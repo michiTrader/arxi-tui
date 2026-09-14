@@ -20,5 +20,6 @@ published, by handing arxi a link.
 - `docs/LESSONS.md` — the bugs and hard rules already paid for by arxi-sim
   and the arxi core, with sources. Do not re-derive them.
 
-Status: planning closed, Phase 0.5 (the bind inventory) next. Nothing here is
-implemented yet.
+Status: planning closed. Next: the bootstrap binds + the raw scene (Phase 0),
+then the full bind inventory in `docs/BINDS.md` before Phase 1's goldens.
+Nothing here is implemented yet.
