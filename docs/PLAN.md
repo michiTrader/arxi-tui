@@ -108,8 +108,12 @@ An extension is a **provider of scene fragments**, not "one panel".
 
 **The user installs arxi, not arxi's dependencies.** Static Go binaries,
 `CGO_ENABLED=0`, per-platform artifacts (linux/macos/windows/**android-arm64**
-for Termux) served from a release CDN behind
-`curl -fsSL https://arxi.sh/install.sh | sh`. Plugins never add a
+for Termux) published to GitHub Releases, with `install.sh` living **in this
+repo** and fetched from the release host. `arxi.sh` is a later vanity domain
+that will point at that same script once the project outgrows its owner —
+until then no document prints a URL we do not control, because a public repo
+advertising an installer site that does not exist is worse than no site.
+Plugins never add a
 user-side dependency: declarative is data, subprocess plugins ship as their
 own static binary, wasm plugins are interpreted inside ours. Inherited from
 fx: auto light/dark detection via the OSC 11 query.
@@ -147,8 +151,12 @@ scene cannot be expressed with the user's tools, the tools are incomplete.
   what was already paid for.
 - **Interface with the arxi core** (`D:/projects/arxi`): arxi-tui is a
   frontend to the same kernel the CLI drives — events, log, `host/v1`
-  capabilities. The bind inventory (Phase 0.5) is derived from the core's
-  event catalog, not invented.
+  capabilities. The bind inventory (Phase 0.5) has two sources with two
+  authorities: run-state binds map onto the core's event catalog and fold,
+  while view-state binds (`slash.active`, `ui.*`, the busy line) are a
+  vocabulary the core never defined because it never had a UI — that half is
+  genuine arxi-tui design, and treating it as transcription is how Phase 0.5
+  becomes a dead end.
 
 ## When data, when code
 
@@ -170,17 +178,32 @@ not the first.
 
 - **Phase 0 — Scene engine.** Document, validation (syntax *and* semantics),
   diff to cells, hot reload, reproducible default scene. Ends with the **raw
-  scene running and usable daily** — not with a "complete engine".
+  scene running and usable daily** — not with a "complete engine". The golden
+  budget is paced by the phases: Phase 0 pins the raw scene and the engine's
+  property tests only; each golden scene gets its family when the phase that
+  needs it lands, never all eleven up front.
 - **Phase 0.5 — The bind vocabulary.** The closed inventory of fields the host
   exposes to scenes (`chat.history`, `agent.working`, `usage.in/out`,
   `ui.focus`, `ui.max`, …) plus computed derivatives, and the open plugin
-  namespace. Done first because scenes cannot be written without it.
+  namespace. The inventory is *designed*, not transcribed: half its fields map
+  to core events, the other half (view state: `slash.active`, `ui.*`, the busy
+  line) exists only because this project has a UI, and it must be written
+  down as arxi-tui's own contract. It lands in two beats so it cannot become
+  the project's bottleneck: a **bootstrap set** — the handful of binds the
+  raw scene needs (`chat.history`, `user.input`, plus the host's own focus
+  and escape state) — frozen with Phase 0, enough to boot and use the
+  interface; the **full vocabulary** (`docs/BINDS.md`) frozen before Phase 1
+  pins its goldens, because every golden scene binds against it.
 - **Phase 1 — The spectrum.** Tokens, base nodes, and the golden scenes:
   raw, sobria default (the fx rules above), and the maximum dashboard/panel
   set. Range visible from day one.
 - **Phase 2 — Mutation from inside.** `/ui …` commands + agent-driven patches,
   with validation, `file:line`, goldens, and the **change-diff view** (the
-  agent shows what it altered before it is trusted).
+  agent shows what it altered before it is trusted). Gated on proof, not on
+  hope: before the feature ships, an **eval corpus** — natural-language order
+  → correct scene patch — runs against the model on the eleven scenes we
+  already have. If the model cannot patch scenes reliably, "autoextendable by
+  command" is not a feature and the document must say so.
 - **Phase 3 — Third-party mounting.** Plugins as scene fragments mounted by
   id; overlays, banners, input-adjacent rows, per-node focus and input;
   `/ui plugin add <url>`; the community installer itself as a scene (Q16/17).
@@ -207,6 +230,17 @@ not the first.
 
 ## Open risks (honest list)
 
+- The promise "usable as time passes" is front-loaded: it depends on
+  validation, the last-good-scene rule, and the immovable escape hatch
+  working **from Phase 0**, not from Phase 2. Until the agent-patch story is
+  proven (Phase 2 eval corpus), a broken user scene must be survivable by a
+  human editing the file — the raw fallback is the guarantee, `/ui` is the
+  convenience.
+- "Usable as time passes" also means *old documents keep booting*: node types,
+  style tokens and binds grow, so a scene written for v0 must render under v1.
+  The mechanism is the same one that makes community content safe —
+  unknown-but-parseable is a warning, missing state is a placeholder (Q16
+  preview mode), and no v0 construction is ever redefined, only added to.
 - The scene format may still hit a ceiling we have not seen; Scene 18 (the
   user's strangest idea) is the pre-test.
 - Derivatives/binds are a real design surface — the Q3 debt, now Phase 0.5.
