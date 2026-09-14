@@ -1,0 +1,13 @@
+# Byte-identical goldens are this repo's central discipline, and git's
+# line-ending normalization silently corrupts it: core.autocrlf=true on a
+# Windows checkout would rewrite every fixture's newlines, so a golden diff
+# would lie without anyone touching a scene. Pin the repo to LF everywhere,
+# and mark fixture families as binary — byte-exact means byte-exact,
+# including trailing whitespace. Set before there is code, because the day
+# fixtures exist is the day a wrong setting becomes a migration event.
+* text=auto eol=lf
+*.frame -text
+*.golden -text
+*.json -text
+*.png -text
+*.jpg -text
