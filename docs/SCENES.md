@@ -227,8 +227,11 @@ survived the cheap test; the expensive test is now code.
 
 ## Next
 
-1. Phase 0.5: derive the bind inventory from the arxi core's event catalog
-   (`D:/projects/arxi/spec/events.md`) and host/v1 — that document freezes the
-   vocabulary scenes can bind.
+1. Phase 0.5, in two beats (see `PLAN.md`): the **bootstrap binds** the raw
+   scene needs, frozen with Phase 0; then the full inventory in
+   `docs/BINDS.md` before Phase 1's goldens. The run-state half maps onto the
+   arxi core's event catalog (`D:/projects/arxi/spec/events.md`) and `host/v1`;
+   the view-state half (`slash.active`, `ui.*`, the busy line) is arxi-tui's
+   own design — the core never defined it because it never had a UI.
 2. Scene 18, the user's strangest interface, on paper.
 3. Phase 0 with the raw scene as its exit criterion.
