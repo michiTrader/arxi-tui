@@ -202,8 +202,14 @@ not the first.
   agent shows what it altered before it is trusted). Gated on proof, not on
   hope: before the feature ships, an **eval corpus** — natural-language order
   → correct scene patch — runs against the model on the eleven scenes we
-  already have. If the model cannot patch scenes reliably, "autoextendable by
-  command" is not a feature and the document must say so.
+  already have. The corpus measures the **repair loop, not the first shot**:
+  order → patch → validator error → retry, until convergence; first-shot
+  accuracy is a vanity metric, because the real use is exactly the case where
+  the engine said `file:line:` and the model had to read it. And it is data,
+  not code: it can be written before the validator exists, which makes it
+  Phase 0's acceptance suite from the start. If the model cannot patch scenes
+  reliably, "autoextendable by command" is not a feature and the document
+  must say so.
 - **Phase 3 — Third-party mounting.** Plugins as scene fragments mounted by
   id; overlays, banners, input-adjacent rows, per-node focus and input;
   `/ui plugin add <url>`; the community installer itself as a scene (Q16/17).
@@ -217,7 +223,13 @@ not the first.
 2. The fold is pure and host-owned; the scene says form, the fold says
    content; the fold never waits on the scene.
 3. An invalid patch never kills the session: last good scene stays; a valid
-   but unsatisfiable scene fails the same way a syntax error does.
+   but unsatisfiable scene fails the same way a syntax error does. The boot
+   path obeys the same rule and cannot inherit it from the hot path: a scene
+   document that is corrupt **on disk** when the instance starts — written by
+   a crashed session, or a stranger's download — falls back to the raw scene
+   with the `file:line:` notice on screen. At boot there is no "last good" to
+   stay on, so the fallback is explicit, invariant-listed, and tested — not
+   implied by the hot-reload code.
 4. Every error carries `file:line:`.
 5. If it can be expressed as data, code is not required.
 6. **The scene never captures the exit.** An immovable panic gesture
@@ -246,6 +258,9 @@ not the first.
 - Derivatives/binds are a real design surface — the Q3 debt, now Phase 0.5.
 - Testing scales differently here: user scenes are unbounded, so goldens
   cover the *engine and the eleven scenes*, and property tests cover
-  invariants (no row ends in bare air, contraction order, escape hatch).
+  invariants (no row ends in bare air, contraction order, escape hatch,
+  boot-corrupt fallback to raw). One harness, not two: the eleven golden
+  scenes are the fixture set for both the hostile property tests and the
+  Phase 2 eval corpus — two suites fed by one infrastructure.
 - Animation budget fights render cost; the 120 ms coalescing seed generalizes,
   but a community scene can always ask for the impossible.
