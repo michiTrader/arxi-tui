@@ -1,9 +1,10 @@
 # Bind inventory — the vocabulary a scene may address
 
-Status: **draft**. The bootstrap set (section 2) is proposed for signature so
-Phase 0 can start; the full inventory (section 4 onward) is Phase 0.5's real
-work and is deliberately *not* guessed here. The owner signs each section;
-an unsigned bind cannot appear in a golden scene.
+Status: **draft**. Section 2 (bootstrap set) is **signed** and frozen as part
+of ADR-0001 — the interface boundary decision of Phase 0, recorded in
+`docs/PLAN.md`. Section 4 (full inventory) is Phase 0.5's real work and is
+deliberately *not* guessed here. The owner signs each section; an unsigned
+bind cannot appear in a golden scene.
 
 ## 1. What a bind is
 
@@ -49,7 +50,25 @@ own survival gestures touch:
 
 Nothing else. If Phase 0 finds it needs a sixth field, that is a finding about
 the bootstrap set's completeness, and this section gets amended and
-re-signed.
+re-signed. These five binds are the full Phase 0 surface, mapped as follows:
+
+- `chat.history` — the host's only run-state projection in Phase 0. It is a
+  view over `llm.response`+`run.prompt` events in the run log, i.e. the
+  log-follow path of ADR-0002. The raw scene binds the transcript node to it;
+  no other bind is referenced.
+- `user.input` — view state, owned by `internal/driver` (the input ring on the
+  TUI side of ADR-0001). It is emitted onto the log only when submitted as
+  `run.prompt`; until then it never touches the kernel.
+- `user.input.submitted` — the enter-key pulse consumed by the host's submit
+  path before it builds the `run.prompt` event. Reserved name only.
+- `host.escape.armed` — derived from the in-process Ctrl-C count in
+  `internal/driver`, not from the core. It is a scene *display* field; the
+  panic gesture itself is handled in `cmd/arxi-tui` and is immovable
+  regardless (invariant 6).
+- `host.scene.error` — set by `internal/engine`'s validator on failure, read
+  by the host's boot renderer. It survives a corrupt-on-disk scene via the
+  raw-scene fallback (invariant 3), and is the one bind the scene may render
+  but the core never provides.
 
 ## 3. Derived-field conventions (settled by Q3/Q21, restated as rules)
 

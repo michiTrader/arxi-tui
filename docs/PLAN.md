@@ -149,14 +149,118 @@ scene cannot be expressed with the user's tools, the tools are incomplete.
   discipline, procgroup supervision, consent/identity machinery — **by copy,
   never import**; two contracts, two repos. `docs/LESSONS.md` is the map of
   what was already paid for.
-- **Interface with the arxi core** (`D:/projects/arxi`): arxi-tui is a
-  frontend to the same kernel the CLI drives — events, log, `host/v1`
-  capabilities. The bind inventory (Phase 0.5) has two sources with two
-  authorities: run-state binds map onto the core's event catalog and fold,
-  while view-state binds (`slash.active`, `ui.*`, the busy line) are a
-  vocabulary the core never defined because it never had a UI — that half is
-  genuine arxi-tui design, and treating it as transcription is how Phase 0.5
-  becomes a dead end.
+- **Interface with the arxi core** (`D:/projects/arxi`): the kernel boundary
+  is a *subprocess boundary* — arxi-tui spawns/attaches to an `arxi` binary, the
+  two are never one process, and `internal/scene`/`internal/fold` import none of
+  `internal/kernel` or `host/v1`. The CLI, by contrast, embeds `internal/kernel`
+  directly (`cmd/arxi/main.go`): it is a sibling driver, not a sibling shape, and
+  arxi-tui deliberately does not copy that embedding. The reasons are isolation
+  (Section "Interface boundary"), not convenience of one codebase.
+  - See **ADR-0001: the interface boundary** (below), the deciding choice of
+    Phase 0: subprocess NDJSON is the contract, not shared memory or a Go import.
+  - See **ADR-0002: the protocol the boundary speaks** (below): the wire is
+    *the run log* (`spec/events.md` as the authoritative event catalog, ADR-0002
+    of arxi) plus request/response invocations over a future subscription
+    protocol; Fase 0 implements log-follow-and-replay and a request/response
+    shim, deferring the subscribe extension until multi-client justifies it.
+  - See **ADR-0003: projection, not expression** (below): binds are read-only
+    named projections of the fold; the scene never carries an expression
+    language, and view-state binds (`slash.active`, `ui.*`, the busy line) are
+    arxi-tui's own contract because the core never owned a UI.
+
+#### ADR-0001 — the interface boundary: one process per side
+
+arxi-tui spawns (or attaches to) the `arxi` binary; the kernel never runs in
+this process. The four rejected alternatives and a word on each:
+
+1. **Import `host/v1` directly** (the tempting half-measure). `host/v1` is the
+   DTOs and backend interface, not the kernel; to embed the kernel would require
+   publishing a *new* Go API surface — a permanent compatibility promise over a
+   repo this project does not control. Two kernels now, divergence later.
+   Rejected.
+2. **Copy the kernel by value** ("as the TUI does"). Copying UI machinery is
+   defensible because it is stable; copying the *live* kernel freezes its log
+   format and two trees diverge. Rejected.
+3. **Daemon + multi-client socket**. Sessions surviving TUI exit already
+   survive via the log: `event log` replays, `run attach` follows, and the
+   state is durable without a daemon. That is the win of the log-as-truth model
+   (arxi ADR-0002), not of process separation. A daemon adds lifecycle/upgrade
+   scope with no new capability here. Deferred, never a default.
+4. **In-memory embedding** (zero IPC, one process). Rejected for all of (1):
+   version skew, no fakeable protocol boundary, no crash isolation, and the TUI
+   dies with the kernel — which is intolerable because the panic gesture
+   (invariant 6) must survive a kernel crash to restore the raw scene.
+
+Chose **subprocess**. The procgroup supervisor from arxi-sim
+(`internal/ext/supervisor`, `LESSONS.md:55-58`) ports wholesale: the TUI owns
+the child, kills it on exit, and the escape gesture can `SIGKILL`+`respawn` the
+core without the interface dying.
+
+#### ADR-0002 — the protocol the boundary speaks: the log, plus invocations
+
+The wire is two things, and both already exist in arxi rather than being
+invented here:
+
+- **The run log** (`spec/events.md`): append-only, `seq`-numbered, one JSON
+  object per line. It is the truth (arxi ADR-0002); snapshots are cache. The
+  host does not embed a live kernel — it reads the log file the kernel writes,
+  the same way `run attach` does without taking the writer lock. Replay is
+  free: feed any captured log to the fold. Property tests, golden re-runs, and
+  the eval corpus all run from fixtures over the same path.
+- **Request/response invocations**: the surface declares the verbs
+  (`run.prompt`, `run.pause`, …) as request types, each one request → one
+  response. This maps directly to `cmd/arxi/serve.go`'s documented NDJSON
+  framing (one object per line, each direction). The serve protocol today is
+  request/response, *not* a publish/subscribe event stream: `serve.go` states
+  that a streaming mode would require subscription IDs, event messages,
+  cancellation, and writer arbitration — i.e. an *extension* to arxi's serve
+  protocol, not a thing arxi-tui can build unilaterally. Phase 0 therefore
+  implements request/response for commands and **log-follow** (the follow-half
+  of `run attach` lifted out of arxi-sim's `ask.go`) for the live stream; the
+  subscribe extension is requested of arxi when multi-client justifies it. The
+  handshake for Phase 0 is a single field: a `hello` with the protocol version
+  this host speaks, answered by either a `hello` (version match) or a
+  terminated handshake (version mismatch).
+
+Chose **log-follow + request/response**, not a brand-new subscription protocol,
+because the cost the other analysis missed is that *no subscription layer
+exists yet in arxi to extend* — inventing it would make arxi-tui's success
+depend on arxi protocol work, and the eleven goldens do not need it.
+
+#### ADR-0003 — binds are view projections, never expressions
+
+Binds are read-only addresses into host state the node names; the host computes
+them. The scene never embeds an expression language. Three namespaces, three
+authorities:
+
+- `chat.*`, `agent.*`, `run.*`, `usage.*`, `session.*`, `team.*`, `model.*` —
+  run state, a named projection of the fold over `spec/events.md`. The core
+  defines events; the *mapping* from event to view field is arxi-tui's design
+  and lives in `docs/BINDS.md`, never in the scene.
+- `ui.*`, `slash.*`, `user.input`, the busy line — view state. The core never
+  defined these; this is arxi-tui's own contract (Q21: scenes read `ui.*` with
+  `when`, write only through registered commands).
+- `<plugin-id>.*` — open namespace. Anything a gated plugin streams via NDJSON
+  lands here; the gate is the boundary, not a name list.
+
+Counter-field rule (carried from `docs/BINDS.md`): an unsatisfied bind renders
+as a placeholder, never a crash — this is the engine contract that makes
+community preview (Q16) and forward compatibility possible at once.
+
+#### ADR-0004 — pull by frame, not push by subscription
+
+Binds are resolved in every frame the host renders, not via per-bind
+subscriptions. Reasons: (1) it maps the scene directly onto the 120 ms coalescing
+budget (`LESSONS.md:50-54`) — one clock, one resolution pass; (2) it keeps the
+fold stateless across frames so geometry survives resize and scroll state stays
+keyed to content (the remembered-row bug, `LESSONS.md:15-18`); (3) it removes an
+entire family of recalled-record bugs — the fold does not track subscribers.
+Scene node counts are tens, not hundreds of thousands, so a per-frame walk is
+within the budget with headroom, and the property test `N nodes < X ms` is the
+only throttle. A subscription layer would be a second tracker to maintain and a
+second concurrency bug class; the coalescer is the only timer this engine
+carries. Chose **pull by frame**; revisit only if the property test proves the
+budget is missed by a real scene, not a synthetic one.
 
 ## When data, when code
 
@@ -264,3 +368,12 @@ not the first.
   Phase 2 eval corpus — two suites fed by one infrastructure.
 - Animation budget fights render cost; the 120 ms coalescing seed generalizes,
   but a community scene can always ask for the impossible.
+- **The boundary protocol must not leak future scope into Phase 0.** arxi's
+  `serve` is request/response, not a subscription stream — the code documents
+  that a streaming mode needs subscription IDs, event messages, cancellation,
+  and writer arbitration, i.e. an extension arxi-tui cannot ship unilaterally.
+  Phase 0 therefore uses log-follow (the follow half of `run attach`, lifted
+  from arxi-sim's `ask.go`) for the live stream and request/response for
+  commands, deferring the subscribe extension until multi-client justifies it.
+  If that deferment turns out to block a Phase 0 need, the fix is scope
+  re-negotiation with arxi, not a protocol invented here.
