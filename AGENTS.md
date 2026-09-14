@@ -137,9 +137,12 @@ the sibling projects. Concretely:
 
 ## Working rules
 
-**One step at a time, in order.** Phase 0.5 (the bind inventory) lands before
-Phase 0 code; Phase 0 ends with the raw scene (two nodes) running, not with a
-"complete engine".
+**One step at a time, in order.** The bind vocabulary is the only hard
+prerequisite Phase 0 cannot code around, so it lands in two beats (see
+`docs/PLAN.md`): its **bootstrap subset** — the few binds the raw scene uses
+— freezes *before* Phase 0 code, and the **full inventory** in
+`docs/BINDS.md` freezes before Phase 1 pins its goldens. Phase 0 ends with the
+raw scene (two nodes) running, not with a "complete engine".
 
 **Dependencies are allowed, but named.** arxi-sim's "stdlib only" claim was
 already false (`charmbracelet/x/ansi` ships in go.mod); the honest rule the
