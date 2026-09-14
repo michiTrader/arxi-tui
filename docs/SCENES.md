@@ -6,11 +6,13 @@ would be fixed here, on paper, for free. It did hold; what the exercise
 produced instead was 23 vocabulary decisions, all now settled.
 
 Status (2026-09-14): the owner of the product **signed all recommendations**
-(questions 1–23 pass with their provisional answers), with two amendments:
+(questions 1–23 pass with their provisional answers), with three amendments:
 Q12 — an `overlay anchor:"full"` scene may own the screen but never the escape
 hatch (invariant 6 in `PLAN.md`); Q14 — a render that is none of our nodes is
 the Phase-4 wasm ADR, and until that lands the ceiling is honestly our node
-set. Q4: the filterable list is a primitive.
+set; Q23 — the gate-UX rule: consent is asked when granting a power, never
+again when a granted power is used (see the Q23 section below). Q4: the
+filterable list is a primitive.
 
 ## Format: JSON
 
