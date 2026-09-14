@@ -104,6 +104,16 @@ changes, the golden diff is a review event, not noise.
 **Nothing merges without `go test ./...` passing.** Correct the code, not the
 test: when a test fails, the default assumption is that the test is right.
 
+Two test decisions are made now so they are never re-litigated with code on
+top: **the escape-hatch test (immovable double Ctrl-C, with its timing) runs
+on Windows CI from Phase 0** — LESSONS.md records that Windows delivered
+ctrl+key as a raw byte and the claim changed twice, and an "immovable"
+gesture proven only on Linux is a slogan — and the **SCENES ↔ BINDS audit
+test** (every `bind`/`when` string in the eleven scenes resolves to a signed
+row in `docs/BINDS.md`, and a signed row no scene uses is a warning) is the
+direct port of arxi-sim's `TestEveryDeclaredKeyIsDrawn` machinery: port it,
+do not invent it.
+
 ## Architectural boundaries
 
 - The **fold stays pure and host-owned**. The scene says form; the folded state
@@ -129,9 +139,10 @@ the sibling projects. Concretely:
    files forming one atomic change (a source file and the fixture it needs) —
    immediately `git add` + `git commit` with a descriptive conventional-commit
    message **in English**.
-2. **Push whenever a remote exists** (none yet; create one and update this
-   line). A commit that exists only in the local working copy is exactly as
-   fragile as an uncommitted change.
+2. **Push whenever a remote exists.** The design work is signed and it lives
+   on one disk: the private remote must exist **before `go.mod`**, because the
+   Go module path is derived from the repo URL and guessing it costs a later
+   migration. Once created, record its URL here and push every commit.
 3. Do not batch a whole feature into one commit at the end.
 4. Before ending a turn, verify `git status` is clean.
 
