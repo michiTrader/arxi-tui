@@ -82,7 +82,7 @@ func run() error {
 	return loop(ctx, tty, doc, eventCh)
 }
 
-// loop is the Phase 0 event loop: terminal events and core events on one select,
+// Loop is the Phase 0 event loop: terminal events and core events on one select,
 // the fold projected per event, one full repaint per change.
 //
 // The escape gesture lives here, in the host, and nowhere below: a scene can
@@ -93,7 +93,7 @@ func run() error {
 // the raw scene — and when there is nothing left to restore, the raw scene is
 // already showing and the fold is empty, the gesture has done its whole job and
 // the program leaves.
-func loop(ctx context.Context, tty *term.TTY, doc *scene.Document, eventCh <-chan fold.Event) error {
+func loop(ctx context.Context, tty Terminal, doc *scene.Document, eventCh <-chan fold.Event) error {
 	panicGesture := &driver.PanicGesture{}
 	var collected []fold.Event
 	var input string
@@ -185,6 +185,15 @@ func isCtrlC(k term.Key) bool {
 	return k.Type == term.KeyRunes &&
 		len(k.Runes) == 1 && k.Runes[0] == 'c' &&
 		k.Mod&term.ModCtrl != 0
+}
+
+// Terminal is the minimal view of a terminal that the event loop needs.
+// *term.TTY satisfies this; tests substitute a fake.TTY to drive the loop
+// from a script instead of a keyboard.
+type Terminal interface {
+	io.Writer
+	Size() (width, height int)
+	Events() <-chan term.Event
 }
 
 // render repaints the whole screen. Phase 0 uses clear-home + full redraw;
