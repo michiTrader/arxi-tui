@@ -10,14 +10,40 @@ import (
 	"github.com/michiTrader/arxi_tui/internal/scene"
 )
 
+// testDriver is a Driver that submits prompts by appending them directly to
+// a channel, so the loop test can verify the full round-trip: key → submit →
+// event → fold → render.
+type testDriver struct {
+	evCh  chan fold.Event
+	seq   int64
+}
+
+func (d *testDriver) SubmitPrompt(ctx context.Context, text string) error {
+	d.seq += 1000
+	ev := fold.Event{
+		Type:    "run.prompt",
+		Seq:     d.seq,
+		Payload: map[string]any{"text": text},
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case d.evCh <- ev:
+		return nil
+	}
+}
+
+func (d *testDriver) Close() error { return nil }
+
 // TestLoopInputSubmitTranscriptExit drives the full event loop through a fake
 // TTY with a scripted key sequence: type "test", press Enter, then double
 // Ctrl-C to exit. It asserts that the typed text appears in the transcript
 // and that the loop returns cleanly on the panic gesture.
 //
-// This is the Phase 0 integration test the raw scene needs: end-to-end through
-// the real loop, the real fold, and the real renderer — only the terminal I/O
-// is faked, so the scenario runs deterministically in CI without a PTY.
+// This is the Phase 0 integration test the raw scene needs: end-to-end
+// through the real loop, the real fold, and the real renderer — only the
+// terminal I/O is faked, so the scenario runs deterministically in CI
+// without a PTY.
 func TestLoopInputSubmitTranscriptExit(t *testing.T) {
 	doc, err := scene.ParseDocument([]byte(factoryRAW))
 	if err != nil {
@@ -41,15 +67,15 @@ func TestLoopInputSubmitTranscriptExit(t *testing.T) {
 	}
 
 	tty := newFakeTTY(80, 24, script)
-	eventCh := make(chan fold.Event, 64)
-	// No mock driver events: the user submits a prompt via the keyboard, and
-	// in Phase 0 that lands directly in the fold (typeKey appends it). There
-	// is no core responding yet; the test asserts on the host-side transcript.
+	drv := &testDriver{
+		evCh: make(chan fold.Event, 64),
+		seq:  1000, // user-submitted prompts number above the mock's log
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err = loop(ctx, tty, doc, eventCh)
+	err = loop(ctx, tty, doc, drv.evCh, drv)
 	if err != nil {
 		t.Fatalf("loop returned error: %v", err)
 	}
@@ -90,12 +116,12 @@ func TestLoopExitsOnCtrlCImmediate(t *testing.T) {
 	}
 
 	tty := newFakeTTY(80, 24, script)
-	eventCh := make(chan fold.Event, 64)
+	drv := &testDriver{evCh: make(chan fold.Event, 64)}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err = loop(ctx, tty, doc, eventCh)
+	err = loop(ctx, tty, doc, drv.evCh, drv)
 	if err != nil {
 		t.Fatalf("loop returned error: %v", err)
 	}
@@ -122,12 +148,12 @@ func TestLoopFirstCtrlCClearsInput(t *testing.T) {
 	}
 
 	tty := newFakeTTY(80, 24, script)
-	eventCh := make(chan fold.Event, 64)
+	drv := &testDriver{evCh: make(chan fold.Event, 64)}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err = loop(ctx, tty, doc, eventCh)
+	err = loop(ctx, tty, doc, drv.evCh, drv)
 	if err != nil {
 		t.Fatalf("loop returned error: %v", err)
 	}
@@ -139,5 +165,59 @@ func TestLoopFirstCtrlCClearsInput(t *testing.T) {
 	// cleared it, so we check that the final state shows "x" in the prompt.
 	if !strings.Contains(out, "x") {
 		t.Errorf("expected 'x' in final output (input was cleared then re-typed); output:\n%s", out)
+	}
+}
+
+// TestLoopReceivesDriverEvents verifies that events arriving on the event
+// channel from the driver (e.g. mock log replay or log-follow) are folded
+// and rendered, proving the loop handles the non-keyboard side of the
+// two-event model.
+func TestLoopReceivesDriverEvents(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factoryRAW))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	// Two Ctrl-C presses exit immediately; the driver events arrive first
+	// and must be rendered before the loop returns.
+	driverEvents := []fold.Event{
+		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hola"}},
+		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hola!"}},
+	}
+
+	evCh := make(chan fold.Event, 64)
+	defer close(evCh)
+
+	// Feed driver events after a short delay, before the Ctrl-C sequence.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		for _, e := range driverEvents {
+			evCh <- e
+		}
+	}()
+
+	script := []scheduledEvent{
+		{100 * time.Millisecond, ctrlCharEvent('c')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+	}
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: evCh}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = loop(ctx, tty, doc, evCh, drv)
+	if err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	out := tty.output()
+	// The driver events must have been folded and rendered.
+	if !strings.Contains(out, "hola") {
+		t.Errorf("transcript does not contain driver event 'hola'; output:\n%s", out)
+	}
+	if !strings.Contains(out, "Hola!") {
+		t.Errorf("transcript does not contain driver event 'Hola!'; output:\n%s", out)
 	}
 }

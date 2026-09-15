@@ -1,9 +1,11 @@
 package driver
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/michiTrader/arxi_tui/internal/fold"
 )
@@ -59,7 +61,6 @@ func TestReplayParsesLogEvents(t *testing.T) {
 			t.Errorf("event %d: got Type=%q Seq=%d, want Type=%q Seq=%d",
 				i, ev.Type, ev.Seq, want[i].Type, want[i].Seq)
 		}
-		// Check payload text field
 		gotText, _ := ev.Payload["text"].(string)
 		wantText, _ := want[i].Payload["text"].(string)
 		if gotText != wantText {
@@ -130,20 +131,17 @@ func TestReplayMatchesFoldDeterministic(t *testing.T) {
 	logContent := `{"seq":1,"type":"run.prompt","payload":{"text":"hola"}}
 {"seq":2,"type":"llm.response","payload":{"text":"Hola!"}}
 {"seq":3,"type":"run.prompt","payload":{"text":"gracias"}}
-{"seq":4,"type":"llm.response","payload":{"text":"De nada."}}
-`
+{"seq":4,"type":"llm.response","payload":{"text":"De nada."}}`
 	if err := os.WriteFile(logPath, []byte(logContent), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	// Fold from the replayed log
 	replayed, err := Replay(logPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	stateA := fold.Fold(replayed)
 
-	// Fold from the same events constructed inline
 	inline := []fold.Event{
 		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hola"}},
 		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hola!"}},
@@ -155,5 +153,118 @@ func TestReplayMatchesFoldDeterministic(t *testing.T) {
 	if stateA.ChatHistoryMarkdown() != stateB.ChatHistoryMarkdown() {
 		t.Error("replay + fold produced different state from inline fold: " +
 			"replay is worthless")
+	}
+}
+
+// TestLogFollowReadsExistingEvents verifies that LogFollow drains the existing
+// contents of the log file when it starts, sending all events on the channel
+// before waiting for new appends.
+func TestLogFollowReadsExistingEvents(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "events.ndjson")
+
+	logContent := `{"seq":1,"type":"run.prompt","payload":{"text":"hola"}}
+{"seq":2,"type":"llm.response","payload":{"text":"Hola!"}}
+{"seq":3,"type":"run.prompt","payload":{"text":"gracias"}}
+{"seq":4,"type":"llm.response","payload":{"text":"De nada."}}
+`
+	if err := os.WriteFile(logPath, []byte(logContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	out, err := LogFollow(ctx, logPath)
+	if err != nil {
+		t.Fatalf("LogFollow: %v", err)
+	}
+
+	items := []struct {
+		typ string
+		seq int64
+	}{
+		{"run.prompt", 1},
+		{"llm.response", 2},
+		{"run.prompt", 3},
+		{"llm.response", 4},
+	}
+
+	for i, want := range items {
+		select {
+		case got := <-out:
+			if got.Type != want.typ || got.Seq != want.seq {
+				t.Errorf("event %d: got Type=%q Seq=%d, want Type=%q Seq=%d",
+					i, got.Type, got.Seq, want.typ, want.seq)
+			}
+		case <-time.After(500 * time.Millisecond):
+			t.Fatalf("timeout waiting for event %d (expected %s seq %d)", i, want.typ, want.seq)
+		}
+	}
+}
+
+// TestLogFollowPicksUpAppendedEvents verifies that LogFollow continues polling
+// and picks up events appended to the file after LogFollow started.
+func TestLogFollowPicksUpAppendedEvents(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "events.ndjson")
+
+	initial := `{"seq":1,"type":"run.prompt","payload":{"text":"first"}}
+`
+	if err := os.WriteFile(logPath, []byte(initial), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	out, err := LogFollow(ctx, logPath)
+	if err != nil {
+		t.Fatalf("LogFollow: %v", err)
+	}
+
+	// Consume the first event.
+	select {
+	case got := <-out:
+		if got.Type != "run.prompt" || got.Seq != 1 {
+			t.Fatalf("first event: got Type=%q Seq=%d, want run.prompt seq 1", got.Type, got.Seq)
+		}
+	case <-time.After(500 * time.Millisecond):
+			t.Fatal("timeout waiting for initial event")
+		}
+
+	// Append a second event.
+	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+
+	time.Sleep(300 * time.Millisecond)
+	if _, err := f.WriteString(`{"seq":2,"type":"llm.response","payload":{"text":"second"}}
+`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Wait for the appended event to arrive.
+	select {
+	case got := <-out:
+		if got.Type != "llm.response" || got.Seq != 2 {
+			t.Errorf("appended event: got Type=%q Seq=%d, want llm.response seq 2", got.Type, got.Seq)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("timeout waiting for appended event")
+	}
+}
+
+// TestLogFollowMissingFile verifies that LogFollow on a nonexistent file returns
+// an error rather than hanging.
+func TestLogFollowMissingFile(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	_, err := LogFollow(ctx, "/nonexistent/path/events.ndjson")
+	if err == nil {
+		t.Error("expected error for missing log file, got nil")
 	}
 }

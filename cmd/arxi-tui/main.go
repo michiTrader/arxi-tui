@@ -3,6 +3,10 @@
 // Phase 0: loads the factory RAW scene, drives the fold with mock events,
 // renders frames in a full-screen terminal, and handles the immovable
 // escape gesture (Ctrl-C twice restores the raw scene).
+//
+// Phase 0.5: the mock driver is replaced by an NDJSON connection to the
+// arxi core's serve subprocess. Log-follow reads the run's event log;
+// run.prompt requests go over the NDJSON request/response protocol.
 package main
 
 import (
@@ -10,6 +14,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -64,22 +70,202 @@ func run() error {
 	fmt.Fprint(tty, "\033[?1049h\033[H")
 	defer fmt.Fprint(tty, "\033[?1049l")
 
-	// Phase 0 mock driver: emits a fixed log to prove the pipeline end-to-end.
-	// Phase 1 replaces this with the NDJSON reader from the arxi core.
-	mockDriver := driver.NewMock([]fold.Event{
+	// Phase 0.5: spawn the arxi core as a serve subprocess and speak the
+	// NDJSON request/response protocol. Log-follow reads the run's event
+	// log file. When no arxi binary is available (Phase 0 dev, or non-interactive
+	// pipe), fall back to the mock driver.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	drv, eventCh, err := openDriver(ctx, doc)
+	if err != nil {
+		return err
+	}
+	defer drv.Close()
+
+	return loop(ctx, tty, doc, eventCh, drv)
+}
+
+// Driver is the minimal interface the event loop needs from whatever feeds it
+// events and accepts prompt submissions. The mock and the NDJSON driver both
+// satisfy it, so the loop never knows which path it is on.
+type Driver interface {
+	// SubmitPrompt sends the user's typed text as a run.prompt request.
+	// In Phase 0 (mock) this feeds events directly to the channel; in Phase 0.5
+	// (NDJSON) this sends the request over the serve protocol and the core's
+	// response arrives as log events on eventCh.
+	SubmitPrompt(ctx context.Context, text string) error
+	// Close tears down any subprocess or resources the driver owns.
+	Close() error
+}
+
+// openDriver decides whether to spawn the arxi core subprocess or fall back to
+// the Phase 0 mock. The mock is used when ARXI_BIN is unset: the binary path
+// is optional, and the mock lets the engine run daily without the core present.
+func openDriver(ctx context.Context, doc *scene.Document) (Driver, <-chan fold.Event, error) {
+	arxiBin := os.Getenv("ARXI_BIN")
+	if arxiBin == "" {
+		// Phase 0: no arxi binary, use the mock driver that replays a fixed
+		// log. The mock submits prompts by appending directly to the event
+		// channel, so the fold sees them without a subprocess.
+		return openMockDriver(ctx, doc)
+	}
+
+	// Phase 0.5: spawn arxi serve as a subprocess. The subprocess communicates
+	// via stdin/stdout using the NDJSON request/response protocol (ADR-0002).
+	// Log-follow reads the run's event log file separately.
+	return openServeDriver(ctx, arxiBin)
+}
+
+// openMockDriver creates the Phase 0 mock: a fixed log replay plus a
+// prompt-submitter that appends run.prompt events to the channel.
+func openMockDriver(ctx context.Context, doc *scene.Document) (Driver, <-chan fold.Event, error) {
+	eventCh := make(chan fold.Event, 64)
+
+	mk := driver.NewMock([]fold.Event{
 		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hola"}},
 		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hola! ¿En qué puedo ayudarte?"}},
 		{Type: "run.prompt", Seq: 3, Payload: map[string]any{"text": "gracias"}},
 		{Type: "llm.response", Seq: 4, Payload: map[string]any{"text": "De nada."}},
 	})
+	go mk.Run(ctx, eventCh)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	md := &mockDriver{
+		eventCh: eventCh,
+		seqBase: 1000, // user-submitted prompts number above the mock's log
+	}
+	return md, eventCh, nil
+}
 
-	eventCh := make(chan fold.Event, 64)
-	go mockDriver.Run(ctx, eventCh)
+// mockDriver satisfies Driver: submitting a prompt appends the event directly
+// to the channel, simulating what the core would emit after processing it.
+type mockDriver struct {
+	eventCh chan<- fold.Event
+	seqBase int64
+}
 
-	return loop(ctx, tty, doc, eventCh)
+func (m *mockDriver) SubmitPrompt(ctx context.Context, text string) error {
+	m.seqBase++
+	ev := fold.Event{
+		Type:    "run.prompt",
+		Seq:     m.seqBase,
+		Payload: map[string]any{"text": text},
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case m.eventCh <- ev:
+		return nil
+	}
+}
+
+func (m *mockDriver) Close() error { return nil }
+
+// openServeDriver spawns `arxi serve` and performs the NDJSON handshake.
+//
+// Phase 0.5 wiring: the subprocess communicates over stdin/stdout using
+// NDJSON (one JSON object per line). The first line from the server is a
+// hello; the client sends protoRequest objects (run.prompt); the server
+// answers each with a protoResponse.
+//
+// Log events are followed by reading the run's event log file (the same
+// mechanism as `arxi run attach`). The log path is resolved from ARXI_RUN_DIR
+// (or defaults to ~/.arxi/runs/last/events.ndjson). LogFollow polls the file
+// at 120ms and feeds events into the same channel the mock used in Phase 0.
+//
+// The subprocess lifecycle is managed by the procgroup supervisor from
+// arxi-sim (internal/ext/supervisor), which will be ported in Phase 2.
+func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.Event, error) {
+	// Resolve the event log path for log-follow. ARXI_RUN_DIR points at the
+	// directory for a specific run; if unset, default to ~/.arxi/runs/last.
+	logPath := filepath.Join(os.Getenv("ARXI_RUN_DIR"), "events.ndjson")
+	if os.Getenv("ARXI_RUN_DIR") == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, nil, fmt.Errorf("phase 0.5: cannot resolve home dir for default log path: %w", err)
+		}
+		logPath = filepath.Join(home, ".arxi", "runs", "last", "events.ndjson")
+	}
+
+	// Start log-follow before spawning the subprocess, so events written by
+	// the core are caught from the very first line.
+	eventCh, err := driver.LogFollow(ctx, logPath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("phase 0.5: log-follow %s: %w", logPath, err)
+	}
+
+	// Spawn `arxi serve` as a subprocess. Stdin/stdout are pipes for the
+	// NDJSON request/response protocol (ADR-0002).
+	cmd := exec.CommandContext(ctx, arxiBin, "serve")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("phase 0.5: stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		stdin.Close()
+		return nil, nil, fmt.Errorf("phase 0.5: stdout pipe: %w", err)
+	}
+
+	// Connect stderr to the host's stderr so arxi's diagnostics are visible.
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Start(); err != nil {
+		stdin.Close()
+		stdout.Close()
+		return nil, nil, fmt.Errorf("phase 0.5: spawn arxi serve: %w", err)
+	}
+
+	nd := driver.NewNDJSON(struct {
+		io.Reader
+		io.Writer
+	}{stdout, stdin})
+
+	// Handshake: read the hello, validate version.
+	if err := nd.Handshake(ctx); err != nil {
+		stdin.Close()
+		stdout.Close()
+		cmd.Process.Kill()
+		return nil, nil, fmt.Errorf("phase 0.5: handshake: %w", err)
+	}
+
+	sd := &serveDriver{
+		nd:      nd,
+		cmd:     cmd,
+		logPath: logPath,
+	}
+	return sd, eventCh, nil
+}
+
+// serveDriver adapts NDJSONDriver to the Driver interface the loop expects.
+// Prompts go over the NDJSON request/response protocol; the core's responses
+// arrive as log events on the LogFollow channel.
+type serveDriver struct {
+	nd      *driver.NDJSONDriver
+	cmd     *exec.Cmd
+	logPath string
+}
+
+// runID derives the run ID from the log path directory name. In Phase 0.5 the
+// run is identified by where its log lives; later phases may negotiate this
+// during handshake instead.
+func (d *serveDriver) runID() string {
+	dir := filepath.Base(filepath.Dir(d.logPath))
+	if dir == "" || dir == "." {
+		return "last"
+	}
+	return dir
+}
+
+func (d *serveDriver) SubmitPrompt(ctx context.Context, text string) error {
+	_, err := d.nd.SubmitPrompt(ctx, d.runID(), text)
+	return err
+}
+
+func (d *serveDriver) Close() error {
+	_ = d.cmd.Process.Kill()
+	_ = d.cmd.Wait()
+	return nil
 }
 
 // Loop is the Phase 0 event loop: terminal events and core events on one select,
@@ -93,11 +279,10 @@ func run() error {
 // the raw scene — and when there is nothing left to restore, the raw scene is
 // already showing and the fold is empty, the gesture has done its whole job and
 // the program leaves.
-func loop(ctx context.Context, tty Terminal, doc *scene.Document, eventCh <-chan fold.Event) error {
+func loop(ctx context.Context, tty Terminal, doc *scene.Document, eventCh <-chan fold.Event, drv Driver) error {
 	panicGesture := &driver.PanicGesture{}
 	var collected []fold.Event
 	var input string
-	nextSeq := int64(1000) // user-submitted prompts number above the mock's log
 
 	repaint := func() {
 		state := fold.Fold(collected)
@@ -116,7 +301,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, eventCh <-chan
 		case <-ctx.Done():
 			return nil
 
-		case ev := <-termEvents:
+		case ev, ok := <-termEvents:
+			if !ok {
+				return nil // TTY channel closed: session ended
+			}
 			switch ev.Kind {
 			case term.EventKey:
 				if isCtrlC(ev.Key) {
@@ -131,7 +319,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, eventCh <-chan
 					}
 				} else {
 					panicGesture.Reset() // any other key disarms the gesture
-					input = typeKey(input, ev.Key, &collected, &nextSeq)
+					input = typeKey(input, ev.Key, ctx, drv)
 				}
 				repaint()
 			case term.EventResize:
@@ -140,30 +328,36 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, eventCh <-chan
 				return nil
 			}
 
-		case e := <-eventCh:
-			collected = append(collected, e)
-			repaint()
+		case e, ok := <-eventCh:
+			if !ok {
+				// Driver channel closed: no more events. Keep running for
+				// terminal input (e.g. user wants to review the transcript).
+				eventCh = nil
+			} else {
+				collected = append(collected, e)
+				repaint()
+			}
 		}
 	}
 }
 
 // typeKey applies one keypress to the input buffer, or submits the line.
-// Enter submits as run.prompt — in Phase 0 the event lands in the local fold
-// directly; Phase 1 the same event goes to the core over the wire and comes
-// back through the log, so the fold never learns a second path.
-func typeKey(input string, k term.Key, collected *[]fold.Event, nextSeq *int64) string {
+// Enter submits as run.prompt: in Phase 0 the event lands in the local fold
+// directly (the mock driver feeds it); Phase 0.5 the same event goes to the
+// core over the NDJSON wire and comes back through the log, so the fold never
+// learns a second path.
+func typeKey(input string, k term.Key, ctx context.Context, drv Driver) string {
 	switch {
 	case k.Type == term.KeyEnter:
 		text := strings.TrimSpace(input)
 		if text == "" {
 			return input
 		}
-		*collected = append(*collected, fold.Event{
-			Type:    "run.prompt",
-			Seq:     *nextSeq,
-			Payload: map[string]any{"text": text},
-		})
-		*nextSeq++
+		// Submit the prompt through the driver. The driver either appends the
+		// event directly (mock) or sends it to the arxi core over NDJSON
+		// (Phase 0.5). The core's response comes back as log events on
+		// eventCh, which the loop folds on the next iteration.
+		_ = drv.SubmitPrompt(ctx, text)
 		return ""
 	case k.Type == term.KeyBackspace:
 		r := []rune(input)

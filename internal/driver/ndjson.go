@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/michiTrader/arxi_tui/internal/fold"
 )
@@ -25,10 +26,10 @@ import (
 // this driver, which speaks the same protocol the arxi core's serve loop
 // implements (cmd/arxi/serve.go).
 type NDJSONDriver struct {
-	rw     io.ReadWriter
-	scanner  *bufio.Scanner
-	enc      *json.Encoder
-	mu       sync.Mutex
+	rw      io.ReadWriter
+	scanner *bufio.Scanner
+	enc     *json.Encoder
+	mu      sync.Mutex
 }
 
 // protoRequest is one NDJSON request line sent to the arxi core.
@@ -65,6 +66,10 @@ const (
 
 	// protocolVersion is the version string this host speaks in the handshake.
 	protocolVersion = "0.1.0"
+
+	// pollInterval is how often LogFollow re-checks the event log for appends
+	// — the same cadence arxi run attach uses.
+	pollInterval = 120 * time.Millisecond
 )
 
 // NewNDJSON creates a driver that speaks the arxi serve NDJSON protocol over
@@ -72,8 +77,8 @@ const (
 // down the arxi subprocess.
 func NewNDJSON(rw io.ReadWriter) *NDJSONDriver {
 	d := &NDJSONDriver{
-		rw:    rw,
-		enc:   json.NewEncoder(rw),
+		rw:      rw,
+		enc:     json.NewEncoder(rw),
 	}
 	d.scanner = bufio.NewScanner(rw)
 	d.scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes+2)
@@ -101,32 +106,16 @@ func (d *NDJSONDriver) Handshake(ctx context.Context) error {
 	return nil
 }
 
-// Run reads log events from the read side and sends them to out. Because the
-// arxi serve protocol is request/response (not a push stream), log-follow is
-// handled by a separate goroutine that reads from the log file. This method
-// blocks until the context is cancelled or the server disconnects.
-//
-// In the full implementation, log-follow reads the run's events.ndjson file
-// (the same mechanism as `arxi run attach`). For now, Run blocks on the
-// request channel — log-follow will be layered on as a file-watcher in
-// Phase 0.5.
+// Run blocks until the context is cancelled. The serve protocol is
+// request/response, so there is nothing to pull from the wire here — log-follow
+// is handled by LogFollow (file polling).
 func (d *NDJSONDriver) Run(ctx context.Context, out chan<- fold.Event) {
-	// The serve protocol is request/response: the server only sends data
-	// in answer to a request. Log-follow is done by reading the run's log
-	// file directly (see LogFollow). So this Run method exists for interface
-	// compatibility with MockDriver but has nothing to pull from the wire
-	// until a request is made.
-	//
-	// When the serve subprocess closes its end, readLine returns io.EOF
-	// and we stop — the context cancellation from the main loop handles the
-	// rest.
 	<-ctx.Done()
 }
 
 // SubmitPrompt sends a run.prompt request to the core, returning the response.
 // This is the request/response half of ADR-0002: user input goes to the core,
-// not directly to the fold. In Phase 0 the fold takes it directly; Phase 0.5
-// routes it through this call.
+// not directly to the fold.
 func (d *NDJSONDriver) SubmitPrompt(ctx context.Context, runID, text string) (*protoResponse, error) {
 	req := protoRequest{
 		ID:   "prompt",
@@ -197,18 +186,103 @@ func (d *NDJSONDriver) readResponse(ctx context.Context) (*protoResponse, error)
 // It reads confirmed lines only: a batch that has not been committed by the
 // logstore is held until it appears in a subsequent read, so a torn write
 // never produces a half-event.
+//
+// LogFollow first drains any existing events from the file, then polls the
+// file for appends at the same 120ms interval arxi run attach uses.
 func LogFollow(ctx context.Context, logPath string) (<-chan fold.Event, error) {
 	out := make(chan fold.Event, 64)
 
-	// In the full implementation this opens the file, reads existing events,
-	// then polls for appends (the same 120ms interval arxi run attach uses).
-	// For Phase 0.5 we provide the interface; the actual file-follow is
-	// tested via the Replay driver below.
-	close(out)
+	f, err := os.Open(logPath)
+	if err != nil {
+		return nil, fmt.Errorf("ndjson: log-follow open %s: %w", logPath, err)
+	}
+
+	go func() {
+		defer close(out)
+		defer f.Close()
+
+		// First: drain any events already written to the log.
+		if err := replayFile(f, out); err != nil {
+			return
+		}
+
+		// Then: poll for appends.
+		ticker := time.NewTicker(pollInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := replayFile(f, out); err != nil {
+					return
+				}
+			}
+		}
+	}()
+
 	return out, nil
 }
 
-// Replay reads a complete NDJSON log file and sends all events to out.
+// replayFile reads any fully-formed lines from f (without a trailing partial
+// line) and sends them as events. It reads from the current file offset, so
+// repeated calls pick up only new appends. A trailing partial line is rewound
+// so it is picked up on the next poll.
+func replayFile(f *os.File, out chan<- fold.Event) error {
+	buf := make([]byte, 64*1024)
+	n, err := f.Read(buf)
+	if err != nil && err != io.EOF {
+		return err
+	}
+	if n == 0 {
+		return nil
+	}
+
+	data := buf[:n]
+	// Only process complete lines; any trailing partial line is left for the
+	// next poll (rewind the file to before those bytes).
+	lastNL := bytes.LastIndexByte(data, '\n')
+	if lastNL < 0 {
+		// No complete line this round — rewind so next poll re-reads.
+		_, _ = f.Seek(-int64(n), io.SeekCurrent)
+		return nil
+	}
+
+	complete := data[:lastNL+1]
+	leftover := data[lastNL+1:]
+
+	// Rewind past the partial tail so next read gets it again.
+	if len(leftover) > 0 {
+		_, _ = f.Seek(-int64(len(leftover)), io.SeekCurrent)
+	}
+
+	for _, line := range bytes.Split(complete, []byte("\n")) {
+		trimmed := bytes.TrimSpace(line)
+		if len(trimmed) == 0 {
+			continue
+		}
+		var raw struct {
+			Seq     int64          `json:"seq"`
+			Type    string         `json:"type"`
+			Payload map[string]any `json:"payload"`
+		}
+		if err := json.Unmarshal(trimmed, &raw); err != nil {
+			return err
+		}
+		out <- fold.Event{
+			Type:    raw.Type,
+			Seq:     raw.Seq,
+			Payload: raw.Payload,
+		}
+	}
+	return nil
+}
+
+// Replay reads a complete NDJSON log file and returns all events.
+// This is the replay half of the fold: any captured log produces the same
+// stat
+// Replay reads a complete NDJSON log file and returns all events.
 // This is the replay half of the fold: any captured log produces the same
 // state, which is what makes golden re-runs and property tests meaningful.
 func Replay(logPath string) ([]fold.Event, error) {
@@ -226,11 +300,15 @@ func decodeLog(path string) ([]fold.Event, error) {
 	lineNo := 0
 	for len(data) > 0 {
 		i := bytes.IndexByte(data, '\n')
+		var line []byte
 		if i < 0 {
-			break
+			// Last line without trailing newline — process it if non-empty.
+			line = data
+			data = nil
+		} else {
+			line = data[:i]
+			data = data[i+1:]
 		}
-		line := data[:i]
-		data = data[i+1:]
 		lineNo++
 
 		trimmed := bytes.TrimSpace(line)
@@ -238,17 +316,12 @@ func decodeLog(path string) ([]fold.Event, error) {
 			continue
 		}
 
-		// The arxi core writes kernel.Event objects (seq, type, payload, etc.).
-		// The fold only needs Type, Seq, and Payload — the rest is metadata
-		// the fold does not consume. We unmarshal into a partial struct so the
-		// fields arxi writes that we don't need (id, ts, source, etc.) are
-		// simply ignored rather than forcing a dependency on kernel.Event.
 		var raw struct {
-			Seq     int64         `json:"seq"`
-			Type    string        `json:"type"`
+			Seq     int64          `json:"seq"`
+			Type    string         `json:"type"`
 			Payload map[string]any `json:"payload"`
 		}
-		if err := json.Unmarshal(line, &raw); err != nil {
+		if err := json.Unmarshal(trimmed, &raw); err != nil {
 			return nil, fmt.Errorf("decode log %s line %d: not an event: %w", path, lineNo, err)
 		}
 
@@ -260,4 +333,3 @@ func decodeLog(path string) ([]fold.Event, error) {
 	}
 	return events, nil
 }
-
