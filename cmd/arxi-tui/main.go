@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -54,6 +55,14 @@ func run() error {
 	if err := tty.Raw(); err != nil {
 		return fmt.Errorf("raw mode: %w", err)
 	}
+
+	// Full-screen frames are drawn on the alternate screen buffer. Nothing this
+	// program paints belongs in the user's scrollback — a transcript that
+	// repaints per keystroke would bury the shell history under thousands of
+	// near-identical copies — and leaving the buffer on exit hands the shell
+	// back exactly as it was found, cursor and all.
+	fmt.Fprint(tty, "\033[?1049h\033[H")
+	defer fmt.Fprint(tty, "\033[?1049l")
 
 	// Phase 0 mock driver: emits a fixed log to prove the pipeline end-to-end.
 	// Phase 1 replaces this with the NDJSON reader from the arxi core.
@@ -181,10 +190,16 @@ func isCtrlC(k term.Key) bool {
 // render repaints the whole screen. Phase 0 uses clear-home + full redraw;
 // the cell-diff repaint (the emitter's own machinery) is Phase 0.5 work on
 // top of the same Frame.
-func render(tty *term.TTY, doc *scene.Document, r engine.Renderer, state fold.State) {
+func render(w io.Writer, doc *scene.Document, r engine.Renderer, state fold.State) {
 	f := r.RenderFrame(doc, state)
-	fmt.Fprint(tty, "\033[H\033[2J")
-	fmt.Fprint(tty, f.Plain())
+	fmt.Fprint(w, "\033[H\033[2J")
+	// Raw mode turned the terminal's output processing off (OPOST/ONLCR), so
+	// the terminal no longer translates \n into \r\n: a bare newline drops
+	// one row and keeps the column, and every line after the first climbs
+	// further right — the staircase. The Frame carries plain \n because it is
+	// mode-blind; the emit path is where they become \r\n, because the emit
+	// path is the only code that knows the terminal is in raw mode.
+	fmt.Fprint(w, strings.ReplaceAll(f.Plain(), "\n", "\r\n"))
 }
 
 // runNonInteractive renders a single frame to stdout when stdin is not a
