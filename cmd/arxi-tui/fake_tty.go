@@ -12,11 +12,11 @@ import (
 // terminal events on its Events channel and records whatever the loop writes to
 // it, so a test can assert on the rendered frames.
 type fakeTTY struct {
-	mu       sync.Mutex
-	width    int
-	height   int
-	frames   []string
-	events   chan term.Event
+	mu     sync.Mutex
+	width  int
+	height int
+	frames []string
+	events chan term.Event
 }
 
 // newFakeTTY creates a fake terminal with the given dimensions and a planned
