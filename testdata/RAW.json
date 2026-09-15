@@ -1,0 +1,4 @@
+{ "root": { "type": "stack", "children": [
+  { "id": "chat",   "type": "markdown", "bind": "chat.history", "grow": 1 },
+  { "id": "prompt", "type": "input",    "bind": "user.input", "placeholder": "> " }
+]}}
