@@ -19,17 +19,17 @@ import (
 // the default theme lands, the sample is replaced by iterating it, unchanged in intent.
 func TestStyleRoundTripsTheDefaultTheme(t *testing.T) {
 	cases := map[string]Style{
-		"":                       {},
-		"bold":                   {Attrs: AttrBold},
-		"dim italic":             {Attrs: AttrDim | AttrItalic},
-		"underline":              {Attrs: AttrUnderline},
-		"reverse":                {Attrs: AttrReverse},
-		"strike":                 {Attrs: AttrStrike},
-		"fg=#c8d3f5 bg=8 bold":   {FG: MustHex("#c8d3f5"), BG: Idx(Bright + Black), Attrs: AttrBold},
-		"bg=#1c5a38":             {BG: MustHex("#1c5a38")},
-		"fg=red bg=bright-blue":  {FG: Idx(Red), BG: Idx(Bright + Blue)},
-		"fg=bright-white":        {FG: Idx(Bright + White)},
-		"bg=bright-black":        {BG: Idx(Bright + Black)},
+		"":                      {},
+		"bold":                  {Attrs: AttrBold},
+		"dim italic":            {Attrs: AttrDim | AttrItalic},
+		"underline":             {Attrs: AttrUnderline},
+		"reverse":               {Attrs: AttrReverse},
+		"strike":                {Attrs: AttrStrike},
+		"fg=#c8d3f5 bg=8 bold":  {FG: MustHex("#c8d3f5"), BG: Idx(Bright + Black), Attrs: AttrBold},
+		"bg=#1c5a38":            {BG: MustHex("#1c5a38")},
+		"fg=red bg=bright-blue": {FG: Idx(Red), BG: Idx(Bright + Blue)},
+		"fg=bright-white":       {FG: Idx(Bright + White)},
+		"bg=bright-black":       {BG: Idx(Bright + Black)},
 	}
 	for _, want := range cases {
 		text := want.String()
@@ -206,8 +206,8 @@ func TestEveryAttributeHasAName(t *testing.T) {
 		}
 		all |= a
 	}
-		// And all of them at once print in the table's order, which is the line a reader
-		// copies out of the default theme listing and edits.
+	// And all of them at once print in the table's order, which is the line a reader
+	// copies out of the default theme listing and edits.
 	if got, want := (Style{Attrs: all}).String(), strings.ReplaceAll(attrList(), ", ", " "); got != want {
 		t.Errorf("every attribute prints as %q, want %q", got, want)
 	}

@@ -13,9 +13,9 @@ type State struct {
 	AgentWorking bool       `json:"agent.working"`
 
 	// View-state binds (arxi-tui's own contract)
-	UserInput       string `json:"user.input"`
-	EscapeArmed     bool   `json:"host.escape.armed"`
-	SceneError      string `json:"host.scene.error"`
+	UserInput   string `json:"user.input"`
+	EscapeArmed bool   `json:"host.escape.armed"`
+	SceneError  string `json:"host.scene.error"`
 }
 
 // Fold is the pure reducer: events in, view-state out. It is deterministic.

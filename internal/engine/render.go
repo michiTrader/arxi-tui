@@ -1,8 +1,8 @@
 package engine
 
 import (
-	"github.com/michiTrader/arxi_tui/internal/ui"
 	"github.com/michiTrader/arxi_tui/internal/scene"
+	"github.com/michiTrader/arxi_tui/internal/ui"
 )
 
 // Renderer turns a scene into a frame of cells. The render phase is pure: it needs
