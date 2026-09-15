@@ -2,8 +2,8 @@ package engine
 
 import (
 	"github.com/michiTrader/arxi_tui/internal/fold"
-	"github.com/michiTrader/arxi_tui/internal/ui"
 	"github.com/michiTrader/arxi_tui/internal/scene"
+	"github.com/michiTrader/arxi_tui/internal/ui"
 )
 
 // Renderer turns a scene into a frame of cells. The render phase is pure: it needs
@@ -92,16 +92,16 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 		} else {
 			promptText = n.Placeholder + state.UserInput
 		}
-default:
-			promptText = n.Placeholder
-		}
-		span := ui.Span{Text: promptText, Style: "input"}
-		return ui.Frame{
-			Live:   []ui.Line{{span}},
-			Width:  r.Width,
-			Height: 1,
-		}
+	default:
+		promptText = n.Placeholder
 	}
+	span := ui.Span{Text: promptText, Style: "input"}
+	return ui.Frame{
+		Live:   []ui.Line{{span}},
+		Width:  r.Width,
+		Height: 1,
+	}
+}
 
 func (r *Renderer) renderText(n *scene.Node) ui.Frame {
 	span := ui.Span{Text: n.Text, Style: "text"}
