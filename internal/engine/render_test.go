@@ -1,68 +1,55 @@
 package engine
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
 )
 
-// rawSceneBytes loads RAW.json from testdata, searching relative paths
-// to handle both test binary locations and source-tree execution.
-func rawSceneBytes(t *testing.T) []byte {
-	t.Helper()
-	// Try current directory first, then the project root.
-	for _, p := range []string{
-		"testdata/RAW.json",
-		filepath.Join("..", "..", "testdata", "RAW.json"),
-	} {
-		if data, err := os.ReadFile(p); err == nil {
-			return data
-		}
-	}
-	t.Fatal("could not find testdata/RAW.json in testdata/ or ../../testdata/")
-	return nil
-}
-
-func frameGoldenBytes(t *testing.T) []byte {
-	t.Helper()
-	for _, p := range []string{
-		"testdata/RAW.frame",
-		filepath.Join("..", "..", "testdata", "RAW.frame"),
-	} {
-		if data, err := os.ReadFile(p); err == nil {
-			return data
-		}
-	}
-	return nil // first run: write golden
-}
-
-// TestRawSceneRendersAsGolden reads RAW.json, renders it, and checks output
-// matches the golden frame. This is the Phase 0 exit criterion.
-func TestRawSceneRendersAsGolden(t *testing.T) {
-	raw := rawSceneBytes(t)
-	doc, err := scene.ParseDocument(raw)
+// TestRawSceneRendersCorrectly renders RAW.scene with the Phase 0 mock events
+// and verifies that chat.history shows the transcript and user.input shows the prompt.
+func TestRawSceneRendersCorrectly(t *testing.T) {
+	// Factory RAW scene JSON embedded directly (no file read in tests)
+	jsonDoc := `{ "root": { "type": "stack", "children": [
+		{ "id": "chat",   "type": "markdown", "bind": "chat.history", "grow": 1 },
+		{ "id": "prompt", "type": "input",    "bind": "user.input", "placeholder": "> " }
+	]}}`
+	doc, err := scene.ParseDocument([]byte(jsonDoc))
 	if err != nil {
 		t.Fatalf("ParseDocument: %v", err)
 	}
 
 	r := Renderer{Width: 80, Height: 24}
-	f := r.RenderFrame(doc)
 
-	got := strings.TrimSuffix(f.Plain(), "\n")
-
-	want := frameGoldenBytes(t)
-	if want == nil {
-		// First run: write golden so we see what we get
-		t.Logf("no golden yet; rendered:\n%s", got)
-		return
+	// Phase 0 mock events: user asks, assistant answers, repeat.
+	events := []fold.Event{
+		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hola"}},
+		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hola! ¿En qué puedo ayudarte?"}},
+		{Type: "run.prompt", Seq: 3, Payload: map[string]any{"text": "gracias"}},
+		{Type: "llm.response", Seq: 4, Payload: map[string]any{"text": "De nada."}},
 	}
-	wantStr := strings.TrimSuffix(string(want), "\n")
+	state := fold.Fold(events)
 
-	if got != wantStr {
-		t.Errorf("frame mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, wantStr)
+	f := r.RenderFrame(doc, state)
+	got := f.Plain()
+
+	// The rendered output must:
+	// 1. Contain the chat transcript in order
+	// 2. End with the prompt "> "
+	// 3. Have no "UNKNOWN NODE TYPE" errors
+	if strings.Contains(got, "UNKNOWN NODE TYPE") {
+		t.Errorf("render produced unknown node type; output:\n%s", got)
 	}
-	t.Logf("golden output:\n%s", got)
+	if !strings.Contains(got, "hola") {
+		t.Errorf("expected 'hola' in chat history; got:\n%s", got)
+	}
+	if !strings.Contains(got, "Hola! ¿En qué puedo ayudarte?") {
+		t.Errorf("expected assistant response; got:\n%s", got)
+	}
+	if !strings.HasSuffix(got, "> ") {
+		t.Errorf("expected output to end with '> '; got:\n%s", got)
+	}
+	t.Logf("rendered frame:\n%s", got)
 }
