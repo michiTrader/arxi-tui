@@ -1,10 +1,11 @@
 # Bind inventory — the vocabulary a scene may address
 
-Status: **draft**. Section 2 (bootstrap set) is **signed** and frozen as part
-of ADR-0001 — the interface boundary decision of Phase 0, recorded in
-`docs/PLAN.md`. Section 4 (full inventory) is Phase 0.5's real work and is
-deliberately *not* guessed here. The owner signs each section; an unsigned
-bind cannot appear in a golden scene.
+Status: **signed (2026-09-15)**. Section 2 (bootstrap set) is signed and
+frozen as part of ADR-0001 — the interface boundary decision of Phase 0,
+recorded in `docs/PLAN.md`. Section 4 (full inventory) is now signed by the
+owner and frozen before Phase 1's goldens, because every golden scene binds
+against it. The owner of the product signed this section on 2026-09-15. No
+unsigned bind may appear in a golden scene.
 
 ## 1. What a bind is
 
@@ -81,25 +82,88 @@ re-signed. These five binds are the full Phase 0 surface, mapped as follows:
 - `ui.*` is the only writable half (through `cmd:` actions); run-state binds
   are read-only everywhere, scenes included.
 
-## 4. Full inventory — to be designed (Phase 0.5, before Phase 1 goldens)
+## 4. Full inventory
 
-The known workload, from the binds the eleven golden scenes already use —
-each line below still needs: type, exact source events or view mechanism,
-update timing, empty-state behavior.
+Each row records exactly what the engine implementation needs to produce — no
+more, no less. The owner of the product signed this section on 2026-09-15.
 
-- **From run state** (map onto `events.md` + fold): `agent.working`,
-  `agent.mode`, `agent.todos`, `thinking.text`, `model.name`,
-  `session.tokens_used`, `session.new_milestone`, `team.members` (per-row
-  `state`/`id`), `usage.delta`, `usage.in`, `usage.out`, `todos.count`,
-  blocked/remedy surface (`run.quiescent.diagnosis`, `agent.blocked.
-  blocked_ref` → a scene should be able to render *why* it is stuck, per
-  ADR-0004).
-- **From view state** (arxi-tui's own design): `slash.active`,
-  `slash.matches` (rows: name, category, description — the `row_template`
-  binds of Scene 5), menu selection/focus, `ui.focus`, `ui.max`, `ui.surface`.
-- **From the plugin namespace contract**: shape of a `tick.*` stream frame
-  (NDJSON record → bind path → type), so Scene 6's manifest validation has
-  something to validate against.
+### 4.1 Run state (mapped from the arxi core event catalog)
 
-Exit criterion: every `bind`/`when` string in the eleven scenes resolves to a
-signed row here, with none invented by the engine implementation.
+These binds are read-only projections of the fold over `spec/events.md`.
+Source events come from `internal/kernel/event.go` (the exhaustive `EventType`
+const block) and the payload field names are confirmed against the actual
+emission sites in `internal/provider/executor.go` and
+`internal/app/acceptance.go`. The fold never imports the core; it reads these
+events from the log file the core writes.
+
+| bind | type | source events / payload | update timing | empty-state |
+|---|---|---|---|---|
+| `chat.history` | markdown text stream | fold of `run.prompt.text` + `llm.response.text` | on every `run.prompt` or `llm.response` | empty string — the prompt line renders alone |
+| `thinking.text` | text | `llm.response` payload `text` (streaming delta) | on each delta of an in-flight `llm.response` | empty string — the marquee does not render (`when` is false) |
+| `agent.working` | bool | `agent.activated` (→true), `agent.turn_done` (→false), `agent.failed` (→false); also `thinking.start`→true, `thinking.stop`→false for the in-flight phase | on `agent.activated`/`turn_done`/`failed`; on `thinking.start`/`stop` | `false` — no member is active |
+| `agent.mode` | text | derived: `"live"` or `"sim"` from `run.started.simulated`, plus stage state from `stage.entered`/`stage.advanced` | on `run.started`, `stage.entered`, `stage.advanced` | `"idle"` before `run.started` lands |
+| `model.name` | text | `llm.response` payload `model` (format: `provider/model`, e.g. `openai/gpt-4o`) | on every completed `llm.response` | empty string — shows the configured default once boot completes, per the status bar design |
+| `usage.in` | uint64 | cumulative sum of `llm.response.tokens_in` across all turns in the run | on every `llm.response` | `0` before the first response |
+| `usage.out` | uint64 | cumulative sum of `llm.response.tokens_out` across all turns in the run | on every `llm.response` | `0` before the first response |
+| `usage.delta` | text | derived delta of `usage.in`/`usage.out` for the most recent turn (e.g. `"+1.2k"` / `"+342"`) | on every `llm.response` | empty string — the suffix is omitted |
+| `session.tokens_used` | uint64 | derived: `run.started.budget_usd` minus running sum of `llm.response.cost_usd`, reported as used budget in USD × 1000 (microunits) for integer bind compatibility | on `run.started`, every `llm.response`, `budget.warning`, `budget.exceeded` | `0` at run start |
+| `session.new_milestone` | event pulse | derived: fires on `stage.advanced` (stage transition) or `agent.turn_done` (turn boundary) | on `stage.advanced`, `agent.turn_done` | null/pulse inactive — no milestone to show |
+| `team.members` | array of objects | projected from the run's members: each row has `id` (the agent name), `state` (`idle`/`thinking`/`tool`/`submitted`/`waiting`/`inactive`/`failed`), `role` (`backend`/`frontend`/`...` from `agent.activated`), `busy` (bool), `turns` (uint), `spent_usd` (float64) | on `agent.activated`, `agent.turn_done`, `agent.blocked`, `agent.unblocked`, `agent.failed` | empty array — the subagent list does not render |
+| `todos.count` | uint | derived: count of pending `agent.blocked` events with `blocked_ref` present | on every `agent.blocked` / `agent.unblocked` / `tool.call` | `0` |
+| `run.quiescent.diagnosis` | text | `run.quiescent` payload `diagnosis` (the concrete reason: "stage X advances with …", "agent waits for …", etc.) | on `run.quiescent` | null — no diagnosis until a quiescent event lands |
+
+### 4.2 Agent blocked / remedy surface
+
+Per `docs/LESSONS.md:91-94`: quiescence is an event with a diagnosis, not a
+terminal state. The fold must be able to render *why* it is stuck. The
+`agent.blocked` event carries `blocked_ref` (a structured object), and the
+remedy is derived from it.
+
+| bind | type | source events / payload | update timing | empty-state |
+|---|---|---|---|---|
+| `agent.blocked.blocked_ref` | object \| null | `agent.blocked` payload `blocked_ref` | on `agent.blocked` | null — no member is blocked |
+| `agent.blocked.blocked_on` | text | `agent.blocked` payload `blocked_on` (one of: `approval`, `lock`, `peer`, `budget`, `timer`, `tool`, `workspace`) | on `agent.blocked` | empty string |
+| `agent.blocked.actor` | text | `agent.blocked` payload `actor` (derived from `agent.activated` or the event's own `actor` field) | on `agent.blocked` | empty string |
+
+The remedy is not a separate bind: the engine reads `blocked_on` +
+`blocked_ref` and resolves it to a command string per the `blocked_ref` rule in
+`spec/events.md` (`approval` → `arxi inbox approve <inbox_id>`, `budget` →
+`arxi run unpause --budget <higher>`, etc.). The scene renders
+`agent.blocked.blocked_ref`'s fields through relative binds in a template row.
+
+### 4.3 View state (arxi-tui's own contract, Q21)
+
+These binds have no corresponding event in the arxi core — they exist only
+because this project has a UI. They are owned by the host, read with `when` and
+written only through registered commands (`cmd:/slash`, `cmd:/max`,
+`cmd:/focus`, `cmd:/plugin`). The event that sets each is named.
+
+| bind | type | view mechanism | update timing | empty-state |
+|---|---|---|---|---|
+| `slash.active` | bool | set true when the user types `/` in the input buffer; set false on Enter/Esc or when the buffer clears | on `user.input` change crossing the `/` threshold | `false` |
+| `slash.matches` | array of `{name, category, description}` | derived from the host's command registry, filtered by the typed substring after `/` | on every keystroke while `slash.active` | empty array |
+| `ui.focus` | text \| null | the `id` of the currently focused node; set by `cmd:/focus <node>` or Tab navigation | on `focus:<node>` action, on Tab/Shift-Tab | null — focus defaults to the input node at boot |
+| `ui.max` | text \| null | the `id` of the maximized pane; set by `cmd:/max <pane>` (Scene 10) | on `cmd:/max` action | null — no pane is maximized |
+| `ui.surface` | text | the active surface/page identifier (e.g. `"chat"`, `"config"`, `"plugins"`) | on `cmd:/surface <name>` | `"chat"` — the default surface |
+
+### 4.4 Plugin namespace contract
+
+The `<plugin-id>.*` namespace is open by design (ADR-0003). Any field a gated
+plugin streams via NDJSON lands here. This row documents the *shape* the engine
+expects so Scene 6's manifest validation has a contract to validate against.
+
+| bind | type | source | update timing | empty-state |
+|---|---|---|---|---|
+| `<plugin-id>.*` | open | NDJSON frame from a gated plugin process | on each frame | placeholder — an unsatisfied plugin bind renders as a placeholder, never a crash |
+
+A plugin manifest declares `mounts` (scene fragments) and the bind fields it
+streams. The engine validates that every bind in a plugin's fragment resolves
+either to a host-owned field (Section 4.1–4.3) or to a field the plugin declares
+it will stream. An undeclared plugin bind is a validation error with `file:line`.
+
+### 4.5 Exit criterion
+
+Every `bind`/`when` string in the eleven scenes resolves to a signed row above.
+No bind is invented by the engine implementation. A scene that references an
+unsigned bind fails validation at load time with a `file:line` error pointing at
+the offending node.
