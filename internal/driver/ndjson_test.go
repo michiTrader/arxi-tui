@@ -230,8 +230,8 @@ func TestLogFollowPicksUpAppendedEvents(t *testing.T) {
 			t.Fatalf("first event: got Type=%q Seq=%d, want run.prompt seq 1", got.Type, got.Seq)
 		}
 	case <-time.After(500 * time.Millisecond):
-			t.Fatal("timeout waiting for initial event")
-		}
+		t.Fatal("timeout waiting for initial event")
+	}
 
 	// Append a second event.
 	f, err := os.OpenFile(logPath, os.O_APPEND|os.O_WRONLY, 0644)

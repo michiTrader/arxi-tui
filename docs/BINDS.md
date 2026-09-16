@@ -99,13 +99,13 @@ events from the log file the core writes.
 | bind | type | source events / payload | update timing | empty-state |
 |---|---|---|---|---|
 | `chat.history` | markdown text stream | fold of `run.prompt.text` + `llm.response.text` | on every `run.prompt` or `llm.response` | empty string — the prompt line renders alone |
-| `thinking.text` | text | `llm.response` payload `text` (streaming delta) | on each delta of an in-flight `llm.response` | empty string — the marquee does not render (`when` is false) |
-| `agent.working` | bool | `agent.activated` (→true), `agent.turn_done` (→false), `agent.failed` (→false); also `thinking.start`→true, `thinking.stop`→false for the in-flight phase | on `agent.activated`/`turn_done`/`failed`; on `thinking.start`/`stop` | `false` — no member is active |
+| `thinking.text` | text | `llm.response` payload `text` (accumulated; consecutive `llm.response` events append) | on each `llm.response` while `agent.activated` has not been followed by `agent.turn_done` | empty string — the marquee does not render (`when` is false) |
+| `agent.working` | bool | `agent.activated` (→true), `agent.turn_done` (→false), `agent.failed` (→false) | on `agent.activated`/`turn_done`/`failed` | `false` — no member is active |
 | `agent.mode` | text | derived: `"live"` or `"sim"` from `run.started.simulated`, plus stage state from `stage.entered`/`stage.advanced` | on `run.started`, `stage.entered`, `stage.advanced` | `"idle"` before `run.started` lands |
-| `model.name` | text | `llm.response` payload `model` (format: `provider/model`, e.g. `openai/gpt-4o`) | on every completed `llm.response` | empty string — shows the configured default once boot completes, per the status bar design |
+| `model.name` | text | `llm.response` payload `model` (format: `provider/model`, e.g. `openai/gpt-4o`) | on every `llm.response` | empty string — no response has landed yet |
 | `usage.in` | uint64 | cumulative sum of `llm.response.tokens_in` across all turns in the run | on every `llm.response` | `0` before the first response |
 | `usage.out` | uint64 | cumulative sum of `llm.response.tokens_out` across all turns in the run | on every `llm.response` | `0` before the first response |
-| `usage.delta` | text | derived delta of `usage.in`/`usage.out` for the most recent turn (e.g. `"+1.2k"` / `"+342"`) | on every `llm.response` | empty string — the suffix is omitted |
+| `usage.delta` | text | derived from cumulative `usage.in`/`usage.out` (e.g. `"+i25 +o35"`) | on every `llm.response` | empty string — the suffix is omitted |
 | `session.tokens_used` | uint64 | derived: `run.started.budget_usd` minus running sum of `llm.response.cost_usd`, reported as used budget in USD × 1000 (microunits) for integer bind compatibility | on `run.started`, every `llm.response`, `budget.warning`, `budget.exceeded` | `0` at run start |
 | `session.new_milestone` | event pulse | derived: fires on `stage.advanced` (stage transition) or `agent.turn_done` (turn boundary) | on `stage.advanced`, `agent.turn_done` | null/pulse inactive — no milestone to show |
 | `team.members` | array of objects | projected from the run's members: each row has `id` (the agent name), `state` (`idle`/`thinking`/`tool`/`submitted`/`waiting`/`inactive`/`failed`), `role` (`backend`/`frontend`/`...` from `agent.activated`), `busy` (bool), `turns` (uint), `spent_usd` (float64) | on `agent.activated`, `agent.turn_done`, `agent.blocked`, `agent.unblocked`, `agent.failed` | empty array — the subagent list does not render |
@@ -141,7 +141,8 @@ written only through registered commands (`cmd:/slash`, `cmd:/max`,
 | bind | type | view mechanism | update timing | empty-state |
 |---|---|---|---|---|
 | `slash.active` | bool | set true when the user types `/` in the input buffer; set false on Enter/Esc or when the buffer clears | on `user.input` change crossing the `/` threshold | `false` |
-| `slash.matches` | array of `{name, category, description}` | derived from the host's command registry, filtered by the typed substring after `/` | on every keystroke while `slash.active` | empty array |
+| `slash.typed` | text | the substring typed after `/` in the input buffer | on every keystroke while `slash.active` | empty string |
+| `slash.matches` | array of `{name, category, description}` | derived from the host's command registry (`fold.Commands`), filtered by `slash.typed` via case-insensitive substring match | on every keystroke while `slash.active` | empty array — no commands match |
 | `ui.focus` | text \| null | the `id` of the currently focused node; set by `cmd:/focus <node>` or Tab navigation | on `focus:<node>` action, on Tab/Shift-Tab | null — focus defaults to the input node at boot |
 | `ui.max` | text \| null | the `id` of the maximized pane; set by `cmd:/max <pane>` (Scene 10) | on `cmd:/max` action | null — no pane is maximized |
 | `ui.surface` | text | the active surface/page identifier (e.g. `"chat"`, `"config"`, `"plugins"`) | on `cmd:/surface <name>` | `"chat"` — the default surface |

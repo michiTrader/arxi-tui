@@ -31,6 +31,35 @@ const factoryRAW = `{ "root": { "type": "stack", "children": [
   { "id": "prompt", "type": "input",    "bind": "user.input", "placeholder": "> " }
 ]}}`
 
+// factorySobria is the Scene 2 sobria default, embedded as a fallback constant
+// so the interface boots even when testdata/SOARIA.json is missing.
+const factorySobria = `{ "root": { "type": "stack", "children": [
+  { "type": "text", "style": {"style": "header"},
+    "text": "Δr×i v0.1.0 · Run /help for commands" },
+  { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+  { "id": "thinking", "type": "marquee", "when": "agent.working",
+    "bind": "thinking.text",
+    "prefix": { "text": "• Thinking · ", "style": {"style": "dim"} },
+    "suffix": { "bind": "usage.delta", "style": {"style": "dim"} } },
+  { "id": "prompt", "type": "input", "bind": "user.input",
+    "prefix": "┃ ", "placeholder": "ask anything, or / for commands" },
+  { "id": "menu", "type": "overlay", "anchor": "bottom", "when": "slash.active",
+    "children": [
+      { "type": "rule" },
+      { "id": "cmds", "type": "list", "bind": "slash.matches",
+        "filter_by": "typed", "count": true,
+        "categories": ["All","General","Session","Account","Model",
+                       "Appearance","Security","Workspace","Media","Extensions","Product"] },
+      { "type": "text", "style": {"style": "dim"},
+        "text": "↑↓ navigate · tab category · enter open · esc close" },
+      { "type": "rule" } ] },
+  { "id": "status", "type": "row", "style": {"style": "dim"}, "children": [
+    { "type": "text", "bind": "agent.mode" },
+    { "type": "text", "text": " · " },
+    { "type": "text", "bind": "model.name" },
+    { "type": "text", "text": " · ⚡︎" } ] }
+]}}`
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "arxi-tui: %v\n", err)
@@ -39,14 +68,12 @@ func main() {
 }
 
 func run() error {
-	// Load scene document (fallback to factory RAW)
-	data, err := os.ReadFile("testdata/RAW.json")
+	// Load scene document. The default is the sobria scene (Scene 2, the
+	// fx-inspired default per PLAN.md); if it fails to parse or validate, fall
+	// back to the factory RAW scene (Scene 1) so the interface always boots.
+	doc, err := loadScene("testdata/SOARIA.json", factoryRAW)
 	if err != nil {
-		data = []byte(factoryRAW)
-	}
-	doc, err := scene.ParseDocument(data)
-	if err != nil {
-		return fmt.Errorf("scene parse: %w", err)
+		return fmt.Errorf("scene load: %w", err)
 	}
 
 	// Initialize terminal
@@ -123,10 +150,25 @@ func openMockDriver(ctx context.Context, doc *scene.Document) (Driver, <-chan fo
 	eventCh := make(chan fold.Event, 64)
 
 	mk := driver.NewMock([]fold.Event{
-		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hola"}},
-		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hola! ¿En qué puedo ayudarte?"}},
-		{Type: "run.prompt", Seq: 3, Payload: map[string]any{"text": "gracias"}},
-		{Type: "llm.response", Seq: 4, Payload: map[string]any{"text": "De nada."}},
+		{Type: "run.started", Seq: 1, Payload: map[string]any{
+			"run_id": "r1", "actor": "user", "budget_usd": 10.0,
+			"max_turns": 10, "simulated": false,
+		}},
+		{Type: "agent.activated", Seq: 2, Payload: map[string]any{"agent": "backend"}},
+		{Type: "llm.response", Seq: 3, Payload: map[string]any{
+			"agent": "backend", "model": "openai/gpt-4o",
+			"text":      "Hola! ¿En qué puedo ayudarte?",
+			"tokens_in": 12, "tokens_out": 18, "cost_usd": 0.0004,
+		}},
+		{Type: "agent.turn_done", Seq: 4, Payload: map[string]any{"agent": "backend"}},
+		{Type: "run.prompt", Seq: 5, Payload: map[string]any{"text": "gracias"}},
+		{Type: "agent.activated", Seq: 6, Payload: map[string]any{"agent": "backend"}},
+		{Type: "llm.response", Seq: 7, Payload: map[string]any{
+			"agent": "backend", "model": "openai/gpt-4o",
+			"text":      "De nada.",
+			"tokens_in": 5, "tokens_out": 3, "cost_usd": 0.0001,
+		}},
+		{Type: "agent.turn_done", Seq: 8, Payload: map[string]any{"agent": "backend"}},
 	})
 	go mk.Run(ctx, eventCh)
 
@@ -412,6 +454,37 @@ type Terminal interface {
 	io.Writer
 	Size() (width, height int)
 	Events() <-chan term.Event
+}
+
+// loadScene reads a scene document from path, validates it, and falls back to
+// the factory RAW scene if the file is missing or fails to parse/validate.
+// This implements invariant 3: a corrupt scene on disk falls back to the raw
+// scene with a file:line notice, never a crash.
+func loadScene(path string, fallback string) (*scene.Document, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		// Scene file missing: use the fallback factory scene.
+		return scene.ParseDocument([]byte(fallback))
+	}
+	doc, err := scene.ParseDocument(data)
+	if err != nil {
+		// Parse error: fall back to the factory RAW scene so the
+		// interface always boots (invariant 3).
+		doc, fbErr := scene.ParseDocument([]byte(fallback))
+		if fbErr != nil {
+			return nil, fmt.Errorf("scene parse %s: %w (and fallback also failed: %v)", path, err, fbErr)
+		}
+		return doc, nil
+	}
+	if err := doc.Validate(); err != nil {
+		// Validation error (e.g. unsigned bind): fall back to factory RAW.
+		fbDoc, fbErr := scene.ParseDocument([]byte(fallback))
+		if fbErr != nil {
+			return doc, fmt.Errorf("scene validate %s: %w (fallback also failed: %v)", path, err, fbErr)
+		}
+		return fbDoc, nil
+	}
+	return doc, nil
 }
 
 // render repaints the whole screen. Phase 0 uses clear-home + full redraw;

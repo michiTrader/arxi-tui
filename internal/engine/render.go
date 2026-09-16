@@ -254,10 +254,12 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 	// main scrolling text.
 	prefix := n.PrefixNode()
 	if prefix != nil {
-		if prefix.Type == "text" {
-			cells = append(cells, ui.Span{Text: prefix.Text, Style: styleName(prefix.Style)})
-		} else if prefix.Bind != "" {
+		// A prefix is a text-bearing node: either Type=="text" or an
+		// untyped node with Text set (the sobria prefix omits the type).
+		if prefix.Bind != "" {
 			cells = append(cells, ui.Span{Text: resolveBind(prefix.Bind, state), Style: styleName(prefix.Style)})
+		} else {
+			cells = append(cells, ui.Span{Text: prefix.Text, Style: styleName(prefix.Style)})
 		}
 	}
 

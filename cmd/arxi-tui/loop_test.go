@@ -14,8 +14,8 @@ import (
 // a channel, so the loop test can verify the full round-trip: key → submit →
 // event → fold → render.
 type testDriver struct {
-	evCh  chan fold.Event
-	seq   int64
+	evCh chan fold.Event
+	seq  int64
 }
 
 func (d *testDriver) SubmitPrompt(ctx context.Context, text string) error {
@@ -172,6 +172,127 @@ func TestLoopFirstCtrlCClearsInput(t *testing.T) {
 // channel from the driver (e.g. mock log replay or log-follow) are folded
 // and rendered, proving the loop handles the non-keyboard side of the
 // two-event model.
+// TestLoopSobriaSlashMenu verifies that the sobria scene renders its header,
+// status bar, and that typing "/" activates the slash command menu. The menu
+// must appear overlaid at the bottom of the screen with the command list.
+func TestLoopSobriaSlashMenu(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factorySobria))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	if err := doc.Validate(); err != nil {
+		t.Fatalf("scene validation: %v", err)
+	}
+
+	// Pre-feed driver events to establish a transcript, then simulate the
+	// user typing "/help" and double-Ctrl-C to exit.
+	driverEvents := []fold.Event{
+		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hola"}},
+		{Type: "llm.response", Seq: 2, Payload: map[string]any{
+			"text": "Hola!", "model": "openai/gpt-4o",
+			"tokens_in": 5, "tokens_out": 3,
+		}},
+	}
+
+	evCh := make(chan fold.Event, 64)
+	defer close(evCh)
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		for _, e := range driverEvents {
+			evCh <- e
+		}
+	}()
+
+	// Type "/help" then double-Ctrl-C to exit.
+	script := []scheduledEvent{
+		{100 * time.Millisecond, keyEvent('/')},
+		{10 * time.Millisecond, keyEvent('h')},
+		{10 * time.Millisecond, keyEvent('e')},
+		{10 * time.Millisecond, keyEvent('l')},
+		{10 * time.Millisecond, keyEvent('p')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+	}
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: make(chan fold.Event, 64)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = loop(ctx, tty, doc, evCh, drv)
+	if err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	out := tty.output()
+	// The header must render.
+	if !strings.Contains(out, "Δr×i v0.1.0") {
+		t.Errorf("sobria header not rendered; output:\n%s", out)
+	}
+	// The slash menu must activate (the "no matches" or command list should appear).
+	if !strings.Contains(out, "no matches") && !strings.Contains(out, "Show available commands") {
+		t.Errorf("slash menu did not activate on '/' keypress; output:\n%s", out)
+	}
+	// The status bar must show the model name.
+	if !strings.Contains(out, "openai/gpt-4o") {
+		t.Errorf("status bar missing model name; output:\n%s", out)
+	}
+}
+
+// TestLoopSobriaStatusbarRenders verifies the sobria scene renders the status
+// bar (agent.mode · model.name · ⚡︎) after receiving driver events.
+func TestLoopSobriaStatusbarRenders(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factorySobria))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	driverEvents := []fold.Event{
+		{Type: "run.started", Seq: 1, Payload: map[string]any{
+			"run_id": "r1", "simulated": false,
+		}},
+		{Type: "agent.activated", Seq: 2, Payload: map[string]any{"agent": "backend"}},
+		{Type: "llm.response", Seq: 3, Payload: map[string]any{
+			"text": "Hola!", "model": "openai/gpt-4o",
+			"tokens_in": 12, "tokens_out": 8,
+		}},
+		{Type: "agent.turn_done", Seq: 4, Payload: map[string]any{"agent": "backend"}},
+	}
+
+	evCh := make(chan fold.Event, 64)
+
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		for _, e := range driverEvents {
+			evCh <- e
+		}
+	}()
+
+	script := []scheduledEvent{
+		{200 * time.Millisecond, ctrlCharEvent('c')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+	}
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: make(chan fold.Event, 64)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err = loop(ctx, tty, doc, evCh, drv)
+	if err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	out := tty.output()
+	if !strings.Contains(out, "live · openai/gpt-4o · ⚡︎") {
+		t.Errorf("status bar not rendered correctly; output:\n%s", out)
+	}
+}
+
+// TestLoopReceivesDriverEvents verifies that events arriving on the event
 func TestLoopReceivesDriverEvents(t *testing.T) {
 	doc, err := scene.ParseDocument([]byte(factoryRAW))
 	if err != nil {

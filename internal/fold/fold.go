@@ -109,6 +109,13 @@ func (s *State) apply(e Event) {
 // deriveUsageDelta computes the per-turn token delta as a short string for
 // usage.delta bind: the input+output tokens of the most recent llm.response.
 // Empty string when no completed response has landed yet.
+// DeriveUsageDelta recomputes usage.delta after manual State construction.
+// In normal use, Fold calls this internally; this method exists for tests and
+// golden generation that build State directly.
+func (s *State) DeriveUsageDelta() {
+	s.deriveUsageDelta()
+}
+
 func (s *State) deriveUsageDelta() {
 	if len(s.History) == 0 {
 		s.UsageDelta = ""

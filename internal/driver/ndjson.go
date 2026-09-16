@@ -77,8 +77,8 @@ const (
 // down the arxi subprocess.
 func NewNDJSON(rw io.ReadWriter) *NDJSONDriver {
 	d := &NDJSONDriver{
-		rw:      rw,
-		enc:     json.NewEncoder(rw),
+		rw:  rw,
+		enc: json.NewEncoder(rw),
 	}
 	d.scanner = bufio.NewScanner(rw)
 	d.scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes+2)

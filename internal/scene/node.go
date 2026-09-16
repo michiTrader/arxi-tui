@@ -22,12 +22,12 @@ type Node struct {
 	PrefixRaw json.RawMessage `json:"prefix,omitempty"`
 	// Suffix is a child node that renders after the main text (used by the
 	// thinking marquee's usage delta suffix).
-	Suffix      *Node `json:"suffix,omitempty"`
-	Anchor      string `json:"anchor,omitempty"`
-	FilterBy    string `json:"filter_by,omitempty"`
-	Count       bool   `json:"count,omitempty"`
+	Suffix      *Node    `json:"suffix,omitempty"`
+	Anchor      string   `json:"anchor,omitempty"`
+	FilterBy    string   `json:"filter_by,omitempty"`
+	Count       bool     `json:"count,omitempty"`
 	Categories  []string `json:"categories,omitempty"`
-	RowTemplate *Node  `json:"row_template,omitempty"`
+	RowTemplate *Node    `json:"row_template,omitempty"`
 }
 
 // PrefixNode decodes PrefixRaw as a child Node (for marquee prefix).
