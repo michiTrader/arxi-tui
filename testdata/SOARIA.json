@@ -1,0 +1,30 @@
+{ "root": { "type": "stack", "children": [
+  { "type": "text", "style": {"style": "header"},
+    "text": "Δr×i v0.1.0 · Run /help for commands" },
+
+  { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+
+  { "id": "thinking", "type": "marquee", "when": "agent.working",
+    "bind": "thinking.text", "prefix": { "text": "• Thinking · ", "style": {"style": "dim"} },
+    "suffix": { "bind": "usage.delta", "style": {"style": "dim"} } },
+
+  { "id": "prompt", "type": "input", "bind": "user.input",
+    "prefix": "┃ ", "placeholder": "ask anything, or / for commands" },
+
+  { "id": "menu", "type": "overlay", "anchor": "bottom", "when": "slash.active",
+    "children": [
+      { "type": "rule" },
+      { "id": "cmds", "type": "list", "bind": "slash.matches",
+        "filter_by": "typed", "count": true,
+        "categories": ["All","General","Session","Account","Model",
+                       "Appearance","Security","Workspace","Media","Extensions","Product"] },
+      { "type": "text", "style": {"style": "dim"},
+        "text": "↑↓ navigate · tab category · enter open · esc close" },
+      { "type": "rule" } ] },
+
+  { "id": "status", "type": "row", "style": {"style": "dim"}, "children": [
+    { "type": "text", "bind": "agent.mode" },
+    { "type": "text", "text": " · " },
+    { "type": "text", "bind": "model.name" },
+    { "type": "text", "text": " · ⚡︎" } ] }
+]}}

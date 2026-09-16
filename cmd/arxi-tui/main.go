@@ -287,6 +287,25 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, eventCh <-chan
 	repaint := func() {
 		state := fold.Fold(collected)
 		state.UserInput = input // view state: the host owns the input buffer
+
+		// slash.* view-state: when the buffer starts with "/", the slash
+		// menu is active and the typed substring filters the command list.
+		// This is arxi-tui's own contract (BINDS.md §4.3), not a core event.
+		if strings.HasPrefix(input, "/") {
+			state.SlashActive = true
+			state.SlashTyped = input[1:]
+			state.SlashMatches = fold.FilterSlashMatches(state.SlashTyped)
+		} else {
+			state.SlashActive = false
+			state.SlashTyped = ""
+			state.SlashMatches = nil
+		}
+
+		// host.escape.armed mirrors the panic gesture's current arm state.
+		// A scene may show it (e.g. a dim "press Ctrl-C again to quit" hint),
+		// but no scene may capture the gesture (invariant 6).
+		state.EscapeArmed = panicGesture.Armed()
+
 		var r engine.Renderer
 		w, h := tty.Size()
 		r.Width, r.Height = w, h
@@ -353,10 +372,15 @@ func typeKey(input string, k term.Key, ctx context.Context, drv Driver) string {
 		if text == "" {
 			return input
 		}
-		// Submit the prompt through the driver. The driver either appends the
-		// event directly (mock) or sends it to the arxi core over NDJSON
-		// (Phase 0.5). The core's response comes back as log events on
-		// eventCh, which the loop folds on the next iteration.
+		// Slash command: the buffer starts with "/". Phase 2 introduces /ui
+		// mutation commands; for now a slash prefix is treated as a normal
+		// prompt so the transcript round-trips during Phase 0 development.
+		if strings.HasPrefix(text, "/") {
+			text = strings.TrimSpace(text[1:])
+			if text == "" {
+				return input
+			}
+		}
 		_ = drv.SubmitPrompt(ctx, text)
 		return ""
 	case k.Type == term.KeyBackspace:
