@@ -27,6 +27,17 @@ type State struct {
 	SlashMatches []SlashMatch `json:"slash.matches"`
 	EscapeArmed  bool         `json:"host.escape.armed"`
 	SceneError   string       `json:"host.scene.error"`
+
+	// agent.todos is the list of pending agent tasks (BINDS.md §4.1). Each
+	// entry carries the task text, what it is blocked on, and the actor that
+	// owns it. A list node bound to agent.todos renders one row per entry.
+	Todos []TodoItem `json:"agent.todos"`
+
+	// BudgetMicrounits is run.started.budget_usd × 1000, captured when the run
+	// starts. Combined with CostMicrounits it produces session.tokens_used.
+	BudgetMicrounits uint64
+	// CostMicrounits is the running sum of llm.response.cost_usd × 1000.
+	CostMicrounits uint64
 }
 
 // Fold is the pure reducer: events in, view-state out. It is deterministic.
@@ -81,6 +92,10 @@ func (s *State) apply(e Event) {
 		if model, ok := e.Payload["model"].(string); ok && model != "" {
 			s.ModelName = model
 		}
+		// Accumulate cost in microunits (cost_usd × 1000).
+		if cost, ok := e.Payload["cost_usd"].(float64); ok {
+			s.CostMicrounits += uint64(cost * 1000)
+		}
 
 	case "agent.activated":
 		// A member began a turn: the run is live and not simulated-idle.
@@ -102,6 +117,46 @@ func (s *State) apply(e Event) {
 			s.AgentMode = "sim"
 		} else {
 			s.AgentMode = "live"
+		}
+		// Capture budget in microunits for session.tokens_used.
+		if budget, ok := e.Payload["budget_usd"].(float64); ok {
+			s.BudgetMicrounits = uint64(budget * 1000)
+		}
+
+	case "agent.blocked":
+		// A member is blocked on something: add a todo, resolved later by
+		// agent.unblocked. The blocked_on field is one of: approval, lock,
+		// peer, budget, timer, tool, workspace (BINDs.md §4.2).
+		task := "blocked"
+		if t, ok := e.Payload["task"].(string); ok && t != "" {
+			task = t
+		}
+		blockedOn := ""
+		if b, ok := e.Payload["blocked_on"].(string); ok {
+			blockedOn = b
+		}
+		actor := ""
+		if a, ok := e.Payload["actor"].(string); ok {
+			actor = a
+		}
+		s.Todos = append(s.Todos, TodoItem{Task: task, BlockedOn: blockedOn, Actor: actor})
+
+	case "agent.unblocked":
+		// A member's blocking condition cleared: remove the first todo
+		// matching that actor and blocked_on.
+		actor := ""
+		if a, ok := e.Payload["actor"].(string); ok {
+			actor = a
+		}
+		blockedOn := ""
+		if b, ok := e.Payload["blocked_on"].(string); ok {
+			blockedOn = b
+		}
+		for i := 0; i < len(s.Todos); i++ {
+			if s.Todos[i].Actor == actor && s.Todos[i].BlockedOn == blockedOn {
+				s.Todos = append(s.Todos[:i], s.Todos[i+1:]...)
+				break
+			}
 		}
 	}
 }

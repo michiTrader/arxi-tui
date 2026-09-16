@@ -18,3 +18,11 @@ type ChatLine struct {
 	Role string // "user" or "assistant"
 	Text string
 }
+
+// TodoItem is one entry in agent.todos: a task the agent is blocked on, why,
+// and which actor owns it. Rendered by a `list` node bound to agent.todos.
+type TodoItem struct {
+	Task      string // the human-readable task description
+	BlockedOn string // why it is blocked: approval, lock, peer, budget, timer, tool, workspace
+	Actor     string // which agent owns the todo
+}
