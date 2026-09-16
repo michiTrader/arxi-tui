@@ -1,0 +1,6 @@
+# Build output. The binary is compiled from source and never committed: a
+# tracked binary is rewritten by every build, so a clean worktree turns dirty
+# on a command that changed no source at all, and the diff is megabytes of
+# noise that hides the change the commit is actually about.
+/arxi-tui
+/bin/
