@@ -95,7 +95,10 @@ func run() error {
 	// near-identical copies — and leaving the buffer on exit hands the shell
 	// back exactly as it was found, cursor and all.
 	fmt.Fprint(tty, "\033[?1049h\033[H")
-	defer fmt.Fprint(tty, "\033[?1049l")
+	// Leaving the alternate buffer restores the cursor position it saved, not
+	// its visibility, so a frame that hid the caret would leave the shell with
+	// no cursor at all. Show it unconditionally on the way out.
+	defer fmt.Fprint(tty, "\033[?25h\033[?1049l")
 
 	// Phase 0.5: spawn the arxi core as a serve subprocess and speak the
 	// NDJSON request/response protocol. Log-follow reads the run's event
@@ -500,6 +503,18 @@ func render(w io.Writer, doc *scene.Document, r engine.Renderer, state fold.Stat
 	// mode-blind; the emit path is where they become \r\n, because the emit
 	// path is the only code that knows the terminal is in raw mode.
 	fmt.Fprint(w, strings.ReplaceAll(f.Plain(), "\n", "\r\n"))
+	// The caret is the frame's, not the last byte's. Writing the frame leaves
+	// the terminal cursor at the end of the final row — the bottom-right corner
+	// of a full repaint — and a text field whose caret sits in the corner is a
+	// text field that does not look like one. A frame that hosts no caret has
+	// the terminal's hidden instead, so nothing blinks on a row that means
+	// nothing.
+	if f.Cursor.Hidden {
+		fmt.Fprint(w, "\033[?25l")
+		return
+	}
+	fmt.Fprint(w, "\033[?25h")
+	fmt.Fprintf(w, "\033[%d;%dH", f.Cursor.Line+1, f.Cursor.Col+1)
 }
 
 // runNonInteractive renders a single frame to stdout when stdin is not a

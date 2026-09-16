@@ -168,6 +168,50 @@ func TestLoopFirstCtrlCClearsInput(t *testing.T) {
 	}
 }
 
+// TestLoopParksTheTerminalCursorInTheInputBar is the end-to-end half of the
+// caret contract: the bytes the loop writes must name a row and a column,
+// because nothing else moves the terminal cursor off the corner a full repaint
+// leaves it in. The column is the one the frame computed for the sobria
+// prompt — two for the "┃ " prefix, then the typed text.
+func TestLoopParksTheTerminalCursorInTheInputBar(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factorySobria))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	if err := doc.Validate(); err != nil {
+		t.Fatalf("scene validation: %v", err)
+	}
+
+	script := []scheduledEvent{
+		{0, keyEvent('h')},
+		{10 * time.Millisecond, keyEvent('i')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+	}
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: make(chan fold.Event, 64)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := loop(ctx, tty, doc, drv.evCh, drv); err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	out := tty.output()
+
+	// The empty line parks the caret just past the two-column prefix, on the
+	// prompt row of the 24-row sobria frame: header, transcript, prompt, status.
+	if !strings.Contains(out, "\x1b[23;3H") {
+		t.Errorf("no cursor-position escape for the empty input; the caret is left in the corner. output:\n%q", out)
+	}
+	// After "hi" the caret walked two columns with the text.
+	if !strings.Contains(out, "\x1b[23;5H") {
+		t.Errorf("caret did not follow the typed text; want a park at row 23 column 5. output:\n%q", out)
+	}
+}
+
 // TestLoopReceivesDriverEvents verifies that events arriving on the event
 // channel from the driver (e.g. mock log replay or log-follow) are folded
 // and rendered, proving the loop handles the non-keyboard side of the

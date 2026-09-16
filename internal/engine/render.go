@@ -172,10 +172,21 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 	// Fixed children are appended as-is; grow children fill their share and
 	// reserve it even when short (the elastic pane pins the input to the
 	// bottom instead of letting it ride up under the transcript).
+	// caret is the terminal cursor expressed as a row of this frame rather
+	// than of the child that hosts it: every row already placed above the
+	// input is added to the input's own line. The host is named by the node
+	// type and not by the frame's Cursor because {0,0} is a legal caret
+	// position and every other renderer leaves that zero value behind —
+	// reading it as a caret would park the terminal inside a text node.
+	caret := ui.Cursor{Hidden: true}
+
 	live := make([]ui.Line, 0, budget)
 	for i := range slots {
 		s := &slots[i]
 		if s.grow == 0 {
+			if s.node != nil && s.node.Type == "input" {
+				caret = ui.Cursor{Line: len(live) + s.frame.Cursor.Line, Col: s.frame.Cursor.Col}
+			}
 			live = append(live, s.frame.Live...)
 			continue
 		}
@@ -191,6 +202,9 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		if len(grown) > share {
 			grown = grown[len(grown)-share:]
 		}
+		if s.node != nil && s.node.Type == "input" {
+			caret = ui.Cursor{Line: len(live) + f.Cursor.Line, Col: f.Cursor.Col}
+		}
 		live = append(live, grown...)
 		for len(grown) < share {
 			live = append(live, ui.Line{})
@@ -202,6 +216,11 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 	// concern (RenderFrame pads to Height, renderBox pads its inner content).
 	if len(live) > budget && budget >= 0 {
 		live = live[:budget]
+	}
+	// A caret whose row was cut away has no cell to sit on, and reporting one
+	// would send the terminal past the last row this frame painted.
+	if !caret.Hidden && caret.Line >= len(live) {
+		caret.Hidden = true
 	}
 
 	for _, ov := range overlays {
@@ -247,7 +266,7 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		}
 	}
 
-	return ui.Frame{Live: live, Width: r.Width, Height: len(live)}
+	return ui.Frame{Live: live, Width: r.Width, Height: len(live), Cursor: caret}
 }
 
 // renderHorizontal lays children out horizontally. Weight-based columns divide
@@ -410,34 +429,42 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 	return ui.Frame{Live: lines, Width: r.Width}
 }
 
-// renderInput renders the input row: one line, always. The placeholder is the
-// prompt spelling the scene chose; the typed buffer rides after it.
+// renderInput renders the input row: one line, always, and the column the
+// terminal caret belongs in.
+//
+// The placeholder is drawn only while the line is empty, and under its own
+// token so a theme can dim it. It used to be concatenated in front of the
+// typed buffer under the same token as the text, which is how "ask anything,
+// or / for commands" came out welded to the first word the human typed: a hint
+// is not part of the line, and the moment there is a line it is gone.
+//
+// The caret is reported and never drawn. A reversed cell standing in for a
+// cursor is the single most obvious tell that a TUI is not a native prompt,
+// and the position is the one thing the terminal cannot work out for itself.
 func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
-	var promptText string
-	switch n.Bind {
-	case "user.input":
-		if state.UserInput == "" {
-			promptText = n.Placeholder
-		} else {
-			promptText = n.Placeholder + state.UserInput
-		}
-	default:
-		promptText = n.Placeholder
-	}
+	var cells []ui.Span
 
 	// sobria: the input may carry a string prefix (e.g. "┃ ") rendered as
-	// styled leading cells before the prompt text.
-	var cells []ui.Span
-	if prefix := n.PrefixText(); prefix != "" {
+	// styled leading cells before the text. The caret starts after it, because
+	// the prefix is chrome and the human types to the right of chrome.
+	prefix := n.PrefixText()
+	if prefix != "" {
 		cells = append(cells, ui.Span{Text: prefix, Style: "input"})
 	}
+	col := ansiStringWidth(prefix)
 
-	cells = append(cells, ui.Span{Text: promptText, Style: "input"})
+	if n.Bind == "user.input" && state.UserInput != "" {
+		cells = append(cells, ui.Span{Text: state.UserInput, Style: "input"})
+		col += ansiStringWidth(state.UserInput)
+	} else {
+		cells = append(cells, ui.Span{Text: n.Placeholder, Style: "input.placeholder"})
+	}
 
 	return ui.Frame{
 		Live:   []ui.Line{cells},
 		Width:  r.Width,
 		Height: 1,
+		Cursor: ui.Cursor{Line: 0, Col: col},
 	}
 }
 
@@ -570,7 +597,16 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 		ui.Span{Text: bottomText, Style: "border"},
 	})
 
-	return ui.Frame{Live: lines, Width: width, Height: len(lines)}
+	// The inner stack answered in its own coordinates; a row of the box is one
+	// below the content (the top border) and a column is one right of it (the
+	// left border), so the caret has to move with them or it lands on the
+	// frame's own glyphs.
+	caret := ui.Cursor{Hidden: true}
+	if !content.Cursor.Hidden && content.Cursor.Line+1 < len(lines)-1 {
+		caret = ui.Cursor{Line: content.Cursor.Line + 1, Col: content.Cursor.Col + 1}
+	}
+
+	return ui.Frame{Live: lines, Width: width, Height: len(lines), Cursor: caret}
 }
 
 // renderSpinner renders a spinner node, which shows an active indicator glyph
