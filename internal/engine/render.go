@@ -4,10 +4,26 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
 	"github.com/michiTrader/arxi_tui/internal/ui"
 )
+
+// ansiStringWidth is a thin wrapper around ansi.StringWidth so the renderer
+// does not import the ansi package everywhere it is used.
+func ansiStringWidth(s string) int {
+	return ansi.StringWidth(s)
+}
+
+// truncateText truncates a string to at most width display columns, cutting at
+// grapheme boundaries so wide characters never split.
+func truncateText(s string, width int) string {
+	if ansi.StringWidth(s) <= width {
+		return s
+	}
+	return ansi.Truncate(s, width, "")
+}
 
 // Renderer turns a scene document into a frame of cells. The render phase is pure: it needs
 // no I/O, no clock, and the fold never waits on it. A frame is a snapshot of what
@@ -34,9 +50,9 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 	case "stack":
 		return r.renderStack(n, state, budget)
 	case "row":
-		return r.renderRow(n, state)
+		return r.renderHorizontal(n, state, budget)
 	case "box":
-		return r.renderStack(n, state, budget)
+		return r.renderBox(n, state, budget)
 	case "markdown":
 		return r.renderMarkdown(n, state, budget)
 	case "input":
@@ -44,13 +60,15 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 	case "text":
 		return r.renderText(n, state)
 	case "rule":
-		return r.renderRule(n)
+		return r.renderRule(n, state)
 	case "marquee":
 		return r.renderMarquee(n, state, budget)
 	case "overlay":
 		return r.renderOverlay(n, state)
 	case "list":
 		return r.renderList(n, state, budget)
+	case "spinner":
+		return r.renderSpinner(n, state)
 	default:
 		return ui.Frame{
 			Live: []ui.Line{
@@ -70,6 +88,10 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 // produces less than its share still owns the whole share: the space is
 // reserved, which is what pins the input to the bottom of the screen instead
 // of letting it ride up under the transcript.
+//
+// Overlay children are excluded from space accounting: they float on top of
+// the rendered content rather than flowing in the vertical axis (Q5 — the menu
+// is an overlay, not a stack row, so the transcript never jumps).
 func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.Frame {
 	type slot struct {
 		frame ui.Frame
@@ -78,7 +100,12 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 	slots := make([]slot, 0, len(n.Children))
 	fixed := 0
 	growSum := 0
+	var overlays []*scene.Node
 	for _, c := range n.Children {
+		if c.Type == "overlay" {
+			overlays = append(overlays, c)
+			continue
+		}
 		grow := 0
 		if c.Grow != nil {
 			grow = *c.Grow
@@ -115,27 +142,138 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 			live = append(live, ui.Line{})
 		}
 	}
-	return ui.Frame{Live: live, Width: r.Width, Height: budget}
-}
 
-// renderRow lays children out horizontally. Phase 0 concatenates the cells of
-// every child into one line; weight-based division of the width arrives with
-// the first scene that needs it.
-func (r *Renderer) renderRow(n *scene.Node, state fold.State) ui.Frame {
-	var cells []ui.Span
-	for _, child := range n.Children {
-		f := r.renderNode(child, state, 1)
-		for _, l := range f.Live {
-			cells = append(cells, l...)
+	// Pad the stack to budget height with blank lines, then overlay any
+	// overlay children on top. Overlays are rendered at their anchor position
+	// and their lines replace the underlying content where they render.
+	for len(live) < budget {
+		live = append(live, ui.Line{})
+	}
+	if len(live) > budget {
+		live = live[:budget]
+	}
+
+	for _, ov := range overlays {
+		f := r.renderOverlay(ov, state)
+		if len(f.Live) == 0 {
+			continue
+		}
+		// Overlays with anchor "bottom" sit at the bottom, replacing the
+		// last N lines. Overlays with "full" replace everything. Others
+		// are positioned by anchorOverlay into the right place.
+		lines := f.Live
+		if len(lines) >= len(live) {
+			// Overlay fills the screen: replace everything.
+			live = lines
+		} else if len(lines) < len(live) {
+			// Place overlay content at the end (bottom anchor) or as
+			// returned by anchorOverlay (already positioned with padding).
+			// For bottom anchor, replace the tail lines.
+			start := len(live) - len(lines)
+			for i, l := range lines {
+				if start+i < len(live) {
+					live[start+i] = l
+				}
+			}
 		}
 	}
+
+	return ui.Frame{Live: live, Width: r.Width, Height: len(live)}
+}
+
+// renderHorizontal lays children out horizontally. Weight-based columns divide
+// the available width in proportion to their weight values (Scene 3/10 layout).
+func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int) ui.Frame {
+	if len(n.Children) == 0 {
+		return ui.Frame{Live: []ui.Line{ui.Line{}}, Width: r.Width, Height: 1}
+	}
+
+	// Measure each child: how many columns it naturally wants.
+	children := n.Children
+	widths := make([]int, len(children))
+	frames := make([]ui.Frame, len(children))
+	totalWeight := 0
+	for i, child := range children {
+		f := r.renderNode(child, state, 1)
+		frames[i] = f
+		w := 0
+		for _, l := range f.Live {
+			w += l.Width()
+		}
+		widths[i] = w
+		wt := 1
+		if child.Weight != nil {
+			wt = *child.Weight
+		}
+		totalWeight += wt
+	}
+
+	totalWidth := r.Width
+	if totalWidth <= 0 {
+		totalWidth = 80
+	}
+
+	// Allocate width: if the natural widths fit, use them; otherwise distribute
+	// proportionally by weight, giving each child at least its natural width
+	// if possible.
+	natural := 0
+	for _, w := range widths {
+		natural += w
+	}
+
+	var colWidths []int
+	if natural <= totalWidth {
+		colWidths = widths
+	} else {
+		// Distribute by weight.
+		allocated := 0
+		colWidths = make([]int, len(children))
+		for i := range widths {
+			wt := 1
+			if children[i].Weight != nil {
+				wt = *children[i].Weight
+			}
+			share := totalWidth * wt / totalWeight
+			allocated += share
+			colWidths[i] = share
+		}
+		// Give the remainder to the first child.
+		if rem := totalWidth - allocated; rem > 0 {
+			colWidths[0] += rem
+		}
+	}
+
+	// Build a single line from the column frames, truncating/padding as needed.
 	style := styleName(n.Style)
 	line := ui.Line{ui.Span{Text: "", Fill: style}}
-	for _, c := range cells {
-		c.Fill = style
-		line = append(line, c)
+	for i, f := range frames {
+		col := colWidths[i]
+		for _, l := range f.Live {
+			// Truncate or pad each line to the column width.
+			text := l.Text()
+			textW := ansiStringWidth(text)
+			if textW > col {
+				text = truncateText(text, col)
+				textW = col
+			}
+			line = append(line, ui.Span{Text: text, Style: style})
+			for j := 0; j < col-textW; j++ {
+				line = append(line, ui.Span{Text: " ", Style: style})
+			}
+		}
 	}
-	return ui.Frame{Live: []ui.Line{line}, Width: r.Width, Height: 1}
+
+	// Pad to full width.
+	curW := 0
+	for _, s := range line {
+		curW += ansiStringWidth(s.Text)
+	}
+	for curW < totalWidth {
+		line = append(line, ui.Span{Text: " ", Style: style})
+		curW++
+	}
+
+	return ui.Frame{Live: []ui.Line{line}, Width: totalWidth, Height: 1}
 }
 
 // renderMarkdown renders a bound markdown pane, wrapped to the frame width.
@@ -211,7 +349,7 @@ func (r *Renderer) renderText(n *scene.Node, state fold.State) ui.Frame {
 }
 
 // renderRule draws a single full-width horizontal rule.
-func (r *Renderer) renderRule(n *scene.Node) ui.Frame {
+func (r *Renderer) renderRule(n *scene.Node, state fold.State) ui.Frame {
 	width := r.Width
 	if width <= 0 {
 		width = 1
@@ -221,6 +359,131 @@ func (r *Renderer) renderRule(n *scene.Node) ui.Frame {
 	rule := strings.Repeat("─", width)
 	return ui.Frame{
 		Live:   []ui.Line{{ui.Span{Text: rule, Style: "rule"}}},
+		Width:  r.Width,
+		Height: 1,
+	}
+}
+
+// renderBox draws a bordered container with an optional title, then its
+// children inside. The border style is configurable: "single" uses light
+// box-drawing, "double" uses double box-drawing, "ascii" uses ASCII +/-/|
+// (Scene 3 — the maximum dashboard, Scene 5 — config screen).
+func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Frame {
+	if n.Border == "" {
+		// A box with no border is just a stack.
+		return r.renderStack(n, state, budget)
+	}
+
+	var tl, tr, bl, br, horiz, vert rune
+	switch n.Border {
+	case "double":
+		tl, tr, bl, br = '╔', '╗', '╚', '╝'
+		horiz, vert = '═', '║'
+	case "ascii":
+		tl, tr, bl, br = '+', '+', '+', '+'
+		horiz, vert = '-', '|'
+	default: // "single"
+		tl, tr, bl, br = '┌', '┐', '└', '┘'
+		horiz, vert = '─', '│'
+	}
+
+	width := r.Width
+	if width <= 0 {
+		width = 80
+	}
+
+	// The box frame takes 2 columns on each side for the border.
+	innerWidth := width - 2
+	if innerWidth < 0 {
+		innerWidth = 0
+	}
+	// Content budget: the top and bottom borders consume 2 rows; if the box
+	// has a title, the top border is replaced by a title row (still 1 row).
+	innerHeight := budget - 2
+	if innerHeight < 0 {
+		innerHeight = 0
+	}
+
+	var lines []ui.Line
+
+	// Top border, with title if present.
+	topText := string(tl) + strings.Repeat(string(horiz), innerWidth) + string(tr)
+	if n.Title != "" {
+		// Title replaces the left part of the top border.
+		// Layout: ┌ title ────────
+		titleText := n.Title
+		if innerWidth > len(titleText)+4 {
+			topText = string(tl) + " " + titleText + " " +
+				strings.Repeat(string(horiz), innerWidth-len(titleText)-2) + string(tr)
+		}
+	}
+	lines = append(lines, ui.Line{
+		ui.Span{Text: topText, Style: "border"},
+	})
+
+	// Inner content: render children as a stack within the inner width/height.
+	innerRenderer := Renderer{Width: innerWidth, Height: innerHeight}
+	var content ui.Frame
+	if len(n.Children) > 0 {
+		content = innerRenderer.renderStack(&scene.Node{
+			Type:     "stack",
+			Children: n.Children,
+		}, state, innerHeight)
+	} else {
+		content = ui.Frame{Live: []ui.Line{ui.Line{}}, Width: innerWidth, Height: innerHeight}
+	}
+
+	for _, l := range content.Live {
+		// Pad each content line to innerWidth, then wrap in border.
+		text := l.Text()
+		if w := ansiStringWidth(text); w < innerWidth {
+			text += strings.Repeat(" ", innerWidth-w)
+		} else if w > innerWidth {
+			text = truncateText(text, innerWidth)
+		}
+		lines = append(lines, ui.Line{
+			ui.Span{Text: string(vert), Style: "border"},
+			ui.Span{Text: text, Style: styleName(n.Style)},
+		})
+	}
+	// Pad remaining rows if content was shorter than innerHeight.
+	for len(lines) < 1+innerHeight {
+		pad := strings.Repeat(" ", innerWidth)
+		lines = append(lines, ui.Line{
+			ui.Span{Text: string(vert), Style: "border"},
+			ui.Span{Text: pad, Style: styleName(n.Style)},
+		})
+	}
+
+	// Bottom border.
+	bottomText := string(bl) + strings.Repeat(string(horiz), innerWidth) + string(br)
+	lines = append(lines, ui.Line{
+		ui.Span{Text: bottomText, Style: "border"},
+	})
+
+	return ui.Frame{Live: lines, Width: width, Height: len(lines)}
+}
+
+// renderSpinner renders a spinner node, which shows an active indicator glyph
+// when its bind is truthy and a dim placeholder when it is not. Used by Scene 9
+// for subagent state indicators (thinking/waiting/idle).
+func (r *Renderer) renderSpinner(n *scene.Node, state fold.State) ui.Frame {
+	active := false
+	if n.Bind != "" {
+		active = evalWhen(n.Bind, state)
+	}
+	var glyph string
+	if active {
+		glyph = "⠋"
+	} else {
+		glyph = "·"
+	}
+	style := styleName(n.Style)
+	if style == "" {
+		style = "dim"
+	}
+	return ui.Frame{
+		Live:   []ui.Line{{ui.Span{Text: glyph, Style: style}}},
 		Width:  r.Width,
 		Height: 1,
 	}
@@ -286,8 +549,13 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 
 // renderOverlay renders a floating panel anchored to a corner/edge. The
 // overlay is only visible when its `when` bind is satisfied (Q5). The layout
-// reserves space for it: the stack above subtracts the overlay's height from
-// the budget before dividing space among growers.
+// in renderStack handles positioning: overlays float above content and replace
+// the lines they cover.
+//
+// Anchors (SCENES.md Q5): "bottom" pins to the lower edge (sobria menu),
+// "top-right" to the upper right corner (Scene 3 token panel), "full" spans
+// the whole screen. The anchor is metadata for the stack's positioning pass;
+// renderOverlay returns content lines that the stack anchors into place.
 func (r *Renderer) renderOverlay(n *scene.Node, state fold.State) ui.Frame {
 	// An overlay with `when` only renders when that bind is truthy.
 	if n.When != "" {
@@ -296,13 +564,112 @@ func (r *Renderer) renderOverlay(n *scene.Node, state fold.State) ui.Frame {
 		}
 	}
 
-	// Layout the overlay's children as a column.
+	// Resolve the content width: use min_width if set and smaller than the frame,
+	// otherwise use the full frame width.
+	contentWidth := r.Width
+	if n.MinWidth != nil && *n.MinWidth < contentWidth {
+		contentWidth = *n.MinWidth
+	}
+
+	// Layout the overlay's children as a vertical column within the content width.
+	innerRenderer := Renderer{Width: contentWidth, Height: r.Height}
 	var lines []ui.Line
 	for _, child := range n.Children {
-		f := r.renderNode(child, state, r.Height)
-		lines = append(lines, f.Live...)
+		f := innerRenderer.renderNode(child, state, r.Height)
+		for _, l := range f.Live {
+			lines = append(lines, l)
+		}
 	}
-	return ui.Frame{Live: lines, Width: r.Width, Height: len(lines)}
+
+	if len(lines) == 0 {
+		return ui.Frame{Width: r.Width, Height: 0}
+	}
+
+	// If the overlay has a border, wrap the content in one.
+	if n.Border != "" {
+		lines = r.wrapWithBorder(lines, n, contentWidth)
+	}
+
+	// Pad or truncate each line to the content width, and resolve fill styles.
+	out := make([]ui.Line, len(lines))
+	for i, l := range lines {
+		text := l.Text()
+		w := ansiStringWidth(text)
+		if w < contentWidth {
+			pad := strings.Repeat(" ", contentWidth-w)
+			// Find the fill style from the first span.
+			fill := ""
+			if len(l) > 0 {
+				fill = l[0].Fill
+			}
+			out[i] = ui.Line{ui.Span{Text: text + pad, Fill: fill}}
+		} else if w > contentWidth {
+			out[i] = ui.Line{ui.Span{Text: truncateText(text, contentWidth), Fill: l[0].Fill}}
+		} else {
+			out[i] = l
+		}
+	}
+
+	return ui.Frame{Live: out, Width: contentWidth, Height: len(out)}
+}
+
+// wrapWithBorder wraps overlay content lines in a border, returning the full
+// bordered lines.
+func (r *Renderer) wrapWithBorder(lines []ui.Line, n *scene.Node, contentWidth int) []ui.Line {
+	var tl, tr, bl, br, horiz, vert rune
+	switch n.Border {
+	case "double":
+		tl, tr, bl, br = '╔', '╗', '╚', '╝'
+		horiz, vert = '═', '║'
+	case "ascii":
+		tl, tr, bl, br = '+', '+', '+', '+'
+		horiz, vert = '-', '|'
+	default:
+		tl, tr, bl, br = '┌', '┐', '└', '┘'
+		horiz, vert = '─', '│'
+	}
+
+	width := contentWidth
+	if width <= 0 {
+		width = 80
+	}
+	innerWidth := width - 2
+	if innerWidth < 0 {
+		innerWidth = 0
+	}
+
+	var bordered []ui.Line
+
+	// Top border with optional title.
+	topText := string(tl) + strings.Repeat(string(horiz), innerWidth) + string(tr)
+	if n.Title != "" {
+		titleText := n.Title
+		if innerWidth > len(titleText)+4 {
+			topText = string(tl) + " " + titleText + " " +
+				strings.Repeat(string(horiz), innerWidth-len(titleText)-2) + string(tr)
+		}
+	}
+	bordered = append(bordered, ui.Line{ui.Span{Text: topText, Style: "border"}})
+
+	// Content lines wrapped with vertical bars.
+	for _, l := range lines {
+		text := l.Text()
+		if w := ansiStringWidth(text); w < innerWidth {
+			text += strings.Repeat(" ", innerWidth-w)
+		} else if w > innerWidth {
+			text = truncateText(text, innerWidth)
+		}
+		bordered = append(bordered, ui.Line{
+			ui.Span{Text: string(vert), Style: "border"},
+			ui.Span{Text: text, Style: styleName(n.Style)},
+		})
+	}
+
+	// Bottom border.
+	bottomText := string(bl) + strings.Repeat(string(horiz), innerWidth) + string(br)
+	bordered = append(bordered, ui.Line{ui.Span{Text: bottomText, Style: "border"}})
+
+	return bordered
 }
 
 // renderList renders a filterable list of slash command matches. The bind is

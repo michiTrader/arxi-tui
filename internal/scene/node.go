@@ -22,12 +22,20 @@ type Node struct {
 	PrefixRaw json.RawMessage `json:"prefix,omitempty"`
 	// Suffix is a child node that renders after the main text (used by the
 	// thinking marquee's usage delta suffix).
-	Suffix      *Node    `json:"suffix,omitempty"`
-	Anchor      string   `json:"anchor,omitempty"`
-	FilterBy    string   `json:"filter_by,omitempty"`
-	Count       bool     `json:"count,omitempty"`
-	Categories  []string `json:"categories,omitempty"`
-	RowTemplate *Node    `json:"row_template,omitempty"`
+	Suffix      *Node             `json:"suffix,omitempty"`
+	Anchor      string            `json:"anchor,omitempty"`
+	FilterBy    string            `json:"filter_by,omitempty"`
+	Count       bool              `json:"count,omitempty"`
+	Categories  []string          `json:"categories,omitempty"`
+	RowTemplate *Node             `json:"row_template,omitempty"`
+	// Border renders a box-drawing frame around the node's content.
+	// The value is "single", "double", or "ascii" (PLAN.md §1).
+	Border string `json:"border,omitempty"`
+	// Title renders a title at the top-left inside the border.
+	Title string `json:"title,omitempty"`
+	// MinWidth is the minimum content width an overlay will accept before
+	// its content wraps. The overlay never shrinks below this (Q7).
+	MinWidth *int `json:"min_width,omitempty"`
 }
 
 // PrefixNode decodes PrefixRaw as a child Node (for marquee prefix).
