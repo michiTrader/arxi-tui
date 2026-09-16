@@ -92,10 +92,6 @@ func (s *State) apply(e Event) {
 		if model, ok := e.Payload["model"].(string); ok && model != "" {
 			s.ModelName = model
 		}
-		// Accumulate cost in microunits (cost_usd × 1000).
-		if cost, ok := e.Payload["cost_usd"].(float64); ok {
-			s.CostMicrounits += uint64(cost * 1000)
-		}
 
 	case "agent.activated":
 		// A member began a turn: the run is live and not simulated-idle.
@@ -118,11 +114,6 @@ func (s *State) apply(e Event) {
 		} else {
 			s.AgentMode = "live"
 		}
-		// Capture budget in microunits for session.tokens_used.
-		if budget, ok := e.Payload["budget_usd"].(float64); ok {
-			s.BudgetMicrounits = uint64(budget * 1000)
-		}
-
 	case "agent.blocked":
 		// A member is blocked on something: add a todo, resolved later by
 		// agent.unblocked. The blocked_on field is one of: approval, lock,

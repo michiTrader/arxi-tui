@@ -20,6 +20,7 @@ var signedBinds = map[string]bool{
 	"thinking.text":           true,
 	"agent.working":           true,
 	"agent.mode":              true,
+	"agent.todos":             true,
 	"model.name":              true,
 	"usage.in":                true,
 	"usage.out":               true,

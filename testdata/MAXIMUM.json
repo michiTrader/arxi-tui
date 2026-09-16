@@ -1,0 +1,20 @@
+{ "root": { "type": "stack", "children": [
+  { "id": "banner", "type": "box", "border": "single", "style": {"style": "banner"},
+    "children": [ { "type": "text", "text": "Δr×i v1.0 ── Trading session" } ] },
+
+  { "type": "row", "grow": 1, "children": [
+    { "type": "stack", "weight": 3, "children": [
+      { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+      { "id": "thinking", "type": "marquee", "when": "agent.working",
+        "bind": "thinking.text",
+        "prefix": { "text": "• Thinking · ", "style": {"style": "dim"} } } ] },
+    { "id": "tasks", "type": "box", "weight": 1, "title": "Tasks",
+      "border": "single",
+      "children": [ { "type": "list", "bind": "agent.todos" } ] } ] },
+
+  { "id": "prompt", "type": "input", "prefix": "❯ ", "placeholder": "ask anything, or / for commands" },
+
+  { "id": "tokens", "type": "overlay", "anchor": "top-right", "min_width": 12,
+    "border": "single",
+    "children": [ { "type": "text", "bind": "session.tokens_used" } ] }
+]}}

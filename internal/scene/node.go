@@ -22,15 +22,18 @@ type Node struct {
 	PrefixRaw json.RawMessage `json:"prefix,omitempty"`
 	// Suffix is a child node that renders after the main text (used by the
 	// thinking marquee's usage delta suffix).
-	Suffix      *Node             `json:"suffix,omitempty"`
-	Anchor      string            `json:"anchor,omitempty"`
-	FilterBy    string            `json:"filter_by,omitempty"`
-	Count       bool              `json:"count,omitempty"`
-	Categories  []string          `json:"categories,omitempty"`
-	RowTemplate *Node             `json:"row_template,omitempty"`
-	// Border renders a box-drawing frame around the node's content.
-	// The value is "single", "double", or "ascii" (PLAN.md §1).
-	Border string `json:"border,omitempty"`
+	Suffix      *Node    `json:"suffix,omitempty"`
+	Anchor      string   `json:"anchor,omitempty"`
+	FilterBy    string   `json:"filter_by,omitempty"`
+	Count       bool     `json:"count,omitempty"`
+	Categories  []string `json:"categories,omitempty"`
+	RowTemplate *Node    `json:"row_template,omitempty"`
+	// Border renders a box-drawing frame around the node's content. It accepts
+	// either a string ("single", "double", "ascii") for shape-only, or an object
+	// { "shape": "single", "style": "warn" } for shape + style (Scene 3 tokens
+	// overlay). Uses json.RawMessage so both forms unmarshal without a custom
+	// UnmarshalJSON on the whole Node.
+	BorderRaw json.RawMessage `json:"border,omitempty"`
 	// Title renders a title at the top-left inside the border.
 	Title string `json:"title,omitempty"`
 	// MinWidth is the minimum content width an overlay will accept before
@@ -69,4 +72,48 @@ func (n *Node) PrefixText() string {
 		return s
 	}
 	return ""
+}
+
+// HasBorder reports whether the node declares any border at all.
+func (n *Node) HasBorder() bool {
+	return len(n.BorderRaw) > 0
+}
+
+// BorderShape returns the border shape ("single", "double", "ascii") or ""
+// if no border is set. Both string and object forms are accepted.
+func (n *Node) BorderShape() string {
+	if len(n.BorderRaw) == 0 {
+		return ""
+	}
+	// String form: "single", "double", "ascii"
+	if n.BorderRaw[0] == '"' {
+		var s string
+		if err := json.Unmarshal(n.BorderRaw, &s); err != nil {
+			return ""
+		}
+		return s
+	}
+	// Object form: { "shape": "single", "style": "warn" }
+	var obj struct {
+		Shape string `json:"shape"`
+	}
+	if err := json.Unmarshal(n.BorderRaw, &obj); err != nil {
+		return ""
+	}
+	return obj.Shape
+}
+
+// BorderStyleName returns the border style token (e.g. "warn") or "" if unset.
+// Only the object form carries a style; a bare string border has no style.
+func (n *Node) BorderStyleName() string {
+	if len(n.BorderRaw) == 0 || (len(n.BorderRaw) > 0 && n.BorderRaw[0] == '"') {
+		return ""
+	}
+	var obj struct {
+		Style string `json:"style"`
+	}
+	if err := json.Unmarshal(n.BorderRaw, &obj); err != nil {
+		return ""
+	}
+	return obj.Style
 }
