@@ -245,10 +245,10 @@ func TestRawSceneStyledGolden(t *testing.T) {
 	}
 }
 
-// TestOverlayBottomDoesNotHideInput verifies that an overlay with anchor="bottom"
-// inserts BEFORE the input node rather than replacing it. This prevents the slash
-// menu from hiding the input bar when active (reported bug: typing "/" hid the input).
-func TestOverlayBottomDoesNotHideInput(t *testing.T) {
+// TestOverlayBottomAppearsAfterInput verifies that an overlay with anchor="bottom"
+// appears AFTER the input node on screen (below it), not before or over it.
+// This floats the slash menu beneath the input bar where the user can see both.
+func TestOverlayBottomAppearsAfterInput(t *testing.T) {
 	sceneJSON := `{ "root": { "type": "stack", "children": [
 	  { "id": "chat", "type": "text", "text": "Chat content", "grow": 1 },
 	  { "id": "input", "type": "input", "bind": "user.input", "placeholder": "type here" },
@@ -287,10 +287,10 @@ func TestOverlayBottomDoesNotHideInput(t *testing.T) {
 	// The input line should still be visible, showing the typed "/".
 	// The input node renders as "┃ /" (prefix + text).
 	if !strings.Contains(got, "/") {
-		t.Errorf("input text missing; overlay replaced it instead of inserting before it.\nGot:\n%s", got)
+		t.Errorf("input text missing; overlay hid it instead of appearing after it.\nGot:\n%s", got)
 	}
 
-	// Verify order: overlay should come before input in the output.
+	// Verify order: overlay should come AFTER input in the output (below on screen).
 	lines := strings.Split(got, "\n")
 	overlayIdx := -1
 	inputIdx := -1
@@ -306,8 +306,8 @@ func TestOverlayBottomDoesNotHideInput(t *testing.T) {
 	if overlayIdx == -1 || inputIdx == -1 {
 		t.Fatalf("could not find overlay (idx=%d) or input (idx=%d) in output", overlayIdx, inputIdx)
 	}
-	if overlayIdx >= inputIdx {
-		t.Errorf("overlay should appear BEFORE input; overlay at line %d, input at line %d.\nGot:\n%s",
+	if overlayIdx <= inputIdx {
+		t.Errorf("overlay should appear AFTER input (below on screen); overlay at line %d, input at line %d.\nGot:\n%s",
 			overlayIdx, inputIdx, got)
 	}
 

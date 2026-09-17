@@ -226,12 +226,13 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 	}
 
 	// Find the first input node to determine where bottom overlays insert.
-	// Bottom overlays appear BEFORE the input (and any nodes after it), not
-	// over them — this keeps the input visible when the slash menu is open.
-	inputLine := len(live)
+	// Bottom overlays appear AFTER the input in the frame (below it on screen),
+	// so the slash menu floats beneath the input bar.
+	inputEndLine := len(live)
 	for i := range slots {
 		if slots[i].node != nil && slots[i].node.Type == "input" {
-			inputLine = slots[i].line
+			// Input is always 1 line tall; overlay goes after it.
+			inputEndLine = slots[i].line + len(slots[i].frame.Live)
 			break
 		}
 	}
@@ -265,20 +266,17 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 				live[i] = compositeLine(live[i], lines[i], x)
 			}
 		default:
-			// "bottom" inserts BEFORE the input (and tail nodes), not over them.
-			// This keeps the input and status bar visible when overlays open.
-			insertAt := inputLine
+			// "bottom" inserts AFTER the input (below it on screen), not over the tail.
+			// This floats the slash menu beneath the input bar.
+			insertAt := inputEndLine
 			if insertAt > len(live) {
 				insertAt = len(live)
 			}
-			// Insert overlay lines at insertAt, shifting tail down.
+			// Insert overlay lines at insertAt, shifting any tail below it down.
 			tail := append([]ui.Line{}, live[insertAt:]...)
 			live = append(live[:insertAt], lines...)
 			live = append(live, tail...)
-			// Adjust caret if it was in the tail that just shifted down.
-			if !caret.Hidden && caret.Line >= insertAt {
-				caret.Line += len(lines)
-			}
+			// The caret stays in the input, which did not move, so no adjustment needed.
 		}
 	}
 
