@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -204,6 +205,43 @@ func TestFramesWithoutAnInputCarryNoCaret(t *testing.T) {
 	f := r.RenderFrame(doc, fold.State{})
 	if !f.Cursor.Hidden {
 		t.Errorf("frame with no input reports a caret at %+v; the terminal would park on a meaningless row", f.Cursor)
+	}
+}
+
+// TestRawSceneStyledGolden compares the rendered RAW scene with token annotations
+// against the golden file. UPDATE_GOLDEN=1 regenerates the fixture.
+func TestRawSceneStyledGolden(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factoryRAWScene))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	events := []fold.Event{
+		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hola"}},
+		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hola!"}},
+		{Type: "run.prompt", Seq: 3, Payload: map[string]any{"text": "gracias"}},
+		{Type: "llm.response", Seq: 4, Payload: map[string]any{"text": "De nada."}},
+	}
+	state := fold.Fold(events)
+
+	r := Renderer{Width: 80, Height: 24}
+	f := r.RenderFrame(doc, state)
+	got := f.Styled()
+
+	goldenPath := "../../testdata/RAW.styled"
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile(goldenPath, []byte(got), 0644); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
+		return
+	}
+
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("read golden %s: %v", goldenPath, err)
+	}
+	if got != string(want) {
+		t.Errorf("raw scene styled output does not match golden:\n--- got ---\n%s\n--- want ---\n%s", got, string(want))
 	}
 }
 
