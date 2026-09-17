@@ -155,6 +155,8 @@ func parseAttr(name string) (ui.Attr, error) {
 func SOBRIA() *Theme {
 	return FromMap(map[string]ui.Style{
 		"text":               {}, // default: no attributes, terminal's default fg/bg
+		"dim":                {Attrs: ui.AttrDim},
+		"bright":             {Attrs: ui.AttrBold},
 		"input":              {Attrs: ui.AttrBold},
 		"input.placeholder":  {Attrs: ui.AttrDim},
 		"banner":             {Attrs: ui.AttrBold},
