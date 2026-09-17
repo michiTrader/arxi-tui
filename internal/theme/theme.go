@@ -142,3 +142,27 @@ func parseAttr(name string) (ui.Attr, error) {
 		return 0, fmt.Errorf("unknown attribute %q (want: bold, dim, italic, underline, reverse, strike)", name)
 	}
 }
+
+// SOBRIA returns the factory default theme: dim/bright only, no color. This is
+// Scene 2 (the fx-inspired default per PLAN.md Phase 1). A dark terminal gets
+// dim dimmer than the default text; a light terminal gets it darker. The theme
+// adapts to the terminal's background without OSC 11 queries — dim and bright
+// are relative attributes the terminal already resolves.
+//
+// Token coverage: text (default), input (bright), input.placeholder (dim),
+// banner (bright), spinner (dim). Every token the RAW and SOBRIA scenes reference
+// is defined here; a missing token is a validation error, not a runtime lookup.
+func SOBRIA() *Theme {
+	return FromMap(map[string]ui.Style{
+		"text":               {}, // default: no attributes, terminal's default fg/bg
+		"input":              {Attrs: ui.AttrBold},
+		"input.placeholder":  {Attrs: ui.AttrDim},
+		"banner":             {Attrs: ui.AttrBold},
+		"spinner":            {Attrs: ui.AttrDim},
+		"markdown.heading":   {Attrs: ui.AttrBold},
+		"markdown.emphasis":  {Attrs: ui.AttrItalic},
+		"markdown.strong":    {Attrs: ui.AttrBold},
+		"markdown.code":      {}, // no style: same as surrounding text
+		"markdown.codeblock": {Attrs: ui.AttrDim},
+	})
+}

@@ -24,6 +24,7 @@ import (
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
 	"github.com/michiTrader/arxi_tui/internal/term"
+	"github.com/michiTrader/arxi_tui/internal/theme"
 )
 
 const factoryRAW = `{ "root": { "type": "stack", "children": [
@@ -76,12 +77,16 @@ func run() error {
 		return fmt.Errorf("scene load: %w", err)
 	}
 
+	// Load theme. The factory SOBRIA theme is compiled in and adapts to the
+	// terminal's background (light/dark detection via OSC 11).
+	theme := theme.SOBRIA()
+
 	// Initialize terminal
 	tty, err := term.Open()
 	if err != nil {
 		// No tty (piped output): render the frame once and exit. This keeps
 		// the pipeline inspectable — the same frames a tty would draw, on stdout.
-		return runNonInteractive(doc)
+		return runNonInteractive(doc, theme)
 	}
 	defer tty.Close()
 
@@ -113,7 +118,7 @@ func run() error {
 	}
 	defer drv.Close()
 
-	return loop(ctx, tty, doc, eventCh, drv)
+	return loop(ctx, tty, doc, theme, eventCh, drv)
 }
 
 // Driver is the minimal interface the event loop needs from whatever feeds it
@@ -324,7 +329,7 @@ func (d *serveDriver) Close() error {
 // the raw scene — and when there is nothing left to restore, the raw scene is
 // already showing and the fold is empty, the gesture has done its whole job and
 // the program leaves.
-func loop(ctx context.Context, tty Terminal, doc *scene.Document, eventCh <-chan fold.Event, drv Driver) error {
+func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.Theme, eventCh <-chan fold.Event, drv Driver) error {
 	panicGesture := &driver.PanicGesture{}
 	var collected []fold.Event
 	var input string
@@ -354,7 +359,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, eventCh <-chan
 		var r engine.Renderer
 		w, h := tty.Size()
 		r.Width, r.Height = w, h
-		render(tty, doc, r, state)
+		render(tty, doc, r, theme, state)
 	}
 
 	repaint()
@@ -493,7 +498,7 @@ func loadScene(path string, fallback string) (*scene.Document, error) {
 // render repaints the whole screen. Phase 0 uses clear-home + full redraw;
 // the cell-diff repaint (the emitter's own machinery) is Phase 0.5 work on
 // top of the same Frame.
-func render(w io.Writer, doc *scene.Document, r engine.Renderer, state fold.State) {
+func render(w io.Writer, doc *scene.Document, r engine.Renderer, theme *theme.Theme, state fold.State) {
 	f := r.RenderFrame(doc, state)
 	fmt.Fprint(w, "\033[H\033[2J")
 	// Raw mode turned the terminal's output processing off (OPOST/ONLCR), so
@@ -502,7 +507,11 @@ func render(w io.Writer, doc *scene.Document, r engine.Renderer, state fold.Stat
 	// further right — the staircase. The Frame carries plain \n because it is
 	// mode-blind; the emit path is where they become \r\n, because the emit
 	// path is the only code that knows the terminal is in raw mode.
-	fmt.Fprint(w, strings.ReplaceAll(f.Plain(), "\n", "\r\n"))
+	//
+	// ANSI() resolves token names ("input", "text", "input.placeholder") to
+	// styles and emits SGR escape codes. When no theme is wired, it falls back
+	// to Plain() — the same unstyled text the goldens compare.
+	fmt.Fprint(w, strings.ReplaceAll(f.ANSI(theme), "\n", "\r\n"))
 	// The caret is the frame's, not the last byte's. Writing the frame leaves
 	// the terminal cursor at the end of the final row — the bottom-right corner
 	// of a full repaint — and a text field whose caret sits in the corner is a
@@ -520,9 +529,10 @@ func render(w io.Writer, doc *scene.Document, r engine.Renderer, state fold.Stat
 // runNonInteractive renders a single frame to stdout when stdin is not a
 // terminal. Same scene, same fold, same renderer — no tty path is a second
 // renderer.
-func runNonInteractive(doc *scene.Document) error {
+func runNonInteractive(doc *scene.Document, theme *theme.Theme) error {
 	r := engine.Renderer{Width: 80, Height: 24}
 	f := r.RenderFrame(doc, fold.Fold(nil))
+	// No terminal: plain output. ANSI escapes in a pipe would pollute greps.
 	fmt.Print(f.Plain())
 	return nil
 }

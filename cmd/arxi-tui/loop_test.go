@@ -8,6 +8,7 @@ import (
 
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
+	"github.com/michiTrader/arxi_tui/internal/theme"
 )
 
 // testDriver is a Driver that submits prompts by appending them directly to
@@ -75,7 +76,7 @@ func TestLoopInputSubmitTranscriptExit(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err = loop(ctx, tty, doc, drv.evCh, drv)
+	err = loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv)
 	if err != nil {
 		t.Fatalf("loop returned error: %v", err)
 	}
@@ -121,7 +122,7 @@ func TestLoopExitsOnCtrlCImmediate(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err = loop(ctx, tty, doc, drv.evCh, drv)
+	err = loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv)
 	if err != nil {
 		t.Fatalf("loop returned error: %v", err)
 	}
@@ -153,7 +154,7 @@ func TestLoopFirstCtrlCClearsInput(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err = loop(ctx, tty, doc, drv.evCh, drv)
+	err = loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv)
 	if err != nil {
 		t.Fatalf("loop returned error: %v", err)
 	}
@@ -195,7 +196,7 @@ func TestLoopParksTheTerminalCursorInTheInputBar(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err := loop(ctx, tty, doc, drv.evCh, drv); err != nil {
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv); err != nil {
 		t.Fatalf("loop returned error: %v", err)
 	}
 
@@ -265,7 +266,7 @@ func TestLoopSobriaSlashMenu(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err = loop(ctx, tty, doc, evCh, drv)
+	err = loop(ctx, tty, doc, theme.SOBRIA(), evCh, drv)
 	if err != nil {
 		t.Fatalf("loop returned error: %v", err)
 	}
@@ -325,7 +326,7 @@ func TestLoopSobriaStatusbarRenders(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err = loop(ctx, tty, doc, evCh, drv)
+	err = loop(ctx, tty, doc, theme.SOBRIA(), evCh, drv)
 	if err != nil {
 		t.Fatalf("loop returned error: %v", err)
 	}
@@ -372,7 +373,7 @@ func TestLoopReceivesDriverEvents(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	err = loop(ctx, tty, doc, evCh, drv)
+	err = loop(ctx, tty, doc, theme.SOBRIA(), evCh, drv)
 	if err != nil {
 		t.Fatalf("loop returned error: %v", err)
 	}

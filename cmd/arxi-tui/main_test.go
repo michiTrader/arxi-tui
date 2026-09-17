@@ -8,6 +8,7 @@ import (
 	"github.com/michiTrader/arxi_tui/internal/engine"
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
+	"github.com/michiTrader/arxi_tui/internal/theme"
 )
 
 // TestRenderCarriesCarriageReturns fixes the emit contract for a raw terminal.
@@ -28,7 +29,7 @@ func TestRenderCarriesCarriageReturns(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	render(&buf, doc, engine.Renderer{Width: 80, Height: 24}, state)
+	render(&buf, doc, engine.Renderer{Width: 80, Height: 24}, theme.SOBRIA(), state)
 	out := buf.String()
 
 	if !strings.HasPrefix(out, "\033[H\033[2J") {
