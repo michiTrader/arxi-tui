@@ -144,14 +144,36 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		frame ui.Frame
 		line  int // Starting line index in the final frame (set in second pass)
 	}
+	type renderedOverlay struct {
+		node  *scene.Node
+		frame ui.Frame
+	}
 	children := n.Children
 	slots := make([]slot, len(children))
 	fixed := 0
 	growSum := 0
-	var overlays []*scene.Node
+	var overlays []renderedOverlay
+	// A bottom overlay inserts its rows into the flow beneath the input, so
+	// its height must come out of the budget before the growers divide the
+	// rest. Reserving it here is what keeps the frame inside the terminal:
+	// without it the frame grows past the last row, the terminal scrolls on
+	// repaint, and every absolute position — the caret included — lands on a
+	// row it does not belong to (the Q6 contraction order: elastic panes
+	// contract first; the input, banner and footer never).
+	bottomOverlayHeight := 0
 	for i, c := range children {
 		if c.Type == "overlay" {
-			overlays = append(overlays, c)
+			// Pre-render once: the same frame is measured now and placed
+			// later, so an overlay whose content depends on state is never
+			// rendered twice with two different answers.
+			of := r.renderOverlay(c, state)
+			if len(of.Live) == 0 {
+				continue // hidden (`when` false) or empty: no rows, no reservation
+			}
+			overlays = append(overlays, renderedOverlay{node: c, frame: of})
+			if c.Anchor == "" || c.Anchor == "bottom" {
+				bottomOverlayHeight += len(of.Live)
+			}
 			continue
 		}
 		grow := 0
@@ -167,7 +189,7 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 			fixed += len(f.Live)
 		}
 	}
-	remaining := budget - fixed
+	remaining := budget - fixed - bottomOverlayHeight
 
 	// Second pass: render grow children with their proportional share as budget.
 	// Fixed children are appended as-is; grow children fill their share and
@@ -237,13 +259,13 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		}
 	}
 
+	// insertAfterInput advances with each bottom overlay placed, so two of
+	// them keep their document order instead of stacking reversed.
+	insertAfterInput := inputEndLine
 	for _, ov := range overlays {
-		f := r.renderOverlay(ov, state)
-		if len(f.Live) == 0 {
-			continue
-		}
+		f := ov.frame
 		lines := f.Live
-		anchor := ov.Anchor
+		anchor := ov.node.Anchor
 		switch anchor {
 		case "full":
 			if len(lines) >= len(live) {
@@ -266,9 +288,11 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 				live[i] = compositeLine(live[i], lines[i], x)
 			}
 		default:
-			// "bottom" inserts AFTER the input (below it on screen), not over the tail.
-			// This floats the slash menu beneath the input bar.
-			insertAt := inputEndLine
+			// "bottom" inserts AFTER the input (below it on screen), not over
+			// the tail. The height these rows occupy was already reserved in
+			// the first pass, so the frame does not grow past the terminal and
+			// the caret's absolute row keeps meaning what it says.
+			insertAt := insertAfterInput
 			if insertAt > len(live) {
 				insertAt = len(live)
 			}
@@ -276,6 +300,7 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 			tail := append([]ui.Line{}, live[insertAt:]...)
 			live = append(live[:insertAt], lines...)
 			live = append(live, tail...)
+			insertAfterInput += len(lines)
 			// The caret stays in the input, which did not move, so no adjustment needed.
 		}
 	}

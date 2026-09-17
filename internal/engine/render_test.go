@@ -311,6 +311,27 @@ func TestOverlayBottomAppearsAfterInput(t *testing.T) {
 			overlayIdx, inputIdx, got)
 	}
 
+	// The frame must fit the terminal: a taller frame scrolls the screen on
+	// repaint and every absolute position, the caret included, lands on a row
+	// it does not belong to. The overlay's height has to come out of the
+	// elastic pane's share, not out of the terminal's scrollback.
+	if len(f.Live) > r.Height {
+		t.Errorf("frame is %d lines tall in a %d-row terminal; the overflow scrolls the repaint and parks the caret inside the overlay.\nGot:\n%s",
+			len(f.Live), r.Height, got)
+	}
+
+	// The caret must sit on the input row, right after the typed "/".
+	if f.Cursor.Hidden {
+		t.Fatalf("caret is hidden while the input is visible on row %d", inputIdx)
+	}
+	if f.Cursor.Line != inputIdx {
+		t.Errorf("caret on row %d, want %d (the input row); a caret elsewhere blinks inside the overlay and the input stops looking editable.\nGot:\n%s",
+			f.Cursor.Line, inputIdx, got)
+	}
+	if f.Cursor.Col != 1 {
+		t.Errorf("caret at column %d, want 1 (after the typed \"/\")", f.Cursor.Col)
+	}
+
 	t.Logf("rendered frame with overlay:\n%s", got)
 }
 
