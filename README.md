@@ -37,9 +37,16 @@ published, by handing arxi a link.
   `usage.delta`, `slash.active`, `slash.matches`, `agent.mode`, `model.name`
 - ✅ Full test suite passing (7 packages, 60+ tests)
 
-**Next (Phase 0.5):** Full bind inventory in `docs/BINDS.md` frozen before Phase 1.
+**Phase 1 — Tokens and themes:** Complete.
 
-**Next (Phase 1):** Tokens, style system, and pinned goldens for the three spectrum points.
+- ✅ Token format and JSON schema (`internal/theme/theme.go`)
+- ✅ Token resolver with open definition (no enum)
+- ✅ Factory SOBRIA theme with OSC 11 background detection
+- ✅ Token wire-up in render pipeline (`engine.Cell.Style`)
+- ✅ Styled golden fixtures: `RAW.styled`, `SOARIA.styled`, `MAXIMUM.styled`
+- ✅ Theme validation (scenes reference existing tokens)
+
+**Next (Phase 2):** Full bind inventory in `docs/BINDS.md` frozen before live driver.
 
 ## Build
 
