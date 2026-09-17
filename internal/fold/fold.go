@@ -253,6 +253,29 @@ func (s *State) apply(e Event) {
 		if diag, ok := e.Payload["diagnosis"].(string); ok {
 			s.QuiescentDiag = diag
 		}
+
+	case "ui.state":
+		// Generic UI state updates for view-state binds (BINDS.md §4.3).
+		// The payload is a map of bind name → value; each field present is
+		// applied to the corresponding State field.
+		if val, ok := e.Payload["user.input"].(string); ok {
+			s.UserInput = val
+		}
+		if val, ok := e.Payload["slash.active"].(bool); ok {
+			s.SlashActive = val
+		}
+		if val, ok := e.Payload["slash.typed"].(string); ok {
+			s.SlashTyped = val
+		}
+		if val, ok := e.Payload["ui.surface"].(string); ok {
+			s.UISurface = val
+		}
+		if val, ok := e.Payload["host.escape.armed"].(bool); ok {
+			s.EscapeArmed = val
+		}
+		if val, ok := e.Payload["host.scene.error"].(string); ok {
+			s.SceneError = val
+		}
 	}
 }
 

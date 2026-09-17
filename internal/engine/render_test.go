@@ -245,6 +245,75 @@ func TestRawSceneStyledGolden(t *testing.T) {
 	}
 }
 
+// TestOverlayBottomDoesNotHideInput verifies that an overlay with anchor="bottom"
+// inserts BEFORE the input node rather than replacing it. This prevents the slash
+// menu from hiding the input bar when active (reported bug: typing "/" hid the input).
+func TestOverlayBottomDoesNotHideInput(t *testing.T) {
+	sceneJSON := `{ "root": { "type": "stack", "children": [
+	  { "id": "chat", "type": "text", "text": "Chat content", "grow": 1 },
+	  { "id": "input", "type": "input", "bind": "user.input", "placeholder": "type here" },
+	  { "id": "overlay", "type": "overlay", "anchor": "bottom", "when": "slash.active",
+	    "children": [
+	      { "type": "text", "text": "OVERLAY LINE 1" },
+	      { "type": "text", "text": "OVERLAY LINE 2" }
+	    ]}
+	]}}`
+
+	doc, err := scene.ParseDocument([]byte(sceneJSON))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	r := Renderer{Width: 80, Height: 10}
+
+	// State with slash.active=true to trigger the overlay.
+	events := []fold.Event{
+		{Type: "ui.state", Seq: 1, Payload: map[string]any{"slash.active": true}},
+		{Type: "ui.state", Seq: 2, Payload: map[string]any{"user.input": "/"}},
+	}
+	state := fold.Fold(events)
+
+	f := r.RenderFrame(doc, state)
+	got := f.Plain()
+
+	// The overlay lines should be present.
+	if !strings.Contains(got, "OVERLAY LINE 1") {
+		t.Errorf("overlay line 1 missing.\nGot:\n%s", got)
+	}
+	if !strings.Contains(got, "OVERLAY LINE 2") {
+		t.Errorf("overlay line 2 missing.\nGot:\n%s", got)
+	}
+
+	// The input line should still be visible, showing the typed "/".
+	// The input node renders as "┃ /" (prefix + text).
+	if !strings.Contains(got, "/") {
+		t.Errorf("input text missing; overlay replaced it instead of inserting before it.\nGot:\n%s", got)
+	}
+
+	// Verify order: overlay should come before input in the output.
+	lines := strings.Split(got, "\n")
+	overlayIdx := -1
+	inputIdx := -1
+	for i, line := range lines {
+		if strings.Contains(line, "OVERLAY LINE 1") {
+			overlayIdx = i
+		}
+		// The input line is the one containing the slash we typed.
+		if strings.Contains(line, "/") && !strings.Contains(line, "OVERLAY") {
+			inputIdx = i
+		}
+	}
+	if overlayIdx == -1 || inputIdx == -1 {
+		t.Fatalf("could not find overlay (idx=%d) or input (idx=%d) in output", overlayIdx, inputIdx)
+	}
+	if overlayIdx >= inputIdx {
+		t.Errorf("overlay should appear BEFORE input; overlay at line %d, input at line %d.\nGot:\n%s",
+			overlayIdx, inputIdx, got)
+	}
+
+	t.Logf("rendered frame with overlay:\n%s", got)
+}
+
 func fmtShort(n int) string {
 	return string(rune('A' + n - 1))
 }
