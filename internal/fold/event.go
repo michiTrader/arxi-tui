@@ -26,3 +26,15 @@ type TodoItem struct {
 	BlockedOn string // why it is blocked: approval, lock, peer, budget, timer, tool, workspace
 	Actor     string // which agent owns the todo
 }
+
+// TeamMember is one entry in team.members: projected from the run's active
+// agents per BINDS.md §4.1. Each member has id, state, role, busy flag, turn
+// count, and spend tracking.
+type TeamMember struct {
+	ID       string  `json:"id"`        // agent name
+	State    string  `json:"state"`     // idle/thinking/tool/submitted/waiting/inactive/failed
+	Role     string  `json:"role"`      // backend/frontend/... from agent.activated
+	Busy     bool    `json:"busy"`      // true while agent.working
+	Turns    uint    `json:"turns"`     // completed turn count
+	SpentUSD float64 `json:"spent_usd"` // cumulative cost for this agent
+}
