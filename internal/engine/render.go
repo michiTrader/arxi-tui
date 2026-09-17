@@ -142,6 +142,7 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		node  *scene.Node
 		grow  int
 		frame ui.Frame
+		line  int // Starting line index in the final frame (set in second pass)
 	}
 	children := n.Children
 	slots := make([]slot, len(children))
@@ -183,6 +184,7 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 	live := make([]ui.Line, 0, budget)
 	for i := range slots {
 		s := &slots[i]
+		s.line = len(live) // Record starting line for this slot
 		if s.grow == 0 {
 			if s.node != nil && s.node.Type == "input" {
 				caret = ui.Cursor{Line: len(live) + s.frame.Cursor.Line, Col: s.frame.Cursor.Col}
@@ -223,6 +225,17 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		caret.Hidden = true
 	}
 
+	// Find the first input node to determine where bottom overlays insert.
+	// Bottom overlays appear BEFORE the input (and any nodes after it), not
+	// over them — this keeps the input visible when the slash menu is open.
+	inputLine := len(live)
+	for i := range slots {
+		if slots[i].node != nil && slots[i].node.Type == "input" {
+			inputLine = slots[i].line
+			break
+		}
+	}
+
 	for _, ov := range overlays {
 		f := r.renderOverlay(ov, state)
 		if len(f.Live) == 0 {
@@ -252,16 +265,19 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 				live[i] = compositeLine(live[i], lines[i], x)
 			}
 		default:
-			// "bottom" and any other anchor: replace the tail lines.
-			if len(lines) >= len(live) {
-				live = lines
-			} else {
-				start := len(live) - len(lines)
-				for i, l := range lines {
-					if start+i < len(live) {
-						live[start+i] = l
-					}
-				}
+			// "bottom" inserts BEFORE the input (and tail nodes), not over them.
+			// This keeps the input and status bar visible when overlays open.
+			insertAt := inputLine
+			if insertAt > len(live) {
+				insertAt = len(live)
+			}
+			// Insert overlay lines at insertAt, shifting tail down.
+			tail := append([]ui.Line{}, live[insertAt:]...)
+			live = append(live[:insertAt], lines...)
+			live = append(live, tail...)
+			// Adjust caret if it was in the tail that just shifted down.
+			if !caret.Hidden && caret.Line >= insertAt {
+				caret.Line += len(lines)
 			}
 		}
 	}
