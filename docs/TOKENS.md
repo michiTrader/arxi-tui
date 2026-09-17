@@ -1,0 +1,171 @@
+# Token system — the open style vocabulary
+
+A **token** is a named style. Scenes reference tokens by name (`"style": "dim"`,
+`"style": "warn"`), and the theme maps each name to concrete attributes. This
+inversion buys three things at once:
+
+1. **Golden files stay readable** — the frame says `"dim"`, not `\x1b[2m`.
+2. **Themes swap without re-rendering** — token resolution happens at emit time,
+   so switching from light to dark is purely a theme file change.
+3. **Terminal capability is an emit concern** — a 24-bit teal becomes palette
+   index 6 when the terminal reports ANSI-only, and that downgrade lives in one
+   place rather than scattered through every renderer.
+
+## Design principle: open definition, closed reference validation
+
+The token namespace is **open by design** (SCENES.md:43-45). Users and plugins
+may mint tokens (`"warn": "yellow"`, `"profit": "#22c55e"`). The validator
+checks that every token a scene references is defined in the active theme, but
+it does not enforce a closed inventory — that is the deliberate inversion of
+arxi-sim, where the theme was a closed table and an unknown key was a compile
+error.
+
+A scene that references an undefined token fails validation with a `file:line`
+error naming the missing token and the node that asked for it. The remedy is
+either to define the token in the theme or to fix the scene.
+
+## Format: JSON
+
+A theme is a JSON object mapping token names to style definitions. Each style
+defines foreground color (`fg`), background color (`bg`), and text attributes
+(`attrs`). All three fields are optional; omitted fields inherit from the
+terminal's default.
+
+```json
+{
+  "dim": { "attrs": ["dim"] },
+  "header": { "attrs": ["bold"] },
+  "warn": { "fg": "yellow" },
+  "error": { "fg": "red", "attrs": ["bold"] },
+  "success": { "fg": "#22c55e" },
+  "input.placeholder": { "attrs": ["dim"] }
+}
+```
+
+### Token names
+
+Token names are arbitrary strings. Namespacing with dots is conventional but
+not required (`"input.placeholder"`, `"markdown.code"`). Names are
+case-sensitive.
+
+### Color values
+
+Three spellings are legal:
+
+- **Palette name:** `"red"`, `"bright-cyan"`, `"yellow"` — the eight base
+  colors plus their bright variants (16 total). These are the colors the user
+  chose in their terminal's own color scheme, which is almost always what they
+  want, and they survive on terminals without truecolor.
+- **Palette index:** `"0"` to `"255"` — numeric strings referencing the
+  terminal's 256-color palette. Indices 0-15 are the named colors above;
+  16-231 are a 6×6×6 RGB cube; 232-255 are grayscale.
+- **Hex RGB:** `"#rrggbb"` or `"rrggbb"` — 24-bit color. Downgraded to the
+  nearest palette index on terminals without truecolor support.
+
+### Attributes
+
+`attrs` is an array of attribute names. All are optional and may be combined:
+
+- `"bold"` — heavier weight
+- `"dim"` — reduced intensity (the factory scene's only emphasis)
+- `"italic"` — slanted text
+- `"underline"` — underscored
+- `"reverse"` — swap foreground and background
+- `"strike"` — strikethrough
+
+## Factory theme: SOBRIA
+
+The default theme shipped with arxi-tui is **sobria** — no color, emphasis by
+brightening text only, light/dark auto-detected via OSC 11. It defines exactly
+the tokens the three golden scenes (RAW, SOBRIA, MAXIMUM) reference, and
+nothing more:
+
+```json
+{
+  "dim": { "attrs": ["dim"] },
+  "header": { "attrs": ["bold"] },
+  "input.placeholder": { "attrs": ["dim"] },
+  "banner": { "attrs": ["bold"] }
+}
+```
+
+The OSC 11 query reports the terminal's background color, which the resolver
+uses to invert the sense of "dim" and "bold" on light backgrounds. That logic
+lives in the emit layer (`internal/term`), not in the theme file — the theme
+says what to emphasize, and the terminal backend decides how.
+
+## Token resolution at emit time
+
+Frames carry token names in `ui.Span.Style` fields. The terminal emitter
+resolves each name to a `ui.Style` (fg/bg/attrs) using the active theme, then
+downgrades colors according to the terminal's reported capability profile
+(truecolor / 256-color / 16-color / monochrome).
+
+The resolution and downgrade steps are separated:
+
+1. **Resolution:** token name → `ui.Style` (theme lookup)
+2. **Downgrade:** `ui.Style` → ANSI escape codes (terminal capability)
+
+Step 1 happens once per token per theme; step 2 happens once per span per
+frame. Caching the resolved styles is an optimization the emitter may apply,
+but it is not required for correctness.
+
+## Validation rules
+
+### Scene validation (at load time)
+
+Every `"style"` field in a scene document must reference a token defined in the
+active theme. A missing token is a validation error with `file:line` pointing
+at the offending node.
+
+The validator walks the scene tree, collects every `"style"` value, and checks
+each against the theme's key set. The error message names the missing token and
+suggests either defining it or checking for typos.
+
+### Theme validation (at load time)
+
+A theme file must parse as valid JSON and satisfy these constraints:
+
+- Top-level object only (no array, no primitives).
+- Every value is an object with optional `fg`, `bg`, `attrs` fields.
+- `fg` and `bg` must be legal color values (palette name, index 0-255, or hex).
+- `attrs` must be an array of legal attribute names.
+- Unknown fields in a style definition are ignored (forward compatibility).
+
+An invalid theme file fails at load time with a `file:line` error. The
+interface falls back to the factory sobria theme compiled into the binary.
+
+## File locations
+
+Themes are JSON files. The search order is:
+
+1. `--theme <path>` flag (explicit override)
+2. `~/.config/arxi-tui/theme.json` (user theme)
+3. Factory sobria theme (compiled-in fallback)
+
+A theme file that fails to load logs the error and falls through to the next
+location. The factory theme is the backstop: if every user-supplied theme is
+broken, the interface still boots with sobria.
+
+## Extension by plugins (Phase 3)
+
+Plugins may define tokens in their manifest (`"tokens": {"profit":
+{"fg":"green"}}`). When a plugin is enabled, its tokens are merged into the
+active theme. Conflicts are resolved by precedence: user theme > plugin tokens
+> factory theme.
+
+Plugin-defined tokens are validated the same way: a scene fragment that
+references a token must either define it in the fragment's own `tokens` block
+or rely on the host theme providing it. A fragment that assumes a token exists
+without declaring it is rejected at plugin-install time.
+
+This is Phase 3 work. Phase 1 implements the resolver and factory theme only.
+
+## Signed contract (Phase 1 freeze)
+
+The token format described here is frozen for Phase 1. The three elements —
+color values, attribute names, and the theme file schema — may grow in later
+phases (new attributes, new color spellings, per-token metadata), but no Phase
+1 construction is ever redefined.
+
+Signed: 2026-09-17
