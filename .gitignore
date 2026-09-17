@@ -3,4 +3,5 @@
 # on a command that changed no source at all, and the diff is megabytes of
 # noise that hides the change the commit is actually about.
 /arxi-tui
+/arxi-tui.exe
 /bin/
