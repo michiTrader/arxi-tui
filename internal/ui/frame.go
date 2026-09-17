@@ -167,6 +167,43 @@ func (f Frame) Plain() string {
 	return b.String()
 }
 
+// Styled renders the frame with token annotations: each span is wrapped with
+// «token:text» markers so the golden can verify both content and style.
+func (f Frame) Styled() string {
+	var b strings.Builder
+	for _, l := range f.Committed {
+		for _, s := range l {
+			if s.Style != "" {
+				b.WriteString("«")
+				b.WriteString(s.Style)
+				b.WriteString(":")
+				b.WriteString(s.Text)
+				b.WriteString("»")
+			} else {
+				b.WriteString(s.Text)
+			}
+		}
+		b.WriteByte('\n')
+	}
+	for i, l := range f.Live {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		for _, s := range l {
+			if s.Style != "" {
+				b.WriteString("«")
+				b.WriteString(s.Style)
+				b.WriteString(":")
+				b.WriteString(s.Text)
+				b.WriteString("»")
+			} else {
+				b.WriteString(s.Text)
+			}
+		}
+	}
+	return b.String()
+}
+
 // Overflow returns the lines that are wider than the frame. A renderer that
 // overflows corrupts inline mode, because the terminal wraps a line we thought
 // we owned and every position after it is off by one. Callers treat a non-empty

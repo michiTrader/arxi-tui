@@ -67,6 +67,54 @@ func TestMaximumSceneRenders(t *testing.T) {
 	}
 }
 
+// TestMaximumSceneStyledGolden compares the rendered Scene 3 frame with token
+// annotations against the golden file. UPDATE_GOLDEN=1 regenerates the fixture.
+func TestMaximumSceneStyledGolden(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/MAXIMUM.json")
+	if err != nil {
+		t.Fatalf("read MAXIMUM.json: %v", err)
+	}
+	doc, err := scene.ParseDocument(data)
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	events := []fold.Event{
+		{Type: "run.started", Seq: 1, Payload: map[string]any{
+			"run_id": "r1", "actor": "user", "budget_usd": 10.0,
+			"max_turns": 10, "simulated": false,
+		}},
+		{Type: "agent.activated", Seq: 2, Payload: map[string]any{"agent": "backend"}},
+		{Type: "llm.response", Seq: 3, Payload: map[string]any{
+			"agent": "backend", "model": "openai/gpt-4o",
+			"text":      "Hola! How can I help you today?",
+			"tokens_in": 25, "tokens_out": 35, "cost_usd": 0.001,
+		}},
+		{Type: "agent.turn_done", Seq: 4, Payload: map[string]any{"agent": "backend"}},
+	}
+	state := fold.Fold(events)
+
+	r := Renderer{Width: 80, Height: 24}
+	f := r.RenderFrame(doc, state)
+	got := f.Styled()
+
+	goldenPath := "../../testdata/MAXIMUM.styled"
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile(goldenPath, []byte(got), 0644); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
+		return
+	}
+
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("read golden %s: %v", goldenPath, err)
+	}
+	if got != string(want) {
+		t.Errorf("maximum scene styled output does not match golden:\n--- got ---\n%s\n--- want ---\n%s", got, string(want))
+	}
+}
+
 // TestMaximumSceneMatchesGolden compares the rendered Scene 3 frame against the
 // golden file. UPDATE_GOLDEN=1 regenerates the fixture.
 func TestMaximumSceneMatchesGolden(t *testing.T) {
