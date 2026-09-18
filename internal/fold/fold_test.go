@@ -252,3 +252,18 @@ func TestViewStateBindsDefaultCorrectly(t *testing.T) {
 		t.Errorf("ui.max default: got %q, want empty (null)", s.UIMax)
 	}
 }
+
+// TestSlashSelectedFromUIState verifies slash.selected round-trips through a
+// ui.state event. Without this the menu renders with no highlighted row: the
+// host moves the selection, the fold carries it, and the list reads it — break
+// any link and ↑/↓ silently stop doing anything visible.
+func TestSlashSelectedFromUIState(t *testing.T) {
+	events := []Event{
+		{Type: "ui.state", Seq: 1, Payload: map[string]any{"slash.selected": float64(2)}},
+	}
+	s := Fold(events)
+
+	if s.SlashSelected != 2 {
+		t.Errorf("slash.selected: got %d, want 2; a lost selection leaves the menu with no bright row and ↑/↓ look dead", s.SlashSelected)
+	}
+}

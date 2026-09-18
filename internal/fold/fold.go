@@ -39,11 +39,17 @@ type State struct {
 	SlashActive  bool         `json:"slash.active"`
 	SlashTyped   string       `json:"slash.typed"`
 	SlashMatches []SlashMatch `json:"slash.matches"`
-	UIFocus      string       `json:"ui.focus"`
-	UIMax        string       `json:"ui.max"`
-	UISurface    string       `json:"ui.surface"`
-	EscapeArmed  bool         `json:"host.escape.armed"`
-	SceneError   string       `json:"host.scene.error"`
+	// SlashSelected is the index into SlashMatches of the highlighted row.
+	// The host owns it (↑/↓ while the menu is open), clamps it to the match
+	// list on every filter keystroke, and resets it to 0 when the menu
+	// reopens. A list bound to slash.matches renders this row bright and every
+	// other row dim (docs/BINDS.md §4.3).
+	SlashSelected int    `json:"slash.selected"`
+	UIFocus       string `json:"ui.focus"`
+	UIMax         string `json:"ui.max"`
+	UISurface     string `json:"ui.surface"`
+	EscapeArmed   bool   `json:"host.escape.armed"`
+	SceneError    string `json:"host.scene.error"`
 
 	// BudgetMicrounits is run.started.budget_usd × 1000, captured when the run
 	// starts. Combined with CostMicrounits it produces session.tokens_used.
@@ -266,6 +272,11 @@ func (s *State) apply(e Event) {
 		}
 		if val, ok := e.Payload["slash.typed"].(string); ok {
 			s.SlashTyped = val
+		}
+		// JSON numbers unmarshal as float64; the bind is an int index and a
+		// fractional selection is not a thing the host ever writes.
+		if val, ok := e.Payload["slash.selected"].(float64); ok {
+			s.SlashSelected = int(val)
 		}
 		if val, ok := e.Payload["ui.surface"].(string); ok {
 			s.UISurface = val
