@@ -22,26 +22,11 @@ func TestRawParsing(t *testing.T) {
 	t.Logf("parsed root.type=%s", doc.Root.Type)
 }
 
-// TestAllGoldenScenesValidate verifies that every golden scene's bind/when
-// strings resolve to a signed row in docs/BINDS.md Section 4 (the §4.5 exit
-// criterion). A golden scene referencing an unsigned bind is a file:line
-// validation error at load time.
-func TestAllGoldenScenesValidate(t *testing.T) {
-	scenes := []string{"RAW.json", "SOARIA.json"}
-	for _, name := range scenes {
-		data, err := os.ReadFile("../../testdata/" + name)
-		if err != nil {
-			t.Fatalf("%s: read file: %v", name, err)
-		}
-		doc, err := ParseDocument(data)
-		if err != nil {
-			t.Fatalf("%s: ParseDocument: %v", name, err)
-		}
-		if err := doc.Validate(); err != nil {
-			t.Errorf("%s: Validate: %v — every bind must resolve to a signed row in BINDS.md §4.5", name, err)
-		}
-	}
-}
+// The golden scenes' §4.5 audit lives in binds_audit_test.go
+// (TestEveryGoldenBindIsSigned), which checks all three pinned scenes against
+// the signed document itself rather than a hardcoded subset. It replaced the
+// earlier test here, which listed only RAW and SOARIA and so never validated
+// MAXIMUM — the one scene that binds agent.todos and session.tokens_used.
 
 // TestUnsignedBindFailsValidation verifies that a scene referencing a bind
 // not in the signed inventory fails validation. This is the §4.5 exit
