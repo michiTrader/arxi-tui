@@ -81,7 +81,7 @@ the `input` node.
         "categories": ["All","General","Session","Account","Model",
                        "Appearance","Security","Workspace","Media","Extensions","Product"] },
       { "type": "text", "style": "dim",
-        "text": "↑↓ navigate · tab category · enter open · esc close" },
+        "text": "↑↓ navigate · enter use · esc close" },
       { "type": "rule" } ] },
 
   { "id": "status", "type": "row", "style": "dim", "children": [
