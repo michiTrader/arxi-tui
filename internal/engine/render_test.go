@@ -335,6 +335,50 @@ func TestOverlayBottomAppearsAfterInput(t *testing.T) {
 	t.Logf("rendered frame with overlay:\n%s", got)
 }
 
+// TestOverlayPaddingKeepsSpanStyles verifies that padding an overlay's rows to
+// its width does not weld the row into one style. The pad used to flatten every
+// span into the first span's token, which made a dim menu row come out
+// undimmed: the slash menu's gray rows and bright selection are span styles,
+// and they must survive the trip through the overlay's padding.
+func TestOverlayPaddingKeepsSpanStyles(t *testing.T) {
+	sceneJSON := `{ "root": { "type": "stack", "children": [
+	  { "id": "input", "type": "input", "bind": "user.input", "placeholder": "type" },
+	  { "id": "overlay", "type": "overlay", "anchor": "bottom", "when": "slash.active",
+	    "min_width": 30,
+	    "children": [
+	      { "type": "text", "style": {"style": "dim"}, "text": "DIM ROW" },
+	      { "type": "text", "text": "PLAIN ROW" }
+	    ]}
+	]}}`
+
+	doc, err := scene.ParseDocument([]byte(sceneJSON))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	r := Renderer{Width: 80, Height: 10}
+	state := fold.State{SlashActive: true}
+	f := r.RenderFrame(doc, state)
+
+	got := f.Styled()
+	if !strings.Contains(got, "«dim:DIM ROW»") {
+		t.Errorf("dim span lost its token through the overlay's padding; styled output:\n%s", got)
+	}
+	if !strings.Contains(got, "PLAIN ROW") {
+		t.Errorf("plain row missing from overlay; styled output:\n%s", got)
+	}
+
+	// The overlay's rows are padded to its min_width — the padding must not
+	// have grown a second styled span that repaints the row in another token.
+	for _, line := range f.Live {
+		for _, s := range line {
+			if s.Text == "DIM ROW" && s.Style != "dim" {
+				t.Errorf("row span carries token %q, want \"dim\"; the pad welded the row into the wrong style:\n%s", s.Style, got)
+			}
+		}
+	}
+}
+
 func fmtShort(n int) string {
 	return string(rune('A' + n - 1))
 }

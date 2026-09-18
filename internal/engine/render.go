@@ -59,6 +59,29 @@ func compositeLine(base, over ui.Line, x int) ui.Line {
 	return append(out, cutLine(base, x+over.Width(), base.Width())...)
 }
 
+// padLine pads or truncates a line to exactly width columns without welding
+// the row into one style. Flattening the line into its first span (the previous
+// approach) is how a dim menu row came out undimmed: the padding is chrome, and
+// chrome must not restyle the content it fills around, nor borrow the style of
+// the span it happens to follow — a background on that token would paint the
+// whole pad. Truncation goes through cutLine so wide glyphs never split; the
+// pad span carries the row's fill (the band convention is that the first span
+// speaks for the row) and no style of its own.
+func padLine(l ui.Line, width int) ui.Line {
+	w := l.Width()
+	if w == width || width <= 0 {
+		return l
+	}
+	if w > width {
+		return cutLine(l, 0, width)
+	}
+	pad := strings.Repeat(" ", width-w)
+	if len(l) == 0 {
+		return ui.Line{{Text: pad}}
+	}
+	return append(append(ui.Line{}, l...), ui.Span{Text: pad, Fill: l[0].Fill})
+}
+
 // truncateText truncates a string to at most width display columns, cutting at
 // grapheme boundaries so wide characters never split.
 func truncateText(s string, width int) string {
@@ -777,23 +800,11 @@ func (r *Renderer) renderOverlay(n *scene.Node, state fold.State) ui.Frame {
 		totalWidth = contentWidth + 2
 	}
 
-	// Pad or truncate each line to the total width.
+	// Pad or truncate each line to the total width, span by span: the pad is
+	// chrome and must not restyle the row it fills (see padLine).
 	out := make([]ui.Line, len(lines))
 	for i, l := range lines {
-		text := l.Text()
-		w := ansiStringWidth(text)
-		if w < totalWidth {
-			pad := strings.Repeat(" ", totalWidth-w)
-			fill := ""
-			if len(l) > 0 {
-				fill = l[0].Fill
-			}
-			out[i] = ui.Line{ui.Span{Text: text + pad, Fill: fill}}
-		} else if w > totalWidth {
-			out[i] = ui.Line{ui.Span{Text: truncateText(text, totalWidth), Fill: l[0].Fill}}
-		} else {
-			out[i] = l
-		}
+		out[i] = padLine(l, totalWidth)
 	}
 
 	return ui.Frame{Live: out, Width: totalWidth, Height: len(out)}
@@ -833,19 +844,14 @@ func (r *Renderer) wrapWithBorder(lines []ui.Line, n *scene.Node, contentWidth i
 	}
 	bordered = append(bordered, ui.Line{ui.Span{Text: topText, Style: "border"}})
 
-	// Content lines wrapped with vertical bars.
+	// Content lines wrapped with vertical bars, span by span: a bordered
+	// overlay keeps each span's own token instead of welding the row into the
+	// box's style (the same weld padLine removed from the borderless path).
 	for _, l := range lines {
-		text := l.Text()
-		if w := ansiStringWidth(text); w < innerWidth {
-			text += strings.Repeat(" ", innerWidth-w)
-		} else if w > innerWidth {
-			text = truncateText(text, innerWidth)
-		}
-		bordered = append(bordered, ui.Line{
-			ui.Span{Text: string(vert), Style: "border"},
-			ui.Span{Text: text, Style: styleName(n.Style)},
-			ui.Span{Text: string(vert), Style: "border"},
-		})
+		row := append(ui.Line{}, ui.Span{Text: string(vert), Style: "border"})
+		row = append(row, padLine(l, innerWidth)...)
+		row = append(row, ui.Span{Text: string(vert), Style: "border"})
+		bordered = append(bordered, row)
 	}
 
 	// Bottom border.
