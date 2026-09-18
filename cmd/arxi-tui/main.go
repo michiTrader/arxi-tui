@@ -37,28 +37,35 @@ const factoryRAW = `{ "root": { "type": "stack", "children": [
 const factorySobria = `{ "root": { "type": "stack", "children": [
   { "type": "text", "style": {"style": "header"},
     "text": "Δr×i v0.1.0 · Run /help for commands" },
+
   { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+
   { "id": "thinking", "type": "marquee", "when": "agent.working",
     "bind": "thinking.text",
     "prefix": { "text": "• Thinking · ", "style": {"style": "dim"} },
     "suffix": { "bind": "usage.delta", "style": {"style": "dim"} } },
+
   { "id": "prompt", "type": "input", "bind": "user.input",
     "prefix": "┃ ", "placeholder": "ask anything, or / for commands" },
+
   { "id": "menu", "type": "overlay", "anchor": "bottom", "when": "slash.active",
     "children": [
       { "type": "rule" },
       { "id": "cmds", "type": "list", "bind": "slash.matches",
         "filter_by": "typed", "count": true,
         "categories": ["All","General","Session","Account","Model",
-                       "Appearance","Security","Workspace","Media","Extensions","Product"] },
-      { "type": "text", "style": {"style": "dim"},
-        "text": "↑↓ navigate · enter use · esc close" },
-      { "type": "rule" } ] },
-  { "id": "status", "type": "row", "style": {"style": "dim"}, "children": [
-    { "type": "text", "bind": "agent.mode" },
-    { "type": "text", "text": " · " },
-    { "type": "text", "bind": "model.name" },
-    { "type": "text", "text": " · ⚡︎" } ] }
+                       "Appearance","Security","Workspace","Media","Extensions","Product"] } ] },
+
+  { "id": "status", "type": "row", "children": [
+    { "type": "text", "bind": "slash.hint", "style": {"style": "dim"},
+      "when": "slash.hint" },
+    { "type": "text", "bind": "agent.mode", "style": {"style": "header"},
+      "when": "status.active" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "status.active" },
+    { "type": "text", "bind": "model.name", "style": {"style": "dim"},
+      "when": "status.active" },
+    { "type": "text", "text": " · ⚡︎", "style": {"style": "dim"},
+      "when": "status.active" } ] }
 ]}}`
 
 func main() {
@@ -366,6 +373,19 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.SlashMatches = nil
 		}
 
+		// The bottom line is either the live status row or the menu's
+		// navigation hint, never both: the menu's help replaces the status
+		// row so there is exactly one line of info at the edge of the screen.
+		// The scene gates each row with `when`, so the host only has to publish
+		// the two view-state binds that drive it (BINDS.md §4.3).
+		if state.SlashActive {
+			state.SlashHint = "↑↓ navigate · enter use · esc close"
+			state.StatusActive = "false"
+		} else {
+			state.SlashHint = ""
+			state.StatusActive = "true"
+		}
+
 		// host.escape.armed mirrors the panic gesture's current arm state.
 		// A scene may show it (e.g. a dim "press Ctrl-C again to quit" hint),
 		// but no scene may capture the gesture (invariant 6).
@@ -489,14 +509,19 @@ func slashMenuKey(input string, k term.Key, sel int, ctx context.Context, drv Dr
 	matches := fold.FilterSlashMatches(strings.TrimPrefix(input, "/"))
 	switch k.Type {
 	case term.KeyUp:
-		if sel > 0 {
-			sel--
+		if len(matches) == 0 {
+			return input, sel
 		}
+		// Wrap at both ends: the highlight is the only thing the keyboard moves,
+		// so the user must always feel a row under it no matter how far up they
+		// spin the wheel (rotary, as requested).
+		sel = (sel - 1 + len(matches)) % len(matches)
 		return input, sel
 	case term.KeyDown:
-		if sel < len(matches)-1 {
-			sel++
+		if len(matches) == 0 {
+			return input, sel
 		}
+		sel = (sel + 1) % len(matches)
 		return input, sel
 	case term.KeyTab:
 		// Walk to the first match of the next distinct category, wrapping to

@@ -39,6 +39,17 @@ type State struct {
 	SlashActive  bool         `json:"slash.active"`
 	SlashTyped   string       `json:"slash.typed"`
 	SlashMatches []SlashMatch `json:"slash.matches"`
+	// SlashHint is the footer line shown while the slash menu is open (BINDS.md
+	// §4.3). The host owns it: it carries the navigation hint when the menu is
+	// active and is empty otherwise, so the scene gates the row with `when:
+	// slash.hint`. The menu's help is a single line of info, and it replaces the
+	// status row rather than stacking on top of it.
+	SlashHint string `json:"slash.hint"`
+	// StatusActive gates the live status row (BINDS.md §4.3): "true" while the
+	// menu is closed so the row renders, "false" while it is open so the single
+	// bottom line carries only the navigation hint. The evalWhen contract treats
+	// "false" as falsy, so a `when: status.active` child hides itself.
+	StatusActive string `json:"status.active"`
 	// SlashSelected is the index into SlashMatches of the highlighted row.
 	// The host owns it (↑/↓ while the menu is open), clamps it to the match
 	// list on every filter keystroke, and resets it to 0 when the menu
@@ -70,10 +81,11 @@ type State struct {
 // imports the core; it reads these events from the log file the core writes.
 func Fold(events []Event) State {
 	s := State{
-		AgentMode: "idle",
-		ModelName: "",
-		UISurface: "chat", // default surface per BINDS.md §4.3
-		members:   make(map[string]*TeamMember),
+		AgentMode:    "idle",
+		ModelName:    "",
+		UISurface:    "chat", // default surface per BINDS.md §4.3
+		StatusActive: "true", // status row visible unless the slash menu is open
+		members:      make(map[string]*TeamMember),
 	}
 	for _, e := range events {
 		s.apply(e)

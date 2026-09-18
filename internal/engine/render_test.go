@@ -425,9 +425,10 @@ func TestSlashMenuListRendersHeaderColumnsAndSelection(t *testing.T) {
 
 	// Categories are right-aligned: every row ends in its category at the
 	// frame's right edge, all in the same column, and no row overflows.
+	// Layout is: header (0), blank separator (1), then the rows.
 	lines := strings.Split(got, "\n")
 	for i, want := range []string{"help", "max", "focus", "surface", "ui"} {
-		line := lines[i+1] // the header is line 0
+		line := lines[i+2] // header line 0, blank line 1, rows from line 2
 		if !strings.HasPrefix(line, want) || !strings.HasSuffix(line, "General") {
 			t.Errorf("row %d: want name %q and category flush right, got %q", i, want, line)
 		}
@@ -465,4 +466,42 @@ func TestSlashMenuSelectionClampsToMatches(t *testing.T) {
 
 func fmtShort(n int) string {
 	return string(rune('A' + n - 1))
+}
+
+// TestSlashMenuRowsAreDimExceptSelection pins the sobria menu's contrast
+// contract: every row is gray except the highlighted one, which is the only
+// row at full brightness. The header line ("Commands N · type to filter") is
+// chrome and dim too — a count is not emphasis.
+func TestSlashMenuRowsAreDimExceptSelection(t *testing.T) {
+	sceneJSON := `{ "root": { "type": "list", "bind": "slash.matches",
+		"filter_by": "typed", "count": true }}`
+	doc, err := scene.ParseDocument([]byte(sceneJSON))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	state := fold.State{
+		SlashActive:   true,
+		SlashMatches:  fold.FilterSlashMatches(""),
+		SlashSelected: 2, // "focus"
+	}
+	r := Renderer{Width: 60, Height: 12}
+	f := r.RenderFrame(doc, state)
+	styled := f.Styled()
+
+	// The header line carries the count, not a command — it is dim chrome.
+	if !strings.Contains(styled, "«dim:Commands 5") {
+		t.Errorf("header is not dim; the count line is chrome and must not shout:\n%s", styled)
+	}
+
+	// Every command row except the selection is dim.
+	for _, name := range []string{"help", "max", "surface", "ui"} {
+		if !strings.Contains(styled, "«dim:"+name+"»") {
+			t.Errorf("unselected row %q is not dim; styled output:\n%s", name, styled)
+		}
+	}
+	// The selection is bright.
+	if !strings.Contains(styled, "«text:focus»") {
+		t.Errorf("selected row 'focus' is not bright; styled output:\n%s", styled)
+	}
 }

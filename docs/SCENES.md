@@ -79,16 +79,18 @@ the `input` node.
       { "id": "cmds", "type": "list", "bind": "slash.matches",
         "filter_by": "typed", "count": true,
         "categories": ["All","General","Session","Account","Model",
-                       "Appearance","Security","Workspace","Media","Extensions","Product"] },
-      { "type": "text", "style": "dim",
-        "text": "↑↓ navigate · enter use · esc close" },
-      { "type": "rule" } ] },
+                       "Appearance","Security","Workspace","Media","Extensions","Product"] } ] },
 
-  { "id": "status", "type": "row", "style": "dim", "children": [
-    { "type": "text", "bind": "agent.mode" },
-    { "type": "text", "text": " · " },
-    { "type": "text", "bind": "model.name" },
-    { "type": "text", "text": " · ⚡︎" } ] }
+  { "id": "status", "type": "row", "children": [
+    { "type": "text", "bind": "slash.hint", "style": {"style": "dim"},
+      "when": "slash.hint" },
+    { "type": "text", "bind": "agent.mode", "style": {"style": "header"},
+      "when": "status.active" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "status.active" },
+    { "type": "text", "bind": "model.name", "style": {"style": "dim"},
+      "when": "status.active" },
+    { "type": "text", "text": " · ⚡︎", "style": {"style": "dim"},
+      "when": "status.active" } ] }
 ]}}
 ```
 

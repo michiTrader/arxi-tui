@@ -481,6 +481,126 @@ func TestLoopSobriaSlashMenu(t *testing.T) {
 	}
 }
 
+// TestLoopSlashMenuWrapsUpAndDown verifies the menu's rotary navigation: pressing
+// Up on the first row wraps to the last, and pressing Down on the last wraps to
+// the first. The highlight must always sit on a real row — a menu that spins
+// off the end and leaves Enter pointing at nothing is a menu that lies.
+func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factorySobria))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	if err := doc.Validate(); err != nil {
+		t.Fatalf("scene validation: %v", err)
+	}
+
+	// "/" opens the menu on the first row (index 0 = "help"). Pressing Up at
+	// row 0 wraps to the last row (index 4 = "ui"); Enter runs it.
+	script := []scheduledEvent{
+		{0, keyEvent('/')},
+		{50 * time.Millisecond, arrowEvent(term.KeyUp)}, // wrap: help(0) → ui(4)
+		{30 * time.Millisecond, enterEvent()},           // runs "ui"
+		{100 * time.Millisecond, ctrlCharEvent('c')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+	}
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: make(chan fold.Event, 64)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv); err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	frames := strings.Split(tty.output(), "\x1b[H\x1b[2J")
+
+	// Up from "help" (row 0) must have wrapped to "ui" (row 4): Enter runs "ui",
+	// and "ui" appears as a whole transcript line in a frame where the menu
+	// is already closed (no "Commands 5" header above it).
+	ranUI := false
+	for _, f := range frames {
+		if frameHasTranscriptLine(f, "ui") && !strings.Contains(f, "Commands 5") {
+			ranUI = true
+			break
+		}
+	}
+	if !ranUI {
+		t.Errorf("Up did not wrap from the first row to the last ('ui' never ran); frames:\n%s", tty.output())
+	}
+}
+
+// TestLoopSlashMenuSwapsStatusForHint verifies the bottom line is a single line
+// of info: when the menu is open the live status bar yields to the navigation
+// hint, and closing the menu brings the status bar back. Both must never appear
+// on the same frame.
+func TestLoopSlashMenuSwapsStatusForHint(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factorySobria))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	if err := doc.Validate(); err != nil {
+		t.Fatalf("scene validation: %v", err)
+	}
+
+	driverEvents := []fold.Event{
+		{Type: "run.started", Seq: 1, Payload: map[string]any{
+			"run_id": "r1", "simulated": false,
+		}},
+		{Type: "llm.response", Seq: 2, Payload: map[string]any{
+			"text": "Hola!", "model": "openai/gpt-4o",
+			"tokens_in": 5, "tokens_out": 3,
+		}},
+	}
+
+	evCh := make(chan fold.Event, 64)
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		for _, e := range driverEvents {
+			evCh <- e
+		}
+	}()
+
+	// Open the menu and stay there until the panic gesture exits.
+	script := []scheduledEvent{
+		{150 * time.Millisecond, keyEvent('/')},
+		{100 * time.Millisecond, arrowEvent(term.KeyDown)}, // menu stays open
+		{100 * time.Millisecond, ctrlCharEvent('c')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+	}
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: evCh}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), evCh, drv); err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	out := tty.output()
+
+	// A frame with the menu open must show the navigation hint and must NOT show
+	// the status bar text on the same screen — the single bottom line swapped.
+	frames := strings.Split(out, "\x1b[H\x1b[2J")
+	hintRendered := false
+	for i, f := range frames {
+		stripped := stripANSI(f)
+		if strings.Contains(stripped, "navigate · enter use · esc close") {
+			hintRendered = true
+			// The hint frame must not carry the status bar on the same screen.
+			if strings.Contains(stripped, "openai/gpt-4o") {
+				t.Errorf("frame %d shows both the status bar and the nav hint on the same screen:\n%s", i, stripped)
+			}
+		}
+	}
+	if !hintRendered {
+		t.Errorf("navigation hint never rendered while the menu was open; output:\n%s", stripANSI(out))
+	}
+}
+
 // TestLoopSobriaStatusbarRenders verifies the sobria scene renders the status
 // bar (agent.mode · model.name · ⚡︎) after receiving driver events.
 func TestLoopSobriaStatusbarRenders(t *testing.T) {
@@ -526,7 +646,10 @@ func TestLoopSobriaStatusbarRenders(t *testing.T) {
 		t.Fatalf("loop returned error: %v", err)
 	}
 
-	out := tty.output()
+	out := stripANSI(tty.output())
+	// The status row splits "live" (bright, the agent.mode bind under the
+	// "header" token) from the dim separators and model — stripANSI collapses
+	// the SGR resets between spans so the visible text is one contiguous line.
 	if !strings.Contains(out, "live · openai/gpt-4o · ⚡︎") {
 		t.Errorf("status bar not rendered correctly; output:\n%s", out)
 	}

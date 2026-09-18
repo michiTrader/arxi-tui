@@ -341,6 +341,22 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 		return ui.Frame{Live: []ui.Line{ui.Line{}}, Width: r.Width, Height: 1}
 	}
 
+	// Drop children whose `when` is unsatisfied before measuring, so a row does
+	// not reserve space (or render padding) for content the host has hidden.
+	// This is what lets the status row swap the live line for the menu hint:
+	// only the truthy set of children lays out.
+	visible := make([]*scene.Node, 0, len(children))
+	for _, c := range children {
+		if c.When != "" && !evalWhen(c.When, state) {
+			continue
+		}
+		visible = append(visible, c)
+	}
+	if len(visible) == 0 {
+		return ui.Frame{Live: []ui.Line{ui.Line{}}, Width: r.Width, Height: 1}
+	}
+	children = visible
+
 	totalWidth := r.Width
 	if totalWidth <= 0 {
 		totalWidth = 80
@@ -424,41 +440,43 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 	}
 
 	// Build output lines: for each row, composite the columns side by side.
+	// Spans from each child are carried through with their own styles so a
+	// row does not flatten into one token (the status row needs "live"
+	// bright and the rest dim on the same line). Truncation respects glyph
+	// boundaries via cutLine; padding is appended as a styleless span so it
+	// never restyles the token it sits beside.
 	out := make([]ui.Line, maxHeight)
 	for i := range out {
 		var line ui.Line
 		for ci, f := range frames {
 			col := colWidths[ci]
-			var source ui.Line
 			if i < len(f.Live) {
-				source = f.Live[i]
-			}
-			text := source.Text()
-			textW := ansiStringWidth(text)
-			if textW > col {
-				text = truncateText(text, col)
-				textW = col
-			}
-			if textW > 0 {
-				line = append(line, ui.Span{Text: text})
-			}
-			for j := textW; j < col; j++ {
-				if len(line) > 0 {
-					line[len(line)-1].Text += " "
-				} else {
-					line = append(line, ui.Span{Text: " "})
+				src := f.Live[i]
+				taken := 0
+				for _, s := range src {
+					if taken >= col {
+						break
+					}
+					room := col - taken
+					sw := ansiStringWidth(s.Text)
+					if sw <= room {
+						line = append(line, s)
+						taken += sw
+					} else {
+						// Span overflows the column: cut it to fit.
+						cut := cutLine(ui.Line{s}, 0, room)
+						line = append(line, cut...)
+						taken += room
+					}
 				}
+			}
+			for line.Width() < col {
+				line = append(line, ui.Span{Text: " "})
 			}
 		}
 		// Pad to full width.
-		curW := line.Width()
-		for curW < totalWidth {
-			if len(line) > 0 {
-				line[len(line)-1].Text += " "
-			} else {
-				line = append(line, ui.Span{Text: " "})
-			}
-			curW++
+		for line.Width() < totalWidth {
+			line = append(line, ui.Span{Text: " "})
 		}
 		out[i] = line
 	}
@@ -909,6 +927,10 @@ func (r *Renderer) renderList(n *scene.Node, state fold.State, budget int) ui.Fr
 				Text:  fmt.Sprintf("Commands %d · type to filter", len(matches)),
 				Style: "dim",
 			}})
+			// A blank row separates the count header from the command rows so
+			// the orientation line does not read as the first option. The row
+			// inherits the list's style (dim) through the pad, not its own token.
+			lines = append(lines, ui.Line{ui.Span{Text: ""}})
 		}
 
 		// The name column is padded from the longest name in the current
@@ -1013,6 +1035,10 @@ func resolveBind(bind string, state fold.State) string {
 			return "true"
 		}
 		return "false"
+	case "slash.hint":
+		return state.SlashHint
+	case "status.active":
+		return state.StatusActive
 	case "host.escape.armed":
 		if state.EscapeArmed {
 			return "true"
