@@ -46,7 +46,18 @@ published, by handing arxi a link.
 - ✅ Styled golden fixtures: `RAW.styled`, `SOARIA.styled`, `MAXIMUM.styled`
 - ✅ Theme validation (scenes reference existing tokens)
 
-**Next (Phase 2):** Full bind inventory in `docs/BINDS.md` frozen before live driver.
+**Phase 1.5 — The SCENES ↔ BINDS audit:** Complete.
+
+- ✅ `internal/scene/binds_audit_test.go` parses `docs/BINDS.md` and holds the
+  validator's runtime inventory to the signed document, in both directions
+- ✅ All three pinned scenes audited (MAXIMUM was previously unchecked)
+- ✅ An unexercised signed bind is a logged warning, per `AGENTS.md`
+- ✅ Inventory drift repaired: 4 unsigned binds removed, 18 signed-but-rejected
+  binds restored, `agent.todos` signed in §4.1
+
+**Next (Phase 2):** Mutation from inside — `/ui` commands and agent-driven
+patches, gated on the eval corpus (natural-language order → scene patch,
+measuring the repair loop rather than first-shot accuracy).
 
 ## Build
 

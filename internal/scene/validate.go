@@ -28,26 +28,60 @@ func (d *Document) Validate() error {
 	return validateBinds(d.Root)
 }
 
-// signedBinds is the §4.5 inventory: every bind the golden scenes may reference.
-// A bind not in this list fails validation. This list is the contract between
-// the scene format and the fold implementation.
+// signedBinds is the §4.5 inventory: every bind a scene may reference. A bind
+// not in this list fails validation at load time.
+//
+// This map is the *runtime* inventory and it is deliberately a Go literal
+// rather than the parsed document: arxi ships as one static binary, so the
+// validator cannot depend on docs/BINDS.md existing on the user's disk. The
+// document stays the contract, and TestSignedInventoryMatchesDocument is what
+// keeps the two identical — a row added to the doc without a line here (or the
+// reverse) fails the suite. That test exists because this map had already
+// drifted from the signed document in both directions: it carried four binds
+// signed nowhere (agent.status, banner.text, session.tokens) while rejecting
+// eighteen that BINDS.md §4 signs and internal/fold already computes
+// (slash.selected, team.members, ui.focus, usage.in/out, …). Drift in this
+// direction is the expensive one: Phase 2's eval corpus measures the repair
+// loop — order, patch, file:line error, retry — so a validator that rejects a
+// signed bind teaches the model to avoid the vocabulary the product documents.
 var signedBinds = map[string]bool{
-	"agent.mode":          true,
-	"agent.status":        true,
-	"agent.todos":         true,
-	"agent.working":       true,
-	"banner.text":         true,
-	"chat.history":        true,
-	"model.name":          true,
-	"session.tokens":      true,
-	"session.tokens_used": true,
-	"slash.active":        true,
-	"slash.hint":          true,
-	"slash.matches":       true,
-	"status.active":       true,
-	"thinking.text":       true,
-	"usage.delta":         true,
-	"user.input":          true,
+	// §4.1 run state
+	"chat.history":            true,
+	"thinking.text":           true,
+	"agent.working":           true,
+	"agent.mode":              true,
+	"agent.todos":             true,
+	"model.name":              true,
+	"usage.in":                true,
+	"usage.out":               true,
+	"usage.delta":             true,
+	"session.tokens_used":     true,
+	"session.new_milestone":   true,
+	"team.members":            true,
+	"todos.count":             true,
+	"run.quiescent.diagnosis": true,
+
+	// §4.2 agent blocked / remedy surface
+	"agent.blocked.blocked_ref": true,
+	"agent.blocked.blocked_on":  true,
+	"agent.blocked.actor":       true,
+
+	// §4.3 view state (arxi-tui's own contract)
+	"slash.active":   true,
+	"slash.typed":    true,
+	"slash.matches":  true,
+	"slash.selected": true,
+	"slash.hint":     true,
+	"status.active":  true,
+	"ui.focus":       true,
+	"ui.max":         true,
+	"ui.surface":     true,
+
+	// §2 bootstrap set — host survival state the raw scene may display
+	"user.input":           true,
+	"user.input.submitted": true,
+	"host.escape.armed":    true,
+	"host.scene.error":     true,
 }
 
 func validateBinds(n *Node) error {
