@@ -333,6 +333,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	panicGesture := &driver.PanicGesture{}
 	var collected []fold.Event
 	var input string
+	// slashSel is the menu's highlighted row. The host owns it across frames
+	// the way it owns the input buffer: the fold is rebuilt per frame and
+	// carries it, but the state of the menu is not the scene's business.
+	slashSel := 0
 
 	repaint := func() {
 		state := fold.Fold(collected)
@@ -345,6 +349,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.SlashActive = true
 			state.SlashTyped = input[1:]
 			state.SlashMatches = fold.FilterSlashMatches(state.SlashTyped)
+			// The selection indexes the filtered list, so a keystroke that
+			// shrinks it must not leave the highlight past the last row: the
+			// menu would show no bright row while Enter would still submit
+			// the clamped one.
+			if slashSel >= len(state.SlashMatches) {
+				slashSel = len(state.SlashMatches) - 1
+			}
+			if slashSel < 0 {
+				slashSel = 0
+			}
+			state.SlashSelected = slashSel
 		} else {
 			state.SlashActive = false
 			state.SlashTyped = ""
@@ -388,7 +403,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					}
 				} else {
 					panicGesture.Reset() // any other key disarms the gesture
-					input = typeKey(input, ev.Key, ctx, drv)
+					if strings.HasPrefix(input, "/") {
+						// The menu is open: navigation steers the highlight
+						// and never reaches the buffer. Ctrl-C never gets
+						// here, so the escape hatch stays uncapturable
+						// (invariant 6) no matter what the menu does.
+						input, slashSel = slashMenuKey(input, ev.Key, slashSel, ctx, drv)
+					} else {
+						input = typeKey(input, ev.Key, ctx, drv)
+					}
 				}
 				repaint()
 			case term.EventResize:
@@ -453,6 +476,67 @@ func isCtrlC(k term.Key) bool {
 	return k.Type == term.KeyRunes &&
 		len(k.Runes) == 1 && k.Runes[0] == 'c' &&
 		k.Mod&term.ModCtrl != 0
+}
+
+// slashMenuKey applies one keypress while the slash menu is open. Up and down
+// steer the highlight, tab walks the categories, escape closes the menu by
+// dropping the line — the menu is derived from the "/" prefix, so a dismissed
+// menu is a cleared buffer — and enter runs the highlighted command, which is
+// what the menu's footer promises. The selection comes back because it lives
+// across frames in the loop, the way the input buffer does; any key that
+// changes the filter puts it back on the first row.
+func slashMenuKey(input string, k term.Key, sel int, ctx context.Context, drv Driver) (string, int) {
+	matches := fold.FilterSlashMatches(strings.TrimPrefix(input, "/"))
+	switch k.Type {
+	case term.KeyUp:
+		if sel > 0 {
+			sel--
+		}
+		return input, sel
+	case term.KeyDown:
+		if sel < len(matches)-1 {
+			sel++
+		}
+		return input, sel
+	case term.KeyTab:
+		// Walk to the first match of the next distinct category, wrapping to
+		// the top. With a single category this lands on row 0, which is also
+		// the sane thing for tab to do there.
+		if len(matches) == 0 {
+			return input, sel
+		}
+		if sel >= len(matches) {
+			sel = 0
+		}
+		cur := matches[sel].Category
+		next := 0
+		for i := sel + 1; i < len(matches); i++ {
+			if matches[i].Category != cur {
+				next = i
+				break
+			}
+		}
+		return input, next
+	case term.KeyEscape:
+		return "", 0
+	case term.KeyEnter:
+		if len(matches) == 0 {
+			return input, sel
+		}
+		if sel >= len(matches) {
+			sel = len(matches) - 1
+		}
+		// Phase 0: a command submits as a prompt (typeKey's contract); Phase 2
+		// routes /ui to the mutation surface.
+		_ = drv.SubmitPrompt(ctx, matches[sel].Name)
+		return "", 0
+	default:
+		next := typeKey(input, k, ctx, drv)
+		if next != input {
+			return next, 0 // the filter changed: the first row is selected again
+		}
+		return input, sel
+	}
 }
 
 // Terminal is the minimal view of a terminal that the event loop needs.

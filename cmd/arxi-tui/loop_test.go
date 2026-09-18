@@ -5,9 +5,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
+	"github.com/michiTrader/arxi_tui/internal/term"
 	"github.com/michiTrader/arxi_tui/internal/theme"
 )
 
@@ -210,6 +212,199 @@ func TestLoopParksTheTerminalCursorInTheInputBar(t *testing.T) {
 	// After "hi" the caret walked two columns with the text.
 	if !strings.Contains(out, "\x1b[23;5H") {
 		t.Errorf("caret did not follow the typed text; want a park at row 23 column 5. output:\n%q", out)
+	}
+}
+
+// stripANSI removes escape sequences so a test can match the visible text the
+// way the user sees it, not the byte stream the terminal receives. The input
+// row arrives as styled spans — "┃ " and the typed text are separated by SGR
+// resets — so a byte-level Contains("┃ x") can never match a frame the user
+// would read as "┃ x".
+func stripANSI(s string) string {
+	var b strings.Builder
+	for {
+		i := strings.Index(s, "\x1b[")
+		if i < 0 {
+			b.WriteString(s)
+			return b.String()
+		}
+		b.WriteString(s[:i])
+		s = s[i+2:]
+		j := 0
+		for j < len(s) && !unicode.IsLetter(rune(s[j])) {
+			j++
+		}
+		if j < len(s) {
+			j++ // the final letter terminates the sequence
+		}
+		s = s[j:]
+	}
+}
+
+// frameHasTranscriptLine reports whether any visual row of the frame is
+// exactly the given text, after escapes are stripped. A whole-row match is
+// what tells a transcript line from a menu row (a menu row continues with the
+// description) and from chrome that merely contains the word.
+func frameHasTranscriptLine(frame, text string) bool {
+	for _, l := range strings.Split(stripANSI(frame), "\n") {
+		if strings.TrimRight(l, "\r") == text {
+			return true
+		}
+	}
+	return false
+}
+
+// TestLoopSlashMenuNavigateAndRun drives the menu end to end: "/" opens it,
+// down moves the highlight to the second command, enter runs it, and the
+// command name lands in the transcript as the submitted prompt — while the
+// menu itself closes, because the buffer it was derived from is gone.
+func TestLoopSlashMenuNavigateAndRun(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factorySobria))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	if err := doc.Validate(); err != nil {
+		t.Fatalf("scene validation: %v", err)
+	}
+
+	script := []scheduledEvent{
+		{0, keyEvent('/')},
+		{10 * time.Millisecond, arrowEvent(term.KeyDown)},
+		{10 * time.Millisecond, arrowEvent(term.KeyDown)},
+		{30 * time.Millisecond, enterEvent()},
+		{100 * time.Millisecond, ctrlCharEvent('c')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+	}
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: make(chan fold.Event, 64)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv); err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	// One frame per repaint, each introduced by the clear-home sequence.
+	frames := strings.Split(tty.output(), "\x1b[H\x1b[2J")
+
+	// The menu must have been open with all five commands.
+	if !strings.Contains(tty.output(), "Commands 5 · type to filter") {
+		t.Errorf("menu header never rendered; output:\n%s", tty.output())
+	}
+
+	// Enter runs the highlighted row: "focus" appears as a transcript line of
+	// its own in a frame where the menu is already closed. A whole-row match
+	// is what tells the transcript line from the menu row "focus  Focus a
+	// node by id", which contains the same word.
+	ranCommand := false
+	for _, f := range frames {
+		if frameHasTranscriptLine(f, "focus") && !strings.Contains(f, "Commands 5") {
+			ranCommand = true
+			break
+		}
+	}
+	if !ranCommand {
+		t.Errorf("enter did not run the highlighted command 'focus' (or the menu stayed open); frames:\n%s", tty.output())
+	}
+}
+
+// TestLoopSlashMenuEscapeCloses verifies escape closes the menu by dropping
+// the line: the menu is derived from the "/" prefix, so a dismissed menu is a
+// cleared buffer, and the next keystroke types into the plain input again.
+func TestLoopSlashMenuEscapeCloses(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factorySobria))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	script := []scheduledEvent{
+		{0, keyEvent('/')},
+		{10 * time.Millisecond, keyEvent('h')},
+		{30 * time.Millisecond, arrowEvent(term.KeyEscape)},
+		{30 * time.Millisecond, keyEvent('x')},
+		{100 * time.Millisecond, ctrlCharEvent('c')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+	}
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: make(chan fold.Event, 64)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv); err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	out := tty.output()
+	if !strings.Contains(out, "Commands 1 · type to filter") {
+		t.Errorf("filtered menu (\"/h\" → help) never rendered; output:\n%s", out)
+	}
+
+	// After escape the buffer is cleared (the placeholder returns) and the
+	// menu is gone; typing 'x' lands in the plain input with no menu above it.
+	frames := strings.Split(out, "\x1b[H\x1b[2J")
+	cleared, typingAgain := false, false
+	for _, f := range frames {
+		// The input row carries the sobria prefix, so the placeholder line is
+		// "┃ ask anything, or / for commands" — prefix included.
+		if frameHasTranscriptLine(f, "┃ ask anything, or / for commands") && !strings.Contains(f, "Commands") {
+			cleared = true
+		}
+		if strings.Contains(stripANSI(f), "┃ x") && !strings.Contains(f, "Commands") && !strings.Contains(f, "no matches") {
+			typingAgain = true
+		}
+	}
+	if !cleared {
+		t.Errorf("escape did not clear the line (placeholder never returned without the menu); frames:\n%s", out)
+	}
+	if !typingAgain {
+		t.Errorf("after escape the next keystroke did not type into the plain input; frames:\n%s", out)
+	}
+}
+
+// TestLoopSlashMenuTabWalksCategories verifies tab jumps the highlight to the
+// first match of the next category, wrapping to the top. The registry has a
+// single category, so down-down-tab must land back on row 0: enter then runs
+// "help", not "focus" — the exact discrimination the test hinges on.
+func TestLoopSlashMenuTabWalksCategories(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factorySobria))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	script := []scheduledEvent{
+		{0, keyEvent('/')},
+		{10 * time.Millisecond, arrowEvent(term.KeyDown)},
+		{10 * time.Millisecond, arrowEvent(term.KeyDown)},
+		{10 * time.Millisecond, arrowEvent(term.KeyTab)},
+		{30 * time.Millisecond, enterEvent()},
+		{100 * time.Millisecond, ctrlCharEvent('c')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+	}
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: make(chan fold.Event, 64)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv); err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	frames := strings.Split(tty.output(), "\x1b[H\x1b[2J")
+	ranHelp := false
+	for _, f := range frames {
+		if frameHasTranscriptLine(f, "help") && !strings.Contains(f, "Commands 5") {
+			ranHelp = true
+			break
+		}
+	}
+	if !ranHelp {
+		t.Errorf("tab did not walk the highlight back to the first row ('help' never ran); frames:\n%s", tty.output())
 	}
 }
 

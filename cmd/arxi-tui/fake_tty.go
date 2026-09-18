@@ -81,3 +81,16 @@ func keyEvent(r rune) term.Event {
 func ctrlCharEvent(r rune) term.Event {
 	return term.Event{Kind: term.EventKey, Key: term.Key{Type: term.KeyRunes, Runes: []rune{r}, Mod: term.ModCtrl}}
 }
+
+// arrowEvent builds a term.EventKey for one of the navigation keys (KeyUp,
+// KeyDown, …), the way the decoder reports an arrow escape sequence.
+func arrowEvent(t term.KeyType) term.Event {
+	return term.Event{Kind: term.EventKey, Key: term.Key{Type: t}}
+}
+
+// enterEvent builds a term.EventKey for Enter. The real decoder maps the
+// carriage-return byte to KeyEnter, never to a '\r' rune — a fake that sent
+// the rune would not exercise the submit path.
+func enterEvent() term.Event {
+	return term.Event{Kind: term.EventKey, Key: term.Key{Type: term.KeyEnter}}
+}
