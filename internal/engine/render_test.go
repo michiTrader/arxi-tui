@@ -379,6 +379,90 @@ func TestOverlayPaddingKeepsSpanStyles(t *testing.T) {
 	}
 }
 
+// TestSlashMenuListRendersHeaderColumnsAndSelection verifies the sobria menu's
+// three visible contracts: a count header, rows laid out in columns (name,
+// description, category right-aligned at the edge), and exactly one bright row
+// — the selection — among dim ones. This is the look fx's menus taught: gray
+// everything except the row the user is on.
+func TestSlashMenuListRendersHeaderColumnsAndSelection(t *testing.T) {
+	sceneJSON := `{ "root": { "type": "stack", "children": [
+	  { "id": "cmds", "type": "list", "bind": "slash.matches",
+	    "filter_by": "typed", "count": true }
+	]}}`
+
+	doc, err := scene.ParseDocument([]byte(sceneJSON))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	state := fold.State{
+		SlashActive:   true,
+		SlashMatches:  fold.FilterSlashMatches(""),
+		SlashSelected: 1, // "max" is the highlighted row
+	}
+
+	r := Renderer{Width: 60, Height: 12}
+	f := r.RenderFrame(doc, state)
+	got := f.Plain()
+	styled := f.Styled()
+
+	// The header is the count line, dim like the rest of the chrome.
+	if !strings.Contains(got, "Commands 5 · type to filter") {
+		t.Errorf("menu header missing; got:\n%s", got)
+	}
+
+	// The selected row renders bright (token "text") and its neighbors stay
+	// dim — a menu where every row shouts has no selection at all.
+	if !strings.Contains(styled, "«text:max»") {
+		t.Errorf("selected row 'max' is not bright; styled output:\n%s", styled)
+	}
+	if !strings.Contains(styled, "«dim:help»") {
+		t.Errorf("unselected row 'help' is not dim; styled output:\n%s", styled)
+	}
+	if strings.Contains(styled, "«text:help»") || strings.Contains(styled, "«text:focus»") {
+		t.Errorf("selection leaked onto an unselected row; styled output:\n%s", styled)
+	}
+
+	// Categories are right-aligned: every row ends in its category at the
+	// frame's right edge, all in the same column, and no row overflows.
+	lines := strings.Split(got, "\n")
+	for i, want := range []string{"help", "max", "focus", "surface", "ui"} {
+		line := lines[i+1] // the header is line 0
+		if !strings.HasPrefix(line, want) || !strings.HasSuffix(line, "General") {
+			t.Errorf("row %d: want name %q and category flush right, got %q", i, want, line)
+		}
+		if w := ansiStringWidth(line); w != 60 {
+			t.Errorf("row %d is %d columns wide in a 60-column frame; the category column only means something when every row ends at the same edge:\n%s", i, w, got)
+		}
+	}
+
+	// The description column starts two past the longest name in the set, so
+	// descriptions line up without a global width nobody asked for.
+	if !strings.Contains(got, "surface  Switch active surface") {
+		t.Errorf("description column is not two past the longest name; got:\n%s", got)
+	}
+}
+
+// TestSlashMenuSelectionClampsToMatches verifies a stale selection index
+// (the filter shrank after ↑/↓ moved the highlight) cannot crash the render
+// or leave the menu with no bright row: the last row is the one that lights.
+func TestSlashMenuSelectionClampsToMatches(t *testing.T) {
+	state := fold.State{
+		SlashActive:   true,
+		SlashMatches:  fold.FilterSlashMatches(""),
+		SlashSelected: 99,
+	}
+	r := Renderer{Width: 60, Height: 12}
+	doc, err := scene.ParseDocument([]byte(`{ "root": { "type": "list", "bind": "slash.matches" }}`))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	styled := r.RenderFrame(doc, state).Styled()
+	if !strings.Contains(styled, "«text:ui»") {
+		t.Errorf("stale selection did not clamp to the last row ('ui'); styled output:\n%s", styled)
+	}
+}
+
 func fmtShort(n int) string {
 	return string(rune('A' + n - 1))
 }

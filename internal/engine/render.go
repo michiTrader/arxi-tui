@@ -901,17 +901,47 @@ func (r *Renderer) renderList(n *scene.Node, state fold.State, budget int) ui.Fr
 			matches = nil
 		}
 
-		// Count header if requested.
+		// Count header: the menu's orientation line. It is chrome, so it is
+		// dim — sobria emphasizes by brightening text, and nothing about a
+		// count is emphasis.
 		if n.Count && len(matches) > 0 {
-			countText := fmt.Sprintf("%d commands", len(matches))
-			lines = append(lines, ui.Line{ui.Span{Text: countText, Style: "dim"}})
+			lines = append(lines, ui.Line{ui.Span{
+				Text:  fmt.Sprintf("Commands %d · type to filter", len(matches)),
+				Style: "dim",
+			}})
 		}
 
-		// Render each match as a row: <name>  <description>
+		// The name column is padded from the longest name in the current
+		// match set, not from a global one: descriptions line up without
+		// reserving width for a word nobody is looking at.
+		nameW := 0
 		for _, m := range matches {
-			descText := fmt.Sprintf("%s  %s", m.Name, m.Description)
-			wrapped := ui.WrapSpans([]ui.Span{{Text: descText, Style: "text"}}, r.Width, nil)
-			lines = append(lines, wrapped...)
+			if w := ansiStringWidth(m.Name); w > nameW {
+				nameW = w
+			}
+		}
+
+		// The selected row is the bright one and every other row is dim.
+		// Sobria has no color and paints no backgrounds: emphasis is
+		// brightening text, so the highlighted command is the only row at
+		// full brightness (docs/BINDS.md §4.3, slash.selected). An index the
+		// filter shrank past clamps to the last row, never to nothing: Enter
+		// will submit the clamped row, so the menu has to show it — a menu
+		// with no highlight while Enter still acts is a menu that lies.
+		selected := state.SlashSelected
+		if selected >= len(matches) {
+			selected = len(matches) - 1
+		}
+		if selected < 0 || !state.SlashActive {
+			selected = -1 // no row is the bright one
+		}
+
+		for i, m := range matches {
+			style := "dim"
+			if i == selected {
+				style = "text"
+			}
+			lines = append(lines, slashRow(m, nameW, r.Width, style))
 		}
 
 		if len(lines) == 0 {
@@ -926,6 +956,30 @@ func (r *Renderer) renderList(n *scene.Node, state fold.State, budget int) ui.Fr
 	}
 
 	return ui.Frame{Live: lines, Width: r.Width, Height: len(lines)}
+}
+
+// slashRow builds one menu row: name, two spaces, description, and the
+// category right-aligned at the frame's edge. The row comes out exactly width
+// columns wide, so the overlay's pad pass is a no-op and the category stays
+// flush right. On a narrow overlay the description is the column that gives
+// up ground, never the category: a category that jumps column to column as
+// the filter narrows is unreadable, and a clipped description still says more
+// than a missing one.
+func slashRow(m fold.SlashMatch, nameW, width int, style string) ui.Line {
+	catW := ansiStringWidth(m.Category)
+	desc := m.Description
+	if room := width - nameW - 2 - 1 - catW; room >= 0 && ansiStringWidth(desc) > room {
+		desc = truncateText(desc, room)
+	}
+	row := ui.Line{{Text: m.Name, Style: style}}
+	if gap := nameW - ansiStringWidth(m.Name); gap > 0 {
+		row = append(row, ui.Span{Text: strings.Repeat(" ", gap), Style: style})
+	}
+	row = append(row, ui.Span{Text: "  " + desc, Style: style})
+	if pad := width - nameW - 2 - ansiStringWidth(desc) - catW; pad > 0 {
+		row = append(row, ui.Span{Text: strings.Repeat(" ", pad), Style: style})
+	}
+	return append(row, ui.Span{Text: m.Category, Style: style})
 }
 
 // resolveBind resolves a bind string into its current value from fold.State.
