@@ -58,9 +58,10 @@ func TestEveryExpectedRefusalIsTheRefusalTheEngineGives(t *testing.T) {
 				name := filepath.Base(c.Path)
 				doc, parseErr := scene.ParseNamed(name, a.Document)
 
-				got, line, addressed := refuse(doc, parseErr, a.Refused.Kind)
+				v := Grade(doc, parseErr, a.Refused.Kind)
+				got, line, addressed := v.Message, v.Line, v.Addressed
 
-				if got == "" {
+				if v.Accepted {
 					t.Errorf("attempt %d (%s) was accepted, but the case says it must be refused with %q\n"+
 						"consequence: the case claims a repair turn that does not exist, so it would score the model against a loop it is never put through — and a corpus of imaginary refusals measures nothing.\n"+
 						"remedy: either correct the attempt document so it really is refused, or delete the attempt if the engine is right to accept it.",
@@ -135,7 +136,7 @@ func TestEveryConvergenceDocumentActuallyConverges(t *testing.T) {
 			// what the order asked for. Deleting the offending node also
 			// makes a scene validate.
 			bound := make(map[string]bool)
-			for _, b := range collectBinds(doc) {
+			for _, b := range CollectBinds(doc) {
 				bound[b] = true
 			}
 			for _, want := range c.Convergence.MustBind {
@@ -187,95 +188,4 @@ func TestCorpusExercisesTheRepairLoopNotTheFirstShot(t *testing.T) {
 	}
 	t.Logf("%d of %d cases exercise at least one repair turn; refusals by kind: bind=%d token=%d",
 		withRepair, len(cases), kinds[KindBind], kinds[KindToken])
-}
-
-// refuse runs the validator the attempt names and reports what it said: the
-// message, the line it addressed, and whether it carried an address at all.
-// An empty message means the engine accepted the document.
-//
-// The two validators are dispatched here rather than at the call site because
-// they differ in shape as well as type — Validate returns one error and stops,
-// ValidateTokens collects every offender — and the corpus cares about the same
-// three facts either way.
-func refuse(doc *scene.Document, parseErr error, kind string) (msg string, line int, addressed bool) {
-	if parseErr != nil {
-		// A document that does not parse never reaches either validator, so
-		// the parse refusal is the answer regardless of the declared kind.
-		var sceneErr *scene.Error
-		if asSceneError(parseErr, &sceneErr) {
-			return sceneErr.Error(), sceneErr.Loc.Line, sceneErr.Loc.Line > 0
-		}
-		return parseErr.Error(), 0, false
-	}
-
-	switch kind {
-	case KindToken:
-		errs := scene.ValidateTokens(doc, theme.SOBRIA())
-		if len(errs) == 0 {
-			return "", 0, false
-		}
-		return errs[0].Error(), errs[0].Loc.Line, errs[0].Loc.Line > 0
-	default:
-		err := doc.Validate()
-		if err == nil {
-			return "", 0, false
-		}
-		var sceneErr *scene.Error
-		if asSceneError(err, &sceneErr) {
-			return sceneErr.Error(), sceneErr.Loc.Line, sceneErr.Loc.Line > 0
-		}
-		return err.Error(), 0, false
-	}
-}
-
-// collectBinds returns every bind path a document addresses. It walks the same
-// arms the validator does — children, prefix, suffix, row_template — because a
-// must_bind field satisfied only inside a row template is still satisfied, and
-// SCENES.md Q10 makes templates the place relative binds live.
-//
-// It is a local walker rather than an export from internal/scene on purpose:
-// the corpus is a consumer of the scene package, and widening that package's
-// API for a test's convenience is how an internal detail becomes a contract
-// nobody meant to sign.
-func collectBinds(doc *scene.Document) []string {
-	var out []string
-	var walk func(n *scene.Node)
-	walk = func(n *scene.Node) {
-		if n == nil {
-			return
-		}
-		if n.Bind != "" {
-			out = append(out, n.Bind)
-		}
-		if n.When != "" {
-			if parts := strings.Fields(n.When); len(parts) > 0 && parts[0] != "" {
-				out = append(out, parts[0])
-			}
-		}
-		for _, c := range n.Children {
-			walk(c)
-		}
-		walk(n.PrefixNode())
-		walk(n.Suffix)
-		walk(n.RowTemplate)
-	}
-	walk(doc.Root)
-	return out
-}
-
-// asSceneError is errors.As specialised to *scene.Error, kept as a helper so
-// the intent reads at the call site.
-func asSceneError(err error, target **scene.Error) bool {
-	for err != nil {
-		if se, ok := err.(*scene.Error); ok {
-			*target = se
-			return true
-		}
-		u, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			return false
-		}
-		err = u.Unwrap()
-	}
-	return false
 }
