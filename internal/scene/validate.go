@@ -2,6 +2,7 @@ package scene
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/michiTrader/arxi_tui/internal/theme"
@@ -95,6 +96,36 @@ var signedBinds = map[string]bool{
 	"user.input.submitted": true,
 	"host.escape.armed":    true,
 	"host.scene.error":     true,
+}
+
+// SignedBinds returns the §4.5 inventory: every bind path a scene may
+// reference, sorted. The slice is freshly built on each call, so a caller
+// cannot mutate the validator's inventory by holding onto it.
+//
+// This exists for one reason that is worth stating, because the obvious
+// alternative is cheaper and wrong. Phase 2's repair loop has to tell the model
+// which binds exist; without that, the first turn of every case is spent
+// guessing the vocabulary, and the corpus measures recall of an undocumented
+// list instead of the repair loop PLAN.md asked it to measure. The cheap
+// alternative is to write the list out again in the runner's prompt — which
+// would be the *fourth* copy of the inventory (docs/BINDS.md §4, signedBinds
+// here, and the two audit directions in binds_audit_test.go). That map has
+// already drifted from the document in both directions once, and the guard
+// test only exists because it did. A hand-copied prompt list would drift the
+// same way, silently, and its failure mode is the expensive one: the model is
+// told a signed bind does not exist, avoids it, and the corpus records that as
+// the model's failure rather than the prompt's.
+//
+// Exporting the inventory rather than the map keeps the validator the single
+// source: there is no second list to keep in step, so there is no third drift
+// guard to write.
+func SignedBinds() []string {
+	out := make([]string, 0, len(signedBinds))
+	for bind := range signedBinds {
+		out = append(out, bind)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // validateBinds walks a subtree, carrying the node's access path so a refusal
