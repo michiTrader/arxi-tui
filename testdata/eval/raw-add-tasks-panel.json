@@ -1,0 +1,47 @@
+{
+  "id": "raw-add-tasks-panel",
+  "order": "put a tasks panel on the right, next to the conversation",
+  "base": "RAW.json",
+  "rationale": "The order says 'on the right' and names no field. The plausible miss is the bind: 'tasks.list' reads like the obvious name for what BINDS.md signs as 'agent.todos'. Kept deliberately to a single refusal after a measurement: a second attempt using a grid node was written for this case and the engine accepted it, because PLAN.md signs 'unknown-but-parseable is a warning' so that a v0 document keeps booting under v1 — an unknown node renders as a placeholder, it is not a load-time refusal. The attempt was removed rather than the rule changed. It is recorded here because it is exactly the kind of refusal a corpus author invents from intuition, and inventing it would have taught the model to expect an error the product has decided never to raise.",
+  "attempts": [
+    {
+      "note": "right shape, guessed bind name",
+      "document": {
+        "root": {
+          "type": "row",
+          "children": [
+            { "id": "chat", "type": "markdown", "bind": "chat.history", "weight": 3 },
+            {
+              "id": "tasks",
+              "type": "box",
+              "weight": 1,
+              "title": "Tasks",
+              "border": "single",
+              "children": [{ "type": "list", "bind": "tasks.list" }]
+            }
+          ]
+        }
+      },
+      "expect_refused": { "reason": "unsigned bind \"tasks.list\"", "line": 12 }
+    }
+  ],
+  "convergence": {
+    "document": {
+      "root": {
+        "type": "row",
+        "children": [
+          { "id": "chat", "type": "markdown", "bind": "chat.history", "weight": 3 },
+          {
+            "id": "tasks",
+            "type": "box",
+            "weight": 1,
+            "title": "Tasks",
+            "border": "single",
+            "children": [{ "type": "list", "bind": "agent.todos" }]
+          }
+        ]
+      }
+    },
+    "must_bind": ["chat.history", "agent.todos"]
+  }
+}

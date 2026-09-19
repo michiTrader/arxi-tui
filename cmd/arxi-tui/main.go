@@ -79,7 +79,7 @@ func run() error {
 	// Load scene document. The default is the sobria scene (Scene 2, the
 	// fx-inspired default per PLAN.md); if it fails to parse or validate, fall
 	// back to the factory RAW scene (Scene 1) so the interface always boots.
-	doc, err := loadScene("testdata/SOARIA.json", factoryRAW)
+	doc, sceneNotice, err := loadScene("testdata/SOARIA.json", factoryRAW)
 	if err != nil {
 		return fmt.Errorf("scene load: %w", err)
 	}
@@ -93,7 +93,7 @@ func run() error {
 	if err != nil {
 		// No tty (piped output): render the frame once and exit. This keeps
 		// the pipeline inspectable — the same frames a tty would draw, on stdout.
-		return runNonInteractive(doc, theme)
+		return runNonInteractive(doc, theme, sceneNotice)
 	}
 	defer tty.Close()
 
@@ -125,7 +125,7 @@ func run() error {
 	}
 	defer drv.Close()
 
-	return loop(ctx, tty, doc, theme, eventCh, drv)
+	return loop(ctx, tty, doc, theme, eventCh, drv, sceneNotice)
 }
 
 // Driver is the minimal interface the event loop needs from whatever feeds it
@@ -336,7 +336,12 @@ func (d *serveDriver) Close() error {
 // the raw scene — and when there is nothing left to restore, the raw scene is
 // already showing and the fold is empty, the gesture has done its whole job and
 // the program leaves.
-func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.Theme, eventCh <-chan fold.Event, drv Driver) error {
+// sceneNotice is the addressed reason the requested scene was refused, or ""
+// when the active scene is the one that was asked for. It is host state exactly
+// as the input buffer is — the fold is rebuilt every frame and carries it, but
+// no core event produces it (BINDS.md §2: `host.scene.error` is "the one bind
+// the scene may render but the core never provides").
+func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.Theme, eventCh <-chan fold.Event, drv Driver, sceneNotice string) error {
 	panicGesture := &driver.PanicGesture{}
 	var collected []fold.Event
 	var input string
@@ -348,6 +353,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	repaint := func() {
 		state := fold.Fold(collected)
 		state.UserInput = input // view state: the host owns the input buffer
+		// Invariant 3's other half: the fallback scene is on screen, and this
+		// is the notice that says why. It is re-applied on every repaint
+		// because Fold rebuilds State from the event list each frame
+		// (ADR-0004, pull by frame), so a value set once would vanish on the
+		// next keystroke.
+		state.SceneError = sceneNotice
 
 		// slash.* view-state: when the buffer starts with "/", the slash
 		// menu is active and the typed substring filters the command list.
@@ -577,31 +588,45 @@ type Terminal interface {
 // the factory RAW scene if the file is missing or fails to parse/validate.
 // This implements invariant 3: a corrupt scene on disk falls back to the raw
 // scene with a file:line notice, never a crash.
-func loadScene(path string, fallback string) (*scene.Document, error) {
-	data, err := os.ReadFile(path)
+// The second return value is the notice, and it is the half that was missing:
+// the fallback worked, but the refusal was dropped on the floor, so a user whose
+// scene failed to load got the raw interface and no statement of why. Invariant
+// 3 names both halves — "falls back to the raw scene *with the file:line:
+// notice on screen*" — and BINDS.md §2 signs the channel for it
+// (`host.scene.error`, "the last-good-scene notice; null means the active scene
+// validated"). An empty notice means the active scene is the one asked for.
+func loadScene(path string, fallback string) (*scene.Document, string, error) {
+	// ParseFile carries the path into the error, so the notice addresses the
+	// file the user would open rather than the bytes the host happened to read.
+	doc, err := scene.ParseFile(path)
 	if err != nil {
-		// Scene file missing: use the fallback factory scene.
-		return scene.ParseDocument([]byte(fallback))
-	}
-	doc, err := scene.ParseDocument(data)
-	if err != nil {
-		// Parse error: fall back to the factory RAW scene so the
-		// interface always boots (invariant 3).
-		doc, fbErr := scene.ParseDocument([]byte(fallback))
-		if fbErr != nil {
-			return nil, fmt.Errorf("scene parse %s: %w (and fallback also failed: %v)", path, err, fbErr)
+		if os.IsNotExist(err) {
+			// A missing scene file is not a defect: the default install has
+			// no user scene, so the factory scene is the intended document
+			// and there is nothing to report.
+			fbDoc, fbErr := scene.ParseDocument([]byte(fallback))
+			return fbDoc, "", fbErr
 		}
-		return doc, nil
-	}
-	if err := doc.Validate(); err != nil {
-		// Validation error (e.g. unsigned bind): fall back to factory RAW.
+		// Parse error: fall back to the factory scene so the interface always
+		// boots (invariant 3), and carry the addressed reason to the screen.
 		fbDoc, fbErr := scene.ParseDocument([]byte(fallback))
 		if fbErr != nil {
-			return doc, fmt.Errorf("scene validate %s: %w (fallback also failed: %v)", path, err, fbErr)
+			return nil, "", fmt.Errorf("scene parse %s: %w (and fallback also failed: %v)", path, err, fbErr)
 		}
-		return fbDoc, nil
+		return fbDoc, err.Error(), nil
 	}
-	return doc, nil
+	if err := doc.Validate(); err != nil {
+		// Validation error (e.g. unsigned bind): same contract as a parse
+		// error. A scene that parses but cannot be satisfied fails the way a
+		// syntax error does — PLAN.md invariant 3 makes that equivalence
+		// explicit so a semantically dead scene cannot take the session down.
+		fbDoc, fbErr := scene.ParseDocument([]byte(fallback))
+		if fbErr != nil {
+			return doc, "", fmt.Errorf("scene validate %s: %w (fallback also failed: %v)", path, err, fbErr)
+		}
+		return fbDoc, err.Error(), nil
+	}
+	return doc, "", nil
 }
 
 // render repaints the whole screen. Phase 0 uses clear-home + full redraw;
@@ -638,9 +663,11 @@ func render(w io.Writer, doc *scene.Document, r engine.Renderer, theme *theme.Th
 // runNonInteractive renders a single frame to stdout when stdin is not a
 // terminal. Same scene, same fold, same renderer — no tty path is a second
 // renderer.
-func runNonInteractive(doc *scene.Document, theme *theme.Theme) error {
+func runNonInteractive(doc *scene.Document, theme *theme.Theme, sceneNotice string) error {
 	r := engine.Renderer{Width: 80, Height: 24}
-	f := r.RenderFrame(doc, fold.Fold(nil))
+	state := fold.Fold(nil)
+	state.SceneError = sceneNotice
+	f := r.RenderFrame(doc, state)
 	// No terminal: plain output. ANSI escapes in a pipe would pollute greps.
 	fmt.Print(f.Plain())
 	return nil
