@@ -261,3 +261,82 @@ func TestTheNonInteractivePathShowsTheNoticeToo(t *testing.T) {
 			"remedy: thread the notice into runNonInteractive's fold state.", sb.String())
 	}
 }
+
+// The boot half of the vocabulary guard, and the reason it is here rather than
+// only in internal/scene.
+//
+// scene.Warnings() computing a correct warning proves nothing on its own: this
+// project has now twice shipped a remedy that satisfied its guard and changed
+// nothing a user could see — the unrenderedFields entry that refused nothing,
+// and the skip-list in a _test.go that could not reach the parser. A warning
+// that never leaves the package it is computed in would be the third. What is
+// asserted here is the delivery: the document still loads, and the notice
+// carrying the reason arrives on the channel invariant 3 already built.
+func TestAnUnknownPropertyLoadsTheSceneAndSaysWhatItIgnored(t *testing.T) {
+	path := writeScene(t, "future.json", `{ "root": { "type": "stack", "children": [
+    { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1, "reveal": "typewriter" },
+    { "id": "prompt", "type": "input", "bind": "user.input", "placeholder": "> " }
+]}}`)
+
+	doc, notice, err := loadScene(path, factoryRAW)
+	if err != nil {
+		t.Fatalf("loadScene returned a hard error for a document with an unknown property: %v\n"+
+			"consequence: PLAN.md's forward-compatibility rule is \"unknown-but-parseable is a\n"+
+			"warning\". Refusing here means a scene written for a later arxi-tui cannot boot at\n"+
+			"all under this one, which is the opposite of the promise.", err)
+	}
+
+	// The user's document, not the fallback. This is the assertion that
+	// separates a warning from a refusal, and getting it wrong would break
+	// every v1 document under a v0 engine while looking like caution.
+	if doc == nil || doc.Root == nil || len(doc.Root.Children) != 2 {
+		t.Fatalf("the document was replaced rather than loaded with a warning\n" +
+			"consequence: an unknown property would cost the user their whole scene, when the\n" +
+			"engine understood every other thing in it.")
+	}
+
+	if notice == "" {
+		t.Fatalf("a scene declaring %q — a property SCENES.md names and this engine does not\n"+
+			"implement — loaded with no notice at all.\n"+
+			"consequence: the silent drop, which is the class this repository has now paid for\n"+
+			"five times. The scene loads, reports success, and the property never happened, so\n"+
+			"the author's only evidence is a screen that looks wrong. Worse, the same silence\n"+
+			"covers a typo: a misspelled \"children\" deletes the whole subtree on this path.\n"+
+			"remedy: loadScene must surface scene.Warnings() on host.scene.error.", "reveal")
+	}
+	if !strings.Contains(notice, "reveal") {
+		t.Errorf("the notice does not name the ignored property, so the author cannot act on it: %q", notice)
+	}
+	if !strings.Contains(notice, "future.json") {
+		t.Errorf("the notice carries no file address (invariant 4): %q\n"+
+			"remedy: the warning's Loc must come from the parsed document, which knows the path\n"+
+			"because loadScene parses by path.", notice)
+	}
+}
+
+// A document whose tree sits under the wrong top-level key draws nothing under
+// any engine, so it is the one shape that is refused rather than warned about.
+// The distinction is the whole design: forward compatibility protects
+// constructions a later version might understand, and there is no version in
+// which a scene with no root renders.
+func TestASceneWithNoRootFallsBackAndSaysSo(t *testing.T) {
+	path := writeScene(t, "rootless.json", `{ "scene": { "type": "text", "text": "hi" } }`)
+
+	doc, notice, err := loadScene(path, factoryRAW)
+	if err != nil {
+		t.Fatalf("loadScene returned a hard error: %v\n"+
+			"consequence: invariant 3 says a corrupt scene falls back, never crashes.", err)
+	}
+	if notice == "" {
+		t.Fatalf("a document with no \"root\" loaded with no notice.\n" +
+			"consequence: the interface draws nothing and never says why. This parsed, validated\n" +
+			"clean and rendered an empty screen before the refusal existed — the failure looks\n" +
+			"exactly like an engine bug to the one person who could fix it.")
+	}
+	// The fallback must actually be showing, because the user's document
+	// has nothing to show. This is the half invariant 3 names explicitly
+	// and the half that was missing once before.
+	if doc == nil || doc.Root == nil {
+		t.Fatal("no document at all: the fallback did not fire, so the session has no scene")
+	}
+}

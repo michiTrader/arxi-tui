@@ -19,6 +19,15 @@ type Document struct {
 	src     []byte
 	file    string
 	offsets map[string]int
+
+	// declaredKeys is the set of json keys each object in the source
+	// actually wrote, keyed by the same access path as offsets. It exists
+	// because the parsed tree cannot answer the question: encoding/json
+	// drops an unrecognised key without a trace, and that silence is the
+	// defect Warnings() reports. Recorded by the parser for the same
+	// reason the offsets are — the token stream is the only place the
+	// evidence survives.
+	declaredKeys map[string][]string
 }
 
 // ParseDocument parses a JSON scene document from bytes. Syntax and type errors
@@ -38,7 +47,7 @@ func ParseNamed(name string, data []byte) (*Document, error) {
 	}
 	doc.src = data
 	doc.file = name
-	doc.offsets = nodeOffsets(data)
+	doc.offsets, doc.declaredKeys = nodeOffsets(data)
 	return &doc, nil
 }
 

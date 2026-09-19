@@ -145,6 +145,53 @@ to the *actions*.
   lives — the audit moved to `internal/engine` and now asks whether a frame
   changes or a refusal is raised, because the validating package cannot be the
   one that certifies the renderer.
+- **Repairing an instance is not repairing the class — ask what is doing the
+  dropping.** Five turns running, the same defect: a construction the format
+  documents, accepted by every layer, drawn by none, reported by nothing. Four
+  of those turns fixed it one field at a time, and each fix was correct. The
+  fifth measured the mechanism and found the previous four had bought exactly
+  the fields they named: `encoding/json` ignores *every* key outside the
+  struct's tags, so declaring `on_press` and `scroll` left `focus_glow`,
+  `transition`, `reveal`, `enter`, `shine` and `tab` — all named by SCENES.md —
+  parsing, validating clean and drawing nothing, indistinguishable from a
+  string nobody has ever typed. The cheapest tell that a repair is
+  instance-shaped: an invented key behaves exactly like the documented one. If
+  a nonsense input is handled identically to the thing just fixed, the fix
+  addressed a symptom and the mechanism is still open. The corollary is where
+  the real cost sat: the worst case was never the documented gap but the
+  **typo** — a misspelled `children` deleted an entire subtree while every
+  layer reported success, and a tree under a wrong top-level key validated
+  clean with no root at all.
+- **Two kinds of unknown deserve two answers, and the difference is whether a
+  later version could be right.** An unknown *property* may be a document
+  written for a future engine, so PLAN.md's signed rule applies — it is a
+  warning, the scene still loads, and the author is told what was skipped
+  (the engine already did this for unknown node *types* via
+  `[[UNKNOWN NODE TYPE]]`; properties had the opposite behaviour, and the
+  silent kind was the one the documentation called universal). A document with
+  **no root** is not that: no version of the format renders a scene with no
+  tree, so accepting it can only ever hide a mistake, and it is refused. The
+  question that separates them is not severity but "could a later engine be
+  right about this?"
+- **Derive the inventory, or watch it drift.** Four inventories in this
+  repository have now been maintained by hand beside the thing they describe,
+  and three drifted: the signed bind map from BINDS.md (both directions), the
+  unrendered-field map from the refusal it advertised, the universals audit
+  from the engine it claimed to check. The vocabulary is therefore computed
+  from `Node`'s json tags by reflection, and the injection that proves it
+  matters is instructive: replacing the reflection with a hand-written list
+  that was *correct on the day it was written* passed the entire suite. Only
+  adding a field to `Node` — the drift itself — made it fail. **A restore that
+  is merely a worse design is not a passing injection; it has to be the
+  defect.** The list was the design, the drift was the defect, and measuring
+  the first proved nothing.
+- **A finding computed and never delivered is the same silence, one layer
+  further out.** The warning had to reach `host.scene.error` and the screen,
+  not just exist in `internal/scene`. Twice before, a remedy satisfied its
+  guard and changed nothing a user could see (the `unrenderedFields` entry that
+  refused nothing; the skip-list in a `_test.go` that could not reach the
+  parser); a correct warning nobody ever reads would have been the third, and
+  it would have passed its own unit test.
 - **A fix no injection can break is not owned yet.** Three turns of injections
   paid for the habit, but the version that matters is the one aimed at the fix
   just written, not at the code it repaired: restore the original defect and
