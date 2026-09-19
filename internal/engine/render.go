@@ -1078,20 +1078,73 @@ func resolveBind(bind string, state fold.State) string {
 		// Full cost tracking lands in a later phase; for now the budget is
 		// not yet wired from run.started, so the empty-state ("0") holds.
 		return "0"
+
+	// The scalar binds below are signed in docs/BINDS.md §4, accepted by
+	// validate.go, and computed by internal/fold on every event — and until
+	// this block existed, none of them were read here. They fell to the
+	// default and drew "[…]", which is the checked-but-never-drawn failure
+	// this project has now paid for four times: the document validates, the
+	// screen is wrong, and no diagnostic fires anywhere, because clearing
+	// validation is exactly the signal that says the scene is fine.
+	//
+	// What separates this instance from row_template — refused rather than
+	// implemented, because its semantics were unsigned — is that nothing was
+	// left to design. The fold already maintains every field named here, so
+	// the value existed, was correct, and was discarded one function short of
+	// the frame. Projecting it invents no format.
+	case "todos.count":
+		return fmt.Sprintf("%d", state.TodosCount)
+	case "run.quiescent.diagnosis":
+		return state.QuiescentDiag
+	case "agent.blocked.actor":
+		return state.BlockedActor
+	case "agent.blocked.blocked_on":
+		return state.BlockedOn
+	case "slash.typed":
+		return state.SlashTyped
+	case "slash.selected":
+		return fmt.Sprintf("%d", state.SlashSelected)
+	case "ui.focus":
+		return state.UIFocus
+	case "ui.max":
+		return state.UIMax
+	case "ui.surface":
+		return state.UISurface
+
 	default:
 		// An unsatisfied bind renders as a placeholder, never a crash —
 		// the engine contract that makes community preview (Q16) and forward
 		// compatibility possible at the same time (ADR-0003).
-		return "[…]"
+		return placeholderValue
 	}
 }
 
+// placeholderValue is what an unresolvable bind displays. It is named rather
+// than repeated so evalWhen can recognise it: the difference between "the
+// value is this text" and "there is no value" is invisible once both are
+// strings, and that ambiguity is what let an unresolved gate read as true.
+const placeholderValue = "[…]"
+
 // evalWhen evaluates a `when` bind string as a boolean predicate. A non-empty
 // string value is truthy; "false", "0", and "" are falsy.
+//
+// The placeholder is falsy, and that is a decision rather than a detail. An
+// unresolvable bind still *displays* as "[…]" so a scene from a newer build
+// draws instead of crashing (ADR-0003) — but visibility is a different
+// question from display, and "I cannot resolve this" is not an affirmative
+// answer to it. Treating the placeholder as an ordinary non-empty string made
+// every unresolved gate render its node ON, which for `ui.max` inverted the
+// signed default precisely: BINDS.md gives "null — no pane is maximized", and
+// Scene 10 gates each pane on it, so the unknown state painted maximized
+// chrome over a screen with nothing maximized.
+//
+// That direction is the dangerous one. A dropped value degrades toward the
+// empty state and the user sees less than they asked for; a gate that fails
+// open degrades toward chrome they never asked for and cannot dismiss.
 func evalWhen(bind string, state fold.State) bool {
 	val := resolveBind(bind, state)
 	switch val {
-	case "", "0", "false":
+	case "", "0", "false", placeholderValue:
 		return false
 	default:
 		return true
