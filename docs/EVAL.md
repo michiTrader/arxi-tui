@@ -264,9 +264,74 @@ projection again leaves the whole `eval` package green while `engine` fails.
 That is a real limit of what the corpus can self-check, and it is written down
 rather than papered over — the corpus verifies its refusals against the
 validator, but it cannot verify its convergence documents against the screen.
-Whether `must_bind` should eventually assert on a rendered frame is a Phase 2
-question; until then the engine-side audits are what stand between a signed
-bind and a silent placeholder.
+
+### The limit, paid off
+
+That paragraph left one question open: whether `must_bind` should eventually
+assert on a rendered frame. It should, and it now does —
+`TestEveryCorpusMustBindFieldReachesTheFrame` renders every case's recorded
+convergence document and requires each `must_bind` field to put a value on
+screen.
+
+`Converged` asks whether a bind is *present* in the tree. That is the right
+question for the grader to ask: it judges documents a model wrote, and needing
+a renderer to do it would point the harness at the engine it must stay
+independent of. But presence is strictly weaker than projection, and the whole
+defect class lives in the gap between them — a bind can be signed, accepted,
+folded on every event, and still never reach a frame.
+
+So the question is asked from the other side. The test lives in
+`internal/engine` because the import direction decides it: `internal/eval`
+imports `scene`, `theme` and `ui` — no renderer, no fold state — while
+`engine` already imports both and adding `eval` closes no loop. The corpus
+stays a document grader; the engine checks the corpus's answers against the
+screen.
+
+Two details are load-bearing. Each bind's witness value is distinct, so a
+projection returning its neighbour's field fails instead of coincidentally
+matching. And each is short enough to survive MAXIMUM's sixteen-column Tasks
+pane: a longer witness gets word-wrapped, the value is on screen, and the
+substring search misses it anyway — a false alarm shaped exactly like the real
+defect, which is the kind that teaches a reader to ignore the guard.
+
+### Fifth instance: a case that was present and still wrong
+
+Building that test found one immediately, and it was a new shape.
+`session.tokens_used` **had** its case in `resolveBind`. The case returned the
+literal `"0"`, under a comment stating the budget was not yet wired from
+`run.started`. It had been wired since: `fold.go` captures `budget_usd` into
+`BudgetMicrounits`, accumulates `cost_usd` into `CostMicrounits`, and
+`deriveSessionTokensUsed()` subtracts them on every fold. The comment outlived
+the condition it described.
+
+A stale justification is worse than a missing case, because both signals that
+normally survive this class are inverted:
+
+- A missing bind draws `[…]`, which looks wrong on screen. This drew `0` —
+  the bind's own signed empty state in BINDS.md §4.1 — so no frame at any
+  budget ever looked like an error.
+- The structural audit decides a bind is handled by reading case labels out
+  of the source. The label was there, so the guard read green.
+
+`TestMaximumSceneRenders` asserted `│0`. That assertion was a transcription of
+the constant rather than a reading of the fold, which made the one test
+positioned to catch the defect into the thing protecting it. It now asserts
+`9999`, derived from the events the test itself declares — `budget_usd` 10.0 is
+10000 microunits, the single response costs 0.001 — so any constant fails it.
+Two goldens moved one cell each; the diff is the review event the rule intends.
+
+The class has now moved one level in, twice: **field → name → body**. Each
+guard was written at the level the last defect lived at, and the next instance
+arrived one level deeper. `TestEveryBindCaseBodyReadsTheFoldState` closes the
+third: every bind case in a switch must mention the fold state parameter. It is
+deliberately weak — it cannot tell a correct projection from a wrong field, and
+the behavioural tests already do that — but it is the one property a constant
+cannot satisfy.
+
+Measured with the constant reinjected rather than argued: the label audit
+passes, and every test under `internal/eval` passes. The two new audits are the
+only things in the tree that fail, and they fail on different axes — one reads
+the source, one reads the frame. That is the reason to keep both.
 
 ### One judge, two callers
 

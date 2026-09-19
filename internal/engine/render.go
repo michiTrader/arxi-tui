@@ -1073,11 +1073,30 @@ func resolveBind(bind string, state fold.State) string {
 	case "host.scene.error":
 		return state.SceneError
 	case "session.tokens_used":
-		// Phase 0: session.tokens_used is the remaining budget in microunits
-		// (budget_usd × 1000 minus cost_usd × 1000 from BINDs.md §4.1).
-		// Full cost tracking lands in a later phase; for now the budget is
-		// not yet wired from run.started, so the empty-state ("0") holds.
-		return "0"
+		// The fifth instance of the checked-but-never-drawn class, and the
+		// first where the case was already here. The four before it were
+		// missing — no case, so the bind fell to the default and drew "[…]".
+		// This one answered, and answered with a constant: it returned the
+		// literal "0" on the stated grounds that the budget was "not yet
+		// wired from run.started". That was true when it was written and is
+		// not true now — fold.go captures budget_usd into BudgetMicrounits
+		// on run.started, accumulates cost_usd into CostMicrounits on every
+		// llm.response, and deriveSessionTokensUsed() subtracts them into
+		// SessionTokensUsed on every fold.
+		//
+		// A stale justification is worse than a missing case, because both
+		// of the signals that would expose one are inverted. A missing bind
+		// draws the placeholder, which at least looks wrong on screen; this
+		// drew "0", which is the bind's own signed empty state, so the
+		// screen looked correct at every budget. And the audits read case
+		// labels out of this source to decide a bind is handled, so the
+		// presence of the label satisfied the structural guard while the
+		// body ignored the fold entirely.
+		//
+		// The remedy is to read the field rather than restate the claim: the
+		// projection follows fold.State, so it cannot go stale again when
+		// the wiring behind it changes.
+		return fmt.Sprintf("%d", state.SessionTokensUsed)
 
 	// The scalar binds below are signed in docs/BINDS.md §4, accepted by
 	// validate.go, and computed by internal/fold on every event — and until
