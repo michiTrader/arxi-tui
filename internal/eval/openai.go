@@ -140,7 +140,76 @@ func (m *OpenAIModel) Patch(ctx context.Context, req PatchRequest) ([]byte, erro
 		return nil, fmt.Errorf("chat completions returned no choices")
 	}
 
-	return StripFence([]byte(parsed.Choices[0].Message.Content)), nil
+	content := parsed.Choices[0].Message.Content
+	if err := gatewayRefusal(raw, content); err != nil {
+		return nil, err
+	}
+
+	return StripFence([]byte(content)), nil
+}
+
+// gatewayRefusal detects a proxy or gateway that answered instead of the
+// model, and turns it into a transport error.
+//
+// This exists because of a measured incident, not a hypothetical. The first
+// real run of the corpus reported 0/3 converged, looped=3 — a damning-looking
+// result. Every case had in fact been answered by the gateway with "Free-plan
+// credits can't be used with the Genspark API", delivered with HTTP 200 and
+// finish_reason "stop", i.e. shaped exactly like a successful completion. The
+// runner graded that prose as the model's document, refused it as invalid
+// JSON, watched the identical prose arrive again, and correctly concluded the
+// model was looping.
+//
+// Every layer behaved as designed and the conclusion was still false, which is
+// the point worth keeping: the runner already separates model_error from a
+// score precisely so a transport problem cannot depress the number a shipping
+// decision rests on, and that separation was defeated by a failure that
+// arrives as a 200. A status-code check is not a transport check.
+//
+// The detection is deliberately narrow — a vendor error envelope, or an
+// unfenced reply that is not JSON at all and reads like a service message.
+// A model that returns bad JSON must still be scored as a model that returned
+// bad JSON; the danger of over-reaching here is excusing real failures, which
+// would inflate the scores in the other direction.
+func gatewayRefusal(raw []byte, content string) error {
+	// The strongest signal: a vendor envelope alongside the choices.
+	var envelope struct {
+		Genspark *struct {
+			Code       string `json:"code"`
+			UpgradeURL string `json:"upgrade_url"`
+		} `json:"x_genspark"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err == nil && envelope.Genspark != nil && envelope.Genspark.Code != "" {
+		return fmt.Errorf("the API gateway answered instead of the model (%s): %s",
+			envelope.Genspark.Code, truncate(content, 200))
+	}
+
+	// Weaker, vendor-independent signal: the reply is not a document at
+	// all and names the account rather than the scene. Checked only when
+	// the content does not even begin like JSON, so a malformed document
+	// is still the model's own failure.
+	trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(content), "```"))
+	if trimmed == "" {
+		return fmt.Errorf("the model returned an empty completion")
+	}
+	if trimmed[0] == '{' || trimmed[0] == '[' {
+		return nil
+	}
+	lower := strings.ToLower(trimmed)
+	for _, marker := range []string{
+		"credits can't be used",
+		"credits cannot be used",
+		"quota",
+		"rate limit",
+		"subscribe or purchase",
+		"upgrade your plan",
+		"billing",
+	} {
+		if strings.Contains(lower, marker) {
+			return fmt.Errorf("the API gateway answered instead of the model: %s", truncate(trimmed, 200))
+		}
+	}
+	return nil
 }
 
 // truncate bounds an error body so a runaway HTML error page does not become

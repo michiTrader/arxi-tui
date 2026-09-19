@@ -148,3 +148,59 @@ func TestStripFenceLeavesProseAlone(t *testing.T) {
 			"remedy: only strip a leading fence; leave everything else to the parser.\n  got: %q", got)
 	}
 }
+
+// TestAGatewayRefusalIsNotAModelAnswer is a regression test for a measured
+// incident, and the reason it is worth keeping is that every layer behaved as
+// designed while the conclusion was false.
+//
+// The first real run of the corpus reported "0/3 converged, looped=3". Every
+// case had actually been answered by the API gateway with "Free-plan credits
+// can't be used with the Genspark API", delivered with HTTP 200 and
+// finish_reason "stop" — shaped exactly like a successful completion. The
+// runner graded the prose as the model's document, refused it as invalid JSON,
+// saw the identical prose again, and concluded the model was looping.
+//
+// The runner already separates model_error from a score so that a transport
+// problem cannot depress the number a shipping decision rests on. That
+// separation was defeated by a failure arriving as a 200, which is the lesson:
+// a status-code check is not a transport check.
+func TestAGatewayRefusalIsNotAModelAnswer(t *testing.T) {
+	// The exact envelope observed, reduced to the fields that matter.
+	raw := []byte(`{"choices":[{"message":{"role":"assistant","content":"Free-plan credits can't be used with the Genspark API / LLM proxy. Please visit https://example.invalid/pricing to subscribe or purchase credits."}}],"x_genspark":{"code":"free_plan_block","audience":"free"}}`)
+	content := "Free-plan credits can't be used with the Genspark API / LLM proxy. Please visit https://example.invalid/pricing to subscribe or purchase credits."
+
+	if err := gatewayRefusal(raw, content); err == nil {
+		t.Fatalf("a gateway plan-block was accepted as the model's answer\n" +
+			"consequence: this exact response produced a report of '0/3 converged, looped=3' — a billing wall read as evidence that the model cannot patch scenes, which is the most misleading result this harness can produce because it looks like a finding.\n" +
+			"remedy: detect the vendor error envelope and report it as a transport error, never as a score.")
+	}
+}
+
+// TestAModelReturningBadJSONIsStillTheModelsFailure keeps the detection above
+// from becoming an excuse.
+//
+// Over-reaching here is the mirror-image error: if malformed output were
+// written off as a transport problem, real failures would vanish from the
+// scores and the corpus would report a capability the model does not have.
+func TestAModelReturningBadJSONIsStillTheModelsFailure(t *testing.T) {
+	raw := []byte(`{"choices":[{"message":{"content":"{ \"root\": { }"}}]}`)
+	content := `{ "root": { }`
+
+	if err := gatewayRefusal(raw, content); err != nil {
+		t.Errorf("malformed JSON from the model was reported as a gateway failure: %v\n"+
+			"consequence: genuine model failures would be excused as transport noise and disappear from the scores, inflating the measured capability.\n"+
+			"remedy: only treat a reply as a gateway message when it is not a document at all.", err)
+	}
+}
+
+// TestProseThatIsNotABillingMessageStaysTheModelsProblem pins the boundary
+// from the other side: a chatty model is a model that violated the output
+// contract, and the corpus must score that.
+func TestProseThatIsNotABillingMessageStaysTheModelsProblem(t *testing.T) {
+	content := "Sure! Here is the updated scene you asked for."
+	if err := gatewayRefusal([]byte(`{"choices":[{"message":{"content":"..."}}]}`), content); err != nil {
+		t.Errorf("ordinary prose was classified as a gateway failure: %v\n"+
+			"consequence: a model ignoring the 'document and nothing else' contract would not be scored for it.\n"+
+			"remedy: restrict the vendor-independent check to service-message markers.", err)
+	}
+}
