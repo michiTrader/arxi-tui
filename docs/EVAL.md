@@ -165,6 +165,34 @@ Its two refusals arrive through *different types* on consecutive turns — a
 combination `GradeBoth` exists for. A model that repairs the bind and stops
 reading is scored `exhausted` here, not `converged`.
 
+### A case must not be passable by doing nothing
+
+A case is scored converged when its final document validates and binds every
+field `must_bind` names. Nothing in that rule asks whether the model *changed*
+anything — so if every field a case demands is already bound by its own base
+scene, handing the base scene straight back passes the case.
+
+That was not hypothetical. A scripted model that ignored the order and echoed
+`req.Base` scored **2/4 converged**: both SOARIA cases demanded only
+`model.name`, which SOARIA already binds. The finish line sat behind the
+starting line, and every other test in the package stayed green throughout,
+because they all ask whether a *refusal* is real — and every refusal was real.
+What was wrong was the definition of done.
+
+`TestDoingNothingDoesNotPass` enforces the rule: every case must demand at
+least one bind its base scene does not already have, proven by running the real
+judge against the base document rather than inferred from the bind lists. The
+two weak cases were widened (`session.tokens_used`; `usage.in`/`usage.out`)
+until the do-nothing model scores **0/4**, each case reporting `incomplete`
+with the field it is missing. The first attempted widening used `agent.mode`
+and the guard rejected it — SOARIA binds that too — which is the test doing its
+job on its own author.
+
+This is the same failure `GradeBoth` guards from the other side, and the reason
+both are worth their weight: a false pass is indistinguishable from a real one
+in the output, and it moves the number PLAN.md gates `/ui` on in the direction
+that argues for shipping.
+
 ## Scoring
 
 The runner has landed: `internal/eval/run.go`, driven by `cmd/arxi-eval`.

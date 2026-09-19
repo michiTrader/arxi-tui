@@ -44,7 +44,16 @@ published, by handing arxi a link.
 - ✅ Factory SOBRIA theme with OSC 11 background detection
 - ✅ Token wire-up in render pipeline (`engine.Cell.Style`)
 - ✅ Styled golden fixtures: `RAW.styled`, `SOARIA.styled`, `MAXIMUM.styled`
-- ✅ Theme validation (scenes reference existing tokens)
+- ✅ Theme validation (scenes reference existing tokens) — repaired during
+  Phase 2: `ValidateTokens` read `style["token"]`, while the shipped scenes,
+  `SCENES.md`, `TOKENS.md` and the render path all write `style["style"]`, so
+  the check was blind to the only spelling that occurs. With the key fixed,
+  the defect it hid surfaced addressed: `SOARIA.json:2:3` and `:25:5`
+  reference the token `header`, which `TOKENS.md` signs and the theme had
+  dropped. Every token test had used the validator's key rather than the
+  scenes', so code and tests shared one wrong assumption and agreed.
+- ✅ The shipped scenes are held to the rule the validator applies to
+  downloaded ones (`TestTheShippedScenesReferenceOnlyDefinedTokens`)
 
 **Phase 1.5 — The SCENES ↔ BINDS audit:** Complete.
 
@@ -87,6 +96,12 @@ feature, as `PLAN.md` requires:
   bind, then an invented token, refused through two different types on
   consecutive turns. Until it landed, every case held a single refusal, so the
   corpus measured the first shot while documenting that it measured the loop.
+- ✅ The false-pass guard (`TestDoingNothingDoesNotPass`): a scripted model that
+  ignored the order and echoed the base scene back scored **2/4 converged**,
+  because both SOARIA cases demanded only fields SOARIA already binds. Every
+  other test stayed green — they ask whether a refusal is real, and every
+  refusal was. Each case must now demand a bind its base scene lacks; the
+  do-nothing model scores 0/4.
 - ✅ `scene.SignedBinds()` — the validator's own inventory, exported so the
   runner can tell the model which binds exist. The alternative was a fourth
   hand-written copy of a list that has already drifted once, and the drift
