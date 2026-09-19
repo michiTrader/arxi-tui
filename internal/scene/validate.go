@@ -2,30 +2,44 @@ package scene
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/michiTrader/arxi_tui/internal/theme"
 )
 
-// TokenError records a reference to an undefined token in a scene.
+// TokenError records a reference to an undefined token in a scene. LESSONS.md
+// carries this rule over from arxi-sim's theme audit with the polarity
+// inverted — the vocabulary is open, so it is the *reference* that is checked —
+// but the error discipline is unchanged: "a referenced-but-undefined token is
+// an error with file:line, and an unused token is a warning".
 type TokenError struct {
 	Token    string // The token name that was not found in the theme
 	NodeType string // The type of node that referenced it
+	Loc      Loc    // Where the reference is, for the file:line rule
 }
 
 func (e TokenError) Error() string {
-	return fmt.Sprintf("node type %q references undefined token %q", e.NodeType, e.Token)
+	msg := fmt.Sprintf("node type %q references undefined token %q", e.NodeType, e.Token)
+	if e.Loc == (Loc{}) {
+		return msg
+	}
+	return e.Loc.String() + ": " + msg
 }
 
 // Validate checks that every bind and when string referenced in the scene is
 // in the signed inventory (docs/BINDS.md §4.5). This is the exit criterion:
 // an unsigned bind is a load-time error. Returns the first validation error
 // encountered, or nil if the document is valid.
+//
+// §4.5 specifies the refusal exactly — "a file:line error pointing at the
+// offending node" — so the walk carries each node's access path and the error
+// resolves it to a position through the document's address book.
 func (d *Document) Validate() error {
-	if d.Root == nil {
+	if d == nil || d.Root == nil {
 		return nil
 	}
-	return validateBinds(d.Root)
+	return d.validateBinds(d.Root, nodePathRoot)
 }
 
 // signedBinds is the §4.5 inventory: every bind a scene may reference. A bind
@@ -84,10 +98,47 @@ var signedBinds = map[string]bool{
 	"host.scene.error":     true,
 }
 
-func validateBinds(n *Node) error {
+// SignedBinds returns the §4.5 inventory: every bind path a scene may
+// reference, sorted. The slice is freshly built on each call, so a caller
+// cannot mutate the validator's inventory by holding onto it.
+//
+// This exists for one reason that is worth stating, because the obvious
+// alternative is cheaper and wrong. Phase 2's repair loop has to tell the model
+// which binds exist; without that, the first turn of every case is spent
+// guessing the vocabulary, and the corpus measures recall of an undocumented
+// list instead of the repair loop PLAN.md asked it to measure. The cheap
+// alternative is to write the list out again in the runner's prompt — which
+// would be the *fourth* copy of the inventory (docs/BINDS.md §4, signedBinds
+// here, and the two audit directions in binds_audit_test.go). That map has
+// already drifted from the document in both directions once, and the guard
+// test only exists because it did. A hand-copied prompt list would drift the
+// same way, silently, and its failure mode is the expensive one: the model is
+// told a signed bind does not exist, avoids it, and the corpus records that as
+// the model's failure rather than the prompt's.
+//
+// Exporting the inventory rather than the map keeps the validator the single
+// source: there is no second list to keep in step, so there is no third drift
+// guard to write.
+func SignedBinds() []string {
+	out := make([]string, 0, len(signedBinds))
+	for bind := range signedBinds {
+		out = append(out, bind)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// validateBinds walks a subtree, carrying the node's access path so a refusal
+// can name where it happened. The path is threaded as an argument rather than
+// stored on Node because the tree is also built by hand and by future patch
+// code, and a position field would then be a field that is sometimes a lie.
+func (d *Document) validateBinds(n *Node, path string) error {
 	// Check this node's bind.
 	if n.Bind != "" && !signedBinds[n.Bind] {
-		return fmt.Errorf("unsigned bind %q in node type %q; every bind must appear in BINDS.md §4.5", n.Bind, n.Type)
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("unsigned bind %q in node type %q; every bind must appear in BINDS.md §4.5", n.Bind, n.Type),
+		}
 	}
 
 	// Check when conditions (they reference the same namespace).
@@ -97,31 +148,34 @@ func validateBinds(n *Node) error {
 		if len(parts) > 0 {
 			bindPath := parts[0]
 			if !signedBinds[bindPath] && bindPath != "" {
-				return fmt.Errorf("unsigned bind %q in when condition of node type %q; every bind must appear in BINDS.md §4.5", bindPath, n.Type)
+				return &Error{
+					Loc: d.locOf(path),
+					Msg: fmt.Sprintf("unsigned bind %q in when condition of node type %q; every bind must appear in BINDS.md §4.5", bindPath, n.Type),
+				}
 			}
 		}
 	}
 
 	// Recurse into children.
-	for _, child := range n.Children {
-		if err := validateBinds(child); err != nil {
+	for i, child := range n.Children {
+		if err := d.validateBinds(child, childPath(path, i)); err != nil {
 			return err
 		}
 	}
 
 	// Recurse into prefix/suffix/template.
 	if prefix := n.PrefixNode(); prefix != nil {
-		if err := validateBinds(prefix); err != nil {
+		if err := d.validateBinds(prefix, prefixPath(path)); err != nil {
 			return err
 		}
 	}
 	if n.Suffix != nil {
-		if err := validateBinds(n.Suffix); err != nil {
+		if err := d.validateBinds(n.Suffix, suffixPath(path)); err != nil {
 			return err
 		}
 	}
 	if n.RowTemplate != nil {
-		if err := validateBinds(n.RowTemplate); err != nil {
+		if err := d.validateBinds(n.RowTemplate, templatePath(path)); err != nil {
 			return err
 		}
 	}
@@ -135,19 +189,20 @@ func validateBinds(n *Node) error {
 // Nodes without a style.token attribute are skipped — an absent token is not an error.
 func ValidateTokens(doc *Document, thm *theme.Theme) []TokenError {
 	var errs []TokenError
-	if doc.Root != nil {
-		collectTokenErrors(doc.Root, thm, &errs)
+	if doc != nil && doc.Root != nil {
+		doc.collectTokenErrors(doc.Root, nodePathRoot, thm, &errs)
 	}
 	return errs
 }
 
-func collectTokenErrors(n *Node, thm *theme.Theme, errs *[]TokenError) {
+func (d *Document) collectTokenErrors(n *Node, path string, thm *theme.Theme, errs *[]TokenError) {
 	// Check if this node declares a token in its style map.
 	if tokenName, ok := n.Style["token"]; ok && tokenName != "" {
 		if !thm.Has(tokenName) {
 			*errs = append(*errs, TokenError{
 				Token:    tokenName,
 				NodeType: n.Type,
+				Loc:      d.locOf(path),
 			})
 		}
 	}
@@ -158,23 +213,24 @@ func collectTokenErrors(n *Node, thm *theme.Theme, errs *[]TokenError) {
 			*errs = append(*errs, TokenError{
 				Token:    borderStyle,
 				NodeType: n.Type + " border",
+				Loc:      d.locOf(path),
 			})
 		}
 	}
 
 	// Recurse into children for nested structures (box nodes, overlays).
-	for _, child := range n.Children {
-		collectTokenErrors(child, thm, errs)
+	for i, child := range n.Children {
+		d.collectTokenErrors(child, childPath(path, i), thm, errs)
 	}
 
 	// Recurse into prefix/suffix nodes.
 	if prefix := n.PrefixNode(); prefix != nil {
-		collectTokenErrors(prefix, thm, errs)
+		d.collectTokenErrors(prefix, prefixPath(path), thm, errs)
 	}
 	if n.Suffix != nil {
-		collectTokenErrors(n.Suffix, thm, errs)
+		d.collectTokenErrors(n.Suffix, suffixPath(path), thm, errs)
 	}
 	if n.RowTemplate != nil {
-		collectTokenErrors(n.RowTemplate, thm, errs)
+		d.collectTokenErrors(n.RowTemplate, templatePath(path), thm, errs)
 	}
 }

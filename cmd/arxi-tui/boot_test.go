@@ -1,0 +1,263 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/michiTrader/arxi_tui/internal/engine"
+	"github.com/michiTrader/arxi_tui/internal/fold"
+	"github.com/michiTrader/arxi_tui/internal/scene"
+	"github.com/michiTrader/arxi_tui/internal/theme"
+)
+
+// The boot path of invariant 3. PLAN.md states it in full and stresses that the
+// boot path cannot inherit it from the hot path:
+//
+//	"a scene document that is corrupt **on disk** when the instance starts —
+//	written by a crashed session, or a stranger's download — falls back to the
+//	raw scene with the `file:line:` notice on screen. At boot there is no
+//	'last good' to stay on, so the fallback is explicit, invariant-listed, and
+//	tested — not implied by the hot-reload code."
+//
+// The fallback half was implemented and untested; the notice half was not
+// implemented at all — loadScene discarded the error, so a user whose scene
+// failed to load got the raw interface and no statement of why. BINDS.md §2
+// signs the channel for it: `host.scene.error`, "text | null", "the last-good
+// scene notice (invariant 3); null means the active scene validated" — and
+// calls it "the one bind the scene may render but the core never provides".
+
+// writeScene puts a scene document in a temp dir and returns its path.
+func writeScene(t *testing.T, name, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+	return path
+}
+
+// TestCorruptSceneOnDiskFallsBackWithAnAddressedNotice is the invariant as a
+// test, both halves at once: the interface boots on the raw scene, and it can
+// say where the refusal was.
+func TestCorruptSceneOnDiskFallsBackWithAnAddressedNotice(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		// wantLine is the line the notice must name: the point of the
+		// exercise is that the user can open the file and go there.
+		wantLine string
+		// wantReason is a distinctive fragment of the diagnosis, so a
+		// notice that carries an address but loses the cause still fails.
+		wantReason string
+	}{
+		{
+			// The crashed-session case: a truncated write. The address is
+			// the end of the file (line 5 — the empty line after the last
+			// newline), not the last line carrying text, because that is
+			// where the input ran out: for a truncation the honest answer
+			// to "where is the problem" is "the document stops here".
+			name:       "truncated by a crashed session",
+			body:       "{\n  \"root\": {\n    \"type\": \"stack\",\n    \"children\": [ { \"type\": \"markdown\",\n",
+			wantLine:   ":5",
+			wantReason: "unexpected end of JSON input",
+		},
+		{
+			// The stranger's-download case: valid JSON, unsatisfiable
+			// scene. PLAN.md invariant 3 makes this equivalent to a
+			// syntax error on purpose, and that equivalence is the part
+			// most likely to be broken by someone "simplifying" the
+			// boot path later.
+			name: "valid JSON binding vocabulary the host does not have",
+			body: `{ "root": { "type": "stack", "children": [
+    { "id": "chat", "type": "markdown", "bind": "chat.history" },
+    { "id": "evil", "type": "text", "bind": "stranger.telemetry" }
+]}}`,
+			wantLine:   ":3",
+			wantReason: "unsigned bind",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := writeScene(t, "user.json", c.body)
+
+			doc, notice, err := loadScene(path, factoryRAW)
+			if err != nil {
+				t.Fatalf("loadScene returned a hard error: %v\n"+
+					"consequence: a corrupt scene on disk took the session down at boot — the exact failure invariant 3 forbids, and the one with no recovery path because there is no 'last good' scene yet.\n"+
+					"remedy: fall back to the factory raw scene and report the reason in the notice, never in the error.", err)
+			}
+			if doc == nil {
+				t.Fatal("loadScene returned no document\n" +
+					"consequence: nothing to render, so the interface does not boot.\n" +
+					"remedy: return the parsed fallback scene.")
+			}
+
+			// The fallback must be the raw scene, and it must actually
+			// render — a document that parses but draws nothing is not a
+			// usable fallback.
+			r := engine.Renderer{Width: 80, Height: 24}
+			f := r.RenderFrame(doc, fold.Fold(nil))
+			if strings.TrimSpace(f.Plain()) == "" && len(f.Live) == 0 {
+				t.Error("the fallback scene rendered an empty frame\n" +
+					"consequence: the user is left staring at a blank terminal with no way to know the interface is alive.\n" +
+					"remedy: the fallback must be the two-node raw scene, parsed and renderable.")
+			}
+
+			if notice == "" {
+				t.Fatalf("loadScene fell back silently for %s\n"+
+					"consequence: the user's scene was refused and the interface cannot say why — invariant 3 requires the file:line: notice on screen, and BINDS.md §2 signs host.scene.error as the channel for it. A silent fallback looks like the user's edit was ignored.\n"+
+					"remedy: return the addressed refusal as the notice; do not discard the error.", c.name)
+			}
+			if !strings.Contains(notice, c.wantLine) {
+				t.Errorf("notice %q does not name line %s\n"+
+					"consequence: the user is told the scene is broken but not where, so a large document has to be bisected by hand.\n"+
+					"remedy: parse through scene.ParseFile so the refusal carries file:line:col.", notice, c.wantLine)
+			}
+			if !strings.Contains(notice, filepath.Base(path)) {
+				t.Errorf("notice %q does not name the file\n"+
+					"consequence: with presets and user documents composed together, a line number alone is ambiguous.\n"+
+					"remedy: loadScene must parse by path, not by bytes.", notice)
+			}
+			if !strings.Contains(notice, c.wantReason) {
+				t.Errorf("notice %q does not state the reason (want %q)\n"+
+					"consequence: an address with no diagnosis tells the user where to look but not what to fix.\n"+
+					"remedy: keep the validator's message in the notice alongside its address.", notice, c.wantReason)
+			}
+		})
+	}
+}
+
+// TestNoticeReachesTheBoundSceneField closes the loop. A notice returned by
+// loadScene and never rendered would satisfy the test above and still leave the
+// screen silent, which is the same bug one layer up — so this asserts the text
+// actually reaches a scene that binds host.scene.error.
+func TestNoticeReachesTheBoundSceneField(t *testing.T) {
+	// A scene that displays the notice. host.scene.error is signed in the
+	// bootstrap set precisely so the failure can be shown by a document.
+	noticeScene := `{ "root": { "type": "stack", "children": [
+    { "id": "chat", "type": "markdown", "bind": "chat.history" },
+    { "id": "notice", "type": "text", "bind": "host.scene.error" }
+]}}`
+	doc, err := scene.ParseDocument([]byte(noticeScene))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	if err := doc.Validate(); err != nil {
+		t.Fatalf("the notice scene must validate: %v\n"+
+			"consequence: if a scene cannot bind host.scene.error, invariant 3's notice has no way onto the screen.\n"+
+			"remedy: keep host.scene.error signed in BINDS.md §2 and in signedBinds.", err)
+	}
+
+	const want = "user.json:4:3: invalid JSON: unexpected end of JSON input"
+	state := fold.Fold(nil)
+	state.SceneError = want
+
+	r := engine.Renderer{Width: 80, Height: 24}
+	f := r.RenderFrame(doc, state)
+	out := f.Plain()
+	if !strings.Contains(out, "user.json:4:3") {
+		t.Errorf("the rendered frame does not show the notice\nframe:\n%s\n"+
+			"consequence: the notice exists in host state but never reaches the user, so the interface silently drops the only explanation of why their scene is not showing.\n"+
+			"remedy: the boot path must set State.SceneError, and it must be re-applied on every repaint because Fold rebuilds State per frame (ADR-0004).", out)
+	}
+}
+
+// TestAMissingSceneFileIsNotAnError protects the other direction: absence is
+// the default install, not a fault. A notice here would greet every first run
+// with a complaint about a file the user never wrote.
+func TestAMissingSceneFileIsNotAnError(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist.json")
+
+	doc, notice, err := loadScene(missing, factoryRAW)
+	if err != nil {
+		t.Fatalf("loadScene: %v\n"+
+			"consequence: the interface refuses to boot without a user scene, so a clean install cannot start.\n"+
+			"remedy: a missing file uses the factory scene.", err)
+	}
+	if doc == nil {
+		t.Fatal("no document for a missing scene file")
+	}
+	if notice != "" {
+		t.Errorf("a missing scene file produced the notice %q\n"+
+			"consequence: BINDS.md §2 defines host.scene.error as null when \"the active scene validated\"; reporting absence as a refusal means every default install boots showing an error about a file the user never created, which trains them to ignore the notice that matters.\n"+
+			"remedy: treat os.IsNotExist as the factory-scene path and return an empty notice.", notice)
+	}
+}
+
+// TestAValidSceneReportsNoNotice is the null case BINDS.md §2 specifies in so
+// many words, and the guard against a notice that is always populated — which
+// would make the field useless exactly as an always-on warning light is.
+func TestAValidSceneReportsNoNotice(t *testing.T) {
+	path := writeScene(t, "good.json", `{ "root": { "type": "stack", "children": [
+    { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+    { "id": "prompt", "type": "input", "bind": "user.input", "placeholder": "> " }
+]}}`)
+
+	doc, notice, err := loadScene(path, factoryRAW)
+	if err != nil {
+		t.Fatalf("loadScene: %v", err)
+	}
+	if notice != "" {
+		t.Errorf("a valid scene produced the notice %q\n"+
+			"consequence: host.scene.error must be null when the active scene validated; a notice that is always set is a warning light that is always on.\n"+
+			"remedy: only populate the notice on the fallback paths.", notice)
+	}
+	// The document returned must be the user's, not the fallback: silently
+	// substituting the factory scene for a valid document would be the
+	// quietest possible way to break customization.
+	if doc.Root == nil || len(doc.Root.Children) != 2 {
+		t.Fatalf("loadScene did not return the user's scene")
+	}
+	if got := doc.Root.Children[1].PrefixText(); got != "" {
+		t.Errorf("the factory scene was substituted for a valid user document (prefix %q)\n"+
+			"consequence: the user's scene is ignored with no notice at all.\n"+
+			"remedy: return the parsed document when it validates.", got)
+	}
+}
+
+// TestTheNonInteractivePathShowsTheNoticeToo guards the pipe path. It exists
+// because a second render path is where an invariant quietly stops holding:
+// `arxi-tui | cat` on a broken scene must still explain itself, and that output
+// is how the failure gets pasted into a bug report.
+func TestTheNonInteractivePathShowsTheNoticeToo(t *testing.T) {
+	noticeScene := `{ "root": { "type": "stack", "children": [
+    { "id": "notice", "type": "text", "bind": "host.scene.error" }
+]}}`
+	doc, err := scene.ParseDocument([]byte(noticeScene))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	const notice = "user.json:2:5: unsigned bind \"stranger.telemetry\""
+
+	stdout := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	runErr := runNonInteractive(doc, theme.SOBRIA(), notice)
+	w.Close()
+	os.Stdout = stdout
+
+	if runErr != nil {
+		t.Fatalf("runNonInteractive: %v", runErr)
+	}
+	var sb strings.Builder
+	buf := make([]byte, 4096)
+	for {
+		n, readErr := r.Read(buf)
+		sb.Write(buf[:n])
+		if readErr != nil {
+			break
+		}
+	}
+	if !strings.Contains(sb.String(), "user.json:2:5") {
+		t.Errorf("piped output omits the notice\ngot:\n%s\n"+
+			"consequence: the non-interactive path is a second renderer, and an invariant that holds in only one of them is not an invariant. This output is also what gets pasted into a bug report.\n"+
+			"remedy: thread the notice into runNonInteractive's fold state.", sb.String())
+	}
+}

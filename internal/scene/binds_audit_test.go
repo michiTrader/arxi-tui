@@ -197,3 +197,74 @@ func collectBinds(n *Node) []string {
 	out = append(out, collectBinds(n.RowTemplate)...)
 	return out
 }
+
+// TestSignedBindsExportsExactlyWhatTheValidatorEnforces guards the accessor
+// Phase 2's runner reads to build the model's vocabulary list.
+//
+// The failure this catches is quiet and expensive. If SignedBinds ever reports
+// a bind the validator rejects, the runner tells the model that bind is
+// available, the model uses it, and the engine refuses the patch — recorded as
+// the model failing the case. If it omits a bind the validator accepts, the
+// model never reaches for it and the corpus scores a vocabulary gap the
+// product does not have. Either way the eval reports a model deficiency that
+// is really a prompt defect, which is the hardest class of result to
+// disbelieve, because the numbers look like evidence.
+//
+// Comparing against signedBinds rather than the document is deliberate: the
+// document is already audited above, and what the runner must not diverge from
+// is the thing that actually refuses patches.
+func TestSignedBindsExportsExactlyWhatTheValidatorEnforces(t *testing.T) {
+	exported := SignedBinds()
+
+	inExport := make(map[string]bool, len(exported))
+	for _, b := range exported {
+		inExport[b] = true
+	}
+
+	var missing []string
+	for bind := range signedBinds {
+		if !inExport[bind] {
+			missing = append(missing, bind)
+		}
+	}
+	var extra []string
+	for _, bind := range exported {
+		if !signedBinds[bind] {
+			extra = append(extra, bind)
+		}
+	}
+	sort.Strings(missing)
+	sort.Strings(extra)
+
+	if len(missing) > 0 {
+		t.Errorf("SignedBinds omits %d bind(s) the validator accepts: %v\n"+
+			"consequence: Phase 2's runner builds the model's vocabulary from this list, so an omitted bind is one the model is told does not exist; it will avoid signed vocabulary and the corpus will record that as a model failure rather than a prompt defect.\n"+
+			"remedy: SignedBinds must enumerate signedBinds in full.", len(missing), missing)
+	}
+	if len(extra) > 0 {
+		t.Errorf("SignedBinds reports %d bind(s) the validator rejects: %v\n"+
+			"consequence: the runner would offer the model vocabulary the engine refuses at load time, producing refusals the case never predicted and scoring them against the model.\n"+
+			"remedy: SignedBinds must not add names of its own.", len(extra), extra)
+	}
+
+	// Sorted order is part of the contract, not a convenience: the list goes
+	// into a model prompt, and an unstable order would change the prompt
+	// between runs, making turns-to-convergence irreproducible for reasons
+	// that have nothing to do with the model.
+	if !sort.StringsAreSorted(exported) {
+		t.Errorf("SignedBinds returned an unsorted list: %v\n"+
+			"consequence: the inventory is rendered into the model prompt, so an unstable order silently changes the input between runs and makes a score difference unattributable.\n"+
+			"remedy: sort before returning.", exported)
+	}
+
+	// The accessor must not hand out a window into the validator's state.
+	if len(exported) > 0 {
+		exported[0] = "mutated.by.caller"
+		again := SignedBinds()
+		if again[0] == "mutated.by.caller" {
+			t.Errorf("a caller mutated the inventory through the slice SignedBinds returned\n" +
+				"consequence: any consumer could silently widen or narrow the vocabulary the validator enforces for the rest of the process.\n" +
+				"remedy: build a fresh slice on each call.")
+		}
+	}
+}

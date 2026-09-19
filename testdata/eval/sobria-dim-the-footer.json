@@ -1,0 +1,51 @@
+{
+  "id": "sobria-dim-the-footer",
+  "order": "make the status footer quieter, grey it out",
+  "base": "SOARIA.json",
+  "rationale": "The token vocabulary is open by design (SCENES.md: 'the validator checks references, not inventory'), which makes a mistyped or invented token name the most common scene error there is — and the one whose refusal is easiest to get wrong, because an open vocabulary tempts an implementation into accepting anything. The order says 'grey', so the plausible patch mints 'grey' rather than the SOBRIA theme's 'dim'. This is also the corpus' only coverage of the token validator, which reports through a different type than bind refusals (TokenError, not a scene.Error) and so could regress independently of everything the other cases pin.",
+  "attempts": [
+    {
+      "note": "invents a token the theme does not define, taking the order's word 'grey' literally",
+      "document": {
+        "root": {
+          "type": "stack",
+          "children": [
+            { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+            { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ " },
+            {
+              "id": "status",
+              "type": "row",
+              "children": [
+                { "type": "text", "bind": "model.name", "style": { "token": "grey" } }
+              ]
+            }
+          ]
+        }
+      },
+      "expect_refused": {
+        "reason": "undefined token \"grey\"",
+        "line": 11,
+        "kind": "token"
+      }
+    }
+  ],
+  "convergence": {
+    "document": {
+      "root": {
+        "type": "stack",
+        "children": [
+          { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+          { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ " },
+          {
+            "id": "status",
+            "type": "row",
+            "children": [
+              { "type": "text", "bind": "model.name", "style": { "token": "dim" } }
+            ]
+          }
+        ]
+      }
+    },
+    "must_bind": ["model.name"]
+  }
+}

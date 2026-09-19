@@ -1,0 +1,35 @@
+{
+  "id": "sobria-add-model-row",
+  "order": "add a row under the input that shows which model is answering",
+  "base": "SOARIA.json",
+  "rationale": "The order is underspecified in the way real orders are: it says what to show, not what the field is called. The obvious reading invents 'model.current', which reads exactly like a signed bind and is not one — BINDS.md signs 'model.name'. This is the corpus' base case for the repair loop: the first patch is structurally correct and fails on vocabulary alone, so convergence depends entirely on reading the refusal.",
+  "attempts": [
+    {
+      "note": "structure is right, the bind name is guessed",
+      "document": {
+        "root": {
+          "type": "stack",
+          "children": [
+            { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+            { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ " },
+            { "id": "model", "type": "text", "bind": "model.current" }
+          ]
+        }
+      },
+      "expect_refused": { "reason": "unsigned bind \"model.current\"", "line": 7 }
+    }
+  ],
+  "convergence": {
+    "document": {
+      "root": {
+        "type": "stack",
+        "children": [
+          { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+          { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ " },
+          { "id": "model", "type": "text", "bind": "model.name" }
+        ]
+      }
+    },
+    "must_bind": ["model.name"]
+  }
+}
