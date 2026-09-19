@@ -134,16 +134,111 @@ about. Two rules, both inherited from the golden discipline:
    not a rationale; "the order is underspecified and the obvious reading binds a
    field that sounds signed but is not" is.
 
-## Scoring (when the runner lands)
+## Scoring
+
+The runner has landed: `internal/eval/run.go`, driven by `cmd/arxi-eval`.
 
 - **Converged / not converged** per case, and **turns to convergence**. One turn
   means the first patch validated; the interesting cases take two or three.
 - A case that converges in one turn *every* time is a weak case: it is measuring
   the model's first shot, which PLAN.md names a vanity metric. It stays only if
   its refusal path is still worth pinning for the validator's sake.
-- **Not converged** includes the case where the model loops — producing the same
-  refused document twice is a failure to read the address, which is precisely
-  what the `file:line:` work exists to make possible.
 
-No threshold is set here. PLAN.md's instruction, if the model cannot do this
-reliably, is not "tune the threshold": it is that the document must say so.
+### "Not converged" is not one fact
+
+The runner reports five outcomes, because collapsing them points a reader at
+the wrong fix:
+
+| Outcome | What happened | Why it is its own outcome |
+| --- | --- | --- |
+| `converged` | Validates, and binds every `must_bind` field | — |
+| `exhausted` | Still refused when the budget ran out | The model was at least making *different* mistakes |
+| `looped` | Returned a document it had already been refused for | The rule above: a failure to read the address. A larger budget cannot help, and reporting it as exhaustion suggests exactly that |
+| `incomplete` | Validates, but does not bind what the order asked for | There is no validator message to repair from, so another turn re-puts an identical question. The engine was satisfied and the user was not |
+| `model_error` | Never produced a gradeable answer | A transport result, never a score: a flaky network must not be able to argue that `/ui` is unshippable |
+
+Loop detection fingerprints the **canonicalised** document, not the raw bytes.
+A model that returns the same wrong answer with different indentation has still
+failed to read the address, and a byte hash would score that as progress.
+
+### One judge, two callers
+
+The corpus test and the runner grade through the same code (`Grade`,
+`GradeBoth`, `Converged` in `internal/eval/grade.go`). The test asks about
+documents a human wrote into a case file; the runner asks about documents a
+model produced. Two copies of that logic would let the corpus test stay green
+while the runner scored the identical document differently, and the promise
+that every recorded refusal is one the engine really produces would hold only
+for the half nobody grades.
+
+One difference is deliberate. A case declares which validator its attempt
+targets, because the author knows what they wrote; a model does not. Model
+output is therefore graded with `GradeBoth` — bind path first, matching the
+engine's load order — so a document that satisfies the named validator and is
+still refused at load time cannot be scored as converged. A false pass is the
+worst result this harness can produce, because in the output it is
+indistinguishable from a real one.
+
+### What the model is told
+
+The prompt carries the order, the base scene, and both vocabularies: the signed
+binds from `scene.SignedBinds()` and the theme's tokens. The bind list is read
+from the validator's own inventory rather than written into the prompt, because
+a hand-copied list would be a fourth copy of something that has already drifted
+once — and its failure mode is the expensive one: the model is told a signed
+bind does not exist, avoids it, and the corpus records that as the model's
+failure rather than the prompt's.
+
+The retry carries **every** prior attempt and its refusal, not just the last.
+Looping is one of the outcomes reported here, and a model shown only its most
+recent attempt cannot tell that it is repeating itself — the harness would be
+scoring a handicap it created.
+
+A markdown code fence around the answer is stripped, and nothing else is. The
+measurement is whether a model can patch a scene and repair from a `file:line`,
+not whether it can suppress a formatting habit every chat-tuned model has;
+scoring a correct document as a syntax error over three backticks would report
+a presentation problem as a capability one. Salvaging JSON out of prose would
+be the opposite error — the harness answering for the model — so prose is left
+to fail.
+
+### A refusal that is not the model's
+
+A gateway or proxy that answers *instead of* the model is reported as
+`model_error`, never as a score. This rule is written from an incident, not as
+a precaution.
+
+The first real run reported `0/3 converged, looped=3`. Every case had in fact
+been answered by the API gateway with a plan-block message — "Free-plan credits
+can't be used with the Genspark API" — delivered with HTTP 200 and
+`finish_reason: "stop"`, shaped exactly like a successful completion. The
+runner graded that prose as the model's document, refused it as invalid JSON,
+saw the identical prose on the retry, and correctly concluded the model was
+looping.
+
+Every layer behaved as designed and the conclusion was false. The runner
+already separates `model_error` from a score precisely so transport trouble
+cannot depress the number a shipping decision rests on, and that separation was
+defeated by a failure arriving as a 200. The lesson kept in the code: **a
+status-code check is not a transport check.**
+
+Detection is narrow on purpose. Over-reaching is the mirror-image error:
+excusing genuine malformed output as transport noise would delete real failures
+from the scores and inflate the measured capability. A model that returns bad
+JSON is still scored as a model that returned bad JSON.
+
+### Running it
+
+```bash
+go build -o arxi-eval ./cmd/arxi-eval
+OPENAI_API_KEY=... arxi-eval -model <name> -v
+```
+
+`arxi-eval` is a separate binary from `arxi-tui`. The shipped interface must not
+carry an eval harness, an HTTP client for a model API, or a reason to read
+`OPENAI_API_KEY`.
+
+Its exit status reports whether the *harness* ran, never whether the model
+scored well. No threshold is set here, and that is deliberate: PLAN.md's
+instruction if the model cannot do this reliably is not "tune the threshold" —
+it is that the document must say so.
