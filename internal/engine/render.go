@@ -111,7 +111,17 @@ func (r *Renderer) RenderFrame(doc *scene.Document, state fold.State) ui.Frame {
 // renderNode lays one node out within a budget of rows. Every container passes
 // its children budgets, never more than it owns; every leaf clips its content
 // to what it was given.
+//
+// The `when` gate is applied here rather than per node type, because `when` is
+// a universal property in SCENES.md and this is the one function every node
+// passes through. It used to be honoured in exactly two places — a `row`
+// filtered its children, and an `overlay` gated itself — so a gated node drew
+// unconditionally anywhere else, and the axis was the parent rather than the
+// node: the same `text` hid under a `row` and drew under a `stack`.
 func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Frame {
+	if hiddenByWhen(n, state) {
+		return ui.Frame{Width: r.Width, Height: 0}
+	}
 	switch n.Type {
 	case "stack":
 		return r.renderStack(n, state, budget)
@@ -185,6 +195,14 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 	// contract first; the input, banner and footer never).
 	bottomOverlayHeight := 0
 	for i, c := range children {
+		// A child the host has hidden reserves nothing. renderNode already
+		// returns an empty frame for it, so a fixed child costs no rows
+		// either way; a *grow* child would otherwise still take its share of
+		// the remaining space and paint that share as blank rows — hiding the
+		// content while keeping the hole it sat in.
+		if hiddenByWhen(c, state) {
+			continue
+		}
 		if c.Type == "overlay" {
 			// Pre-render once: the same frame is measured now and placed
 			// later, so an overlay whose content depends on state is never
@@ -345,9 +363,14 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 	// not reserve space (or render padding) for content the host has hidden.
 	// This is what lets the status row swap the live line for the menu hint:
 	// only the truthy set of children lays out.
+	//
+	// renderNode gates the drawing; this pass gates the *column*, which is the
+	// part it cannot do from inside a child. A hidden child returning an empty
+	// frame would still be counted here, divide the width with its siblings,
+	// and leave its share as padding.
 	visible := make([]*scene.Node, 0, len(children))
 	for _, c := range children {
-		if c.When != "" && !evalWhen(c.When, state) {
+		if hiddenByWhen(c, state) {
 			continue
 		}
 		visible = append(visible, c)
@@ -843,12 +866,18 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 // the whole screen. The anchor is metadata for the stack's positioning pass;
 // renderOverlay returns content lines that the stack anchors into place.
 func (r *Renderer) renderOverlay(n *scene.Node, state fold.State) ui.Frame {
-	// An overlay with `when` only renders when that bind is truthy.
-	if n.When != "" {
-		if !evalWhen(n.When, state) {
-			return ui.Frame{Width: r.Width, Height: 0}
-		}
-	}
+	// An overlay with `when` only renders when that bind is truthy, and both
+	// of this method's callers now ask before calling: renderNode gates every
+	// node, and renderStack — which reaches renderOverlay directly, to measure
+	// the overlay before the growers divide the budget — skips hidden children
+	// in the same pass.
+	//
+	// This method used to ask a third time. That third copy was not extra
+	// safety, it was mutual masking: deleting the stack's skip left this one
+	// hiding the overlay, and deleting this one left the stack's skip hiding
+	// it, so neither deletion failed a test and each looked unnecessary while
+	// the other stood. Removing it is what makes the stack's skip the single
+	// thing that can be measured for this path.
 
 	// Resolve the content width: use min_width if set and smaller than the frame,
 	// otherwise use the full frame width.
@@ -1226,6 +1255,24 @@ const placeholderValue = "[…]"
 // That direction is the dangerous one. A dropped value degrades toward the
 // empty state and the user sees less than they asked for; a gate that fails
 // open degrades toward chrome they never asked for and cannot dismiss.
+// hiddenByWhen reports whether a node declares a `when` the host does not
+// satisfy. A node with no `when` is always visible: absence of a gate is not a
+// closed gate, and reading it as one would blank every scene in the tree.
+//
+// It is one function rather than an inlined comparison because the gate is
+// asked in two different registers and both must agree. renderNode asks it to
+// decide whether to *draw*, and renderStack's measuring pass asks it to decide
+// whether to *reserve*. Those are separable — a grow child can be skipped by
+// the first and still take its share of the budget from the second, which
+// hides the content and keeps the blank rows it occupied — and two spellings
+// of the same predicate is how they drift apart.
+func hiddenByWhen(n *scene.Node, state fold.State) bool {
+	if n == nil || n.When == "" {
+		return false
+	}
+	return !evalWhen(n.When, state)
+}
+
 func evalWhen(bind string, state fold.State) bool {
 	val := resolveBind(bind, state)
 	switch val {
