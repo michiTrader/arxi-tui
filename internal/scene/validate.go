@@ -178,9 +178,63 @@ func (d *Document) validateBinds(n *Node, path string) error {
 		if err := d.validateBinds(n.RowTemplate, templatePath(path)); err != nil {
 			return err
 		}
+		// The template's own binds are checked above, and only then is the
+		// field itself refused. Order matters: a mistyped bind inside the
+		// template is the more specific complaint, and a reader who wrote
+		// "totaly.invented" is better served by being told which bind is
+		// unsigned than by being told the containing field is unsupported.
+		if err := d.refuseUnrendered(n, path); err != nil {
+			return err
+		}
 	}
 
 	return nil
+}
+
+// unrenderedFields are constructions this package validates but internal/engine
+// does not draw. Accepting one is the failure mode this project has now paid
+// for three times: a style key the validator learned and styleName() did not,
+// a border token checked by the validator and dropped by both drawing paths,
+// and this. All three report success and show the wrong screen — the outcome
+// with no diagnostic anywhere, because clearing validation is precisely the
+// signal that says the document is fine.
+//
+// `row_template` is the most expensive of the three, because it reaches past a
+// scene and into the instrument. internal/eval's CollectBinds walks templates
+// by name, citing SCENES.md Q10, so a corpus answer that satisfies must_bind
+// only inside a template scores converged while the list renders "[…]". That
+// is reachable from a case the corpus already ships — raw-add-tasks-panel,
+// whose order is "put a tasks panel on the right" — so Phase 2's number could
+// have recorded a model success for a document that draws an empty panel.
+//
+// The fix is a refusal rather than an implementation, deliberately. The field's
+// semantics are relative binds (`row.kind`), and `row.*` is signed nowhere in
+// BINDS.md: it is Scene 5, which is Phase 3. Rendering it "somehow" now would
+// invent format ahead of the phase meant to design it. When the engine learns
+// to draw one of these, its entry leaves this map and the guard in
+// unrendered_test.go is what notices the map and the renderer disagree.
+var unrenderedFields = map[string]string{
+	"row_template": "relative binds inside templates are SCENES.md Q10 / Scene 5, " +
+		"and the `row.*` namespace they need is signed nowhere in BINDS.md yet",
+}
+
+// refuseUnrendered reports a field the validator understands and the renderer
+// ignores. The message says "not yet rendered" rather than "invalid" on
+// purpose: the document is well-formed and the author spelled the field
+// correctly, so telling them it is malformed sends them hunting for a typo
+// that is not there. Phase 2's repair loop reads these messages, and a wrong
+// diagnosis costs a turn the corpus then charges to the model.
+func (d *Document) refuseUnrendered(n *Node, path string) error {
+	because, ok := unrenderedFields["row_template"]
+	if !ok {
+		return nil
+	}
+	return &Error{
+		Loc: d.locOf(path),
+		Msg: fmt.Sprintf("node type %q declares %q, which is accepted by the validator "+
+			"but not yet rendered by the engine (%s); the field would be silently "+
+			"dropped, so it is refused instead", n.Type, "row_template", because),
+	}
 }
 
 // ValidateTokens checks that every token referenced in the scene is defined in

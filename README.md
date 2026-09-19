@@ -77,6 +77,41 @@ published, by handing arxi a link.
   keeps `"border"`, held by its own test because MAXIMUM's styled golden pins
   six spans under that name and the unconditional fix moves it (verified: the
   naive version fails both that guard and `TestMaximumSceneStyledGolden`).
+- ✅ A construction the validator accepts is one the engine draws — and where
+  that is not true yet, the refusal is explicit. `row_template` was the third
+  instance of the class above and the first to reach the *measuring
+  instrument* rather than a scene: the validator walked it for binds and for
+  tokens, `loc.go` addressed it, the binds audit collected through it and
+  `eval`'s `CollectBinds` walked it by name citing Q10 — five places saying
+  the field was live — while `internal/engine` read it in zero. Because the
+  grader counts a bind found inside a template, an answer satisfying
+  `must_bind` only there scored **converged** while the list drew `[…]`.
+  Measured, not reasoned: reachable from a case the corpus already ships
+  (`raw-add-tasks-panel`, *"put a tasks panel on the right"*), which returned
+  `converged=true, missing=[]` on a panel with no tasks in it — the corpus
+  lying in the model's favour, the one direction nobody audits.
+  The fix is a refusal rather than an implementation: the field's semantics
+  are relative binds (`row.kind`) and `row.*` is signed nowhere in BINDS.md —
+  it is Scene 5, i.e. Phase 3 — so drawing it now would invent format ahead of
+  the phase meant to design it. The message says *"not yet rendered"* rather
+  than *"invalid"*, because the author spelled the field correctly and a wrong
+  diagnosis costs the repair loop a turn it charges to the model.
+- ✅ The **fourth** instance of the class fails the suite by itself
+  (`internal/scene/unrendered_audit_test.go`). Three were found by hand, one
+  per session; the audit enumerates `Node`'s fields from the source and holds
+  each to one of three states — rendered, refused via `unrenderedFields`, or
+  justified in writing in `acceptedUnreadFields`. Types are resolved with
+  `go/types` rather than matched as text, because the text draft reported
+  `Node.ID` as read (`eval.Case` also has an `ID`) and a guard that cries wolf
+  is a guard that gets deleted. The scene package is excluded from the read
+  set on purpose: *being validated* is the shared signature of all three
+  instances, so counting this package's own reads would make the audit agree
+  with the bug. Two fields stay unread and say why: `filter_by` is decorative
+  (the host filters regardless — verified byte-identical frames with the
+  field, with a nonsense value, and with no field at all), and `categories` is
+  a real silent drop that cannot be refused because SOARIA ships eleven and
+  invariant 1 outranks this audit. Both entries fail the day the engine reads
+  them, which is the signal to delete them.
 
 **Phase 1.5 — The SCENES ↔ BINDS audit:** Complete.
 
@@ -146,10 +181,15 @@ feature, as `PLAN.md` requires:
   available here refuses on plan grounds, so there is no score for any model
   yet. Phase 2's question — can a model patch scenes reliably — is therefore
   still open, and `PLAN.md` gates `/ui` on the answer.
-  The plan-block detection is now confirmed against the live gateway rather
-  than a captured body: the same run that once reported `looped=3` now reports
-  `model_error=3` and exits non-zero. That is the harness declining to score,
-  which is the correct result and still not a score.
+  The plan-block detection is confirmed against the live gateway rather than a
+  captured body, and re-confirmed each session it is checked: the run that
+  once reported `looped=3` now reports `model_error` on every case and exits
+  non-zero (latest check: `0/4 converged, model_error=4`, exit 1). That is the
+  harness declining to score, which is the correct result and still not a
+  score. The block arrives as **HTTP 200 carrying a normal-looking assistant
+  message** — `x_genspark.code = free_plan_block` — which is why the detection
+  has to exist at all: without it the refusal reads as a model that answered
+  badly, and the corpus would record a plan limit as a capability measurement.
 - ⬜ `/ui` commands and agent-driven patches, with the change-diff view
 
 ## Build

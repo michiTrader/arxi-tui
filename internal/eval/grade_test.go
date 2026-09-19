@@ -217,14 +217,71 @@ func TestConvergedRejectsADocumentThatDeletedTheFeature(t *testing.T) {
 	}
 }
 
-// TestConvergedFindsABindInsideARowTemplate is the inverse failure, and the
-// more insidious one: a harness that under-counts binds fails a correct answer.
+// TestConvergedFindsABindInAnIndirectArm is the inverse failure, and the more
+// insidious one: a harness that under-counts binds fails a correct answer.
 //
-// SCENES.md Q10 makes row_template the place relative binds live, so a list
-// that binds its field per row is idiomatic, not exotic. A walk that skipped
-// templates would mark the idiomatic answer as "deleted the feature" — and the
-// result would read as a model failure on a document that is actually right.
-func TestConvergedFindsABindInsideARowTemplate(t *testing.T) {
+// A node's binds do not all hang off `children`. The marquee's prefix and
+// suffix are nodes in their own right, and a walk that only recursed into
+// children would mark a document binding its field there as "deleted the
+// feature" — reported as a model deficiency on a document that is right.
+//
+// This test used to make the same point through `row_template`, and the swap
+// is the interesting part. The validator now refuses row_template outright,
+// because the engine does not draw it (see scene.unrenderedFields): a document
+// using it validated clean and rendered "[…]", so the grader scored converged
+// on a screen with nothing on it. That made this test's own premise false — it
+// asserted the document validates — and, worse, it meant the case being
+// defended was the false positive. The property is real and still worth
+// pinning; the vehicle had to be an arm the engine actually renders.
+func TestConvergedFindsABindInAnIndirectArm(t *testing.T) {
+	c := Case{
+		ID:          "probe-suffix",
+		Order:       "show the token delta next to the thinking line",
+		Convergence: Convergence{MustBind: []string{"usage.delta"}},
+	}
+
+	body := `{
+  "root": {
+    "type": "stack",
+    "children": [
+      {
+        "type": "marquee",
+        "bind": "thinking.text",
+        "suffix": { "type": "text", "bind": "usage.delta" }
+      }
+    ]
+  }
+}`
+	doc, parseErr := parse(t, "suffix.json", body)
+
+	converged, v, missing := c.Converged(doc, parseErr)
+	if !v.Accepted {
+		t.Fatalf("premise broken: document did not validate: %s", v.Message)
+	}
+	if !converged {
+		t.Errorf("Converged rejected a document binding %q inside a suffix (missing=%v)\n"+
+			"consequence: the walk misses an arm the renderer draws, so a correct answer is scored as a failure to do the job — reported as a model deficiency on a document that is right.\n"+
+			"remedy: CollectBinds must walk prefix, suffix and every other arm the engine renders, as the validator does.",
+			"usage.delta", missing)
+	}
+}
+
+// The grader must never score a document converged on a bind the screen does
+// not show. This is the defect that motivated the row_template refusal, pinned
+// from the consumer's side so the two packages cannot drift back apart.
+//
+// CollectBinds walks row_template by name, citing SCENES.md Q10, and the field
+// is correct about the format — it is the engine that does not implement it.
+// While that is true, an answer satisfying must_bind only inside a template
+// rendered "[…]" and still scored converged. It was reachable from a case the
+// corpus already ships (raw-add-tasks-panel, "put a tasks panel on the
+// right"), so Phase 2's number could have recorded a model success for a panel
+// with nothing in it — the corpus lying in the model's favour, which is the
+// one direction no one audits.
+//
+// When the engine learns to render templates, this test is the one that should
+// fail: at that point the refusal is wrong and the walk is right.
+func TestConvergedIsNotAwardedForABindTheEngineCannotDraw(t *testing.T) {
 	c := Case{
 		ID:          "probe-template",
 		Order:       "list the todos",
@@ -244,15 +301,15 @@ func TestConvergedFindsABindInsideARowTemplate(t *testing.T) {
 }`
 	doc, parseErr := parse(t, "template.json", body)
 
-	converged, v, missing := c.Converged(doc, parseErr)
-	if !v.Accepted {
-		t.Fatalf("premise broken: document did not validate: %s", v.Message)
+	converged, v, _ := c.Converged(doc, parseErr)
+	if converged {
+		t.Errorf("a document whose only binding of %q sits in an unrendered field scored converged\n"+
+			"consequence: the corpus records a model success for a scene that draws the placeholder, so Phase 2's number overstates the model in the one direction nobody audits.\n"+
+			"remedy: the validator refuses constructions the engine does not draw; keep scene.unrenderedFields and the renderer in step.",
+			"agent.todos")
 	}
-	if !converged {
-		t.Errorf("Converged rejected a document binding %q inside a row_template (missing=%v)\n"+
-			"consequence: the walk misses the place SCENES.md Q10 says relative binds belong, so the idiomatic correct answer is scored as a failure to do the job — reported as a model deficiency on a document that is right.\n"+
-			"remedy: CollectBinds must walk row_template, prefix and suffix as the validator does.",
-			"agent.todos", missing)
+	if v.Accepted {
+		t.Errorf("premise drifted: the document is expected to be refused, not accepted")
 	}
 }
 
