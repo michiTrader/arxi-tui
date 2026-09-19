@@ -333,6 +333,69 @@ passes, and every test under `internal/eval` passes. The two new audits are the
 only things in the tree that fail, and they fail on different axes — one reads
 the source, one reads the frame. That is the reason to keep both.
 
+### The frame test's reach, measured
+
+`TestEveryCorpusMustBindFieldReachesTheFrame` is the strongest of the three
+projection guards — it is the only one that looks at a drawn value — and it is
+also the narrowest. It can only check the binds some case names in `must_bind`,
+and that set was never chosen to be a coverage list. Measured rather than
+assumed: **7 of the 30 signed binds** appear in a `must_bind` anywhere in the
+corpus. Twenty-three have no check that inspects a projected value at all.
+
+The seven are worth reading closely, because the way `session.tokens_used` got
+in is the uncomfortable part. It is not there because anyone judged the budget
+display worth pinning to a frame. It is there because
+`TestDoingNothingDoesNotPass` found two cases a do-nothing model could pass and
+needed some bind SOARIA did not already have; `session.tokens_used` was the
+field that fit. Had that widening reached for a different bind, the frame test
+would have rendered right past the fifth instance — the defect it was written
+in response to — and reported green.
+
+So the frame test's coverage of the actual defect was a coincidence of an
+unrelated repair. That is not a reason to distrust it; it is a reason not to
+let the corpus decide which binds get checked at all.
+
+### Asking from an axis the corpus cannot move
+
+`TestEverySignedBindProjectionVariesWithItsFoldField` closes that. For every
+signed bind `fold.State` carries a field for, it perturbs **only that field**
+and requires `resolveBind` to return something different. The bind list comes
+from `scene.SignedBinds()` and the field mapping from `fold.State`'s own json
+tags, so neither the corpus nor a case author can widen or narrow what gets
+measured.
+
+It is weak in exactly the way the body audit is weak, and deliberately so: it
+cannot distinguish a correct projection from one returning a plausible wrong
+field, and it does not try — the goldens and the behavioural tests own that
+question. What it proves is the single property a constant cannot fake, which
+is that the output depends on the input. Twenty-three scalar binds are checked
+where the corpus reached seven.
+
+Two design points are load-bearing, both of them about what the guard refuses
+to excuse quietly:
+
+- The two signed binds with no fold field — `user.input.submitted` and
+  `session.new_milestone`, both documented pulses in BINDS.md — are exempted
+  **by name, with their reason recorded**. Skipping unmappable binds silently
+  would mean a bind that later disappears from `fold.State` gets excused by the
+  same gap that legitimately covers a pulse.
+- A run that checks zero binds is a hard failure. If a refactor renamed the json
+  tags or emptied `SignedBinds()`, every bind would fall into a skip bucket and
+  the file would report success having measured nothing — the same false-pass
+  shape the do-nothing model exposed in the grader, one layer down.
+
+Verified the way this document requires: with the fifth instance's `return "0"`
+reinjected into `render.go`, the guard reports `session.tokens_used` inert; with
+the fold-reading projection restored, it passes and `render.go` is byte-identical
+to where it started. A guard that would not have caught the defect it was
+written after is not worth its maintenance, and that is checkable rather than
+arguable.
+
+No sixth instance surfaced. Every other scalar bind already varies with its
+field — which is a result, not an absence of one: it is the first time this
+class has been swept across the whole signed surface instead of the part some
+other test happened to reach.
+
 ### One judge, two callers
 
 The corpus test and the runner grade through the same code (`Grade`,
