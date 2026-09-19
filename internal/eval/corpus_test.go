@@ -189,3 +189,78 @@ func TestCorpusExercisesTheRepairLoopNotTheFirstShot(t *testing.T) {
 	t.Logf("%d of %d cases exercise at least one repair turn; refusals by kind: bind=%d token=%d",
 		withRepair, len(cases), kinds[KindBind], kinds[KindToken])
 }
+
+// TestDoingNothingDoesNotPass is the false-pass guard, and it is the one test
+// here that grades the corpus rather than the engine.
+//
+// A case scores converged when its final document validates and binds every
+// field must_bind names. Nothing in that rule requires the model to have
+// *changed* anything. If every field a case demands is already bound by the
+// base scene the case starts from, then handing the base scene straight back —
+// ignoring the order completely — satisfies the case, and the run records a
+// convergence.
+//
+// That is the worst result this harness can produce. EVAL.md already says so
+// of GradeBoth — a false pass "is indistinguishable from a real one" in the
+// output — and the same sentence applies with more force here: a model that
+// fails loudly costs a retry, while a model that passes for doing nothing
+// corrupts the number PLAN.md gates /ui on, in the optimistic direction.
+//
+// It was not hypothetical. When this test was written, two of the four cases
+// demanded only fields SOARIA already binds, and a scripted model returning
+// req.Base verbatim scored 2/4 converged. None of the other tests could see
+// it: they ask whether a refusal is real, and the refusals were real — it was
+// the finish line that sat behind the starting line.
+//
+// The rule enforced is the cheapest statement of "the order was actually
+// carried out" that does not require the corpus to diff documents: every case
+// must demand at least one bind its base scene does not already have.
+func TestDoingNothingDoesNotPass(t *testing.T) {
+	cases, err := LoadAll(corpusDir())
+	if err != nil {
+		t.Fatalf("LoadAll: %v", err)
+	}
+
+	for _, c := range cases {
+		t.Run(c.ID, func(t *testing.T) {
+			baseRaw, err := readBase(filepath.Join("..", "..", "testdata"), c.Base)
+			if err != nil {
+				t.Fatalf("read base scene: %v", err)
+			}
+			baseDoc, err := scene.ParseNamed(c.Base, baseRaw)
+			if err != nil {
+				t.Fatalf("base scene %s does not parse: %v", c.Base, err)
+			}
+
+			bound := make(map[string]bool)
+			for _, b := range CollectBinds(baseDoc) {
+				bound[b] = true
+			}
+			novel := make([]string, 0, len(c.Convergence.MustBind))
+			for _, want := range c.Convergence.MustBind {
+				if !bound[want] {
+					novel = append(novel, want)
+				}
+			}
+			if len(novel) == 0 {
+				t.Errorf("every must_bind field is already bound by the base scene %s: %v\n  order: %s\n"+
+					"consequence: a model that ignores the order and returns the base scene unchanged scores this case as converged. The harness would report a capability the model never demonstrated, in the direction that argues for shipping /ui.\n"+
+					"remedy: add a field to must_bind that only a document carrying out the order can bind, or rewrite the order so it demands one.",
+					c.Base, c.Convergence.MustBind, c.Order)
+				return
+			}
+
+			// The stronger half: prove it against the real judge rather
+			// than inferring it from the bind sets, so the guard cannot
+			// drift from the scoring it is protecting.
+			converged, _, missing := c.Converged(baseDoc, nil)
+			if converged {
+				t.Errorf("the unmodified base scene %s scores as converged\n  order: %s\n"+
+					"consequence: the case is passed by doing nothing, so its score says nothing about the model.\n"+
+					"remedy: tighten must_bind until carrying out the order is the only way to satisfy it.",
+					c.Base, c.Order)
+			}
+			t.Logf("base scene rejected, missing %v (case demands %v beyond the base)", missing, novel)
+		})
+	}
+}
