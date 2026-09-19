@@ -396,6 +396,118 @@ field — which is a result, not an absence of one: it is the first time this
 class has been swept across the whole signed surface instead of the part some
 other test happened to reach.
 
+### The composite axis, and a correction to the paragraph above
+
+"Swept across the whole signed surface" was too strong, and the overstatement
+is worth keeping visible rather than editing away. That guard perturbs a fold
+field and asks `resolveBind` whether its answer changed. `resolveBind` returns
+a string, so any field that is not a scalar falls out of it here:
+
+```go
+if !perturbScalar(perturbed.Field(idx)) {
+        // Composite field; not this guard's axis.
+        continue
+}
+```
+
+The comment is true about the axis. The mechanism is a silent skip bucket —
+the precise shape that guard's own second design point forbids. Its reason for
+listing the two pulses **by name** was that excusing the unmappable in silence
+would let a bind that later vanishes from `fold.State` slip through the same
+crack. Five binds were already going through a crack one kind-switch wide, and
+nothing named them. Measured:
+
+```
+signed                          30
+scalars checked by that guard   23
+skipped silently                 5   agent.todos, chat.history,
+                                     slash.matches, team.members,
+                                     agent.blocked.blocked_ref
+unmapped, exempted by name       2   user.input.submitted,
+                                     session.new_milestone
+```
+
+23 + 5 + 2 = 30, so the five were the entire remainder, and "the whole signed
+surface" was in fact 23/30 of it.
+
+`TestEverySignedCompositeBindIsDrawnOrRecordedUnprojected` closes that. For
+every signed bind whose `fold.State` field is a slice or map, it builds a
+one-element witness by reflection, renders the bind, and requires some frame
+to move. Binds in `acceptedUnprojectedBinds` must move *nothing* — so the prose
+claim and the frame are now checked against each other in both directions,
+which is new: the label audit only ever checked that a listed bind had not
+quietly gained a case, never that it still drew nothing.
+
+#### The first draft passed, and was wrong in the way that matters
+
+That draft carried a hand-written map from bind to the one node type that draws
+it — `list` for `agent.todos`, `markdown` for `chat.history` — rendered each
+composite through its recorded type, passed, and caught an injected defect that
+blanked `agent.todos`.
+
+Then the same injection was tried on `chat.history`: its `resolveBind` case was
+changed to compute `ChatHistoryMarkdown()` and discard it. **The entire suite
+stayed green, that draft included.** `chat.history` reaches the frame through
+two independent paths — `renderMarkdown` reads `state.History` directly, while
+`resolveBind` feeds `text` and `spinner` nodes and every `when` gate through
+`evalWhen` — and rendering through one recorded node type exercised the first
+and never touched the second.
+
+The map was not a convenience. It was a second inventory, written by exactly
+the kind of judgement the scalar guard refused to let the corpus make, and it
+silently decided which half of a bind's surface got measured. Swept across
+every node type instead — the list parsed out of `renderNode`'s own switch, so
+a new node type is swept the moment it exists — the real shape appears:
+
+| Bind | Frame moves in |
+| --- | --- |
+| `chat.history` | markdown, text, spinner |
+| `thinking.text` | markdown, text, marquee, spinner |
+| `user.input` | input, text, spinner |
+| `agent.todos` | list |
+| `slash.matches` | list |
+| `team.members` | — (placeholder, on the record) |
+| `agent.blocked.blocked_ref` | — (placeholder, on the record) |
+
+Two binds are multi-path. A guard that picks one path per bind is guessing, and
+the guess was wrong before the file was ever committed.
+
+#### Verified by injection, twice, against the tests that already existed
+
+The question a new guard has to answer is not "does it pass" but "what does it
+catch that the tree did not already catch". Both answers were measured:
+
+- **R10b** — `chat.history`'s `resolveBind` case blanked. Before: the whole
+  suite green, including the first draft of this guard. After the redesign:
+  this test is the only thing in the tree that fails, and it names the split
+  precisely — *draws in node type(s) markdown, but its resolveBind case returns
+  the same value for both states*.
+- **R10d** — `team.members` drawn through `renderList`'s `default` branch, so
+  it gains no case label at all. Invisible to the label audit by construction,
+  which reads case labels; caught here, because the frame moved while
+  `acceptedUnprojectedBinds` still claimed Scene 9 was blocking.
+
+A third injection (`R10c`, `team.members` given a real case label) is caught by
+*both* this guard and the label audit. That one is reported as overlap rather
+than as a win: it is the reason R10d was written, since a guard justified only
+by defects another test already catches has not earned its maintenance.
+
+`render.go` is byte-identical to its committed state after every restore — 0
+changes in porcelain — so nothing here moved production.
+
+#### What it still does not do
+
+The same weakness as its two siblings, and deliberately: it cannot tell a
+correct rendering from a plausible wrong one. A list drawing its todos in the
+wrong order, or the actor where the task belongs, passes here. The goldens and
+the behavioural scene tests own that question. What it proves is the property a
+placeholder cannot fake — that the frame depends on the state — across the five
+binds that previously had no check of any kind on that axis.
+
+With this, all 30 signed binds are measured for projection: 23 scalars on
+`resolveBind`, 5 composites across all 11 node types, 2 pulses exempted by name
+with their reasons on the record.
+
 ### One judge, two callers
 
 The corpus test and the runner grade through the same code (`Grade`,
