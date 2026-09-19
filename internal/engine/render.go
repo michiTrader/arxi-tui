@@ -580,6 +580,28 @@ func (r *Renderer) renderRule(n *scene.Node, state fold.State) ui.Frame {
 	}
 }
 
+// borderStyleName is the token the frame glyphs of n are drawn under.
+//
+// A node may name one through the object border form that SCENES.md Scene 3
+// signs — {"shape": "single", "style": "warn"} — and when it does, that is the
+// reference ValidateTokens checked, so it is the one that has to reach the
+// screen. Both drawing paths used to stamp the literal "border" and never ask,
+// which meant the declared token was validated and then discarded: a typo was
+// refused with an address while a correct value did nothing, and the field
+// looked wired precisely because the refusal proved something was reading it.
+//
+// The bare string form ("border": "single") carries no token and keeps
+// "border", which is not merely a default but a pinned one: MAXIMUM declares
+// its borders that way and its styled golden fixes six spans under that name,
+// so reading the style unconditionally would move a factory golden no feature
+// asked to move and break invariant 1.
+func borderStyleName(n *scene.Node) string {
+	if name := n.BorderStyleName(); name != "" {
+		return name
+	}
+	return "border"
+}
+
 // renderBox draws a bordered container with an optional title, then its
 // children inside. The border style is configurable: "single" uses light
 // box-drawing, "double" uses double box-drawing, "ascii" uses ASCII +/-/|
@@ -602,6 +624,8 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 		tl, tr, bl, br = '┌', '┐', '└', '┘'
 		horiz, vert = '─', '│'
 	}
+
+	frameStyle := borderStyleName(n)
 
 	width := r.Width
 	if width <= 0 {
@@ -634,7 +658,7 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 		}
 	}
 	lines = append(lines, ui.Line{
-		ui.Span{Text: topText, Style: "border"},
+		ui.Span{Text: topText, Style: frameStyle},
 	})
 
 	// Inner content: render children as a stack clipped to innerHeight.
@@ -661,9 +685,9 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 			text = truncateText(text, innerWidth)
 		}
 		lines = append(lines, ui.Line{
-			ui.Span{Text: string(vert), Style: "border"},
+			ui.Span{Text: string(vert), Style: frameStyle},
 			ui.Span{Text: text, Style: styleName(n.Style)},
-			ui.Span{Text: string(vert), Style: "border"},
+			ui.Span{Text: string(vert), Style: frameStyle},
 		})
 	}
 	// Clip content to innerHeight if it overflowed.
@@ -674,7 +698,7 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 	// Bottom border.
 	bottomText := string(bl) + strings.Repeat(string(horiz), innerWidth) + string(br)
 	lines = append(lines, ui.Line{
-		ui.Span{Text: bottomText, Style: "border"},
+		ui.Span{Text: bottomText, Style: frameStyle},
 	})
 
 	// The inner stack answered in its own coordinates; a row of the box is one
@@ -831,6 +855,8 @@ func (r *Renderer) renderOverlay(n *scene.Node, state fold.State) ui.Frame {
 // wrapWithBorder wraps overlay content lines in a border, returning the full
 // bordered lines.
 func (r *Renderer) wrapWithBorder(lines []ui.Line, n *scene.Node, contentWidth int) []ui.Line {
+	frameStyle := borderStyleName(n)
+
 	var tl, tr, bl, br, horiz, vert rune
 	switch n.BorderShape() {
 	case "double":
@@ -860,21 +886,21 @@ func (r *Renderer) wrapWithBorder(lines []ui.Line, n *scene.Node, contentWidth i
 				strings.Repeat(string(horiz), innerWidth-len(titleText)-2) + string(tr)
 		}
 	}
-	bordered = append(bordered, ui.Line{ui.Span{Text: topText, Style: "border"}})
+	bordered = append(bordered, ui.Line{ui.Span{Text: topText, Style: frameStyle}})
 
 	// Content lines wrapped with vertical bars, span by span: a bordered
 	// overlay keeps each span's own token instead of welding the row into the
 	// box's style (the same weld padLine removed from the borderless path).
 	for _, l := range lines {
-		row := append(ui.Line{}, ui.Span{Text: string(vert), Style: "border"})
+		row := append(ui.Line{}, ui.Span{Text: string(vert), Style: frameStyle})
 		row = append(row, padLine(l, innerWidth)...)
-		row = append(row, ui.Span{Text: string(vert), Style: "border"})
+		row = append(row, ui.Span{Text: string(vert), Style: frameStyle})
 		bordered = append(bordered, row)
 	}
 
 	// Bottom border.
 	bottomText := string(bl) + strings.Repeat(string(horiz), innerWidth) + string(br)
-	bordered = append(bordered, ui.Line{ui.Span{Text: bottomText, Style: "border"}})
+	bordered = append(bordered, ui.Line{ui.Span{Text: bottomText, Style: frameStyle}})
 
 	return bordered
 }
@@ -1074,9 +1100,26 @@ func evalWhen(bind string, state fold.State) bool {
 
 // styleName extracts the style token from a node's style map, or returns ""
 // if unset. Scene nodes carry styles as a map (e.g. {"style": "dim"}).
+//
+// The keys come from scene.StyleTokenKeys rather than being spelled here, and
+// that indirection is the whole point of the function. This read used to be
+// style["style"] alone while ValidateTokens accepted "token" as well, so a
+// scene using the other accepted spelling passed validation and then rendered
+// with no style — the one failure mode that reports success, since clearing
+// validation is precisely the signal that says the document is fine. A refusal
+// would have named the fix; this said nothing and drew the wrong screen.
+//
+// Reading the validator's own list means the two cannot disagree again: a key
+// the validator stops accepting stops being read here, and one it starts
+// accepting is honoured without a second edit anybody has to remember.
 func styleName(style map[string]string) string {
 	if style == nil {
 		return ""
 	}
-	return style["style"]
+	for _, key := range scene.StyleTokenKeys() {
+		if name := style[key]; name != "" {
+			return name
+		}
+	}
+	return ""
 }

@@ -54,6 +54,29 @@ published, by handing arxi a link.
   scenes', so code and tests shared one wrong assumption and agreed.
 - ✅ The shipped scenes are held to the rule the validator applies to
   downloaded ones (`TestTheShippedScenesReferenceOnlyDefinedTokens`)
+- ✅ Every style reference the validator accepts now also reaches the screen.
+  Fixing the key above left the renderer behind: `ValidateTokens` accepted
+  both `style["token"]` and `style["style"]`, while `styleName()` still read
+  `style["style"]` alone, so a scene using the other accepted spelling
+  validated clean and drew **unstyled** — the one outcome that reports success
+  and shows the wrong screen, since clearing validation is exactly the signal
+  that says the document is fine. Found on the corpus' own gold answer: the
+  converged document of `sobria-dim-the-footer`, whose order is *"grey it
+  out"*, styled `model.name` as `{"token": "dim"}` and rendered it with no
+  style. The render path now reads `scene.StyleTokenKeys()`, so the two
+  cannot disagree again, and the guard is a property over that list rather
+  than two hardcoded spellings — a test that enumerated the keys itself would
+  reproduce the drift it exists to catch.
+- ✅ A border's declared style token reaches the frame. `SCENES.md` Scene 3
+  signs the object form (`{"shape": "single", "style": "warn"}`) so a frame
+  can carry a token, `BorderStyleName` exists to read it and `ValidateTokens`
+  refuses an undefined one — but both drawing paths stamped the literal
+  `"border"` onto all eight frame spans and never asked. The same class as
+  above, and more deceptive: naming a bad token *does* get a refusal, so the
+  field looks wired; a correct value simply did nothing. The bare string form
+  keeps `"border"`, held by its own test because MAXIMUM's styled golden pins
+  six spans under that name and the unconditional fix moves it (verified: the
+  naive version fails both that guard and `TestMaximumSceneStyledGolden`).
 
 **Phase 1.5 — The SCENES ↔ BINDS audit:** Complete.
 
