@@ -66,7 +66,7 @@ func Grade(doc *scene.Document, parseErr error, kind string) Verdict {
 
 	switch kind {
 	case KindToken:
-		errs := scene.ValidateTokens(doc, theme.SOBRIA())
+		errs := scene.ValidateTokens(doc, corpusTheme())
 		if len(errs) == 0 {
 			return Verdict{Accepted: true}
 		}
@@ -227,3 +227,15 @@ func (c Case) Converged(doc *scene.Document, parseErr error) (bool, Verdict, []s
 	}
 	return len(missing) == 0, v, missing
 }
+
+// corpusTheme is the theme every grade and every prompt is measured against.
+//
+// It is a function rather than a package variable so no caller can swap the
+// theme mid-run: the token half of a verdict is only meaningful relative to a
+// fixed vocabulary, and a corpus whose theme could change between cases would
+// report token refusals that depend on evaluation order.
+//
+// SOBRIA is the choice because it is the shipped default — the scene set the
+// corpus patches is written against it, so grading against anything else would
+// measure the model on a vocabulary no user has.
+func corpusTheme() *theme.Theme { return theme.SOBRIA() }
