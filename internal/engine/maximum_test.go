@@ -53,12 +53,29 @@ func TestMaximumSceneRenders(t *testing.T) {
 		t.Errorf("expected input prefix '❯ '; got:\n%s", got)
 	}
 
-	// The tokens overlay must render with session.tokens_used (shown as "0").
+	// The tokens overlay must render the budget the events above actually
+	// describe. This assertion used to require "0", which was not a reading
+	// of the fold but a transcription of the projection's hardcoded
+	// constant: the renderer returned the literal "0" for
+	// session.tokens_used, and the test pinned that. So the one check that
+	// could have caught the constant was instead the thing that protected
+	// it — and because "0" is also this bind's signed empty state, it read
+	// as a legitimate expectation rather than a defect.
+	//
+	// The value is derived, not chosen: run.started carries budget_usd 10.0
+	// (10000 microunits) and the single llm.response costs 0.001 (1
+	// microunit), so BINDS.md §4.1's budget-minus-cost is 9999. Asserting
+	// the arithmetic is what makes the test sensitive to the fold again — a
+	// projection that returns any constant, "0" included, now fails here.
 	if !strings.Contains(got, "┌") || !strings.Contains(got, "┐") {
 		t.Errorf("expected overlay border corners; got:\n%s", got)
 	}
-	if !strings.Contains(got, "│0") {
-		t.Errorf("expected overlay content '0' (session.tokens_used); got:\n%s", got)
+	if !strings.Contains(got, "│9999") {
+		t.Errorf("expected overlay to show session.tokens_used as 9999 (budget_usd 10.0 = 10000 microunits, minus cost_usd 0.001 = 1); got:\n"+
+			"consequence: the overlay is bound to session.tokens_used and the fold computes it from\n"+
+			"the events above, so any other value means the projection is ignoring fold.State and\n"+
+			"reporting a number the run never had.\n"+
+			"remedy: return state.SessionTokensUsed from resolveBind rather than a literal.\n%s", got)
 	}
 
 	// The tasks box title must render.
