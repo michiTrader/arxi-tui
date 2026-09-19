@@ -78,10 +78,15 @@ feature, as `PLAN.md` requires:
 
 - ✅ `docs/EVAL.md` — the corpus contract: case shape, scoring, and why the
   corpus is data rather than code
-- ✅ `internal/eval` + `testdata/eval/` — the corpus loader and its first three
-  cases. Every expected refusal is replayed against the real validator on each
-  `go test`, so a case cannot claim a refusal the engine does not produce —
-  which already caught an invented one (see EVAL.md).
+- ✅ `internal/eval` + `testdata/eval/` — the corpus loader and its first four
+  cases, covering all three pinned scenes. Every expected refusal is replayed
+  against the real validator on each `go test`, so a case cannot claim a
+  refusal the engine does not produce — which already caught an invented one
+  and three misaddressed ones (see EVAL.md).
+- ✅ A repair path longer than one turn (`maximum-count-the-tasks`): an unsigned
+  bind, then an invented token, refused through two different types on
+  consecutive turns. Until it landed, every case held a single refusal, so the
+  corpus measured the first shot while documenting that it measured the loop.
 - ✅ `scene.SignedBinds()` — the validator's own inventory, exported so the
   runner can tell the model which binds exist. The alternative was a fourth
   hand-written copy of a list that has already drifted once, and the drift
@@ -98,11 +103,15 @@ feature, as `PLAN.md` requires:
   A separate binary: the shipped interface carries no eval harness and no
   reason to read `OPENAI_API_KEY`.
 - ⬜ **The corpus has not yet been run against a real model.** The harness is
-  verified end to end against a local stub (3/3 converged, turns 1×1 2×2,
+  verified end to end against a local stub (4/4 converged, turns 3×2 1×3,
   driven by real addressed refusals from the real validator), but the gateway
   available here refuses on plan grounds, so there is no score for any model
   yet. Phase 2's question — can a model patch scenes reliably — is therefore
   still open, and `PLAN.md` gates `/ui` on the answer.
+  The plan-block detection is now confirmed against the live gateway rather
+  than a captured body: the same run that once reported `looped=3` now reports
+  `model_error=3` and exits non-zero. That is the harness declining to score,
+  which is the correct result and still not a score.
 - ⬜ `/ui` commands and agent-driven patches, with the change-diff view
 
 ## Build

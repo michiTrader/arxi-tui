@@ -42,6 +42,14 @@ model to expect an error this product has decided never to raise. The other
 three were addresses off by one, five and one line, which is precisely the drift
 the `file:line:` work exists to make visible.
 
+It earned it again on the fourth case: both of `maximum-count-the-tasks`'
+attempts were written against line 32 and the engine addresses both at line 33.
+Two out of two hand-written addresses wrong is the argument for replaying
+expectations against the validator rather than reviewing them by eye — an
+off-by-one here is not cosmetic, because the address is the entire input the
+model repairs from, and a corpus pinning line 32 would be scoring the model on
+a handicap the corpus invented.
+
 The model-facing half (does the model converge, and in how many turns) runs when
 the runner lands. The corpus shape is designed so that adding the runner adds no
 new data.
@@ -133,6 +141,29 @@ about. Two rules, both inherited from the golden discipline:
 2. **A case names the decision it protects** in `rationale`. "More coverage" is
    not a rationale; "the order is underspecified and the obvious reading binds a
    field that sounds signed but is not" is.
+
+### The cases, and what each one is for
+
+| Case | Base | Refusal path | What it is the only cover for |
+| --- | --- | --- | --- |
+| `raw-add-tasks-panel` | RAW | unsigned bind | An order that needs a *new node*, not an edited one |
+| `sobria-add-model-row` | SOARIA | unsigned bind | A bind that sounds signed (`model.current`) and is not |
+| `sobria-dim-the-footer` | SOARIA | undefined token | The token validator, which reports through another type |
+| `maximum-count-the-tasks` | MAXIMUM | unsigned bind → undefined token | A repair path longer than one turn, and MAXIMUM |
+
+The last row is the one the corpus was missing in both of its dimensions, and
+both gaps were measured rather than noticed by eye. Every case before it
+carried exactly one attempt, so a corpus whose stated metric is the repair loop
+never pinned more than a single refusal — and one refusal cannot distinguish a
+model that reads addresses from one that happens to fix the first thing it is
+told. MAXIMUM was also the only pinned scene the corpus never patched, despite
+PLAN.md asking for one fixture set feeding both the hostile property tests and
+this corpus.
+
+Its two refusals arrive through *different types* on consecutive turns — a
+`*scene.Error` for the bind, then a `TokenError` for the token — which is the
+combination `GradeBoth` exists for. A model that repairs the bind and stops
+reading is scored `exhausted` here, not `converged`.
 
 ## Scoring
 
