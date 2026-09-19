@@ -113,6 +113,28 @@ published, by handing arxi a link.
   invariant 1 outranks this audit. Both entries fail the day the engine reads
   them, which is the signal to delete them.
 
+- ✅ A container does not restyle its children's content
+  (`internal/engine/container_preserves_child_style_test.go`). The bind guards
+  ask whether a value reaches the frame; this asks about the other half of what
+  a node declares — the token it is drawn under. A value arriving under the
+  wrong token is on screen and wrong, and every projection guard passes it.
+  Swept as a matrix (every node type × bordered/borderless × the container
+  declaring a token or not), one shape of sixteen discarded the child's token:
+  a **bordered box**, whose content loop flattened each row with `l.Text()` and
+  re-emitted it under the box's style. The rule was already written down in
+  `padLine` — *"chrome must not restyle the content it fills around"* — and
+  already honoured by `wrapWithBorder`, the bordered *overlay* path. Three of
+  four drawing paths obeyed it and nothing compared them, which is why the
+  guard enumerates rather than testing the box. Reachable from a shipped scene:
+  MAXIMUM's Tasks panel is a bordered box around a list whose empty state is
+  minted `dim`, and `MAXIMUM.styled` had been pinning it bare as correct output
+  since the day it was generated. The fix moves two golden lines and they were
+  measured apart: `no tasks` gains `«dim:…»` (the repair), and the banner's one
+  span becomes two adjacent spans of the *same* token (a boundary, not a
+  change) — with SGR codes stripped the emitted text is byte-identical, so no
+  cell moved and invariant 1 holds. Verified by injection: welding the sibling
+  `wrapWithBorder` path leaves every golden green and fails only this guard.
+
 **Phase 1.5 — The SCENES ↔ BINDS audit:** Complete.
 
 - ✅ `internal/scene/binds_audit_test.go` parses `docs/BINDS.md` and holds the
