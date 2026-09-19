@@ -1,6 +1,9 @@
 package scene
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"sort"
+)
 
 // Node is one element in a scene document. A scene is a tree of Nodes, each
 // declaring its type, a stable id, optional bindings and styles.
@@ -39,6 +42,65 @@ type Node struct {
 	// MinWidth is the minimum content width an overlay will accept before
 	// its content wraps. The overlay never shrinks below this (Q7).
 	MinWidth *int `json:"min_width,omitempty"`
+}
+
+// declaredUnrenderedFields returns the json names of the fields this node
+// actually sets, so the validator can ask which of them the engine cannot yet
+// draw.
+//
+// It re-serialises the node rather than testing each field by hand, and that
+// is the whole point. A hand-written switch would be a second inventory of
+// Node's fields, maintained beside the struct and the unrenderedFields map,
+// and this package has already paid twice for exactly that shape: the signed
+// bind map drifted from BINDS.md in both directions, and the audit's remedy
+// drifted from the refusal it promised. A field added to Node tomorrow shows
+// up here for free, because every optional field carries omitempty — so a key
+// present in the output is a key the document set.
+//
+// The clone is shallow: children, template, prefix and suffix are cleared
+// before marshalling. The walk visits every node itself, so serialising whole
+// subtrees at each step would make the pass quadratic and would also report a
+// child's field as the parent's.
+func (n *Node) declaredUnrenderedFields() []string {
+	shallow := *n
+	shallow.Children = nil
+	shallow.RowTemplate = nil
+	shallow.Suffix = nil
+	shallow.PrefixRaw = nil
+	shallow.BorderRaw = nil
+
+	encoded, err := json.Marshal(&shallow)
+	if err != nil {
+		return nil
+	}
+	var keys map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &keys); err != nil {
+		return nil
+	}
+
+	// The cleared fields are still declared by the original node, and one
+	// of them (row_template) is the map's first entry. They are restored
+	// by name rather than by value: what matters is presence.
+	out := make([]string, 0, len(keys)+4)
+	for key := range keys {
+		out = append(out, key)
+	}
+	if n.RowTemplate != nil {
+		out = append(out, "row_template")
+	}
+	if n.Suffix != nil {
+		out = append(out, "suffix")
+	}
+	if len(n.PrefixRaw) > 0 {
+		out = append(out, "prefix")
+	}
+	if len(n.BorderRaw) > 0 {
+		out = append(out, "border")
+	}
+	// Sorted so a node declaring two unrendered fields refuses the same one
+	// every run; an address that moves between runs is not an address.
+	sort.Strings(out)
+	return out
 }
 
 // PrefixNode decodes PrefixRaw as a child Node (for marquee prefix).

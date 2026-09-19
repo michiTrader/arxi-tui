@@ -110,6 +110,35 @@ to the *actions*.
   arxi-sim's suite (`"two folds of the same log produced different states:
   replay is worthless"`) is the template.
 - Commit per file-change; a local-only commit is as fragile as no commit.
+  Stronger, after the cost was paid twice more: **work is pushed when it is
+  green, not when it is verified.** Committing is not backing up — an
+  uncommitted tree and a local-only commit are lost to the same event. The
+  second loss happened mid-verification, holding a finished change back
+  because the injection matrix was not finished yet; the third was survived,
+  because the fix had been pushed the moment the suite went green and only
+  the unpushed audit had to be redone. Verification is worth redoing. The
+  thing being verified is not.
+- **A guard whose documented remedy is a no-op is worse than no guard.** The
+  unrendered-field audit told contributors to record a dead field in
+  `scene.unrenderedFields`; doing so satisfied the audit and refused nothing,
+  because the refusal read one hardcoded key. A missing guard leaves a defect
+  undetected, which is recoverable; this kind converts a correct finding into
+  a closed ticket and leaves the next reader evidence that the question was
+  already settled. When a guard offers a remedy, the remedy is part of the
+  guard and has to be tested — take the advice and assert the behaviour
+  changes.
+- **An audit can be blinded by the very defect it was built to find.** Two
+  instances in one sweep: the field audit reports full coverage for a property
+  `Node` never declared, because it enumerates struct fields and there is no
+  field to enumerate; the unrendered-field map looked fully honoured because
+  it had exactly one entry. Ask what a check's subject is, and whether the
+  defect could remove the subject rather than fail the check.
+- **A restore that fails more than the original defect is measuring the
+  injection.** Reintroducing half of a two-part bug produced an incoherent
+  hybrid failing twenty-odd tests across four packages — noise that looks like
+  a large blast radius. A faithful restore of the original pair failed exactly
+  one test. Decompose the welds and restore each alone; and where two guards
+  could mask each other, verify each separately rather than assuming depth.
 - The table of "features" that once overclaimed in the arxi README is the
   standing warning against aspirational tables: **a document whose rows all say
   "works" is a document nobody can trust.**
