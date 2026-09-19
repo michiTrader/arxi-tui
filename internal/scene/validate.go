@@ -212,6 +212,28 @@ func ValidateTokens(doc *Document, thm *theme.Theme) []TokenError {
 // understood yesterday is a reference.
 var styleTokenKeys = [...]string{"token", "style"}
 
+// StyleTokenKeys returns the keys a node may name its style token under, in
+// the order the validator reads them. The slice is freshly built per call so a
+// caller cannot mutate the validator's list by holding onto it.
+//
+// This is exported for the same reason SignedBinds is, and against the same
+// cheaper-and-wrong alternative. Accepting a key here is a statement that
+// scenes may be written that way, and every consumer of that statement — above
+// all the render path, which has to turn the reference into a style — must read
+// the same list or the statement is only half true. It already was: the
+// validator learned "style" while styleName() in internal/engine kept reading
+// only its own spelling, so a scene using the other accepted key validated
+// clean and drew unstyled. That failure is silent by construction, because
+// passing validation is exactly the signal that says nothing is wrong.
+//
+// The alternative was to write the key list out again in the render path. That
+// is how this package's bind inventory drifted in both directions once already,
+// and a style-key copy would drift the same way with a worse symptom: binds fail
+// loudly at load, a missed style key just quietly renders the wrong screen.
+func StyleTokenKeys() []string {
+	return append([]string(nil), styleTokenKeys[:]...)
+}
+
 func (d *Document) collectTokenErrors(n *Node, path string, thm *theme.Theme, errs *[]TokenError) {
 	// Check whichever key this node declares its style token under. At most
 	// one error per node: the two keys are spellings of the same reference,

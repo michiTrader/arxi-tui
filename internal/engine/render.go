@@ -1074,9 +1074,26 @@ func evalWhen(bind string, state fold.State) bool {
 
 // styleName extracts the style token from a node's style map, or returns ""
 // if unset. Scene nodes carry styles as a map (e.g. {"style": "dim"}).
+//
+// The keys come from scene.StyleTokenKeys rather than being spelled here, and
+// that indirection is the whole point of the function. This read used to be
+// style["style"] alone while ValidateTokens accepted "token" as well, so a
+// scene using the other accepted spelling passed validation and then rendered
+// with no style — the one failure mode that reports success, since clearing
+// validation is precisely the signal that says the document is fine. A refusal
+// would have named the fix; this said nothing and drew the wrong screen.
+//
+// Reading the validator's own list means the two cannot disagree again: a key
+// the validator stops accepting stops being read here, and one it starts
+// accepting is honoured without a second edit anybody has to remember.
 func styleName(style map[string]string) string {
 	if style == nil {
 		return ""
 	}
-	return style["style"]
+	for _, key := range scene.StyleTokenKeys() {
+		if name := style[key]; name != "" {
+			return name
+		}
+	}
+	return ""
 }
