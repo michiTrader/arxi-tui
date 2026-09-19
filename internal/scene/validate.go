@@ -214,9 +214,36 @@ func (d *Document) validateBinds(n *Node, path string) error {
 // invent format ahead of the phase meant to design it. When the engine learns
 // to draw one of these, its entry leaves this map and the guard in
 // unrendered_test.go is what notices the map and the renderer disagree.
+// `on_press` and `scroll` are the same class one step earlier, and they are
+// the reason this map's generality had to be real before they could be added.
+// SCENES.md calls both universal; neither was a field on Node, so
+// encoding/json discarded the key without a word — a scene declaring either
+// parsed, validated and rendered byte-identically to one that did not. That is
+// worse than the unrendered-field case above, because there was no field for
+// the audit to enumerate: it reported full coverage *because* the property was
+// missing.
+//
+// It also broke a rule the project signs elsewhere. PLAN.md's
+// forward-compatibility contract is "unknown-but-parseable is a warning", and
+// the engine honours it for node *types* — `button`, `switch`, `slider` and
+// `sparkline` are documented, unimplemented, and each draws
+// [[UNKNOWN NODE TYPE]], so a v0 document keeps booting under v1 and the
+// screen says what it could not do. Properties had the opposite behaviour, and
+// the silent class was the one the documentation called universal.
+//
+// They are refused rather than implemented for row_template's reason: both are
+// behaviour, which PLAN.md schedules for Phase 3 (`on_press`, the action
+// vocabulary of SCENES.md Q18) and Phase 4 (`scroll`, the animation clock of
+// Q8/Q9). Inventing either now would build format ahead of the phase meant to
+// design it. A refusal costs the author one addressed message and costs the
+// project nothing it has to keep.
 var unrenderedFields = map[string]string{
 	"row_template": "relative binds inside templates are SCENES.md Q10 / Scene 5, " +
 		"and the `row.*` namespace they need is signed nowhere in BINDS.md yet",
+	"on_press": "the action vocabulary is closed per surface (SCENES.md Q18) and " +
+		"dispatch is Phase 3 interaction work; no node type presses anything yet",
+	"scroll": "scroll: {speed, pause_when} runs on the host animation clock " +
+		"(SCENES.md Q8/Q9, Scene 4), which PLAN.md schedules after the golden set",
 }
 
 // refuseUnrendered reports a field the validator understands and the renderer

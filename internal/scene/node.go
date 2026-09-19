@@ -39,6 +39,31 @@ type Node struct {
 	BorderRaw json.RawMessage `json:"border,omitempty"`
 	// Title renders a title at the top-left inside the border.
 	Title string `json:"title,omitempty"`
+	// OnPress names the action a press dispatches ("cmd:/max chat",
+	// "answer:approve", "focus:<node>"). SCENES.md calls it universal and
+	// four of the eleven scenes write it; nothing dispatches it yet.
+	//
+	// The field exists in order to be refused, not to be read, and that is
+	// the whole reason it was added. Without it the key was not part of the
+	// parser's vocabulary at all, so encoding/json discarded it in silence:
+	// a scene declaring on_press parsed, validated and rendered, and the
+	// property was gone before any layer could have an opinion. That is a
+	// silent drop one step earlier than the four this package already paid
+	// for — earlier because there was no field for the unrendered-field
+	// audit to enumerate, so it reported full coverage precisely *because*
+	// the property was missing. Declaring it puts the key back inside the
+	// vocabulary, where unrenderedFields can refuse it with an address.
+	OnPress string `json:"on_press,omitempty"`
+	// Scroll is Scene 4's animation property, `{ "speed": n, "pause_when":
+	// <bind> }`. Same story and same remedy as OnPress: universal in
+	// SCENES.md, implemented nowhere, and silently discarded until the key
+	// was declared here.
+	//
+	// json.RawMessage rather than a struct because the shape belongs to the
+	// animation clock Phase 4 designs; parsing it into fields now would
+	// pin a format ahead of the phase meant to choose it, while refusing it
+	// only needs to know the key was written.
+	Scroll json.RawMessage `json:"scroll,omitempty"`
 	// MinWidth is the minimum content width an overlay will accept before
 	// its content wraps. The overlay never shrinks below this (Q7).
 	MinWidth *int `json:"min_width,omitempty"`

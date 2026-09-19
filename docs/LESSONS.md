@@ -133,6 +133,27 @@ to the *actions*.
   field to enumerate; the unrendered-field map looked fully honoured because
   it had exactly one entry. Ask what a check's subject is, and whether the
   defect could remove the subject rather than fail the check.
+- **An escape hatch that lives where behaviour cannot is a blindfold, not an
+  exemption.** The universals audit skipped any property listed in a map of
+  accepted gaps — and the map was in a `_test.go` file, so recording a gap
+  there could not change what the parser did. The property stayed silently
+  discarded, the gap was documented to the suite alone, and the audit passed.
+  Paired with a source-level question (is this a json tag on the struct?), it
+  meant reverting the fix entirely left the whole suite green. Two rules fell
+  out: a guard's offered remedy is part of the guard and must be tested by
+  taking it; and a guard should ask its question in the layer where the defect
+  lives — the audit moved to `internal/engine` and now asks whether a frame
+  changes or a refusal is raised, because the validating package cannot be the
+  one that certifies the renderer.
+- **A fix no injection can break is not owned yet.** Three turns of injections
+  paid for the habit, but the version that matters is the one aimed at the fix
+  just written, not at the code it repaired: restore the original defect and
+  confirm something fails. When that restore left the suite green, the fix was
+  correct and unheld — a distinction invisible from the test output alone.
+  Also: a restore the *compiler* rejects is not a passing injection. It proves
+  the type checker works and says nothing about the guard, so the faithful
+  analogue has to be built (here: keep the field, drop the json tag) before an
+  exemption may be called tested.
 - **A restore that fails more than the original defect is measuring the
   injection.** Reintroducing half of a two-part bug produced an incoherent
   hybrid failing twenty-odd tests across four packages — noise that looks like
