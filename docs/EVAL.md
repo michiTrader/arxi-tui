@@ -596,6 +596,103 @@ Whether the token is the *right* one. A child asking for `warn` and getting
 goldens own appearance; this owns the property that a declaration survives the
 trip to the frame at all.
 
+### The same axis, pointed the other way: a node's token on its own content
+
+The container guard holds the *child* fixed at `text` — the one node type
+nobody doubted — and sweeps the containers. Stated that way the gap is
+obvious: it can only see a parent discarding a declaration, never a leaf that
+never applied one. A container cannot overwrite a token the child never put
+on the frame, so a node ignoring its **own** `style` is invisible to that
+guard and to every other test in the package.
+
+`style` is signed as a **universal** property in SCENES.md's vocabulary —
+*"Universal: `id`, `bind` …, `when`, `style`, `grow`/`weight` …"* — not as a
+property of `text` nodes. `collectTokenErrors` agrees and is type-agnostic: it
+reads `n.Style` on whatever node it walks and refuses an undefined token
+wherever it appears. Both the format and the validator therefore say every
+node may name a token.
+
+Swept childless across `renderNode`'s own switch, so whatever reaches the
+frame came from the node itself:
+
+| Node type | Draws own content | Honours its own token |
+| --- | --- | --- |
+| `input` | yes | **no** |
+| `list` | yes | **no** |
+| `markdown` | yes | **no** |
+| `rule` | yes | **no** |
+| `marquee` | yes | yes |
+| `spinner` | yes | yes |
+| `text` | yes | yes |
+| `box` | only its frame | yes (border glyphs) |
+| `overlay`, `row`, `stack` | no | n/a |
+
+Three of seven content types honoured the declaration. The measurement was
+itself wrong twice before it was right, and both corrections are the point
+rather than trivia. The first probe used `dim` as its witness and `list`
+passed — not because it honoured anything, but because its empty-state row is
+hardcoded `dim` and the search found that. A witness colliding with a
+hardcoded name measures the hardcoding. The second used a single slash match,
+which is *always* the selected row; the selected row deliberately keeps its
+own token, so that probe reported a defect in the one piece of the behaviour
+that is correct.
+
+#### It is silent, reachable, and it scores as a win
+
+SOARIA carries one node of each of the four: the `markdown` transcript, the
+`input` prompt, the `rule` above the slash menu, and the `list` of matches.
+Styling all four — the obvious patch for *"grey out the command menu"*, which
+is nearly the order `sobria-dim-the-footer` already carries — is accepted by
+**both** validators and leaves the rendered frame **byte-identical**.
+
+That is the worst combination this document has a name for, and all three
+parts land at once:
+
+- nothing refuses, so there is no `file:line` and the repair loop has no
+  input — the model is not being tested on reading an address, because no
+  address exists;
+- `converged` asks only that the document validates and binds what
+  `must_bind` names, so the case scores as a **win**;
+- the screen is unchanged.
+
+It is the `row_template` shape again — the corpus crediting an answer that
+draws nothing — in the direction named above as the dangerous one: a corpus
+that under-credits the model gets argued with, and one that over-credits it is
+the number nobody audits.
+
+#### The boundary, and the part of the fix nothing defended
+
+The fix makes a declared token replace the token the renderer minted, keeping
+the minted one when the scene declares nothing — that fallback is load-bearing
+rather than tidy, because all three shipped goldens declare nothing on these
+nodes and invariant 1 says the factory scene draws byte-identical frames. No
+golden moved.
+
+Two tokens are deliberately **not** replaceable:
+
+- the list's `[…]` placeholder, which is the engine reporting that it has no
+  projection for a bind rather than the list's content — the same `[…]` that
+  made nine signed binds look drawn. A scene that could restyle it could dress
+  up the engine's own admission of a gap.
+- the **selected** slash row. `slash.selected` is signed in BINDS.md §4.3 as
+  *"the list renders this row bright and every other row dim"*, so the
+  highlight is not a default being overridden; it is the only answer on screen
+  to what `Enter` will submit. A declaration may replace a default, not a
+  semantic.
+
+The second of those was argued rather than measured, and the injection said
+so. Letting the declared token win on the selected row too — erasing the
+highlight — passed the **entire suite** with nothing failing. A part of a fix
+that no test defends is exactly the part a later "make the token handling
+uniform" deletes, so it now has its own guard, which fails on that injection
+alone and checks both directions: the selected row must not carry the scene's
+token, *and* a resting row must, or the guard would pass on a list that
+ignored the declaration outright.
+
+Verified one weld at a time — R12a `rule`, R12b `markdown`, R12c `input`,
+R12d `list` — each caught only by the new guards, with nothing else in the
+tree seeing any of them, and `render.go` byte-identical after every restore.
+
 ### One judge, two callers
 
 The corpus test and the runner grade through the same code (`Grade`,
