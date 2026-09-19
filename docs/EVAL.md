@@ -806,6 +806,129 @@ whole-screen diff with no statement of the rule.
 `render.go` byte-identical after every restore; no golden regenerated;
 invariant 1 intact.
 
+### The guard that cleared the finding it was given
+
+The sweep that follows `when` went looking for the next half-wired universal
+and found something else: the defect had moved into the instrument.
+
+`unrenderedFields` is written as a map from json field name to the reason the
+engine cannot draw it, and `refuseUnrendered` read exactly one key out of it —
+`unrenderedFields["row_template"]` — from the one call site that already knew
+the answer, inside the `RowTemplate` arm of the walk. With one entry in the
+map, that is indistinguishable from a working lookup. Both halves were wrong
+in the same direction, so they agreed, and the map's generality was decoration.
+
+What makes it worth more than a quiet correction is where the inertness
+surfaces. `TestEveryNodeFieldIsEitherRenderedRefusedOrJustified` is the audit
+written after the third instance of the silent-drop class, and it tells a
+contributor who finds a dead field to *"add it to `scene.unrenderedFields` so
+the validator refuses it with an address"*. Measured: adding `categories` to
+the map left a list declaring it validating clean — and the audit passed,
+because a listed field is skipped as handled. Taking the advertised remedy
+silenced the alarm and refused nothing.
+
+That is a worse failure than the original class. A missing guard leaves a
+defect undetected; this one takes a contributor who has correctly found a
+defect and hands them a green suite saying it is fixed. The finding becomes a
+closed ticket with the bug still shipping, and the next person has evidence
+that the question was already asked and answered.
+
+The fix is that `refuseUnrendered` asks which unrendered fields *this node*
+declares, and the call site covers every node rather than only the templated
+ones. The field list is derived by re-serialising the node rather than by a
+hand-written switch, because a switch would be a third inventory of `Node`'s
+fields maintained beside the struct and the map — the shape that has already
+drifted twice here.
+
+#### The injection matrix, and one restore that was not faithful
+
+The first attempt to restore the defect changed the lookup but left the call
+site general, and it failed twenty-odd tests across four packages. That is not
+the original bug reproduced; it is a hybrid that refuses `text` nodes for
+declaring `text`. A restore that fails more than the original is measuring the
+injection, not the code — the same error as the vacuous frame-height assertion
+one turn earlier, in a new costume.
+
+Decomposed properly:
+
+- **R14a** — the original pair (constant lookup *and* the call site inside the
+  `RowTemplate` arm): fails exactly one test, the new
+  `TestUnrenderedFieldsIsReadAsAMapNotAConstant`.
+- **R14c** — only the call site moved back, lookup left general: fails the same
+  single test.
+- **R14b** — only the lookup made constant, call site left general: fails
+  twenty-odd tests, because it is the incoherent hybrid, not a weld of the
+  original.
+
+So the two halves of the defect are not mutually masking — either one alone is
+caught, and caught by the test named for it. That question is asked explicitly
+now, because the previous turn's overlay gate was two guards each hiding the
+other's deletion.
+
+Two guards were needed rather than one, and the reason generalises. The
+"every entry actually refuses" test passes against the *constant* lookup too,
+since the only entry is the one the constant names — so it cannot tell a map
+from a hardcoded string. Only the test that adds an entry at runtime and
+asserts the behaviour changes can fail against a constant, because a constant
+cannot see a key it was not written with.
+
+### A property that never reached the struct
+
+The same sweep, pointed at the document instead of the code, found the class
+one step earlier than any of the five before it.
+
+`SCENES.md` names seven universal properties. Five are fields on `Node`.
+`on_press` and `scroll` are not fields at all — and `encoding/json` discards
+unknown keys in silence, so a scene setting either one parses, validates,
+renders, and the property is gone before any layer could have had an opinion
+about it. A `text` node with `on_press` and one without produce byte-identical
+frames.
+
+The audit built to catch exactly this class cannot see it. It enumerates the
+fields of `Node` and asks what reads them, so its subject is the struct; a
+property the format promises and the struct never declared has no field to
+enumerate. It reports full coverage *because* the property is missing — the
+same shape as the `unrenderedFields` finding above, and found in the same
+sweep: a check whose silence is caused by the defect it was built to report.
+
+The asymmetry is the part worth fixing eventually. PLAN.md signs
+"unknown-but-parseable is a warning", and the engine honours it for node
+*types*: `button`, `switch`, `slider` and `sparkline` are all documented, none
+are implemented, and each draws `[[UNKNOWN NODE TYPE]]` — a v0 document keeps
+booting under v1 and the screen says what it could not do. Properties get no
+such treatment. The format has two classes of unknown construction and treats
+them in opposite ways, and the silent class is the one the documentation calls
+universal.
+
+`on_press` and `scroll` are recorded as accepted gaps rather than implemented,
+for the reason `row_template` is refused rather than drawn: both are
+behaviour, which PLAN.md schedules for Phase 3 and Phase 4, and inventing an
+action vocabulary or an animation clock now would be building format ahead of
+the phase meant to design it. What is not acceptable is shipping them as
+silent no-ops, so the map of gaps carries the decision owed for each.
+
+The audit reads its vocabulary out of `docs/SCENES.md` rather than a Go copy,
+on the binds-audit precedent — a hand-copied list has already drifted here in
+both directions, and its failure mode is the expensive one: the audit agrees
+with the code and the contract is the thing nobody checked.
+
+#### A filter that never fired
+
+The first draft carried a skip-list so that `bind`'s dotted examples
+(`path.state`, `row.field`) would not be read as properties. Removing it
+failed nothing — which the previous turn established is the moment to look
+harder rather than to delete or to keep. Measured by running the pattern in
+isolation: it never matched one of them, because the anchored `[a-z_]+`
+already excludes a dotted span. The list was not defence in depth and not
+load-bearing; it was a guard nobody could observe doing anything. Deleted, and
+the two injections re-run afterwards to confirm the audit still catches both.
+
+What protects the parse instead is the floor. The `Universal:` paragraph wraps
+across two lines, and a reader that takes only the first finds `id` and `bind`
+and stops — silently losing both properties this audit exists to report. The
+floor turns that into a loud failure, and it is the check that earns its
+place: restored alone, it fires.
+
 ### One judge, two callers
 
 The corpus test and the runner grade through the same code (`Grade`,

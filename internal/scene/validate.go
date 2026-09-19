@@ -178,14 +178,15 @@ func (d *Document) validateBinds(n *Node, path string) error {
 		if err := d.validateBinds(n.RowTemplate, templatePath(path)); err != nil {
 			return err
 		}
-		// The template's own binds are checked above, and only then is the
-		// field itself refused. Order matters: a mistyped bind inside the
-		// template is the more specific complaint, and a reader who wrote
-		// "totaly.invented" is better served by being told which bind is
-		// unsigned than by being told the containing field is unsupported.
-		if err := d.refuseUnrendered(n, path); err != nil {
-			return err
-		}
+	}
+
+	// The node's own binds and everything below it are checked first, and
+	// only then is an unrendered field refused. Order matters: a mistyped
+	// bind inside a template is the more specific complaint, and a reader
+	// who wrote "totaly.invented" is better served by being told which bind
+	// is unsigned than by being told the containing field is unsupported.
+	if err := d.refuseUnrendered(n, path); err != nil {
+		return err
 	}
 
 	return nil
@@ -224,17 +225,31 @@ var unrenderedFields = map[string]string{
 // correctly, so telling them it is malformed sends them hunting for a typo
 // that is not there. Phase 2's repair loop reads these messages, and a wrong
 // diagnosis costs a turn the corpus then charges to the model.
+//
+// It asks which unrendered fields *this node declares*, rather than assuming
+// the answer. The first version took the map's only key as a constant —
+// `unrenderedFields["row_template"]` — and was called only from the
+// RowTemplate arm, so the two halves agreed by coincidence and the map's
+// shape was decoration. That made the audit in unrendered_audit_test.go
+// unsound in the direction nobody checks: its advertised remedy is "add it to
+// scene.unrenderedFields so the validator refuses it with an address", and
+// taking that advice silenced the audit while refusing nothing. A guard whose
+// documented remedy is a no-op is worse than no guard, because it converts a
+// real finding into a closed ticket.
 func (d *Document) refuseUnrendered(n *Node, path string) error {
-	because, ok := unrenderedFields["row_template"]
-	if !ok {
-		return nil
+	for _, field := range n.declaredUnrenderedFields() {
+		because, ok := unrenderedFields[field]
+		if !ok {
+			continue
+		}
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("node type %q declares %q, which is accepted by the validator "+
+				"but not yet rendered by the engine (%s); the field would be silently "+
+				"dropped, so it is refused instead", n.Type, field, because),
+		}
 	}
-	return &Error{
-		Loc: d.locOf(path),
-		Msg: fmt.Sprintf("node type %q declares %q, which is accepted by the validator "+
-			"but not yet rendered by the engine (%s); the field would be silently "+
-			"dropped, so it is refused instead", n.Type, "row_template", because),
-	}
+	return nil
 }
 
 // ValidateTokens checks that every token referenced in the scene is defined in
