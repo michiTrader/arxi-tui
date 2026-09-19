@@ -135,6 +135,30 @@ published, by handing arxi a link.
   cell moved and invariant 1 holds. Verified by injection: welding the sibling
   `wrapWithBorder` path leaves every golden green and fails only this guard.
 
+- ✅ A node draws its own content under its own token
+  (`internal/engine/node_honours_own_style_test.go`). The guard above holds
+  the *child* fixed at `text` and sweeps the containers, which can only see a
+  parent discarding a declaration — never a leaf that never applied one. That
+  is the **fifth** instance of the accepted-but-not-drawn class: `style` is a
+  universal property in SCENES.md's vocabulary and `ValidateTokens` is
+  type-agnostic, yet `input`, `list`, `markdown` and `rule` emitted the token
+  they minted and ignored the one the scene declared. Reachable and silent:
+  SOARIA has one node of each, and styling all four is accepted by **both**
+  validators while leaving the frame **byte-identical** — so nothing refuses,
+  the repair loop gets no `file:line`, and `converged` scores the unchanged
+  screen as a win. The fix makes a declaration replace the minted default and
+  keeps the default when the scene declares nothing; that fallback is
+  load-bearing, since all three goldens declare nothing here and invariant 1
+  says the factory frames do not move (none did). Two tokens stay fixed on
+  purpose: the list's `[…]` placeholder is the engine reporting it has no
+  projection, not content a scene may dress up, and the **selected** slash row
+  stays bright because BINDS.md §4.3 signs it as the only indication of what
+  `Enter` will submit. That second boundary was argued and unmeasured —
+  erasing the highlight passed the entire suite — so it now has its own guard,
+  failing on that injection alone. Verified one weld at a time (`rule`,
+  `markdown`, `input`, `list`): each caught only by these guards, with
+  `render.go` byte-identical after every restore.
+
 **Phase 1.5 — The SCENES ↔ BINDS audit:** Complete.
 
 - ✅ `internal/scene/binds_audit_test.go` parses `docs/BINDS.md` and holds the
@@ -206,7 +230,9 @@ feature, as `PLAN.md` requires:
   The plan-block detection is confirmed against the live gateway rather than a
   captured body, and re-confirmed each session it is checked: the run that
   once reported `looped=3` now reports `model_error` on every case and exits
-  non-zero (latest check: `0/4 converged, model_error=4`, exit 1). That is the
+  non-zero (latest check, re-run live this session: `0/4 converged,
+  model_error=4`, exit 1, with the block confirmed by a direct probe of the
+  endpoint rather than inferred from the harness). That is the
   harness declining to score, which is the correct result and still not a
   score. The block arrives as **HTTP 200 carrying a normal-looking assistant
   message** — `x_genspark.code = free_plan_block` — which is why the detection

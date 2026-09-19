@@ -489,19 +489,28 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 // in bare air or overflow the frame no matter what the fold hands it.
 func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) ui.Frame {
 	var lines []ui.Line
+
+	// "text" is the token the pane mints when the scene declares none. A
+	// declared token replaces it, because the transcript is content this node
+	// draws itself and SCENES.md signs `style` on every node, not only on
+	// `text` ones. The token is handed to the wrapper up front rather than
+	// applied to the spans afterwards: WrapText splits into spans, and
+	// rewriting them post hoc is the same weld padLine exists to remove.
+	token := styleNameOr(n.Style, "text")
+
 	switch n.Bind {
 	case "chat.history":
 		for _, h := range state.History {
-			lines = append(lines, ui.WrapText(h.Text, "text", r.Width, nil)...)
+			lines = append(lines, ui.WrapText(h.Text, token, r.Width, nil)...)
 			lines = append(lines, ui.Line{}) // one blank row between turns
 		}
 		if len(lines) > 0 {
 			lines = lines[:len(lines)-1]
 		}
 	case "thinking.text":
-		lines = append(lines, ui.WrapText(state.ThinkingText, "text", r.Width, nil)...)
+		lines = append(lines, ui.WrapText(state.ThinkingText, token, r.Width, nil)...)
 	default:
-		lines = append(lines, ui.WrapText(n.Text, "text", r.Width, nil)...)
+		lines = append(lines, ui.WrapText(n.Text, token, r.Width, nil)...)
 	}
 	if budget >= 0 && len(lines) > budget {
 		lines = lines[len(lines)-budget:]
@@ -533,8 +542,13 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 	}
 	col := ansiStringWidth(prefix)
 
+	// The typed line is the content this node draws, so a declared token
+	// applies to it and "input" is the default it replaces. The placeholder
+	// keeps its own token either way: it is a hint the node substitutes while
+	// the line is empty, not the line itself, and the paragraph above records
+	// what welding the two together already cost once.
 	if n.Bind == "user.input" && state.UserInput != "" {
-		cells = append(cells, ui.Span{Text: state.UserInput, Style: "input"})
+		cells = append(cells, ui.Span{Text: state.UserInput, Style: styleNameOr(n.Style, "input")})
 		col += ansiStringWidth(state.UserInput)
 	} else {
 		cells = append(cells, ui.Span{Text: n.Placeholder, Style: "input.placeholder"})
@@ -572,9 +586,14 @@ func (r *Renderer) renderRule(n *scene.Node, state fold.State) ui.Frame {
 	}
 	// The rule glyph: a row of box-drawing horizontal dashes, matching the
 	// sobria aesthetic of rules instead of frames (PLAN.md §2).
+	//
+	// "rule" is the token this node mints for itself, and a token the scene
+	// declares replaces it: a separator the author asked to have dimmed is a
+	// separator that draws dim. It used to be stamped unconditionally, so the
+	// declaration validated and did nothing.
 	rule := strings.Repeat("─", width)
 	return ui.Frame{
-		Live:   []ui.Line{{ui.Span{Text: rule, Style: "rule"}}},
+		Live:   []ui.Line{{ui.Span{Text: rule, Style: styleNameOr(n.Style, "rule")}}},
 		Width:  r.Width,
 		Height: 1,
 	}
@@ -929,6 +948,21 @@ func (r *Renderer) wrapWithBorder(lines []ui.Line, n *scene.Node, contentWidth i
 func (r *Renderer) renderList(n *scene.Node, state fold.State, budget int) ui.Frame {
 	var lines []ui.Line
 
+	// The token for an ordinary, unemphasized row. The list mints one per
+	// bind ("text" for a todo, "dim" for a non-selected command) and a token
+	// the scene declares replaces it: the rows are content this node draws
+	// itself, and a list the author asked to dim used to validate and render
+	// unchanged.
+	//
+	// The *selected* command row is deliberately excluded below. Its
+	// brightness is not decoration but the only indication of what Enter will
+	// submit — "a menu with no highlight while Enter still acts is a menu
+	// that lies" (BINDS.md §4.3) — so a declared token replaces the resting
+	// style of the rows and never erases the highlight distinguishing one.
+	// That is the same line the container guard draws from the other side: a
+	// declaration may replace a default, not a semantic.
+	rowToken := styleNameOr(n.Style, "text")
+
 	switch n.Bind {
 	case "agent.todos":
 		// Each todo renders as: "task  (blockedOn, actor)" — one line per
@@ -948,11 +982,15 @@ func (r *Renderer) renderList(n *scene.Node, state fold.State, budget int) ui.Fr
 				}
 				taskText += fmt.Sprintf("  (%s)", detail)
 			}
-			wrapped := ui.WrapSpans([]ui.Span{{Text: taskText, Style: "text"}}, r.Width, nil)
+			wrapped := ui.WrapSpans([]ui.Span{{Text: taskText, Style: rowToken}}, r.Width, nil)
 			lines = append(lines, wrapped...)
 		}
 		if len(lines) == 0 {
-			lines = append(lines, ui.Line{ui.Span{Text: "no tasks", Style: "dim"}})
+			// The empty state mints "dim" rather than rowToken's "text"
+			// default: "no tasks" is the list reporting absence, and sobria
+			// de-emphasizes that. A declared token still replaces it, which
+			// is what MAXIMUM's Tasks panel now carries to the frame.
+			lines = append(lines, ui.Line{ui.Span{Text: "no tasks", Style: styleNameOr(n.Style, "dim")}})
 		}
 
 	case "slash.matches":
@@ -1003,7 +1041,11 @@ func (r *Renderer) renderList(n *scene.Node, state fold.State, budget int) ui.Fr
 		}
 
 		for i, m := range matches {
-			style := "dim"
+			// The resting rows take the declared token when there is one and
+			// "dim" when there is not. The selected row stays "text"
+			// unconditionally: it answers "what does Enter do", and a scene
+			// dimming its menu must still be able to say which row is live.
+			style := styleNameOr(n.Style, "dim")
 			if i == selected {
 				style = "text"
 			}
@@ -1012,12 +1054,18 @@ func (r *Renderer) renderList(n *scene.Node, state fold.State, budget int) ui.Fr
 
 		if len(lines) == 0 {
 			if state.SlashActive {
-				lines = append(lines, ui.Line{ui.Span{Text: "no matches", Style: "dim"}})
+				lines = append(lines, ui.Line{ui.Span{Text: "no matches", Style: styleNameOr(n.Style, "dim")}})
 			}
 		}
 
 	default:
 		// Unknown bind: render placeholder.
+		//
+		// The placeholder keeps "dim" whatever the scene declares. It is not
+		// the list's content but the engine reporting that it has none — the
+		// "[…]" that made nine signed binds look drawn — and letting a scene
+		// restyle that would let a document dress up the engine's own
+		// admission of a gap.
 		lines = append(lines, ui.Line{ui.Span{Text: "[…]", Style: "dim"}})
 	}
 
@@ -1212,4 +1260,29 @@ func styleName(style map[string]string) string {
 		}
 	}
 	return ""
+}
+
+// styleNameOr is styleName with the token the renderer would otherwise mint,
+// and it encodes which of the two wins.
+//
+// A node that declares a token has said what it wants drawn; a token the
+// renderer chose (a list's `dim` empty state, markdown's `text`, the rule's
+// `rule`) is a default for the case where the author said nothing. Four
+// content types used to ignore the declaration and emit the minted token
+// unconditionally, which validated clean — `style` is a universal property in
+// SCENES.md and ValidateTokens checks it on every node type — and drew an
+// unchanged screen. That is the failure this project has now hit five times:
+// a construction the validator accepts and the engine does not read, silent
+// precisely because clearing validation is the signal that says the document
+// is fine.
+//
+// The fallback is not cosmetic. Passing "" where a token is minted today would
+// strip the styling off every scene that declares nothing, which is all three
+// shipped goldens, and invariant 1 says the factory scene draws byte-identical
+// frames. Declaring a token replaces the default; declaring none keeps it.
+func styleNameOr(style map[string]string, minted string) string {
+	if name := styleName(style); name != "" {
+		return name
+	}
+	return minted
 }
