@@ -195,9 +195,33 @@ func ValidateTokens(doc *Document, thm *theme.Theme) []TokenError {
 	return errs
 }
 
+// styleTokenKeys are the keys a node may name its style token under.
+//
+// Two rather than one, and the second is the one that matters in practice:
+// "style" is what the three golden scenes, every example in SCENES.md and
+// TOKENS.md, and styleName() in the render path all use, while "token" was the
+// only key this validator originally read. Checking just "token" made the
+// validator blind to the sole spelling that actually occurs — SOARIA
+// referenced the undefined token "header" twice and validated clean, so the
+// factory interface failed the rule the product enforces on downloaded scenes.
+//
+// "token" is kept rather than replaced because it is already written into
+// corpus cases and tests, and silently rejecting it would turn a validator fix
+// into a format break. Accepting both costs one extra lookup; TOKENS.md's
+// promise is that every style reference is checked, and a key this validator
+// understood yesterday is a reference.
+var styleTokenKeys = [...]string{"token", "style"}
+
 func (d *Document) collectTokenErrors(n *Node, path string, thm *theme.Theme, errs *[]TokenError) {
-	// Check if this node declares a token in its style map.
-	if tokenName, ok := n.Style["token"]; ok && tokenName != "" {
+	// Check whichever key this node declares its style token under. At most
+	// one error per node: the two keys are spellings of the same reference,
+	// so reporting both would address the same node twice and make the
+	// count of offenders depend on how the scene was spelled.
+	for _, key := range styleTokenKeys {
+		tokenName, ok := n.Style[key]
+		if !ok || tokenName == "" {
+			continue
+		}
 		if !thm.Has(tokenName) {
 			*errs = append(*errs, TokenError{
 				Token:    tokenName,
@@ -205,6 +229,7 @@ func (d *Document) collectTokenErrors(n *Node, path string, thm *theme.Theme, er
 				Loc:      d.locOf(path),
 			})
 		}
+		break
 	}
 
 	// Check border style token if present.

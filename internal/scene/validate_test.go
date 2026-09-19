@@ -1,6 +1,8 @@
 package scene
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/michiTrader/arxi_tui/internal/theme"
@@ -193,5 +195,90 @@ func TestValidateTokensChecksBorderStyles(t *testing.T) {
 	}
 	if errs[0].Token != "undefined.border" {
 		t.Errorf("error Token = %q, want %q", errs[0].Token, "undefined.border")
+	}
+}
+
+// TestValidateTokensChecksTheKeyTheScenesActuallyUse is the regression test for
+// a gap that every other token test in this file walked straight past.
+//
+// collectTokenErrors read style["token"]. The shipped scenes, SCENES.md and
+// TOKENS.md all write the style reference as style["style"] — SOARIA's header
+// row is `"style": {"style": "header"}` — and styleName() in the render path
+// reads style["style"] too. So the validator was checking a key the format does
+// not use, and the only reason no test noticed is that every token test here
+// was written with the validator's key rather than the scenes' key.
+//
+// What that cost, measured rather than supposed: SOBRIA does not define
+// "header", SOARIA.json references it twice, and ValidateTokens(SOARIA) returned
+// zero errors. The default interface shipped with an undefined token reference
+// that the token validator existed to catch.
+//
+// Why this is worth a test rather than a quiet fix. TOKENS.md signs the
+// promise — "the validator walks the scene tree, collects every "style" value,
+// and checks each against the theme's key set" — and LESSONS.md's rule, with
+// arxi-sim's polarity inverted, is that the reference is checked, not the
+// inventory. A validator that reads the wrong key keeps both promises on paper
+// and neither in fact; worse, it is the exact failure mode the corpus cannot
+// see, because a corpus case naming the "token" key gets a real refusal and
+// concludes the machinery works.
+func TestValidateTokensChecksTheKeyTheScenesActuallyUse(t *testing.T) {
+	// The spelling used by the three golden scenes and by every example in
+	// SCENES.md and TOKENS.md.
+	src := []byte(`{
+  "root": {
+    "type": "text",
+    "text": "hello",
+    "style": { "style": "nonexistent.token" }
+  }
+}`)
+	doc, err := ParseDocument(src)
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	errs := ValidateTokens(doc, theme.SOBRIA())
+	if len(errs) == 0 {
+		t.Fatalf("ValidateTokens accepted the undefined token %q written as \"style\": {\"style\": ...}\n"+
+			"consequence: this is the spelling the shipped scenes use, so the token validator is blind to the only form that occurs in practice — SOARIA references the undefined token \"header\" twice and validates clean.\n"+
+			"remedy: collect the style reference from both keys in collectTokenErrors, not just style[\"token\"].",
+			"nonexistent.token")
+	}
+	if errs[0].Token != "nonexistent.token" {
+		t.Errorf("error Token = %q, want %q", errs[0].Token, "nonexistent.token")
+	}
+	if errs[0].Loc.Line == 0 {
+		t.Errorf("token refusal carries no address\n" +
+			"consequence: invariant 4 requires file:line on every refusal, and the repair loop is exactly the case where it has to be read.\n" +
+			"remedy: populate Loc from the offending node's path.")
+	}
+}
+
+// TestTheShippedScenesReferenceOnlyDefinedTokens holds the factory scenes to
+// the rule the validator enforces for everyone else.
+//
+// A downloaded scene naming an undefined token is refused at load; the scenes
+// arxi ships must clear the same bar, or the product is enforcing on community
+// content a standard its own default interface fails. This is the check that
+// would have caught "header" the day it was written, independent of whichever
+// key the validator happens to read.
+func TestTheShippedScenesReferenceOnlyDefinedTokens(t *testing.T) {
+	thm := theme.SOBRIA()
+	for _, name := range []string{"RAW.json", "SOARIA.json", "MAXIMUM.json"} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", name))
+			if err != nil {
+				t.Fatalf("read scene: %v", err)
+			}
+			doc, err := ParseNamed(name, raw)
+			if err != nil {
+				t.Fatalf("parse scene: %v", err)
+			}
+			for _, e := range ValidateTokens(doc, thm) {
+				t.Errorf("shipped scene references undefined token %q (%s)\n"+
+					"consequence: the factory interface fails the rule the validator applies to community content, and a theme swap can leave a node with no style at all.\n"+
+					"remedy: define the token in the theme, or use one the theme already defines.",
+					e.Token, e.Error())
+			}
+		})
 	}
 }

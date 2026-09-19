@@ -1,6 +1,6 @@
 {
   "id": "sobria-dim-the-footer",
-  "order": "make the status footer quieter, grey it out",
+  "order": "make the status footer quieter, grey it out, and show the tokens in and out there",
   "base": "SOARIA.json",
   "rationale": "The token vocabulary is open by design (SCENES.md: 'the validator checks references, not inventory'), which makes a mistyped or invented token name the most common scene error there is — and the one whose refusal is easiest to get wrong, because an open vocabulary tempts an implementation into accepting anything. The order says 'grey', so the plausible patch mints 'grey' rather than the SOBRIA theme's 'dim'. This is also the corpus' only coverage of the token validator, which reports through a different type than bind refusals (TokenError, not a scene.Error) and so could regress independently of everything the other cases pin.",
   "attempts": [
@@ -16,6 +16,8 @@
               "id": "status",
               "type": "row",
               "children": [
+                { "type": "text", "bind": "usage.in", "style": { "style": "dim" } },
+                { "type": "text", "bind": "usage.out", "style": { "style": "dim" } },
                 { "type": "text", "bind": "model.name", "style": { "token": "grey" } }
               ]
             }
@@ -24,7 +26,7 @@
       },
       "expect_refused": {
         "reason": "undefined token \"grey\"",
-        "line": 11,
+        "line": 13,
         "kind": "token"
       }
     }
@@ -40,12 +42,14 @@
             "id": "status",
             "type": "row",
             "children": [
+              { "type": "text", "bind": "usage.in", "style": { "style": "dim" } },
+              { "type": "text", "bind": "usage.out", "style": { "style": "dim" } },
               { "type": "text", "bind": "model.name", "style": { "token": "dim" } }
             ]
           }
         ]
       }
     },
-    "must_bind": ["model.name"]
+    "must_bind": ["model.name", "usage.in", "usage.out"]
   }
 }

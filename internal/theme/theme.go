@@ -154,8 +154,19 @@ func parseAttr(name string) (ui.Attr, error) {
 // is defined here; a missing token is a validation error, not a runtime lookup.
 func SOBRIA() *Theme {
 	return FromMap(map[string]ui.Style{
-		"text":               {}, // default: no attributes, terminal's default fg/bg
-		"dim":                {Attrs: ui.AttrDim},
+		"text": {}, // default: no attributes, terminal's default fg/bg
+		"dim":  {Attrs: ui.AttrDim},
+		// TOKENS.md signs "header": {"attrs": ["bold"]} and states this
+		// theme "defines exactly the tokens the three golden scenes
+		// reference, and nothing more". It was missing while SOARIA
+		// referenced it twice, and nothing caught that because the token
+		// validator was reading the wrong style key — so the default
+		// interface shipped a reference the product refuses in a
+		// downloaded scene. Restored from the document rather than
+		// removed from the scene: the signed theme is the contract, and
+		// dropping the reference would have silently restyled the header
+		// row of the shipped look.
+		"header":             {Attrs: ui.AttrBold},
 		"bright":             {Attrs: ui.AttrBold},
 		"input":              {Attrs: ui.AttrBold},
 		"input.placeholder":  {Attrs: ui.AttrDim},
