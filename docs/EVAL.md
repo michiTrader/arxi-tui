@@ -693,6 +693,119 @@ Verified one weld at a time — R12a `rule`, R12b `markdown`, R12c `input`,
 R12d `list` — each caught only by the new guards, with nothing else in the
 tree seeing any of them, and `render.go` byte-identical after every restore.
 
+### The third universal property, and the axis that was not the node type
+
+`style` was the second of SCENES.md's universal properties to turn out
+half-implemented. The same list has a third entry with the same exposure, and
+asking the question in the obvious form finds it: `when` is signed alongside
+`id`, `bind` and `style` — *"Universal: `id`, `bind` …, `when`, `style`,
+`grow`/`weight` …"* — and the validator accepts it on every node type. The
+engine honoured it in exactly two places: `renderHorizontal` filtered its
+children before laying out columns, and `renderOverlay` gated itself.
+
+The sweep that found it is the previous one pointed at a different property,
+with one change that turned out to matter more than the property did. The
+`style` sweep held the parent fixed and varied the node; this one varied both,
+and the result does not decompose by node type at all:
+
+| Parent | Gated child is hidden |
+| --- | --- |
+| `row` | every type |
+| `stack` | `overlay` only |
+| `box` (borderless → stack) | `overlay` only |
+| `overlay` | none |
+
+Ten of eleven types ignored the gate under a `stack` and every one of them
+obeyed it under a `row`. So the defect was never "these node types are
+unfinished" — the visibility of a node was a fact about **its parent**, and
+the same `{"type":"text","when":"ui.max"}` disappeared or drew depending on
+where it was pasted. A per-type table, which is what the previous
+investigation trained me to produce, would have reported a different defect
+than the one that exists.
+
+#### Reachable, silent, and signed by name
+
+SOBRIA's thinking marquee is a direct child of the root stack with
+`when: "agent.working"` — the position with no gate. BINDS.md §4.1 does not
+merely permit the gate, it names it as the mechanism, in `thinking.text`'s
+empty state: *"empty string — the marquee does not render (`when` is
+false)"*.
+
+It looked correct in every golden, and for a reason worth recording: the
+goldens pin a state where `thinking.text` is empty, and the marquee collapses
+on empty text through a path with nothing to do with `when`. A second rule was
+covering for the missing one. Hold the text non-empty and flip only
+`agent.working` — which is what the fold does the instant a turn ends, since
+`agent.turn_done` clears the flag and nothing clears the text — and the two
+frames are byte-identical. The thinking line kept scrolling while the agent
+was idle.
+
+Nothing refuses, no golden moves, and the screen is wrong: the same shape as
+`row_template` and as the four unstyled node types, which is now the sixth
+instance of a construction the validator accepts and the engine does not read.
+
+#### Hiding is two properties, not one
+
+A node is hidden when it draws nothing *and* reserves nothing, and those are
+separate mechanisms in two different passes. `renderStack` measures its
+children before dividing rows among the growers; `renderHorizontal` divides
+width before drawing columns. A gate applied only at draw time leaves a hidden
+grow child holding its share of the budget and painting it blank — the content
+gone, the hole it sat in still there.
+
+So the fix is one predicate (`hiddenByWhen`) asked in three places, and the
+guards are one per place, because a single sweep cannot see them. The sweep
+above asks only whether the node's own text is absent, which is true in every
+one of these cases while the layout is wrong.
+
+#### Three corrections, all to the measurement
+
+The defect was cheap. Measuring it correctly was not, and all three errors are
+the entry:
+
+1. **The frame-height assertion was vacuous.** The reservation guard first
+   compared the frame's height with and without the hidden child.
+   `RenderFrame` pads to the terminal height, so both are always identical: the
+   assertion passed under the very injection it existed to catch. What moves is
+   the *position* of the survivor — pushed down by exactly the rows the hidden
+   child kept — so the guard measures the row index, not the row count.
+2. **The row filter looked redundant and was not.** Removing
+   `renderHorizontal`'s filter failed nothing, which reads as "renderNode
+   already covers this". It does, for *unweighted* columns, which pack left so
+   a hidden sibling costs nothing visible. Give the columns weights and the
+   survivor shifts right by the hidden child's share. The guard uses weights;
+   without them it would have licensed deleting a load-bearing filter.
+3. **The overlay's own gate was mutual masking, not defence in depth.**
+   Removing it also failed nothing — and so did removing the stack's skip,
+   *separately*. Each was hiding the overlay when the other was deleted, so
+   both injections came back green and each copy looked like the dead one. Two
+   redundant guards that mask each other are strictly worse than one: neither
+   can be measured, and whoever removes the second has a passing suite telling
+   them it was safe. The duplicate is now gone and the stack's skip is a
+   single measurable thing — which is what makes `R13b` fail six tests,
+   including two SOBRIA goldens, where before it failed none.
+
+The direction of the last assertion is also worth stating, because the obvious
+guess is backwards: closing the slash menu moves the input *down*, not up. The
+transcript is a grower and reserves its full share regardless of content, so
+the rows the menu releases go to the transcript and push the input toward the
+bottom. The first version of that check asserted the opposite and failed
+honestly.
+
+#### Verified one weld at a time
+
+R13a (`renderNode`'s gate), R13b (the stack's reservation skip), R13d (the
+row's column filter) and R13e (`hiddenByWhen` treating an absent `when` as a
+closed gate) were each restored alone. R13a and R13d fail only the new guards;
+R13b fails the new guards and the SOBRIA goldens; R13e fails forty-odd tests
+across four packages, which is the expected blast radius for a predicate that
+blanks every node in every scene — and is the reason the "ungated nodes are
+not hidden" guard exists anyway, since the goldens report that failure as a
+whole-screen diff with no statement of the rule.
+
+`render.go` byte-identical after every restore; no golden regenerated;
+invariant 1 intact.
+
 ### One judge, two callers
 
 The corpus test and the runner grade through the same code (`Grade`,
