@@ -1,0 +1,150 @@
+{
+  "id": "maximum-count-the-tasks",
+  "order": "in the tasks panel, show how many are left, and keep it muted",
+  "base": "MAXIMUM.json",
+  "rationale": "The first case whose repair path is longer than one turn, and the first to start from MAXIMUM. Both gaps were measurable: every earlier case carried exactly one attempt, so the corpus claimed to measure the repair loop while only ever pinning a single refusal, and MAXIMUM was the one pinned scene the corpus never patched even though EVAL.md names the golden scenes as the fixture set for the corpus and the hostile property tests alike. The chain is the point: the order provokes an unsigned bind first, and the obvious repair of that bind still leaves an invented token, so the two refusals arrive through different types (a scene.Error, then a TokenError) on consecutive turns of one case. A model that reads only the first address converges on nothing here, which is the behaviour PLAN.md's file:line: work exists to distinguish. The order is underspecified in the way real orders are: 'how many are left' names no bind, and 'muted' is an English adjective rather than a token this theme defines.",
+  "attempts": [
+    {
+      "note": "counts the tasks with a bind that reads like the panel it sits in; the panel binds agent.todos, so tasks.count is the plausible guess and is not signed",
+      "document": {
+        "root": {
+          "type": "stack",
+          "children": [
+            {
+              "id": "banner",
+              "type": "box",
+              "border": "single",
+              "style": { "style": "banner" },
+              "children": [
+                { "type": "text", "text": "Δr×i v1.0 ── Trading session" }
+              ]
+            },
+            {
+              "type": "row",
+              "grow": 1,
+              "children": [
+                {
+                  "type": "stack",
+                  "weight": 3,
+                  "children": [
+                    { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 }
+                  ]
+                },
+                {
+                  "id": "tasks",
+                  "type": "box",
+                  "weight": 1,
+                  "title": "Tasks",
+                  "border": "single",
+                  "children": [
+                    { "type": "list", "bind": "agent.todos" },
+                    { "type": "text", "bind": "tasks.count", "style": { "token": "dim" } }
+                  ]
+                }
+              ]
+            },
+            { "id": "prompt", "type": "input", "prefix": "❯ " }
+          ]
+        }
+      },
+      "expect_refused": {
+        "reason": "unsigned bind \"tasks.count\"",
+        "line": 33,
+        "kind": ""
+      }
+    },
+    {
+      "note": "repairs the bind from the first address, then takes the order's word 'muted' literally as a token name; SOBRIA defines dim, not muted",
+      "document": {
+        "root": {
+          "type": "stack",
+          "children": [
+            {
+              "id": "banner",
+              "type": "box",
+              "border": "single",
+              "style": { "style": "banner" },
+              "children": [
+                { "type": "text", "text": "Δr×i v1.0 ── Trading session" }
+              ]
+            },
+            {
+              "type": "row",
+              "grow": 1,
+              "children": [
+                {
+                  "type": "stack",
+                  "weight": 3,
+                  "children": [
+                    { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 }
+                  ]
+                },
+                {
+                  "id": "tasks",
+                  "type": "box",
+                  "weight": 1,
+                  "title": "Tasks",
+                  "border": "single",
+                  "children": [
+                    { "type": "list", "bind": "agent.todos" },
+                    { "type": "text", "bind": "todos.count", "style": { "token": "muted" } }
+                  ]
+                }
+              ]
+            },
+            { "id": "prompt", "type": "input", "prefix": "❯ " }
+          ]
+        }
+      },
+      "expect_refused": {
+        "reason": "undefined token \"muted\"",
+        "line": 33,
+        "kind": "token"
+      }
+    }
+  ],
+  "convergence": {
+    "document": {
+      "root": {
+        "type": "stack",
+        "children": [
+          {
+            "id": "banner",
+            "type": "box",
+            "border": "single",
+            "style": { "style": "banner" },
+            "children": [
+              { "type": "text", "text": "Δr×i v1.0 ── Trading session" }
+            ]
+          },
+          {
+            "type": "row",
+            "grow": 1,
+            "children": [
+              {
+                "type": "stack",
+                "weight": 3,
+                "children": [
+                  { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 }
+                ]
+              },
+              {
+                "id": "tasks",
+                "type": "box",
+                "weight": 1,
+                "title": "Tasks",
+                "border": "single",
+                "children": [
+                  { "type": "list", "bind": "agent.todos" },
+                  { "type": "text", "bind": "todos.count", "style": { "token": "dim" } }
+                ]
+              }
+            ]
+          },
+          { "id": "prompt", "type": "input", "prefix": "❯ " }
+        ]
+      }
+    },
+    "must_bind": ["agent.todos", "todos.count"]
+  }
+}
