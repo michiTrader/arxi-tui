@@ -175,6 +175,18 @@ func TestEveryUnrenderedFieldIsActuallyRefused(t *testing.T) {
 	fixtures := map[string]string{
 		"row_template": `{ "root": { "type": "list", "bind": "agent.todos",
 		  "row_template": { "type": "text", "bind": "model.name" } } }`,
+
+		// on_press and scroll are universal properties SCENES.md promises
+		// and no layer implemented. Before they were declared on Node they
+		// could not be refused at all: encoding/json dropped the key, so
+		// these two documents rendered byte-identically to the same scene
+		// without them. Their fixtures are ordinary nodes, because that is
+		// the point — the format says any node may carry these, so the
+		// refusal must not depend on picking an exotic node type.
+		"on_press": `{ "root": { "type": "text", "bind": "model.name",
+		  "on_press": "cmd:/help" } }`,
+		"scroll": `{ "root": { "type": "markdown", "bind": "chat.history",
+		  "scroll": { "speed": 2, "pause_when": "agent.working" } } }`,
 	}
 
 	if len(unrenderedFields) == 0 {

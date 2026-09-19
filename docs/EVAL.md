@@ -907,10 +907,93 @@ action vocabulary or an animation clock now would be building format ahead of
 the phase meant to design it. What is not acceptable is shipping them as
 silent no-ops, so the map of gaps carries the decision owed for each.
 
+**Amended the following turn, and the amendment is the finding.** "Recorded as
+accepted gaps" was itself the silent no-op. The record lived in
+`acceptedAbsentUniversals`, a map inside a `_test.go` file, and a map there
+cannot change what the parser does: the keys were still discarded, the scene
+still validated, and the audit still passed. The gap was documented to the
+suite and invisible to the author — which is the outcome the paragraph above
+says is unacceptable, arrived at by the sentence that promised to prevent it.
+
+Both fields are now declared on `Node` and listed in `scene.unrenderedFields`,
+which refuses them with an address. The fields exist in order to be refused,
+not read: declaring the key is what puts it inside the parser's vocabulary,
+where a refusal can reach it at all. The general map lookup fixed the turn
+before is what lets two new entries work without touching the refusal code.
+
 The audit reads its vocabulary out of `docs/SCENES.md` rather than a Go copy,
 on the binds-audit precedent — a hand-copied list has already drifted here in
 both directions, and its failure mode is the expensive one: the audit agrees
 with the code and the contract is the thing nobody checked.
+
+#### The fix that no test held down
+
+The injection matrix for the fix above is where the turn's real finding was.
+**R16a** — delete both fields *and* both refusals, i.e. restore the original
+defect exactly — returned the **whole suite to green**. Nothing failed. A fix
+that can be reverted without a single test noticing is not a fix the project
+owns; it is a fix that happens to be present.
+
+Two halves let it pass, and both were in the instrument rather than the
+engine:
+
+- the audit asked whether each universal was a **json tag on `Node`** — a
+  question about source, which a source deletion answers correctly; and
+- it **skipped** any property listed in `acceptedAbsentUniversals`. With the
+  fields gone, the skip-list answered on the engine's behalf.
+
+Neither half is wrong alone. Together they mean the audit's verdict cannot
+distinguish "the property works" from "the property is absent and excused",
+which is precisely the pair it exists to separate.
+
+This is the third turn running in which the recurring defect class was found
+in the instrument, and the second in which the mechanism was a guard's own
+escape hatch. Last turn the `unrenderedFields` remedy was a no-op *in
+practice*; this turn it was a no-op *by construction*, because a test-file map
+cannot change parser behaviour under any circumstances. The generalisation
+worth keeping: **when a guard offers an escape hatch, the hatch is part of the
+guard — and an escape hatch that lives where behaviour cannot is not an
+exemption, it is a blindfold.**
+
+The replacement asks an engine question instead, and lives in
+`internal/engine` because that package imports `scene` rather than the
+reverse: the validating package cannot be the one that certifies the renderer.
+Each universal must be observable in exactly one of two ways — the document
+changes the frame, or it is refused with an address — and a property with no
+probe **fails** rather than skipping, because an unexercised entry is how the
+`unrenderedFields` map became decoration in the first place.
+
+Two findings surfaced while wiring it, each measured before acting:
+
+- **`when` failed, and the probe was wrong, not the code.** The first pair
+  gated on a bind the probe state sets truthy, so the node drew either way and
+  the frames matched. A probe that cannot distinguish its two cases measures
+  the probe — the injection lesson from the previous turn, arriving in a new
+  place. Re-pointed at an empty bind, it passes.
+- **`id` failed, and it is a real third outcome.** Nothing in the engine reads
+  it; it is an address for patches, so identical frames are correct. It is
+  exempted **by name and with teeth**: not skipped — a skip would survive the
+  field being deleted, the exact failure under repair — but asserted to
+  round-trip through the parser.
+
+The matrix, decomposed so no two halves could mask each other:
+
+- **R17a** — the full original defect (no fields, no refusals): fails exactly
+  one test, `TestEveryUniversalPropertyIsHonouredOrRefused`. Under the old
+  audit this same injection failed nothing.
+- **R17b** — fields kept, refusals deleted: caught by **two independent
+  audits in two packages** — the behavioural one in `engine`, and
+  `TestEveryNodeFieldIsEitherRenderedRefusedOrJustified` in `scene`, each
+  naming its own half.
+- **R17c** — refusals kept, fields deleted: caught by the behavioural audit
+  and by `TestEveryUnrenderedFieldIsActuallyRefused`.
+- **R17d** — delete `Node.ID` outright: the compiler catches it, which proves
+  nothing about the audit. Recorded because a compile failure is *not* a
+  passing injection, and reading it as one is how an untested exemption gets
+  called tested.
+- **R17e** — the faithful analogue: keep the Go field, take the json key out
+  of the parser's vocabulary (`json:"-"`) — the exact shape that made
+  `on_press` and `scroll` invisible. The `id` exemption fails, as it must.
 
 #### A filter that never fired
 
