@@ -508,6 +508,94 @@ With this, all 30 signed binds are measured for projection: 23 scalars on
 `resolveBind`, 5 composites across all 11 node types, 2 pulses exempted by name
 with their reasons on the record.
 
+### The other half of a node: the token it is drawn under
+
+The three guards above all ask the same kind of question — does the bind's
+*value* reach the frame. A scene node declares two things, and nothing asked
+about the second. A value that arrives under the wrong token is on screen and
+wrong, and every projection guard passes it, because the text is there; only
+the styling belongs to somebody else.
+
+Swept as a matrix (every node type in `renderNode`'s switch × bordered and
+borderless × the container declaring a token of its own or not), rendering a
+child that declares `{"style": "…"}` and asking whether that token survives to
+the frame. Sixteen combinations draw the child. One shape did not keep it:
+
+	box       bordered=false  childTokenKept=true
+	box       bordered=true   childTokenKept=false   <-- here
+	overlay   bordered=true   childTokenKept=true
+	row/stack (both)          childTokenKept=true
+
+`renderBox`'s content loop flattened each child row with `l.Text()` and
+re-emitted it as one span under the box's token — or under none. Everything
+the children said about themselves was discarded at the border.
+
+#### It is a repeat, and that is what makes it a finding
+
+`padLine` already carries the rule in writing, and it was written from a bug
+that had shipped: *"Flattening the line into its first span is how a dim menu
+row came out undimmed: the padding is chrome, and chrome must not restyle the
+content it fills around."* `wrapWithBorder` — the **bordered overlay** path —
+was fixed to honour it and says so in its own comment.
+
+So three of the four bordered/borderless drawing paths obeyed the rule, one did
+not, and nothing in the tree compared them. A rule honoured in three places out
+of four is not a rule; it is a coincidence, and the fourth place is found by
+enumeration or not at all. That is why the guard sweeps the matrix instead of
+testing the box.
+
+#### Reachable from a shipped scene, and already visible in a golden
+
+MAXIMUM's Tasks panel is a bordered box around a list. `renderList` mints its
+empty state as `{Text: "no tasks", Style: "dim"}`, and `MAXIMUM.styled`
+recorded what actually reached the screen:
+
+	«border:│»no tasks          «border:│»
+
+Bare. The `dim` token was created by the renderer and deleted by the box one
+call later. The golden had been pinning the defect as correct output since the
+day it was generated — the same shape as the `row_template` case, where five
+places agreed a field was live and the engine read it in zero.
+
+#### Verified by injection, and by separating the two golden changes
+
+The fix moves exactly two lines of `MAXIMUM.styled`, and they are not the same
+kind of change. Measured by emitting real ANSI through the factory theme before
+and after:
+
+- **Line 5** — `no tasks` gains `«dim:…»`. In ANSI: `\e[2m` appears where there
+  was nothing. This is the defect, repaired.
+- **Line 2** — the banner's single `«banner:…»` span becomes two adjacent
+  `«banner:…»` spans. In ANSI: the same bold, closed and reopened at the
+  content/padding boundary. Same attribute, same cells.
+
+Stripping SGR codes from both emissions, **the plain text is byte-identical** —
+no cell moved, so invariant 1 holds. Reporting "the golden changed" without
+that split would have hidden a real repair behind a cosmetic span boundary, or
+the reverse.
+
+The injections:
+
+- **R11b** (`wrapWithBorder` welded again — the *sibling* path, reintroducing
+  the identical defect where it had already been fixed once): every golden
+  stays green, because no shipped scene uses a bordered overlay. This guard is
+  the only thing in the tree that fails. That is the one that earns its keep.
+- **R11a** (the weld restored in `renderBox`): caught by this guard *and* by
+  `TestMaximumSceneStyledGolden` — but only because the golden was just
+  updated. Reported as overlap, not as a win.
+- **R11c** (the box computes its own token and discards it, so the padding it
+  adds goes unstyled): caught by the **golden**, not by this guard — correctly.
+  The guard does not require a container to style its own chrome, and must not:
+  MAXIMUM's banner depends on exactly that, and it is the distinction the fix
+  draws. Chrome may style chrome; it may not restyle the content it wraps.
+
+#### What it does not check
+
+Whether the token is the *right* one. A child asking for `warn` and getting
+`warn` passes here even if the theme maps `warn` to something illegible. The
+goldens own appearance; this owns the property that a declaration survives the
+trip to the frame at all.
+
 ### One judge, two callers
 
 The corpus test and the runner grade through the same code (`Grade`,

@@ -677,18 +677,36 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 		content = ui.Frame{Live: []ui.Line{ui.Line{}}, Width: innerWidth}
 	}
 
+	// Content rows are carried through span by span, keeping each child's own
+	// token, exactly as wrapWithBorder does for the bordered overlay. This
+	// loop used to flatten the row with l.Text() and re-emit it as a single
+	// span under the box's style, which discarded every declaration the
+	// children had made: a list's `dim` empty state came out bare inside
+	// MAXIMUM's Tasks panel, and a child asking for `warn` inside a banner box
+	// was painted `banner`.
+	//
+	// It is the same weld padLine was written to remove ("chrome must not
+	// restyle the content it fills around") and that wrapWithBorder already
+	// honours. Three of the four bordered/borderless drawing paths obeyed the
+	// rule and this one did not, which is why the guard sweeps the matrix
+	// rather than testing a box.
+	//
+	// The box's own token still reaches the screen: padLine's pad span carries
+	// no style, so styleName(n.Style) is applied to it here — chrome styling
+	// chrome. That is what MAXIMUM's banner relies on, and the distinction
+	// between padding the box adds and content the box wraps is the whole line
+	// this change draws.
+	boxStyle := styleName(n.Style)
 	for _, l := range content.Live {
-		text := l.Text()
-		if w := ansiStringWidth(text); w < innerWidth {
-			text += strings.Repeat(" ", innerWidth-w)
-		} else if w > innerWidth {
-			text = truncateText(text, innerWidth)
+		row := ui.Line{ui.Span{Text: string(vert), Style: frameStyle}}
+		for _, s := range padLine(l, innerWidth) {
+			if s.Style == "" {
+				s.Style = boxStyle
+			}
+			row = append(row, s)
 		}
-		lines = append(lines, ui.Line{
-			ui.Span{Text: string(vert), Style: frameStyle},
-			ui.Span{Text: text, Style: styleName(n.Style)},
-			ui.Span{Text: string(vert), Style: frameStyle},
-		})
+		row = append(row, ui.Span{Text: string(vert), Style: frameStyle})
+		lines = append(lines, row)
 	}
 	// Clip content to innerHeight if it overflowed.
 	for len(lines) > 1+innerHeight {
