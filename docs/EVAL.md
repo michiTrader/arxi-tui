@@ -220,6 +220,54 @@ Loop detection fingerprints the **canonicalised** document, not the raw bytes.
 A model that returns the same wrong answer with different indentation has still
 failed to read the address, and a byte hash would score that as progress.
 
+### What `converged` does not check, and the false pass it allowed
+
+`converged` means the document validates and binds every `must_bind` field. It
+does **not** mean the screen is right, and once that gap is stated plainly the
+failure it permits is obvious: a bind the validator accepts and the renderer
+ignores satisfies `must_bind` while drawing nothing.
+
+That was not hypothetical. Nine binds signed in BINDS.md §4 — `todos.count`,
+`ui.focus/max/surface`, `slash.typed`, `slash.selected`,
+`run.quiescent.diagnosis`, `agent.blocked.actor/blocked_on` — were accepted by
+`validate.go`, computed by `internal/fold` on every event, and read by
+`resolveBind` nowhere, so each fell through to the `"[…]"` placeholder.
+
+`maximum-count-the-tasks` lists `todos.count` in `must_bind`, and its own
+recorded convergence document binds it. Measured before the fix:
+
+```
+GRADER: converged=true  missing=[]
+SCREEN: │[…]          │
+```
+
+This is the same class as `row_template`, and one step worse in placement.
+`row_template` was *reachable* from a shipped case; this one was already
+sitting in the corpus's ground truth — the document the corpus holds up as the
+correct answer. A model reproducing it exactly would have been scored right for
+an empty panel, and Phase 2's number would have carried that.
+
+The direction matters. A corpus that under-credits the model gets argued with;
+a corpus that over-credits it is the one nobody audits, because the number
+looks like good news.
+
+The fix was an implementation rather than a refusal, which is the opposite of
+the `row_template` call and for a stated reason: `row_template`'s semantics
+(relative `row.*` binds) are unsigned and belong to Phase 3, so drawing it
+would have invented format ahead of the phase meant to design it. These nine
+had nothing left to design — the value already existed and was correct in
+`fold.State`, discarded one function short of the frame.
+
+**The guard lives in `internal/engine`, not here.** `internal/eval` cannot
+catch this: it grades documents and never renders one, so removing the
+projection again leaves the whole `eval` package green while `engine` fails.
+That is a real limit of what the corpus can self-check, and it is written down
+rather than papered over — the corpus verifies its refusals against the
+validator, but it cannot verify its convergence documents against the screen.
+Whether `must_bind` should eventually assert on a rendered frame is a Phase 2
+question; until then the engine-side audits are what stand between a signed
+bind and a silent placeholder.
+
 ### One judge, two callers
 
 The corpus test and the runner grade through the same code (`Grade`,

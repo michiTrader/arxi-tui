@@ -172,3 +172,42 @@ Every `bind`/`when` string in the eleven scenes resolves to a signed row above.
 No bind is invented by the engine implementation. A scene that references an
 unsigned bind fails validation at load time with a `file:line` error pointing at
 the offending node.
+
+### 4.6 Signed is not the same as projected
+
+A signed row means the name is committed to and the validator accepts it. It
+does **not** by itself mean the engine draws it, and conflating the two cost
+this project a real defect: nine binds in §4.1–4.3 were signed, accepted, and
+computed by `internal/fold` on every event, while `resolveBind` read none of
+them. Each fell through to the `"[…]"` placeholder. A scene author who spelled
+one correctly got silence; one who misspelled it got an addressed refusal — so
+the refusal was positive evidence the bind was wired, and the correct spelling
+was the one with no diagnostic.
+
+Two guards now hold the two halves apart, both in `internal/engine`:
+
+- `TestEverySignedBindIsHandledOrJustified` enumerates this document's
+  vocabulary through `scene.SignedBinds()` and requires each name to be handled
+  by the engine or justified in writing. A newly signed row that nobody wires
+  fails the suite on its own.
+- `TestEverySignedScalarBindTheFoldComputesReachesTheFrame` pins each projected
+  bind against a distinguishable value in the drawn frame, so a case returning
+  the *wrong* fold field is caught too — the structural audit cannot see that,
+  because the case label is present.
+
+Four signed binds are deliberately not projected, and the reason is recorded in
+`acceptedUnprojectedBinds` rather than left to be rediscovered:
+`team.members` (needs per-row templates over the still-unsigned `row.*`
+namespace, the same blocker as `row_template`), `agent.blocked.blocked_ref`
+(its projection is the command-resolution rule described above, not a value to
+print), `session.new_milestone` (a pulse with no fold field and an undecided
+lifetime — Scene 11), and `user.input.submitted` (signed only to reserve the
+name, as §4.3 states).
+
+**An unresolved bind is falsy.** It still *displays* as `"[…]"` so a scene from
+a newer build draws rather than crashes (ADR-0003), but display and visibility
+are different questions. Until this was fixed, `when` treated the placeholder
+as an ordinary non-empty string, so every unresolved gate rendered its node
+**on** — inverting `ui.max`'s signed empty-state exactly, and Scene 10 gates
+each pane on it. A dropped value degrades toward the empty state; a gate that
+fails open degrades toward chrome the user cannot dismiss.
