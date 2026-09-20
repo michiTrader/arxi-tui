@@ -198,60 +198,73 @@ func nodeIsDispatched(path string) bool {
 //
 // # The defect it exists for
 //
-// `prefix` and `suffix` are walked by the validator on every node — the binds
-// inside them are checked, their tokens are checked against the theme, their
-// keys are checked against the node vocabulary — and read by exactly one owner
-// each. Measured, with the whole suite green:
+// Every nested branch — `prefix`, `suffix`, `children` — is walked by the
+// validator on every node: the binds inside it are checked against BINDS.md,
+// its tokens are checked against the theme, its keys are checked against the
+// node vocabulary. Each is *composed* by a strict subset of the owners.
+// Measured, with the whole suite green:
 //
 //	{"type":"input",  "prefix":{"type":"text","text":"X"}} -> clean, X never drawn
 //	{"type":"marquee","prefix":"X "}                        -> clean, X never drawn
 //	{"type":"text",   "prefix":{"type":"text","text":"X"}} -> clean, X never drawn
 //	{"type":"text",   "suffix":{"type":"text","text":"X"}} -> clean, X never drawn
+//	{"type":"text",   "children":[{"type":"text","text":"X"}]} -> clean, X never drawn
 //
-// Each is the silent drop this package has now paid for four times, and the
+// Each is the silent drop this package has now paid for five times, and the
 // symptom is the usual one: the document is well-formed, every layer reports
-// success, and the screen is missing a span the author wrote.
+// success, and the screen is missing what the author wrote.
 //
-// # Why the previous fix could not reach it
+// # Why each previous fix could not reach the next one
 //
-// This is the fourth recurrence of a single defect, and the axis is what
-// matters. `when` was once honoured per *container*; then per *node type*; the
-// remedy both times was to move the work into renderNode, which withFocusGlow
-// documents as making "some node types obey and others do not" unrepresentable
-// — true, and quantified over node types. Last turn found the third
-// recurrence at a nested *position*, which no widening of a type switch
-// reaches, and fixed it by asking hiddenByWhen inside renderMarquee.
+// One defect, five recurrences, and the axis is the whole story. `when` was
+// once honoured per *container*; then per *node type*; the remedy both times
+// was to move the work into renderNode, which withFocusGlow documents as
+// making "some node types obey and others do not" unrepresentable — true, and
+// quantified over node types. The third recurrence was a nested *position*,
+// which no widening of a type switch reaches, and was closed by asking
+// hiddenByWhen inside renderMarquee — quantified over one owner. The fourth
+// was a nested *shape*: `prefix` is polymorphic, renderInput calls PrefixText
+// and renderMarquee calls PrefixNode, so handing either owner the other shape
+// lands on a reader that does not exist.
 //
-// That fix is quantified over *one owner*. The sweep guarding it holds the
-// owner fixed at marquee and varies the property and the branch, so it cannot
-// see an owner that ignores the branch entirely. `prefix` is polymorphic —
-// string or node — and each owner reads exactly one form: renderInput calls
-// PrefixText and renderMarquee calls PrefixNode, so handing either owner the
-// other shape lands on a reader that does not exist. A chokepoint is only a
-// chokepoint for the traffic that goes through it, and a sweep is only a sweep
-// over the axes it varies.
+// The fourth fix — this map as it was first written — was quantified over the
+// *branch*. It enumerated `prefix` and `suffix` because those were the two
+// branches the defect had been found in, and `children` is a nested branch by
+// exactly the same argument: a child of an owner that does not compose one is
+// parsed, validated, warned about for its own misspellings, and never drawn.
+// Eleven of the fifteen signed types drop it, and it is the most expensive row
+// in the table because the construction is an entire subtree rather than one
+// span, and because `children` is the branch an author is most likely to write
+// by analogy from the shipped scenes.
+//
+// A chokepoint is only a chokepoint for the traffic that goes through it; a
+// sweep is only a sweep over the axes it varies; and an inventory is only an
+// inventory of the keys it enumerates. Hence the shape of the fix: the branch
+// stops being a hardcoded pair and becomes a key of this map, so adding a
+// nested branch to Node means adding a row here or being caught by the audit.
 //
 // # Why a warning rather than a refusal
 //
 // LESSONS.md's question: could a later engine be right about this? Yes, by
 // construction — a `text` with a prefix span, or an input with a styled
-// node prefix, are both things this format could grow, and three of the four
-// rows above are constructions the shipped scenes write in their *other*
-// pairing. Refusing would break PLAN.md's forward-compatibility rule for a
-// document that names no misspelling. A warning keeps the rule the vocabulary
-// path already follows for unknown keys and unsigned types: the document
-// loads, and the author is told what the engine did not draw, with an address.
-// What the construction may not do any more is vanish.
+// node prefix, are both things this format could grow, and most of the rows
+// above are constructions the shipped scenes write in their *other* pairing.
+// Refusing would break PLAN.md's forward-compatibility rule for a document
+// that names no misspelling. A warning keeps the rule the vocabulary path
+// already follows for unknown keys and unsigned types: the document loads, and
+// the author is told what the engine did not draw, with an address. What the
+// construction may not do any more is vanish.
 //
 // The inventory is written here rather than derived, for signedNodeTypes'
 // reason: the fact being recorded is which *shape* an owner reads, and a shape
 // is not a Go declaration to reflect over — PrefixText and PrefixNode have the
 // same signature shape and differ only in which branch of the raw JSON they
-// decode. Written inventories in this package drift, so this one is pinned by
-// an audit in internal/engine that renders both shapes under every signed
-// owner type and fails if a pairing this map calls silent in fact draws, or if
-// a pairing it omits does not. That audit measures the real renderer, not a
-// mirror of it.
+// decode, and `n.Children` is read by four render functions that share no
+// signature at all. Written inventories in this package drift, so this one is
+// pinned by an audit in internal/engine that renders every shape under every
+// signed owner type and fails if a pairing this map calls silent in fact
+// draws, or if a pairing it omits does not. That audit measures the real
+// renderer, not a mirror of it.
 var nestedFormReaders = map[string]map[string]string{
 	// prefix, node shape: read by renderMarquee via PrefixNode().
 	"prefix.node": {"marquee": "renderMarquee reads PrefixNode()"},
@@ -259,18 +272,53 @@ var nestedFormReaders = map[string]map[string]string{
 	"prefix.string": {"input": "renderInput reads PrefixText()"},
 	// suffix is always a node, and only the marquee composes one.
 	"suffix.node": {"marquee": "renderMarquee reads n.Suffix"},
+	// children is always an array, and four owners compose it. The box and
+	// the overlay are containers with a frame; the row and the stack are the
+	// two layout primitives. Every other signed type draws from its own
+	// bind and text, and a child handed to one of them is not laid out
+	// anywhere.
+	"children.array": {
+		"box":     "renderBox lays n.Children out as an inner stack",
+		"overlay": "renderOverlay renders each child into its column",
+		"row":     "renderHorizontal divides the width between n.Children",
+		"stack":   "renderStack divides the height between n.Children",
+	},
 }
 
 // nestedFormLabel names the shape a nested position was written in, in the
 // vocabulary nestedFormReaders is keyed by.
+//
+// It reads the raw JSON rather than trusting the branch name because `prefix`
+// is the one branch with two live shapes, and which one an owner reads is the
+// fact this whole path turns on. The other branches have a single shape each,
+// named in the key so the map is keyed uniformly: a `<branch>.<shape>` string
+// is what makes the branch a varied axis instead of a hardcoded pair.
 func nestedFormLabel(branch string, raw []byte) string {
-	if branch == "prefix" && len(raw) > 0 && raw[0] == '"' {
-		return "prefix.string"
-	}
-	if branch == "prefix" {
+	switch branch {
+	case "prefix":
+		if len(raw) > 0 && raw[0] == '"' {
+			return "prefix.string"
+		}
 		return "prefix.node"
+	case "children":
+		return "children.array"
+	default:
+		return "suffix.node"
 	}
-	return "suffix.node"
+}
+
+// nestedShapeNoun renders a form's shape as the noun the warning uses. It is
+// derived from the form key rather than passed in, so a form added to
+// nestedFormReaders cannot be described by a stale literal at the call site.
+func nestedShapeNoun(form string) string {
+	switch {
+	case strings.HasSuffix(form, ".string"):
+		return "a string"
+	case strings.HasSuffix(form, ".array"):
+		return "a list of child nodes"
+	default:
+		return "a node"
+	}
 }
 
 // NestedFormReadersForAudit exposes the inventory to the engine-side audit

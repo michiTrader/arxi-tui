@@ -314,16 +314,24 @@ func (d *Document) warnKeysOf(path string, vocab map[string]bool, out *[]Warning
 	}
 }
 
-// warnDroppedNestedForm reports a nested prefix/suffix written in a shape the
-// owning node type has no reader for.
+// warnDroppedNestedForm reports a nested branch written on an owner that has
+// no reader for that shape of it.
 //
-// The message names the owner, the shape and the owner that *does* read that
+// The message names the owner, the shape and the owners that *do* read that
 // shape, because the mistake this catches is almost always a pairing error
 // rather than a typo: the author wrote a construction the format contains,
 // against the node that does not compose it. Telling them "unknown property"
 // would send them hunting for a misspelling that is not there, and Phase 2's
 // repair loop reads these messages — a wrong diagnosis costs a turn the corpus
 // then charges to the model.
+//
+// What was lost is named per branch rather than generically. A dropped prefix
+// costs one span; a dropped `children` costs the whole subtree, every node in
+// it, and any interface the author built there — the same loss a misspelled
+// "children" causes, arriving through a correctly spelled key. Collapsing both
+// into "it was ignored" would make the cheap case and the expensive one read
+// alike, which is the failure warnKeysOf's per-object messages already exist
+// to avoid.
 func (d *Document) warnDroppedNestedForm(n *Node, path, branch string, raw []byte, out *[]Warning) {
 	if len(raw) == 0 {
 		return
@@ -337,23 +345,26 @@ func (d *Document) warnDroppedNestedForm(n *Node, path, branch string, raw []byt
 		return
 	}
 
-	shape := "a node"
-	if form == "prefix.string" {
-		shape = "a string"
-	}
 	owners := make([]string, 0, len(readers))
 	for owner := range readers {
 		owners = append(owners, owner)
 	}
 	sort.Strings(owners)
 
+	lost := "the span the author wrote is simply absent from the frame"
+	if form == "children.array" {
+		lost = "the entire subtree the author wrote — every node in it — is simply absent " +
+			"from the frame, which is the same loss a misspelled \"children\" causes, " +
+			"reached through a key spelled correctly"
+	}
+
 	*out = append(*out, Warning{
 		Loc: d.locOf(path),
 		Msg: fmt.Sprintf("node type %q declares %q as %s, and no node type reads that shape "+
 			"except %s; it was ignored. The validator still walked it — the binds inside it "+
 			"were checked and its tokens were checked against the theme — so the document "+
-			"reports success and the span the author wrote is simply absent from the frame",
-			n.Type, branch, shape, strings.Join(owners, " or ")),
+			"reports success and %s",
+			n.Type, branch, nestedShapeNoun(form), strings.Join(owners, " or "), lost),
 	})
 }
 
@@ -423,6 +434,14 @@ func (d *Document) collectWarnings(n *Node, path string, vocab map[string]bool, 
 	d.warnDroppedNestedForm(n, path, "prefix", n.PrefixRaw, out)
 	if n.Suffix != nil {
 		d.warnDroppedNestedForm(n, path, "suffix", []byte("{}"), out)
+	}
+	// `children` is a nested branch by the same argument as the two above,
+	// and it was outside this call site until the fifth recurrence: the
+	// inventory enumerated the branches the defect had been found in, which
+	// is the same mistake one level up from the sweep that enumerated node
+	// types. Eleven of the fifteen signed owners drop a child array whole.
+	if len(n.Children) > 0 {
+		d.warnDroppedNestedForm(n, path, "children", []byte("[]"), out)
 	}
 
 	for i, child := range n.Children {

@@ -108,8 +108,17 @@ func assertNestedShapeOnOwner(t *testing.T, owner, branch, shape, form string, s
 
 	const marker = "ZZNESTED"
 
-	withSrc := nestedOwnerOfType(owner, branch, shape, marker)
-	withoutSrc := nestedOwnerOfType(owner, branch, "", marker)
+	withSrc, ok := nestedOwnerOfType(owner, branch, shape, marker)
+	if !ok {
+		t.Fatalf("premise broken: this audit cannot build a probe for shape %q (form %s), so the\n"+
+			"probe would be byte-identical to the control and every assertion below would\n"+
+			"compare a frame against itself — a subtest that passes having measured nothing.\n"+
+			"remedy: teach nestedOwnerOfType to write the %q shape.", shape, form, shape)
+	}
+	withoutSrc, ok := nestedOwnerOfType(owner, branch, "", marker)
+	if !ok {
+		t.Fatalf("premise broken: the %s control on %q could not be built", form, owner)
+	}
 
 	withDoc, err := scene.ParseDocument([]byte(withSrc))
 	if err != nil {
@@ -118,6 +127,15 @@ func assertNestedShapeOnOwner(t *testing.T, owner, branch, shape, form string, s
 	withoutDoc, err := scene.ParseDocument([]byte(withoutSrc))
 	if err != nil {
 		t.Fatalf("premise broken: the %s control on %q must parse; got %v", form, owner, err)
+	}
+
+	// The fragment must survive parsing, or the probe is the control and a
+	// reported "drop" is the harness measuring itself.
+	if !nestedFragmentReachedNode(withDoc.Root, branch) {
+		t.Fatalf("premise broken: the %s probe on %q parsed, but %q did not reach the node.\n"+
+			"consequence: the probe is then identical to the control, so this subtest would\n"+
+			"report a silent drop for every owner — an accusation against the engine that\n"+
+			"measures only the harness.\nsrc: %s", form, owner, branch, withSrc)
 	}
 
 	// A refused document never reaches a frame, so the comparison below
@@ -207,14 +225,22 @@ func assertNestedDropWarns(t *testing.T, doc *scene.Document, owner, branch, for
 }
 
 // nestedOwnerOfType builds a document whose root is the named node type
-// carrying a prefix or suffix in the named shape. shape == "" omits the
-// fragment entirely, which is the control.
+// carrying a nested branch in the named shape. shape == "" omits the fragment
+// entirely, which is the control.
 //
 // The owner is given enough of its own content to draw: a node that renders
 // nothing at all would make every comparison here vacuous, which is the
 // failure mode this package keeps closing. The binds are the ones
 // nestedStyleState populates.
-func nestedOwnerOfType(owner, branch, shape, marker string) string {
+//
+// The shape switch has no default that emits nothing, and that is deliberate.
+// It used to: a shape it did not recognise produced a probe byte-identical to
+// the control, so the frames matched, `drew` came out false, and every subtest
+// expecting a drop passed — having measured nothing at all. That is the trap
+// AGENTS.md records as "a test's own probes are code, and untested code", and
+// it was live the moment `children.array` joined the inventory. It now returns
+// ok=false, and the caller fails rather than guessing.
+func nestedOwnerOfType(owner, branch, shape, marker string) (string, bool) {
 	var b strings.Builder
 	b.WriteString(`{"root":{"type":"`)
 	b.WriteString(owner)
@@ -233,14 +259,42 @@ func nestedOwnerOfType(owner, branch, shape, marker string) string {
 	}
 
 	switch shape {
+	case "":
+		// The control: the fragment is omitted on purpose.
 	case "node":
 		b.WriteString(`,"` + branch + `":{"type":"text","text":"` + marker + `"}`)
 	case "string":
 		b.WriteString(`,"` + branch + `":"` + marker + `"`)
+	case "array":
+		b.WriteString(`,"` + branch + `":[{"type":"text","text":"` + marker + `"}]`)
+	default:
+		return "", false
 	}
 
 	b.WriteString(`}}`)
-	return b.String()
+	return b.String(), true
+}
+
+// nestedFragmentReachedNode reports whether the parsed node actually carries
+// the branch the probe wrote.
+//
+// This is the second half of the same lesson. A probe can be well-formed JSON,
+// parse without error, and still lose its fragment — `encoding/json` discards
+// a key the struct does not declare, and a shape that does not match the
+// field's type fails into the zero value. Either produces a node identical to
+// the control, which this audit would report as an engine silent drop: a false
+// accusation in the flattering direction, because it looks like coverage.
+func nestedFragmentReachedNode(n *scene.Node, branch string) bool {
+	switch branch {
+	case "prefix":
+		return len(n.PrefixRaw) > 0
+	case "suffix":
+		return n.Suffix != nil
+	case "children":
+		return len(n.Children) > 0
+	default:
+		return false
+	}
 }
 
 // splitNestedForm turns "prefix.node" into ("prefix", "node").
