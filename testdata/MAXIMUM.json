@@ -2,6 +2,9 @@
   { "id": "banner", "type": "box", "border": "single", "style": {"style": "banner"},
     "children": [ { "type": "text", "text": "Δr×i v1.0 ── Trading session" } ] },
 
+  { "id": "notice", "type": "text", "bind": "host.scene.error",
+    "when": "host.scene.error", "style": {"style": "banner"} },
+
   { "type": "row", "grow": 1, "children": [
     { "type": "stack", "weight": 3, "children": [
       { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },

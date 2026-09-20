@@ -1,4 +1,5 @@
 { "root": { "type": "stack", "children": [
+  { "id": "notice", "type": "text", "bind": "host.scene.error", "when": "host.scene.error", "style": {"style": "banner"} },
   { "id": "chat",   "type": "markdown", "bind": "chat.history", "grow": 1 },
   { "id": "prompt", "type": "input",    "bind": "user.input", "placeholder": "> " }
 ]}}

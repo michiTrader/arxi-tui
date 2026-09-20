@@ -27,7 +27,51 @@ import (
 	"github.com/michiTrader/arxi_tui/internal/theme"
 )
 
+// The notice row every shipped document carries, and the reason it is not
+// optional chrome.
+//
+// invariant 3 is a conjunction — a corrupt scene on disk "falls back to the raw
+// scene **with the `file:line:` notice on screen**" — and until this constant
+// existed the two halves were true separately and false together. The fallback
+// fired, the notice was computed in full, and nothing drew it, because the
+// document on screen after a refusal is this file's factory scene and no
+// factory scene bound the field. Measured on the built binary: a scene carrying
+// one unsigned bind rendered twenty-four blank rows while
+//
+//	testdata/SOBRIA.json:3:3: unsigned bind "model.curent" in node type
+//	"input"; every bind must appear in BINDS.md §4.5
+//
+// sat in host state with nowhere to go. Every layer had done its job —
+// loadScene addressed it, run() passed it, loop() wrote it to state, and
+// resolveBind answered host.scene.error correctly — and the string died one
+// function short of a pixel.
+//
+// BINDS.md §2 calls host.scene.error "the one bind the scene may render but the
+// core never provides". A channel no shipped document reads is not a channel,
+// and a notice delivered into an unbound field is indistinguishable from a
+// notice never computed — worse, because every guard on the computation passes.
+// This is the sixth instance of the class this repository keeps paying for, and
+// the purest: the previous five were a layer that knew the answer and did not
+// print it, and here the answer is printed into a field nobody is listening on.
+//
+// `when` is what lets this cost nothing. The field is signed "text | null",
+// BINDS.md §2 defines null as "the active scene validated", and evalWhen
+// already reads the empty string as false — so on a clean boot the node renders
+// zero rows and the raw scene is still the two nodes PLAN.md promises. Without
+// the gate this would be the always-on warning light that
+// TestAValidSceneReportsNoNotice rejects one layer up.
+//
+// It is spliced into each document as text rather than injected by the renderer,
+// and that is the same objection that keeps the planned type list out of the
+// engine: a host that welds a node into every tree has made the notice a
+// privileged construction the user's format can neither express nor remove,
+// which contradicts the thesis the whole project rests on. Every scene says it
+// in the user's own vocabulary, so a user who wants it elsewhere moves it, and
+// one who deletes it has chosen silence explicitly.
+const factoryNoticeNode = `{ "id": "notice", "type": "text", "bind": "host.scene.error", "when": "host.scene.error", "style": {"style": "banner"} }`
+
 const factoryRAW = `{ "root": { "type": "stack", "children": [
+  ` + factoryNoticeNode + `,
   { "id": "chat",   "type": "markdown", "bind": "chat.history", "grow": 1 },
   { "id": "prompt", "type": "input",    "bind": "user.input", "placeholder": "> " }
 ]}}`
@@ -37,6 +81,8 @@ const factoryRAW = `{ "root": { "type": "stack", "children": [
 const factorySobria = `{ "root": { "type": "stack", "children": [
   { "type": "text", "style": {"style": "header"},
     "text": "Δr×i v0.1.0 · Run /help for commands" },
+
+  ` + factoryNoticeNode + `,
 
   { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
 
