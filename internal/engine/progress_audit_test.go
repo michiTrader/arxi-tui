@@ -193,6 +193,62 @@ func TestProgressAxesAreMeasuredNotAsserted(t *testing.T) {
 				"and the axis would report total failure without measuring anything.")
 		}
 
+		// A ceiling, for the third axis to need one and the first where the
+		// drift direction is dangerous rather than merely untrue.
+		//
+		// The other two ceilings guard denominators that grow: the animation
+		// axis went 5 to 8 and reported 1/8 instead of 1/5, the node-type
+		// axis gained a type that does not exist. Both understate progress,
+		// which is a false alarm. This axis fails the other way, and it was
+		// measured — the Universal paragraph was given one sentence of
+		// ordinary documentation prose, naming two properties that are real
+		// members of the parser vocabulary:
+		//
+		//	a bordered container may also carry a `title`, drawn into its `border`.
+		//
+		//	universal properties: 10 documented, 10 present in the parser
+		//	vocabulary, 0 absent ()
+		//
+		// The axis passed. It did not merely mis-measure: the ratio this
+		// subtest exists to report went from 8/8 to 10/10, and the second
+		// number moved in lockstep with the first because a word already in
+		// the vocabulary is, by construction, never absent. The one
+		// quantity that can fail here is pinned to zero by the same
+		// property that inflates the count. That is why the floor cannot
+		// see it and why membership-checking cannot either.
+		//
+		// The sibling audit does catch this pair, naming both words, and
+		// last turn's rule says a guard that can never be the one that
+		// fires should not be added. It does not apply here, and the
+		// difference is worth stating because it is the reason this
+		// ceiling is not the duplicate it resembles. That audit needs a
+		// probe per property, and it fails on the *missing probe*, not on
+		// the count — so it catches an inflating word only while no probe
+		// exists for it. More decisive: the header of this file documents
+		// `go test -run TestProgressAxes -v ./internal/engine/` as the way
+		// to print the ledger, and under exactly that invocation the
+		// sibling does not run. The inflated 10/10 was printed, and PASS
+		// was reported, by the command this file tells a reader to use.
+		// A ledger that misreports when read the documented way is the
+		// "45-50%" defect with a test around it.
+		//
+		// Eight is what the paragraph settles: id, bind, when, style, grow,
+		// weight, on_press, scroll. Raising it is a vocabulary change and
+		// belongs in the commit that argues for it.
+		if len(universals) > 8 {
+			t.Errorf("parsed %d universal properties from docs/SCENES.md (%v), and the paragraph names 8.\n"+
+				"consequence: this is the inflating direction, and it is invisible here. A backticked\n"+
+				"word that is already a Node field reads as a universal property and is never counted\n"+
+				"absent, so the denominator and the numerator rise together and the axis reports a\n"+
+				"clean ratio over a vocabulary the document does not actually settle -- measured at\n"+
+				"10/10 with one sentence of prose naming `title` and `border`.\n"+
+				"remedy: keep the prose out of the \"Universal:\" paragraph -- the document's own\n"+
+				"convention puts vocabulary in one paragraph and commentary in the others -- or, if\n"+
+				"the format really did gain a universal property, declare it on scene.Node, add its\n"+
+				"probe pair to universalProbes, and raise this ceiling in the same commit.",
+				len(universals), universals)
+		}
+
 		var absent []string
 		for _, prop := range universals {
 			if !vocab[prop] {
