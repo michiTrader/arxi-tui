@@ -139,6 +139,21 @@ input/banner/footer never); Q7 overlays may declare `min-width`.
 is a global `[anim]` token with per-node override; Q9 the host announces
 "row new", the scene owns the animation. Form/content separation intact.
 
+**Implementation status.** `focus_glow: { "style": "<token>" }` is implemented:
+when a node's `id` equals `ui.focus`, the engine renders its content under the
+named token. It needs no clock — its only input is the focused node's id, which
+`ui.focus` already supplies — so it is the one property of this scene that
+could land before Phase 4.
+
+The other four are parsed and **warned about with an address**, not silently
+dropped: a document declaring them loads, renders, and says on screen what the
+engine could not do (PLAN.md's forward-compatibility rule). They stay warnings
+rather than implementations because each needs elapsed time, and the `[anim]`
+timing token Q8 assigns that job to is **not yet specified in `TOKENS.md`**.
+Building them now would mean inventing the timing format inside the renderer —
+the same objection that keeps `row_template` and `on_press` refused. When the
+`[anim]` token is signed, this paragraph is what should be updated first.
+
 ## Scene 5 — CONFIG (the /config screen as a scene, not as Go)
 
 Category `list` + a settings `list` with `row_template` mixing `switch` and

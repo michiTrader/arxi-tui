@@ -67,6 +67,31 @@ type Node struct {
 	// MinWidth is the minimum content width an overlay will accept before
 	// its content wraps. The overlay never shrinks below this (Q7).
 	MinWidth *int `json:"min_width,omitempty"`
+
+	// FocusGlow is Scene 4's focus emphasis: `{ "style": "<token>" }`. When
+	// this node's id equals `ui.focus`, the engine renders its content under
+	// the named token instead of the node's ordinary style.
+	//
+	// It is the one Scene 4 property that lands before the host clock, and
+	// the asymmetry with the other four is a scope decision, not an
+	// oversight. focus_glow's input is the focused node's id: `ui.focus` is
+	// signed in BINDS.md, maintained by the fold and already projected, so
+	// the property is expressible today with no new vocabulary. transition,
+	// reveal, enter and scroll all need elapsed time, and the timing format
+	// Q8 assigns to a global `[anim]` token does not exist — docs/TOKENS.md
+	// does not mention `anim`. Implementing them now would invent that
+	// format in the renderer, which is precisely what row_template,
+	// on_press and scroll are refused for.
+	//
+	// A struct rather than json.RawMessage, unlike Scroll: the shape is
+	// being read now, so leaving it raw would mean parsing it at the render
+	// site, and a shape parsed where it is used is a shape with no single
+	// definition. Scroll stays raw because nothing reads it yet.
+	//
+	// The `anim:"1"` tag is what puts it on the progress audit's animation
+	// axis. It is a marker rather than a name convention because a
+	// name-based rule silently captures an unrelated field added later.
+	FocusGlow *FocusGlow `json:"focus_glow,omitempty" anim:"1"`
 }
 
 // declaredUnrenderedFields returns the json names of the fields this node
@@ -188,6 +213,24 @@ func (n *Node) HasBorder() bool {
 // unrepresentable rather than merely tested for.
 type borderObject struct {
 	Shape string `json:"shape"`
+	Style string `json:"style"`
+}
+
+// FocusGlow is the object form of Scene 4's focus_glow: `{ "style": <token> }`.
+//
+// It is exported because the engine reads it, and it is one named type for
+// borderObject's reason — the vocabulary check for `focus_glow.*` is derived
+// from this struct, so the keys the guard accepts and the keys the renderer
+// reads cannot drift apart. An anonymous struct at the render site would
+// reintroduce exactly the divergence R19h measured: a guard reflecting a copy
+// warned about a document the renderer honoured, with the suite green.
+//
+// One field, deliberately. The natural second field is a duration, and a
+// duration needs the `[anim]` timing token Q8 specifies and TOKENS.md does not
+// yet define; adding it here would pin that format from the node side, ahead
+// of the phase that designs it. A glow that is on or off needs no clock, which
+// is why this is the one Scene 4 property that can land now.
+type FocusGlow struct {
 	Style string `json:"style"`
 }
 

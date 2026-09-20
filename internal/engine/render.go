@@ -122,6 +122,7 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 	if hiddenByWhen(n, state) {
 		return ui.Frame{Width: r.Width, Height: 0}
 	}
+	n = withFocusGlow(n, state)
 	switch n.Type {
 	case "stack":
 		return r.renderStack(n, state, budget)
@@ -1271,6 +1272,61 @@ func hiddenByWhen(n *scene.Node, state fold.State) bool {
 		return false
 	}
 	return !evalWhen(n.When, state)
+}
+
+// withFocusGlow returns the node the rest of the render path should draw: the
+// node itself, or a shallow copy whose style token is the one its focus_glow
+// names, when this node is the one `ui.focus` points at.
+//
+// It is called from renderNode rather than from the twelve sites that resolve
+// n.Style, and that placement is the whole design. This engine has produced
+// the per-node-type defect twice: `when` was honoured in a row and an overlay
+// only, so a gated node drew unconditionally everywhere else, and a style
+// token was read by four node types and dropped by the rest. Both times the
+// property worked on whatever type the first test reached for. renderNode is
+// the one function every node passes through, so honouring the glow here makes
+// "some node types glow and others do not" unrepresentable rather than merely
+// tested for.
+//
+// It rewrites the style map rather than passing a token alongside it because
+// every downstream site already resolves a token out of n.Style through
+// styleName/styleNameOr. Threading a second parameter through twelve call
+// sites would mean twelve chances to forget it — the same arithmetic that
+// produced the two defects above. A node whose style the glow replaces is
+// still just a node with a style.
+//
+// The copy is shallow and local: the document must not be mutated, because
+// the same document renders again on the next repaint with focus possibly
+// elsewhere, and a glow written into the tree would be permanent. That is the
+// bug shape of the arxi-sim remembered-row: state keyed to the wrong lifetime.
+func withFocusGlow(n *scene.Node, state fold.State) *scene.Node {
+	if n == nil || n.FocusGlow == nil || n.FocusGlow.Style == "" {
+		return n
+	}
+	// The glow is keyed to id equality with ui.focus. An empty id can never
+	// be the focused node: ui.focus is null at boot and BINDS.md's empty
+	// state for it is "no node is focused", so matching "" against "" would
+	// glow every id-less node in the tree the moment nothing had focus —
+	// the inverse of what the property means.
+	if n.ID == "" || state.UIFocus != n.ID {
+		return n
+	}
+
+	glowed := *n
+	glowed.Style = make(map[string]string, len(n.Style)+1)
+	for k, v := range n.Style {
+		glowed.Style[k] = v
+	}
+	// Written under every key styleName consults, not just the canonical
+	// one. styleName returns the first key that is set, so writing only
+	// "style" would leave a node that spelled its token "token" wearing its
+	// old value — the two-spelling defect PR #4 fixed in the validator,
+	// reappearing here because the glow would honour one spelling of a
+	// reference the rest of the engine accepts in two.
+	for _, key := range scene.StyleTokenKeys() {
+		glowed.Style[key] = n.FocusGlow.Style
+	}
+	return &glowed
 }
 
 func evalWhen(bind string, state fold.State) bool {

@@ -196,6 +196,21 @@ func borderVocabulary() map[string]bool {
 // this way" and the render path reads it too. A second copy here would let the
 // three disagree, which is the exact history StyleTokenKeys' own comment
 // records.
+// focusGlowVocabulary is derived from FocusGlow, the single type the engine
+// reads a glow from. Same contract as borderVocabulary: reflect the type that
+// does the reading, never a copy of it.
+func focusGlowVocabulary() map[string]bool {
+	vocab := make(map[string]bool)
+	t := reflect.TypeOf(FocusGlow{})
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			vocab[name] = true
+		}
+	}
+	return vocab
+}
+
 func styleVocabulary() map[string]bool {
 	vocab := make(map[string]bool)
 	for _, key := range StyleTokenKeys() {
@@ -331,6 +346,16 @@ func (d *Document) collectWarnings(n *Node, path string, vocab map[string]bool, 
 			"the token it names is never checked against the theme — a token that does not "+
 			"exist would normally fail the load with an address",
 			n.Type, key, strings.Join(StyleTokenKeys(), " or "))
+	})
+
+	// The focus_glow object. A misspelled key here is the quiet kind: the
+	// glow object survives, so the node still claims the property, and the
+	// engine falls back to the ordinary style — the focused row simply never
+	// brightens, which reads as focus not working rather than as a typo.
+	d.warnKeysOf(path+".focus_glow", focusGlowVocabulary(), out, func(key string) string {
+		return fmt.Sprintf("the focus_glow of node type %q declares %q, which is not a "+
+			"focus_glow property this engine knows; it was ignored, so the node keeps its "+
+			"ordinary style when focused and the glow silently never happens", n.Type, key)
 	})
 
 	for i, child := range n.Children {

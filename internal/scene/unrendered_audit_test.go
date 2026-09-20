@@ -113,10 +113,6 @@ var acceptedUnreadFields = map[string]string{
 	// are Scene 5 / Phase 3 work alongside row_template; when they land,
 	// this entry fails and that is the signal to delete it.
 	"Categories": "declared by SOBRIA and not yet drawn; refusing would break the factory scene (invariant 1)",
-
-	// The node's identity, used for addressing and patching rather than
-	// drawing. Phase 2's /ui commands name nodes by id; nothing paints it.
-	"ID": "an address for patches, not a drawable property",
 }
 
 type nodeField struct {
