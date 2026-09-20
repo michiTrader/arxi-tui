@@ -291,6 +291,9 @@ the sibling projects. Concretely:
    costing nothing. Ratio only, per the rule above; the open PR was
    again merged while the sandbox was down, for the fourth time.
 
+   **The nineteenth destruction.** Nineteen destructions, sixteen
+   costing nothing. Ratio only, per the rule above.
+
 ## Working rules
 
 **One step at a time, in order.** The bind vocabulary is the only hard
