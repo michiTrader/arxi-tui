@@ -216,3 +216,58 @@ func styleOfText(f ui.Frame, want string) string {
 	}
 	return ""
 }
+
+// TestFocusGlowHonoursEveryStyleTokenSpelling closes the gap injection R20g
+// found: every assertion above spells the token under "style", and the
+// validator accepts two spellings.
+//
+// scene.StyleTokenKeys() is {"token", "style"} and styleName returns the first
+// key that is set, so a glow that wrote only the canonical "style" key would
+// leave a node spelling its token "token" wearing its original value. The
+// property would work for the spelling the tests happened to use and be
+// silently absent for the other — which is the two-spelling defect of PR #4,
+// where the token validator read only "token" while every golden scene and
+// the render path used "style". The lesson then was that the format's two
+// spellings must be honoured wherever a token is read; this is the first place
+// a token is *written*, and it inherits the same obligation.
+//
+// The cases are derived from StyleTokenKeys rather than listed, so a third
+// spelling added to the format joins this test by existing. A hand-listed pair
+// here would be the second inventory this package has watched drift five
+// times.
+func TestFocusGlowHonoursEveryStyleTokenSpelling(t *testing.T) {
+	keys := scene.StyleTokenKeys()
+	if len(keys) < 2 {
+		t.Fatalf("scene.StyleTokenKeys() returned %v; this test exists because the format accepts\n"+
+			"more than one spelling, and with fewer than two it would pass vacuously", keys)
+	}
+
+	for _, key := range keys {
+		t.Run(key, func(t *testing.T) {
+			src := `{"root":{"id":"root","type":"stack","children":[` +
+				`{"id":"target","type":"text","text":"alpha","style":{"` + key + `":"text"},` +
+				`"focus_glow":{"style":"bright"}}]}}`
+
+			doc, err := scene.ParseDocument([]byte(src))
+			if err != nil {
+				t.Fatalf("ParseDocument: %v", err)
+			}
+			if warns := doc.Warnings(); len(warns) > 0 {
+				t.Fatalf("premise broken: the %q probe must carry no warnings; got %v", key, warns)
+			}
+
+			r := Renderer{Width: 40, Height: 10}
+			got := styleOfText(r.RenderFrame(doc, fold.State{UIFocus: "target"}), "alpha")
+			if got != "bright" {
+				t.Errorf("a focused node spelling its token under %q renders under %q, want %q.\n"+
+					"consequence: the glow is written under one spelling while styleName reads the\n"+
+					"first of %v that is set, so the property works for one spelling of a reference\n"+
+					"the rest of the engine accepts in two — silently inert for the other. That is\n"+
+					"the defect PR #4 fixed in the validator, arriving at the first place the engine\n"+
+					"writes a token rather than reads one.\n"+
+					"remedy: withFocusGlow must write the glow token under every key\n"+
+					"scene.StyleTokenKeys() names.", key, got, "bright", keys)
+			}
+		})
+	}
+}
