@@ -196,6 +196,21 @@ func borderVocabulary() map[string]bool {
 // this way" and the render path reads it too. A second copy here would let the
 // three disagree, which is the exact history StyleTokenKeys' own comment
 // records.
+// focusGlowVocabulary is derived from FocusGlow, the single type the engine
+// reads a glow from. Same contract as borderVocabulary: reflect the type that
+// does the reading, never a copy of it.
+func focusGlowVocabulary() map[string]bool {
+	vocab := make(map[string]bool)
+	t := reflect.TypeOf(FocusGlow{})
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			vocab[name] = true
+		}
+	}
+	return vocab
+}
+
 func styleVocabulary() map[string]bool {
 	vocab := make(map[string]bool)
 	for _, key := range StyleTokenKeys() {
@@ -333,6 +348,16 @@ func (d *Document) collectWarnings(n *Node, path string, vocab map[string]bool, 
 			n.Type, key, strings.Join(StyleTokenKeys(), " or "))
 	})
 
+	// The focus_glow object. A misspelled key here is the quiet kind: the
+	// glow object survives, so the node still claims the property, and the
+	// engine falls back to the ordinary style — the focused row simply never
+	// brightens, which reads as focus not working rather than as a typo.
+	d.warnKeysOf(path+".focus_glow", focusGlowVocabulary(), out, func(key string) string {
+		return fmt.Sprintf("the focus_glow of node type %q declares %q, which is not a "+
+			"focus_glow property this engine knows; it was ignored, so the node keeps its "+
+			"ordinary style when focused and the glow silently never happens", n.Type, key)
+	})
+
 	for i, child := range n.Children {
 		d.collectWarnings(child, childPath(path, i), vocab, out)
 	}
@@ -345,4 +370,60 @@ func (d *Document) collectWarnings(n *Node, path string, vocab map[string]bool, 
 	if n.RowTemplate != nil {
 		d.collectWarnings(n.RowTemplate, templatePath(path), vocab, out)
 	}
+}
+
+// NodeVocabularyForAudit exposes the parser's node vocabulary to the audits in
+// internal/engine.
+//
+// It returns the same derived map the warning path uses, and that identity is
+// the whole point. The alternative — letting the engine's audit build its own
+// view of what Node accepts — is the defect R19h found: a guard that reflected
+// over a *copy* of the accessor structs warned about a document the renderer
+// honoured, because reflecting a copy only relocates the copy. An audit must
+// ask the production vocabulary, or it is measuring its own mirror.
+//
+// It is a copy of the map rather than the map itself so a caller cannot mutate
+// the vocabulary it is asking about. A test that can edit the contract it
+// checks is the escape hatch that ends up a blindfold.
+func NodeVocabularyForAudit() map[string]bool {
+	src := nodeVocabulary()
+	out := make(map[string]bool, len(src))
+	for k, v := range src {
+		out[k] = v
+	}
+	return out
+}
+
+// AnimationFieldsForAudit maps the json name of each Scene 4 animation
+// property Node declares to its Go field name.
+//
+// The progress audit needs both halves: the json name is what docs/SCENES.md
+// names and what an author writes, the Go field name is what the engine's
+// source refers to when it honours one. Deriving the pair here — from the
+// single `anim` struct tag on Node's own fields — is what keeps the audit from
+// hand-listing the properties it exists to count. A field marked `anim:"1"`
+// joins the map by being declared; one deleted leaves it the same way.
+//
+// The marker is a dedicated tag rather than a name prefix or a list, because
+// the two failure modes of the alternatives are known here: a name-based rule
+// silently captures an unrelated field added later, and a list is the
+// hand-maintained second inventory this package has watched drift four times.
+func AnimationFieldsForAudit() map[string]string {
+	out := make(map[string]string)
+	t := reflect.TypeOf(Node{})
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		if f.Tag.Get("anim") != "1" {
+			continue
+		}
+		tag := f.Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		name, _, _ := strings.Cut(tag, ",")
+		if name != "" {
+			out[name] = f.Name
+		}
+	}
+	return out
 }

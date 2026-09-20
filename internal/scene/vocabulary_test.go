@@ -132,12 +132,12 @@ func TestAnUnknownKeyIsWarnedAboutWithAnAddress(t *testing.T) {
 // is a check somebody turns off.
 //
 // The three golden scenes are the strongest available statement of "correct
-// document", and SOARIA is the factory interface invariant 1 pins
+// document", and SOBRIA is the factory interface invariant 1 pins
 // byte-for-byte. If the vocabulary warned about anything in them, either the
 // vocabulary is wrong or the shipped scenes are — and both are findings that
 // must stop the suite rather than train a reader to ignore output.
 func TestTheShippedScenesWarnAboutNothing(t *testing.T) {
-	for _, name := range []string{"RAW.json", "SOARIA.json", "MAXIMUM.json"} {
+	for _, name := range []string{"RAW.json", "SOBRIA.json", "MAXIMUM.json"} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join("..", "..", "testdata", name)
 			data, err := os.ReadFile(path)

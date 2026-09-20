@@ -1,7 +1,7 @@
 {
   "id": "sobria-add-model-row",
   "order": "add a row under the input showing which model is answering and how many tokens the session has used",
-  "base": "SOARIA.json",
+  "base": "SOBRIA.json",
   "rationale": "The order is underspecified in the way real orders are: it says what to show, not what the field is called. The obvious reading invents 'model.current', which reads exactly like a signed bind and is not one — BINDS.md signs 'model.name'. This is the corpus' base case for the repair loop: the first patch is structurally correct and fails on vocabulary alone, so convergence depends entirely on reading the refusal.",
   "attempts": [
     {

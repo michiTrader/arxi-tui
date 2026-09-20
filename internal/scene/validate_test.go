@@ -202,14 +202,14 @@ func TestValidateTokensChecksBorderStyles(t *testing.T) {
 // a gap that every other token test in this file walked straight past.
 //
 // collectTokenErrors read style["token"]. The shipped scenes, SCENES.md and
-// TOKENS.md all write the style reference as style["style"] — SOARIA's header
+// TOKENS.md all write the style reference as style["style"] — SOBRIA's header
 // row is `"style": {"style": "header"}` — and styleName() in the render path
 // reads style["style"] too. So the validator was checking a key the format does
 // not use, and the only reason no test noticed is that every token test here
 // was written with the validator's key rather than the scenes' key.
 //
 // What that cost, measured rather than supposed: SOBRIA does not define
-// "header", SOARIA.json references it twice, and ValidateTokens(SOARIA) returned
+// "header", SOBRIA.json references it twice, and ValidateTokens(SOBRIA) returned
 // zero errors. The default interface shipped with an undefined token reference
 // that the token validator existed to catch.
 //
@@ -239,7 +239,7 @@ func TestValidateTokensChecksTheKeyTheScenesActuallyUse(t *testing.T) {
 	errs := ValidateTokens(doc, theme.SOBRIA())
 	if len(errs) == 0 {
 		t.Fatalf("ValidateTokens accepted the undefined token %q written as \"style\": {\"style\": ...}\n"+
-			"consequence: this is the spelling the shipped scenes use, so the token validator is blind to the only form that occurs in practice — SOARIA references the undefined token \"header\" twice and validates clean.\n"+
+			"consequence: this is the spelling the shipped scenes use, so the token validator is blind to the only form that occurs in practice — SOBRIA references the undefined token \"header\" twice and validates clean.\n"+
 			"remedy: collect the style reference from both keys in collectTokenErrors, not just style[\"token\"].",
 			"nonexistent.token")
 	}
@@ -263,7 +263,7 @@ func TestValidateTokensChecksTheKeyTheScenesActuallyUse(t *testing.T) {
 // key the validator happens to read.
 func TestTheShippedScenesReferenceOnlyDefinedTokens(t *testing.T) {
 	thm := theme.SOBRIA()
-	for _, name := range []string{"RAW.json", "SOARIA.json", "MAXIMUM.json"} {
+	for _, name := range []string{"RAW.json", "SOBRIA.json", "MAXIMUM.json"} {
 		t.Run(name, func(t *testing.T) {
 			raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", name))
 			if err != nil {

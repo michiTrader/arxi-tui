@@ -79,7 +79,7 @@ func TestRowTemplateIsRefusedWhileTheEngineCannotDrawIt(t *testing.T) {
 // The refusal must reach every arm the walk already covers. A guard that only
 // checked the root would let the same silent drop through one level down —
 // and nesting a list inside a box or an overlay is how real scenes are written
-// (it is exactly how the shipped SOARIA menu is built).
+// (it is exactly how the shipped SOBRIA menu is built).
 func TestRowTemplateIsRefusedWhereverItAppears(t *testing.T) {
 	for _, tc := range []struct {
 		name string

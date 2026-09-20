@@ -13,9 +13,9 @@ import (
 // nodes correctly with the Phase 0 mock events: header, transcript, input,
 // status bar. This is the Phase 1 golden for Scene 2.
 func TestSobriaSceneRenders(t *testing.T) {
-	data, err := os.ReadFile("../../testdata/SOARIA.json")
+	data, err := os.ReadFile("../../testdata/SOBRIA.json")
 	if err != nil {
-		t.Fatalf("read SOARIA.json: %v", err)
+		t.Fatalf("read SOBRIA.json: %v", err)
 	}
 	doc, err := scene.ParseDocument(data)
 	if err != nil {
@@ -77,9 +77,9 @@ func TestSobriaSceneRenders(t *testing.T) {
 // TestSobriaSceneMarqueeGolden verifies the thinking marquee renders with its
 // prefix and suffix when agent.working is true.
 func TestSobriaSceneMarqueeGolden(t *testing.T) {
-	data, err := os.ReadFile("../../testdata/SOARIA.json")
+	data, err := os.ReadFile("../../testdata/SOBRIA.json")
 	if err != nil {
-		t.Fatalf("read SOARIA.json: %v", err)
+		t.Fatalf("read SOBRIA.json: %v", err)
 	}
 	doc, err := scene.ParseDocument(data)
 	if err != nil {
@@ -113,9 +113,9 @@ func TestSobriaSceneMarqueeGolden(t *testing.T) {
 // TestSobriaSceneStyledGolden compares the rendered frame with token annotations
 // against the golden file. UPDATE_GOLDEN=1 regenerates the fixture.
 func TestSobriaSceneStyledGolden(t *testing.T) {
-	data, err := os.ReadFile("../../testdata/SOARIA.json")
+	data, err := os.ReadFile("../../testdata/SOBRIA.json")
 	if err != nil {
-		t.Fatalf("read SOARIA.json: %v", err)
+		t.Fatalf("read SOBRIA.json: %v", err)
 	}
 	doc, err := scene.ParseDocument(data)
 	if err != nil {
@@ -141,7 +141,7 @@ func TestSobriaSceneStyledGolden(t *testing.T) {
 	f := r.RenderFrame(doc, state)
 	got := f.Styled()
 
-	goldenPath := "../../testdata/SOARIA.styled"
+	goldenPath := "../../testdata/SOBRIA.styled"
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
 		if err := os.WriteFile(goldenPath, []byte(got), 0644); err != nil {
 			t.Fatalf("write golden: %v", err)
@@ -161,9 +161,9 @@ func TestSobriaSceneStyledGolden(t *testing.T) {
 // TestSobriaSceneMatchesGolden compares the rendered frame against the
 // golden file. UPDATE_GOLDEN=1 regenerates the fixture.
 func TestSobriaSceneMatchesGolden(t *testing.T) {
-	data, err := os.ReadFile("../../testdata/SOARIA.json")
+	data, err := os.ReadFile("../../testdata/SOBRIA.json")
 	if err != nil {
-		t.Fatalf("read SOARIA.json: %v", err)
+		t.Fatalf("read SOBRIA.json: %v", err)
 	}
 	doc, err := scene.ParseDocument(data)
 	if err != nil {
@@ -189,7 +189,7 @@ func TestSobriaSceneMatchesGolden(t *testing.T) {
 	f := r.RenderFrame(doc, state)
 	got := f.Plain()
 
-	goldenPath := "../../testdata/SOARIA.frame"
+	goldenPath := "../../testdata/SOBRIA.frame"
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
 		if err := os.WriteFile(goldenPath, []byte(got), 0644); err != nil {
 			t.Fatalf("write golden: %v", err)

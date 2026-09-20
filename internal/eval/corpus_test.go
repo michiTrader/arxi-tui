@@ -207,7 +207,7 @@ func TestCorpusExercisesTheRepairLoopNotTheFirstShot(t *testing.T) {
 // corrupts the number PLAN.md gates /ui on, in the optimistic direction.
 //
 // It was not hypothetical. When this test was written, two of the four cases
-// demanded only fields SOARIA already binds, and a scripted model returning
+// demanded only fields SOBRIA already binds, and a scripted model returning
 // req.Base verbatim scored 2/4 converged. None of the other tests could see
 // it: they ask whether a refusal is real, and the refusals were real — it was
 // the finish line that sat behind the starting line.

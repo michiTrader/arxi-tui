@@ -107,7 +107,7 @@ func TestSignedInventoryMatchesDocument(t *testing.T) {
 // all of them, not a subset: MAXIMUM.json was previously absent from the
 // validation test, so the richest scene — the only one binding agent.todos and
 // session.tokens_used — was the one scene never checked against the inventory.
-var goldenScenes = []string{"RAW.json", "SOARIA.json", "MAXIMUM.json"}
+var goldenScenes = []string{"RAW.json", "SOBRIA.json", "MAXIMUM.json"}
 
 // TestEveryGoldenBindIsSigned is the forward half of the §4.5 exit criterion:
 // every bind/when string in every golden scene resolves to a signed row.

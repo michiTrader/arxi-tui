@@ -13,7 +13,7 @@ func TestThePromptCarriesTheOrderTheSceneAndTheVocabulary(t *testing.T) {
 	req := PatchRequest{
 		Order:       "grey out the footer",
 		Base:        []byte(`{"root":{"type":"stack"}}`),
-		BaseName:    "SOARIA.json",
+		BaseName:    "SOBRIA.json",
 		SignedBinds: []string{"chat.history", "model.name"},
 		Tokens:      []string{"dim", "bright"},
 	}
@@ -23,7 +23,7 @@ func TestThePromptCarriesTheOrderTheSceneAndTheVocabulary(t *testing.T) {
 	for _, want := range []string{
 		"grey out the footer",
 		`{"root":{"type":"stack"}}`,
-		"SOARIA.json",
+		"SOBRIA.json",
 		"chat.history",
 		"model.name",
 		"dim",
@@ -62,7 +62,7 @@ func TestTheRetryPromptCarriesTheAddressedRefusal(t *testing.T) {
 		History: []Turn{{
 			Document: []byte(`{"root":{"type":"text","bind":"model.current"}}`),
 			Verdict: Verdict{
-				Message:   `SOARIA.json:7:5: unsigned bind "model.current" in node type "text"`,
+				Message:   `SOBRIA.json:7:5: unsigned bind "model.current" in node type "text"`,
 				Line:      7,
 				Addressed: true,
 			},
@@ -71,7 +71,7 @@ func TestTheRetryPromptCarriesTheAddressedRefusal(t *testing.T) {
 
 	got := BuildUserPrompt(req)
 
-	if !strings.Contains(got, "SOARIA.json:7:5") {
+	if !strings.Contains(got, "SOBRIA.json:7:5") {
 		t.Errorf("the retry prompt does not carry the address\n"+
 			"consequence: this corpus exists to measure whether a model repairs from a file:line; withholding the address measures address-guessing instead, and the whole addressing effort would go unmeasured.\n"+
 			"remedy: render Verdict.Message verbatim into the history section.\n--- prompt ---\n%s", got)

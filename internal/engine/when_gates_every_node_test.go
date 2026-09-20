@@ -313,9 +313,9 @@ func TestGatedOverlayIsNotPreRenderedByTheStack(t *testing.T) {
 // `agent.working`, and the two frames were byte-identical: the line drew while
 // the agent was idle.
 func TestSoariaThinkingLineObeysItsGate(t *testing.T) {
-	data, err := os.ReadFile("../../testdata/SOARIA.json")
+	data, err := os.ReadFile("../../testdata/SOBRIA.json")
 	if err != nil {
-		t.Fatalf("read SOARIA: %v", err)
+		t.Fatalf("read SOBRIA: %v", err)
 	}
 
 	base := fold.State{
