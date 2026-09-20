@@ -207,6 +207,59 @@ to the *actions*.
   a large blast radius. A faithful restore of the original pair failed exactly
   one test. Decompose the welds and restore each alone; and where two guards
   could mask each other, verify each separately rather than assuming depth.
+- **A different vocabulary is not the absence of one.** The fifth repair
+  closed the node object and stopped, with a written reason: walking every
+  object in the source would report `style`'s token names and `border`'s keys
+  as unknown node properties, a wall of false alarms, and a guard that cries
+  wolf gets deleted. The danger was real and the conclusion did not follow —
+  the sub-objects each have their *own* vocabulary, and treating "different"
+  as "none" left them swallowing keys exactly as `Node` had. Measured with the
+  suite green: `{"border":{"shpae":"double"}}` drew the default border,
+  `{"root":…,"roott":…}` was accepted in silence, and a misspelled style key
+  was worse in kind than any silent drop recorded here — it **defeats the
+  token validator**, because `ValidateTokens` can only check a token it can
+  find, so a scene naming a token absent from the theme passes clean instead
+  of failing with an address. When a guard's scope is justified by a risk,
+  check whether the risk argues for a narrower scope or for a *more specific
+  question* at full scope.
+- **Reflecting a copy only relocates the copy.** The remedy for four drifted
+  inventories was to derive them by reflection, and the first sub-object
+  version reflected over two anonymous structs copied out of the accessors
+  that read a border. An injection showed the hole: teaching one accessor an
+  extra key left those copies untouched, so a document using it was honoured
+  by the renderer and **warned about** by the guard, whole suite green. That
+  is the false-alarm direction — the one that gets a guard switched off rather
+  than filed as a bug — and it was the guard contradicting the very code it
+  claims to describe. Reflection is only worth something when it reflects the
+  thing that actually does the reading: one named type (`borderObject`),
+  decoded by both accessors and reflected by the vocabulary, makes the
+  disagreement unrepresentable instead of merely tested for.
+- **Assert the round-trip, not the list.** The guard for the above does not
+  name `shape` and `style`; that would have been a fifth hand-maintained
+  inventory, correct the day it was written, which is exactly what the
+  injection defeated. It asserts instead that every tag the type declares is
+  accepted by the vocabulary *and* surfaced by an accessor through a real
+  document, and that every vocabulary entry is a declared tag. Both halves
+  were verified load-bearing: deleting the accessor half leaves the drift
+  injection green.
+- **`grep -- FAIL` cannot tell a caught injection from a broken build.** An
+  injection was scored twice as "suite green" when the tree did not compile:
+  a `git checkout` had reverted an uncommitted fix, and the filter used to
+  read the result was blind to compile errors, which print no `--- FAIL`
+  line. Two injections measured nothing and were briefly believed. The
+  standing rule that a compile failure is not a passing injection is only
+  enforceable if the instrument *reports* compile failures — so the harness
+  now builds first and says so, and the lesson generalises: **an instrument
+  that can only observe one kind of failure will silently report every other
+  kind as success.** Commit the fix before injecting, so the restore step
+  cannot delete it.
+- **A guard that cannot see the case does not cover it.** The shipped-scene
+  counter-assertion is the strongest false-alarm guard in the package, and it
+  does not protect the border vocabulary at all: all three golden scenes write
+  the *string* form (`"border": "single"`), so the object form appears nowhere
+  in them. Coverage by a guard requires the guard's corpus to contain the
+  construction; a counter-assertion over documents that never exercise a path
+  is silent about it, however loud it is elsewhere.
 - The table of "features" that once overclaimed in the arxi README is the
   standing warning against aspirational tables: **a document whose rows all say
   "works" is a document nobody can trust.**

@@ -166,6 +166,44 @@ func (n *Node) HasBorder() bool {
 	return len(n.BorderRaw) > 0
 }
 
+// borderObject is the object form of a border: { "shape": …, "style": … }.
+//
+// It is one named type rather than the two anonymous structs the accessors
+// used to declare inline, and that is load-bearing rather than tidiness. The
+// vocabulary check reports a border key it does not recognise, so it has to
+// know what a border may contain, and the only truthful answer is "whatever
+// the code that reads a border reads". With the shape spelled out separately
+// inside each accessor, the two statements were free to diverge, and an
+// injection measured the divergence: teaching BorderStyleName one extra key
+// left a document using that key correct, honoured by the renderer, and
+// *warned about* by the guard, with the whole suite green. A false alarm on a
+// working construction, produced by the guard disagreeing with the code it
+// claims to describe — and a false alarm is how a guard loses its reader.
+//
+// That is the same drift this package has watched four times, arriving one
+// level in from where it was last closed. Deriving a vocabulary by reflection
+// is only worth something if it reflects the thing that actually does the
+// reading; reflecting a copy of it just moves the copy. One type, read by
+// both accessors and by borderVocabulary(), makes the disagreement
+// unrepresentable rather than merely tested for.
+type borderObject struct {
+	Shape string `json:"shape"`
+	Style string `json:"style"`
+}
+
+// border decodes the object form. It reports false for the string form and
+// for a malformed one, neither of which carries keys to speak of.
+func (n *Node) border() (borderObject, bool) {
+	if len(n.BorderRaw) == 0 || n.BorderRaw[0] == '"' {
+		return borderObject{}, false
+	}
+	var obj borderObject
+	if err := json.Unmarshal(n.BorderRaw, &obj); err != nil {
+		return borderObject{}, false
+	}
+	return obj, true
+}
+
 // BorderShape returns the border shape ("single", "double", "ascii") or ""
 // if no border is set. Both string and object forms are accepted.
 func (n *Node) BorderShape() string {
@@ -180,11 +218,8 @@ func (n *Node) BorderShape() string {
 		}
 		return s
 	}
-	// Object form: { "shape": "single", "style": "warn" }
-	var obj struct {
-		Shape string `json:"shape"`
-	}
-	if err := json.Unmarshal(n.BorderRaw, &obj); err != nil {
+	obj, ok := n.border()
+	if !ok {
 		return ""
 	}
 	return obj.Shape
@@ -193,13 +228,8 @@ func (n *Node) BorderShape() string {
 // BorderStyleName returns the border style token (e.g. "warn") or "" if unset.
 // Only the object form carries a style; a bare string border has no style.
 func (n *Node) BorderStyleName() string {
-	if len(n.BorderRaw) == 0 || (len(n.BorderRaw) > 0 && n.BorderRaw[0] == '"') {
-		return ""
-	}
-	var obj struct {
-		Style string `json:"style"`
-	}
-	if err := json.Unmarshal(n.BorderRaw, &obj); err != nil {
+	obj, ok := n.border()
+	if !ok {
 		return ""
 	}
 	return obj.Style

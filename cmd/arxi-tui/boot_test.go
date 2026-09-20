@@ -340,3 +340,71 @@ func TestASceneWithNoRootFallsBackAndSaysSo(t *testing.T) {
 		t.Fatal("no document at all: the fallback did not fire, so the session has no scene")
 	}
 }
+
+// The sub-object warnings must reach the screen too, and this test exists
+// because the delivery path is the place this project has been burned twice:
+// a finding computed and never delivered is the same silence one layer
+// further out.
+//
+// It is a separate test from the unknown-property one rather than another
+// case in it, because the two ask different questions. That one asks whether
+// loadScene surfaces warnings at all; this asks whether the warnings it
+// surfaces cover the objects a node owns. The first would keep passing with
+// the sub-object vocabularies deleted.
+func TestASubObjectTypoAlsoReachesTheNotice(t *testing.T) {
+	path := writeScene(t, "styled.json", `{ "root": { "type": "box",
+    "border": { "shpae": "double" },
+    "style": { "tokne": "no_such_token_at_all" },
+    "children": [ { "type": "text", "text": "hi" } ] } }`)
+
+	doc, notice, err := loadScene(path, factoryRAW)
+	if err != nil {
+		t.Fatalf("loadScene returned a hard error for two sub-object typos: %v\n"+
+			"consequence: these are warnings, not refusals — the scene parses and draws.", err)
+	}
+	if doc == nil || doc.Root == nil {
+		t.Fatalf("the document was replaced rather than loaded with a warning")
+	}
+
+	if notice == "" {
+		t.Fatalf("a scene whose border and style keys are both misspelled loaded with no\n" +
+			"notice at all.\n" +
+			"consequence: the box draws the theme's default border instead of the double one\n" +
+			"asked for, the node draws unstyled, and the undefined token it names is never\n" +
+			"checked against the theme — the load reports success on a document that is wrong\n" +
+			"in three ways.\n" +
+			"remedy: Warnings() must check each sub-object against its own vocabulary.")
+	}
+	// The notice is one line and shows the first warning in full with a count
+	// for the rest — a deliberate decision documented on warningNotice, and
+	// not one this test may quietly overturn. The first draft asserted that
+	// both keys appeared in the notice and failed, and the failure was the
+	// test's: it was measuring the probe, not the code. So the assertion is
+	// split to match what each layer actually promises.
+	if !strings.Contains(notice, "shpae") {
+		t.Errorf("the notice does not name the first offending key: %q", notice)
+	}
+	if !strings.Contains(notice, "styled.json") {
+		t.Errorf("the notice carries no file address (invariant 4): %q", notice)
+	}
+
+	// Both typos must have been *found*, whatever the one-line notice has room
+	// to print. Asserting only on the notice would let the style vocabulary be
+	// deleted without this test noticing, because the border warning alone
+	// fills the line.
+	warned := map[string]bool{}
+	for _, w := range doc.Warnings() {
+		for _, key := range []string{"shpae", "tokne"} {
+			if strings.Contains(w.Msg, key) {
+				warned[key] = true
+			}
+		}
+	}
+	for _, key := range []string{"shpae", "tokne"} {
+		if !warned[key] {
+			t.Errorf("no warning names %q\n"+
+				"consequence: this sub-object is still swallowing keys, and the notice that did\n"+
+				"appear would make the load look adequately reported.", key)
+		}
+	}
+}
