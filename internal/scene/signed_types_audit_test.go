@@ -119,6 +119,25 @@ func TestSignedNodeTypesMatchTheDocument(t *testing.T) {
 		t.Fatalf("parsed only %d primitives from docs/SCENES.md (%v); the audit is reading the\n"+
 			"wrong paragraph and would report drift that is not there", len(documented), documented)
 	}
+	// No ceiling here, and that is a decision rather than the omission it
+	// looks like next to the one the engine's copy of this parser carries.
+	//
+	// The two readers share the drift risk — a backticked property written
+	// into the primitive paragraph reads as a type to both, measured with
+	// "`sticky` header" — but they do not share the exposure. The engine's
+	// axis reports a *count*, so a word that slips past the exclusion list
+	// silently enlarges a denominator and nothing else notices; it needed an
+	// explicit ceiling. This test compares the parsed set against
+	// signedNodeTypes in both directions, so the same word fails it
+	// immediately and by name:
+	//
+	//	docs/SCENES.md settles node type "sticky" and signedNodeTypes omits it
+	//
+	// Verified, not assumed: the injection was run against this test and it
+	// failed on exactly that line. Adding a count check on top would be a
+	// second guard over a case already caught, and this file's own argument
+	// against silent filters applies to redundant ones too — a guard that
+	// cannot be the one that fires teaches nothing when it does.
 
 	signed := make(map[string]bool)
 	for _, typ := range SignedNodeTypes() {
