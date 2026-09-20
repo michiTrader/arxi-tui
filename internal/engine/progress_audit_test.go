@@ -108,6 +108,46 @@ func TestProgressAxesAreMeasuredNotAsserted(t *testing.T) {
 			t.Fatalf("parsed only %d node types from docs/SCENES.md (%v); the audit is reading the\n"+
 				"wrong paragraph and would measure nothing", len(documented), documented)
 		}
+		// A ceiling as well as a floor, for the reason the animation axis
+		// already proved and this one inherited without the defence: both
+		// denominators are backticked words scraped out of a prose
+		// paragraph, so both move when someone writes a sentence. That is
+		// not a hypothetical here — measured by adding "`sticky` header"
+		// to the list's parenthetical, which is ordinary documentation
+		// prose describing a property of `list`:
+		//
+		//	node types: 16 documented, 11 rendered, 5 drawing
+		//	[[UNKNOWN NODE TYPE]] (button, slider, sparkline, sticky, switch)
+		//
+		// The floor passed, the audit passed, and the reported gap grew by
+		// a type that does not exist. The direction is the mild one — the
+		// progress number understates itself — but a denominator that
+		// moves when someone writes a sentence is not a measurement, and
+		// this file exists because the previous answer to "how far along
+		// is this" was an assertion nobody could check.
+		//
+		// The exclusion lists in the two readers of this paragraph are
+		// what hold the count down, and they are hand-maintained: every
+		// property named in backticks here has to be listed in both, in
+		// two packages, by someone who remembers. This ceiling is the
+		// cheap guard that fires when the next one is forgotten.
+		//
+		// Fifteen is what SCENES.md settles. Raising this number is a
+		// review event, which is the point: a real new primitive is a
+		// vocabulary change and should be argued in the commit that makes
+		// it, not absorbed silently by an audit.
+		if len(documented) > 15 {
+			t.Errorf("parsed %d node types from docs/SCENES.md (%v), and the settled vocabulary is 15.\n"+
+				"consequence: the denominator moved without a vocabulary change, so the progress this\n"+
+				"file reports is measured against a number that grew on its own. The likely cause is\n"+
+				"prose: a property or value written in backticks inside the primitive paragraph reads\n"+
+				"as a type to both parsers of it, and both exclusion lists have to be updated by hand,\n"+
+				"in two packages. That is how this axis's sibling drifted from 5 to 8.\n"+
+				"remedy: add the word to the exclusion lists in documentedNodeTypes (here) and\n"+
+				"documentedPrimitives (internal/scene), or -- if the vocabulary really did gain a\n"+
+				"primitive -- sign it in signedNodeTypes and raise this ceiling in the same commit.",
+				len(documented), documented)
+		}
 		if len(implemented) == 0 {
 			t.Fatal("found no node type case labels in renderNode; the audit cannot tell an\n" +
 				"unimplemented type from a parse failure, and would report the whole vocabulary\n" +
