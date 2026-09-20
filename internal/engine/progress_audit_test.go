@@ -190,6 +190,26 @@ func TestProgressAxesAreMeasuredNotAsserted(t *testing.T) {
 				"the audit is reading the wrong section and the standing debt would read as paid",
 				len(props), props)
 		}
+		// A ceiling as well as a floor, because this axis has already drifted
+		// upward once. Adding prose to the Scene 4 section that mentioned
+		// `row_template`, `on_press` and `id` in backticks pushed the
+		// denominator from 5 to 8 and dropped the honoured fraction from 1/5
+		// to 1/8 with no code change. A floor alone cannot catch that: the
+		// count was too *high*, and a denominator that grows quietly makes
+		// progress look worse for free — the mirror of the vanity metric this
+		// file replaced, and just as untrue. Scene 4 names five properties;
+		// if that genuinely changes, this number changes with it in the same
+		// commit.
+		if len(props) > 5 {
+			t.Fatalf("parsed %d animation properties from Scene 4's vocabulary paragraph (%v), and the\n"+
+				"paragraph names five.\n"+
+				"consequence: the parser has captured prose from elsewhere in the section, so the\n"+
+				"denominator moves when someone writes a sentence and the axis measures the\n"+
+				"documentation rather than the engine.\n"+
+				"remedy: narrow animationPropertiesFromDocument to the vocabulary paragraph, or — if\n"+
+				"Scene 4 really did gain a property — update this ceiling in the same commit.",
+				len(props), props)
+		}
 
 		rendered := renderedAnimationProperties(t)
 
@@ -387,12 +407,36 @@ func renderedNodeTypes(t *testing.T) map[string]bool {
 	return out
 }
 
-// animationPropertiesFromDocument reads the Scene 4 paragraph.
+// animationPropertiesFromDocument reads Scene 4's vocabulary paragraph — the
+// first paragraph of the section, which lists the properties, and not the
+// prose that follows it.
 //
-// `scroll` is named there as well as in the Universal list, and it is not
-// filtered out: it is genuinely both, and dropping it here would make the
-// animation denominator disagree with the document to make a number look
-// better — the exact move this file was written to stop.
+// The narrower scope is a defect this audit produced against itself, and it is
+// worth the words because the cause is general. The first version read the
+// whole Scene 4 section to the next heading. Then the feat commit added an
+// "Implementation status" paragraph to that section explaining why four
+// properties stay warnings, and that explanation mentions `row_template`,
+// `on_press` and `id` in backticks as comparisons. The parser counted all
+// three as animation properties: the denominator went from 5 to 8, and the
+// honoured fraction fell from 1/5 to 1/8 without one line of engine code
+// changing.
+//
+// The direction is the mild one — a denominator that grows understates
+// progress, so this was a false alarm rather than a false pass. But a
+// denominator that moves when someone writes a sentence is not a measurement,
+// which is the entire charge this file levels against the "45-50%" figure it
+// replaced. An instrument whose reading depends on the prose around its
+// subject is measuring the prose.
+//
+// So the block is the property list specifically. A paragraph boundary is the
+// honest delimiter because the document's own structure puts the vocabulary in
+// one paragraph and the commentary in the others — the same convention
+// documentedNodeTypes relies on for "Containers:".
+//
+// `scroll` is named here as well as in the Universal list and is not filtered
+// out: it is genuinely both, and dropping it would make the denominator
+// disagree with the document to make a number look better — the exact move
+// this file exists to stop.
 var animationPropertyPattern = regexp.MustCompile("`([a-z_]+)(?::|`)")
 
 func animationPropertiesFromDocument(t *testing.T) []string {
@@ -405,10 +449,23 @@ func animationPropertiesFromDocument(t *testing.T) []string {
 		if !strings.HasPrefix(line, "## Scene 4") {
 			continue
 		}
+		// Skip the blank line after the heading, then take exactly the
+		// paragraph that follows: it is the vocabulary list. Stopping at
+		// the blank line is what keeps later commentary — which names
+		// other properties in backticks to contrast with them — out of
+		// this axis's denominator.
+		started := false
 		for _, l := range lines[i+1:] {
 			if strings.HasPrefix(l, "## ") {
 				break
 			}
+			if strings.TrimSpace(l) == "" {
+				if started {
+					break
+				}
+				continue
+			}
+			started = true
 			block.WriteString(l)
 			block.WriteString("\n")
 		}
