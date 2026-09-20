@@ -872,8 +872,20 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 
 	// Prefix: a child node with text+style (or bind+style) rendered before the
 	// main scrolling text.
+	//
+	// hiddenByWhen is asked here, and at the suffix below, because a nested
+	// node never passes through renderNode — the owning renderer reads
+	// prefix.Bind/.Text/.Style itself, so renderNode's gate at the top of the
+	// dispatch never sees it. This is the third recurrence of one defect:
+	// `when` was once honoured by a row and an overlay only, the fix moved the
+	// gate into renderNode to make "some node types obey and others do not"
+	// unrepresentable — and that fix is scoped to node *types*, while a prefix
+	// is a node *position*, which no widening of a type switch reaches.
+	// Measured before this line existed: a prefix declaring `when` rendered
+	// byte-identically under `agent.working` and `!agent.working`, and the
+	// validator accepted both.
 	prefix := n.PrefixNode()
-	if prefix != nil {
+	if prefix != nil && !hiddenByWhen(prefix, state) {
 		// A prefix is a text-bearing node: either Type=="text" or an
 		// untyped node with Text set (the sobria prefix omits the type).
 		if prefix.Bind != "" {
@@ -889,7 +901,7 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 
 	// Suffix: a child node (bind or text) rendered after the main text.
 	// The sobria marquee's suffix binds usage.delta with style "dim".
-	if n.Suffix != nil {
+	if n.Suffix != nil && !hiddenByWhen(n.Suffix, state) {
 		if n.Suffix.Bind != "" {
 			cells = append(cells, ui.Span{Text: resolveBind(n.Suffix.Bind, state), Style: styleName(n.Suffix.Style)})
 		} else if n.Suffix.Text != "" {
