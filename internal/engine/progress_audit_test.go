@@ -654,6 +654,23 @@ func animationPropertiesFromDocument(t *testing.T) []string {
 // all inferred a behavioural fact from a structural proxy, and all three
 // produced a false clean bill of health. When a guard can ask the artifact
 // directly, a proxy is not a shortcut, it is a different question.
+//
+// The counterfactual was run rather than argued, because "the old code would
+// have missed this" is exactly the kind of claim this file exists to distrust.
+// `transition` — a real documented property that nothing in the engine reads —
+// was declared as a field named `Repeat`, and the same ledger was printed with
+// each matcher:
+//
+//	old (name only):  5 documented, 2 honoured, 3 warned, 0 silent   PASS
+//	                  honoured: focus_glow, transition
+//	new (go/types):   5 documented, 1 honoured, 3 warned, 1 silent   FAIL
+//	                  honoured: focus_glow
+//
+// The old ledger reported a property as implemented that no line of the engine
+// reads, and reported it under the invocation the header of this file
+// documents. That is the "45-50%" defect reappearing inside the instrument
+// built to replace it — which is the argument for holding a measuring tool to
+// the standard it measures by.
 func renderedAnimationProperties(t *testing.T) map[string]bool {
 	t.Helper()
 	fields := scene.AnimationFieldsForAudit()
