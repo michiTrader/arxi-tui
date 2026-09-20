@@ -5,6 +5,7 @@ import (
 	"go/importer"
 	"go/token"
 	"go/types"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -337,7 +338,7 @@ type documentWalker struct {
 // A walker is recognised by its shape instead — a function that takes a
 // *scene.Node and calls itself.
 //
-// # Why internal/engine is out of scope, and why that is not the same mistake
+// # Which functions are held to this, and why it is not "which package"
 //
 // The renderers also take a *Node and recurse, and they are *supposed* to be
 // selective: renderText composing no children is not a bug, it is the fact
@@ -347,9 +348,25 @@ type documentWalker struct {
 // branch" would demand that every node type compose every branch, which is a
 // false alarm on working code — the direction that gets a guard switched off.
 //
-// The distinction is not "which package" but which claim the function makes:
-// these walkers are the ones that enforce a document-wide invariant, so a
-// branch they skip is a branch where the invariant does not hold.
+// So a walker is exempt when it dispatches on `n.Type`: choosing behaviour per
+// node type is exactly what a renderer does, and a function that does it is
+// making a claim about *this kind of node* rather than about every node in the
+// document. Everything else that recurses over the tree is claiming to visit
+// the whole of it.
+//
+// That test replaces an exclusion of `internal/engine` by name, which was
+// wrong in the way this file is about: the previous comment here asserted the
+// distinction "is not which package" and then implemented it as a package
+// list. A renderer moved out of engine would have been held to the rule, and a
+// whole-document walker added inside engine would have escaped it.
+//
+// # Why the packages are discovered
+//
+// The first version searched two hand-written directories. Measured: a
+// recursive `*scene.Node` walker added to cmd/arxi-tui, skipping `suffix`,
+// left this audit green — the seventh appearance of one defect, arriving
+// through the one axis the sixth fix hand-enumerated. goPackageDirs already
+// existed in this package for exactly this purpose and was not used.
 func documentWalkers(t *testing.T) []documentWalker {
 	t.Helper()
 
@@ -362,19 +379,14 @@ func documentWalkers(t *testing.T) []documentWalker {
 	var out []documentWalker
 	checked := 0
 
-	// The import path is spelled out per directory rather than derived from
-	// the relative path, and that detail cost this audit its first run.
-	// packagePathFor(".") yields ".../arxi_tui/.", so this package's own
-	// Node was checked under a path that does not end in "internal/scene",
-	// isSceneNode rejected it, and the three walkers *in this file's own
-	// package* were invisible — leaving only eval's. The floor below caught
-	// it; a guard with no floor would have reported success while checking
-	// one walker out of four.
-	for _, pkg := range []struct{ dir, path string }{
-		{".", "github.com/michiTrader/arxi_tui/internal/scene"},
-		{"../eval", "github.com/michiTrader/arxi_tui/internal/eval"},
-	} {
-		files, err := parseDir(fset, pkg.dir)
+	// Every package in the module, this one included. goPackageDirs skips
+	// internal/scene because its caller asks about *outside* readers; a
+	// walker here is still a walker, and three of the four live in this
+	// package.
+	dirs := append([]string{"."}, goPackageDirs(t)...)
+
+	for _, dir := range dirs {
+		files, err := parseDir(fset, dir)
 		if err != nil || len(files) == 0 {
 			continue
 		}
@@ -384,7 +396,14 @@ func documentWalkers(t *testing.T) []documentWalker {
 			Uses:       make(map[*ast.Ident]types.Object),
 			Defs:       make(map[*ast.Ident]types.Object),
 		}
-		_, _ = conf.Check(pkg.path, fset, files, info)
+		// The import path matters and cost this audit its first run:
+		// packagePathFor(".") yields ".../arxi_tui/.", so this package's
+		// own Node was checked under a path not ending in
+		// "internal/scene", isSceneNode rejected it, and the three
+		// walkers in this very file's package were invisible. The floor
+		// below caught it; a guard with no floor would have reported
+		// success having checked one walker out of four.
+		_, _ = conf.Check(importPathFor(t, dir), fset, files, info)
 		if len(info.Selections) == 0 {
 			continue
 		}
@@ -415,6 +434,9 @@ func walkersInFile(f *ast.File, info *types.Info) []documentWalker {
 		if !ok || fn.Body == nil || !takesNode(fn.Type, info) {
 			continue
 		}
+		if dispatchesOnType(fn.Body, info) {
+			continue
+		}
 		if branches := branchesRecursedInto(fn.Body, fn.Name.Name, info); branches != nil {
 			out = append(out, documentWalker{name: fn.Name.Name, recursesInto: branches})
 		}
@@ -431,7 +453,7 @@ func walkersInFile(f *ast.File, info *types.Info) []documentWalker {
 				continue
 			}
 			id, ok := as.Lhs[i].(*ast.Ident)
-			if !ok {
+			if !ok || dispatchesOnType(lit.Body, info) {
 				continue
 			}
 			if branches := branchesRecursedInto(lit.Body, id.Name, info); branches != nil {
@@ -442,6 +464,77 @@ func walkersInFile(f *ast.File, info *types.Info) []documentWalker {
 	})
 
 	return out
+}
+
+// dispatchesOnType reports whether a function chooses behaviour from a node's
+// `type` field — the property that marks a renderer rather than a
+// whole-document walker.
+//
+// This is the exemption test, and it is a behavioural question asked of the
+// source rather than a name on a list. A function switching on `n.Type` is
+// saying "what this node is decides what I do", which is precisely why
+// renderText composing no children is correct and not a silent drop. A
+// function that recurses without asking is claiming to visit the document.
+//
+// Selecting `Type` is resolved through the type checker, so `c.Type` on some
+// other struct is not this field — the standing rule that a guard which can
+// ask the type checker must not match a spelling.
+func dispatchesOnType(body *ast.BlockStmt, info *types.Info) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		var subject ast.Expr
+		switch s := n.(type) {
+		case *ast.SwitchStmt:
+			subject = s.Tag
+		case *ast.IfStmt:
+			subject = s.Cond
+		default:
+			return true
+		}
+		if subject == nil {
+			return true
+		}
+		for _, sel := range nodeSelectorsIn(subject, info) {
+			if sel == "Type" {
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// importPathFor turns a directory this test walks into the import path the
+// type checker must use for it.
+//
+// Derived rather than spelled out, because the spelling is what broke on the
+// first run: packagePathFor(".") produced ".../arxi_tui/.", the scene package
+// was checked under a path that does not end in "internal/scene", and
+// isSceneNode rejected its own Node.
+func importPathFor(t *testing.T, dir string) string {
+	t.Helper()
+
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatalf("resolve %q: %v", dir, err)
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve module root: %v", err)
+	}
+	rel, err := filepath.Rel(root, abs)
+	if err != nil {
+		t.Fatalf("relativise %q: %v", abs, err)
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == "." {
+		return "github.com/michiTrader/arxi_tui"
+	}
+	return "github.com/michiTrader/arxi_tui/" + rel
 }
 
 // takesNode reports whether a signature accepts a scene.Node, resolved through
