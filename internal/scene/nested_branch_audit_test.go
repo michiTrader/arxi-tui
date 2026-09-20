@@ -105,6 +105,19 @@ import (
 // The last two are the pair that matters: one function, one package, differing
 // only by `switch n.Type`. That is what makes the exemption a test of the
 // claim a function makes rather than of where it lives.
+//
+// A fourth was the audit's own version of the defect again, one axis further
+// in: recursion was recognised as "a function that calls itself", so the
+// *form* the recursion takes was the enumeration. Measured:
+//
+//	a mutually recursive pair skipping suffix, before -> green (invisible)
+//	the same pair, after                              -> 1 finding
+//	the same pair with suffix restored                -> no false alarm
+//	a three-function cycle skipping suffix            -> 1 finding, all three named
+//
+// The third line is the one that justifies pooling a cycle's branches: the
+// halves of a correct pair each reach only some branches, so judging either
+// alone would fail a walker that is complete.
 func TestEveryNestedBranchIsInventoriedAndWalked(t *testing.T) {
 	branches := nodeBearingBranches(t)
 
