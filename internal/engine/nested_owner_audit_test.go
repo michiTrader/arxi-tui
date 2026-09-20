@@ -198,11 +198,20 @@ func assertNestedShapeOnOwner(t *testing.T, owner, branch, shape, form string, s
 // assertNestedDropWarns is the other half of the claim. Measuring that the
 // fragment does not draw only establishes the drop; what makes it survivable
 // is that the author is told, at an address.
+//
+// It matches on Warning.Form, not on the message text. It used to ask
+// strings.Contains(w.Msg, branch), and that was wrong in the direction that
+// switches a guard off: the generic unknown-key warning quotes `a misspelled
+// "children" silently drops the whole subtree` in its own prose, so any
+// document with an unrelated typo satisfied the search and this function
+// returned having found someone else's finding. A guard that greps a sentence
+// written for a human is coupled to that sentence's wording; the identity is
+// the thing to match.
 func assertNestedDropWarns(t *testing.T, doc *scene.Document, owner, branch, form string) {
 	t.Helper()
 
 	for _, w := range doc.Warnings() {
-		if !strings.Contains(w.Msg, branch) {
+		if w.Form != form {
 			continue
 		}
 		if w.Loc == (scene.Loc{}) {
@@ -213,15 +222,78 @@ func assertNestedDropWarns(t *testing.T, doc *scene.Document, owner, branch, for
 	}
 
 	t.Errorf("node type %q declares %s, the renderer never draws it, and the document loads with\n"+
-		"no warning naming %q.\n\n"+
+		"no warning identifying itself as %q.\n\n"+
 		"consequence: the silent drop, at the axis the nested sweep holds fixed. That sweep\n"+
 		"varies the property and the branch with the owner hardcoded to marquee, so this\n"+
 		"pairing is outside everything it can see. Measured before this audit existed:\n"+
-		"an input with a node-shaped prefix, a marquee with a string-shaped prefix, and a\n"+
-		"text with either — all four validated clean and drew nothing.\n"+
+		"an input with a node-shaped prefix, a marquee with a string-shaped prefix, a\n"+
+		"text with either, and a child array under eleven of the fifteen signed types —\n"+
+		"every one validated clean and drew nothing.\n"+
 		"remedy: read the shape where the owner composes its spans, or keep it in\n"+
 		"scene.nestedFormReaders' complement so warnDroppedNestedForm reports it.",
 		owner, form, branch)
+}
+
+// TestTheDropWarningIsFoundByIdentityNotByProse pins the fix above from the
+// side that matters: that the search assertNestedDropWarns performs cannot be
+// satisfied by a warning it did not cause.
+//
+// This is a guard on a guard, and it is here because the bug it describes was
+// live and green. assertNestedDropWarns asked strings.Contains(w.Msg, branch);
+// the generic unknown-key warning's own prose contains `a misspelled
+// "children" silently drops the whole subtree`, so a document warning only
+// about a typo answered "yes, the drop was reported". The audit would then
+// certify that authors are told about a silent drop on the strength of an
+// unrelated finding — the guard switching itself off, which AGENTS.md records
+// as the failure mode a numerator over the *passing* state always has.
+//
+// The document below is the exact shape of that false positive: a node whose
+// children are composed (a stack, so nothing is dropped and no Form warning is
+// produced) carrying a misspelled key (so the prose warning appears). Under
+// the old matcher the branch substring is present; under the new one no
+// warning claims the form, which is the truth.
+func TestTheDropWarningIsFoundByIdentityNotByProse(t *testing.T) {
+	const src = `{"root":{"type":"stack","txet":"x","children":[{"type":"text","text":"base"}]}}`
+
+	doc, err := scene.ParseDocument([]byte(src))
+	if err != nil {
+		t.Fatalf("premise broken: this probe must parse; got %v", err)
+	}
+	if verr := doc.Validate(); verr != nil {
+		t.Fatalf("premise broken: this probe must validate clean, or the warning list below is\n"+
+			"not the one an author would see; got %v", verr)
+	}
+
+	warnings := doc.Warnings()
+
+	// The premise: the prose warning is present, and it does quote the
+	// branch name. Without this the test passes for the wrong reason — an
+	// empty warning list satisfies both assertions below while measuring
+	// nothing, which is the vacuous-guard shape this package keeps closing.
+	prose := false
+	for _, w := range warnings {
+		if w.Form == "" && strings.Contains(w.Msg, "children") {
+			prose = true
+		}
+	}
+	if !prose {
+		t.Fatalf("premise broken: no unrelated warning quotes %q, so this probe no longer\n"+
+			"reproduces the false positive it exists to pin. That is not a pass — it means the\n"+
+			"generic message was reworded, and the next guard to grep a sentence will be\n"+
+			"written believing prose is a safe thing to match.\nwarnings: %v", "children", warnings)
+	}
+
+	// The claim: no warning here identifies itself as the dropped-children
+	// form, because nothing was dropped.
+	for _, w := range warnings {
+		if w.Form == "children.array" {
+			t.Errorf("a warning claims to be the dropped-children finding on a document whose children\n"+
+				"are composed by their owner.\n\n"+
+				"consequence: the false-alarm direction — the author is told a subtree was ignored\n"+
+				"when the engine drew it, and borderVocabulary's comment records what that costs.\n"+
+				"remedy: only warnDroppedNestedForm may set Form.\nwarning: %q", w.Msg)
+		}
+	}
 }
 
 // nestedOwnerOfType builds a document whose root is the named node type

@@ -81,6 +81,24 @@ import (
 type Warning struct {
 	Loc Loc
 	Msg string
+	// Form names the nested form this warning is about ("children.array",
+	// "prefix.string", …), and is empty on every other warning.
+	//
+	// It exists because the audit that pins nestedFormReaders has to find
+	// *this* warning among a document's warnings, and it used to do so by
+	// looking for the branch name in Msg. Measured: that substring is
+	// satisfied by the generic unknown-key warning, whose own explanatory
+	// text quotes `a misspelled "children" silently drops the whole
+	// subtree`. So a document that warned only about a typo would have
+	// satisfied the audit's demand that the drop be reported — the guard
+	// accepting an unrelated finding as its own evidence, which is the
+	// numerator failure this package has now seen four times.
+	//
+	// Prose is written for the author and is revised whenever the message
+	// is improved; an identity is written for the machine reading it. A
+	// guard that greps a human sentence is coupled to its wording, and the
+	// coupling is invisible until the wording changes underneath it.
+	Form string
 }
 
 func (w Warning) String() string {
@@ -359,7 +377,8 @@ func (d *Document) warnDroppedNestedForm(n *Node, path, branch string, raw []byt
 	}
 
 	*out = append(*out, Warning{
-		Loc: d.locOf(path),
+		Loc:  d.locOf(path),
+		Form: form,
 		Msg: fmt.Sprintf("node type %q declares %q as %s, and no node type reads that shape "+
 			"except %s; it was ignored. The validator still walked it — the binds inside it "+
 			"were checked and its tokens were checked against the theme — so the document "+
