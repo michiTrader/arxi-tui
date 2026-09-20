@@ -243,6 +243,14 @@ the sibling projects. Concretely:
    and `git fetch` before assuming any branch state — and both were
    already written here before this turn needed them.
 
+   **The eleventh destruction.** Clean: eleven destructions, eight of
+   them costing nothing. Both standing lessons applied again unchanged,
+   which is now the whole content of this entry — Go absent, `git fetch`
+   first, nothing to rebuild. When a restore stops teaching anything
+   new, stop lengthening the list and keep the ratio: the procedural
+   rules are settled, and the only open cost is that the toolchain has
+   to be reinstalled before any number can honestly be reported.
+
 ## Working rules
 
 **One step at a time, in order.** The bind vocabulary is the only hard
@@ -279,10 +287,37 @@ fail on.
 The general rule: **when a measurement is a ratio, the numerator needs the
 same scrutiny as the denominator, and it usually gets less** — a denominator
 that moves is visible in the reported total, while a numerator that
-over-counts just looks like progress. The specific rule, paid for four times
+over-counts just looks like progress. The specific rule, paid for five times
 in `internal/engine` now: **when a guard can ask the type checker, matching on
 an identifier name is not a shortcut, it is a different question.** A bare
-`sel.Sel.Name == "X"` matches `pkg.X`, `otherType.X` and `n.X` alike.
+`sel.Sel.Name == "X"` matches `pkg.X`, `otherType.X` and `n.X` alike, and a
+bare `id.Name == param` matches a local that shadows the parameter.
+
+**A rule derived in one file is not finished until it has been pointed
+somewhere else.** Both rules above were written from defects in the progress
+audit, and the audit is where they stopped being applied. Grepping the tree
+for name-matching guards took one command and found three: two already
+resolved types and were cleared as negative findings, and the third —
+`TestEveryBindCaseBodyReadsTheFoldState`, in a different file, written at a
+different time, for a different defect class — had the identical bug. Its
+`readsState` numerator is satisfied by any local spelled like the `fold.State`
+parameter, so a bind case answering `state := "sobria"; return state` scored
+as reading the fold. That is the exact shape the test exists to reject,
+certifying itself.
+
+The direction repeats too, and it is the part worth internalising: that axis
+can only fail on a case that does *not* read the state, so the false positive
+did not inflate a count, it **disarmed the single condition the subtest could
+fail on**. Three over-counting numerators in this package now, all three
+flattering, two of them pre-empting their own failure mode. When a numerator
+counts the passing state, an error in it is not a measurement error — it is
+the guard switching itself off.
+
+**Prove the fix in both directions, with a counterfactual you actually run.**
+Every one of these was settled by constructing the defect and measuring the
+old and new matcher over the same probe, never by argument. A guard that
+passes on a clean tree has demonstrated nothing; the claim is that it fails on
+the defect, and that claim is cheap to test and routinely false.
 
 ## Build
 
