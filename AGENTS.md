@@ -174,6 +174,27 @@ the sibling projects. Concretely:
    unpushed commits is the exact state that lost work above, and it looks
    identical to a finished turn.
 
+6. **Also verify `git log origin/main..origin/<branch>` is empty, or that
+   an open PR covers it.** Rule 5 checks that the local disk is safe; it
+   says nothing about whether the work is *reviewable*, and the two come
+   apart in a way that has now happened.
+
+   **Measured, on the turn that added this rule.** The sandbox was
+   destroyed for the **sixth** time, mid-commit. Rules 2–5 worked exactly
+   as written: every pushed commit came back, and the one unpushed half
+   was the only casualty. But the PR had been opened early per rule 3,
+   with the first commit — and it was merged while the remaining four
+   commits were still being pushed to the same branch. Those four landed
+   on a branch whose PR had already closed. Nothing was lost and nothing
+   was unpushed, so rule 5 reported a clean finish; 657 lines sat on the
+   remote with no open PR pointing at them, which is invisible in exactly
+   the way an unpushed commit is.
+
+   The remedy is not to open the PR later — that reintroduces the risk
+   rule 3 exists to remove. It is to re-check the PR at the end of the
+   turn as well as at the start: an early PR is a live object, and a merge
+   can happen between the first push and the last.
+
 ## Working rules
 
 **One step at a time, in order.** The bind vocabulary is the only hard
