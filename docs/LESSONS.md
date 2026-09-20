@@ -294,3 +294,41 @@ to the *actions*.
   omits that in fact drops (the defect). Both were verified by counterfactual —
   over-claiming `text` and un-claiming `input` each failed exactly one subtest,
   and reverting the warning failed 42.
+- **The fix that enumerates is the next defect's hiding place.** The rule above
+  was written from the fourth recurrence and pointed at the fifth on the first
+  probe. `nestedFormReaders` enumerated `prefix` and `suffix` — the two
+  branches the defect had been found in — which is the same mistake one level
+  up from the sweep that enumerated node types. `children` is a nested branch
+  by exactly the same argument, and eleven of the fifteen signed owners accept
+  one, validate it in full (an unsigned bind inside it is still refused with an
+  address), and never draw it. It is the most expensive row in the table: the
+  loss is a whole subtree, and it is indistinguishable, from the author's side,
+  from the misspelled `children` this package already warns about. The remedy
+  is structural rather than another row: the branch became a *key* of the
+  inventory (`<branch>.<shape>`), so a nested branch added to `Node` is either
+  listed or caught. **When a fix enumerates the instances of a defect, the
+  enumeration itself is the next axis** — ask what makes something a member of
+  that list, and key the inventory on it.
+- **A guard can be correct because of its corpus rather than its check, and
+  the two are indistinguishable while it passes.** The audit above found "the
+  warning about this drop" with `strings.Contains(w.Msg, branch)`. The generic
+  unknown-key message quotes `a misspelled "children" silently drops the whole
+  subtree` in its own advice, so any document with an unrelated typo answers
+  *yes* to "was the drop reported?". Measured honestly, the false positive was
+  **latent**: the audit's probes were otherwise clean, so reverting the matcher
+  alone failed nothing. That is not a reprieve — it locates the correctness in
+  the inputs, where one added probe or one reworded sentence moves it, and the
+  function that would then certify a silent drop as reported is unchanged and
+  still green. Two remedies, both needed: match an *identity* (`Warning.Form`,
+  set only by the code that raises it) rather than prose written for a human,
+  and **put the case that can fool the guard into the guard's own corpus**.
+  Only after adding an unrelated misspelling to every probe did the two
+  matchers disagree — prose 0 failures against a reverted engine, identity 11 —
+  which is the difference between a claim measured and a claim argued.
+- **Correct the commit message the counterfactual refutes.** Two claims written
+  in one turn were wrong in the flattering direction and both were caught by
+  running the experiment they described: a harness trap said to pass silently
+  in fact failed 15 subtests loudly, and a matcher said to be fooled was only
+  fooled in principle. A commit message is the durable record of why a decision
+  is right; an unverified claim in it is worse than none, because the next turn
+  reads it as measurement. Re-run, then write the number.
