@@ -236,6 +236,13 @@ the sibling projects. Concretely:
    built or measured. Budget that, and do not report a test result until
    it has actually run in the new sandbox.
 
+   **The tenth destruction.** Clean again, and the count is now more
+   useful as a ratio than a tally: ten destructions, seven of them
+   costing nothing at all. The two remaining lessons are both
+   environmental rather than procedural — Go is absent on every restore,
+   and `git fetch` before assuming any branch state — and both were
+   already written here before this turn needed them.
+
 ## Working rules
 
 **One step at a time, in order.** The bind vocabulary is the only hard
@@ -258,6 +265,24 @@ commit that adds it.
 **Verify, do not assume.** Before reporting a number, measure it. Before
 saying tests pass, run them. Counts, file contents and git state have all been
 wrong from memory on the sibling projects.
+
+**The instrument is not exempt.** The progress audit exists because a
+completion figure was asserted for thirteen turns and never measured; three
+turns were then spent guarding its *denominators*, and each guard was
+justified by a measurement. Its *numerators* were never checked at all, and
+both of them were wrong — one counted `strings.Repeat` as an implemented
+animation property, the other counted a node type as rendered because of an
+unrelated `switch` in the same function. Both errors ran in the flattering
+direction, and the animation one disarmed the single state that subtest can
+fail on.
+
+The general rule: **when a measurement is a ratio, the numerator needs the
+same scrutiny as the denominator, and it usually gets less** — a denominator
+that moves is visible in the reported total, while a numerator that
+over-counts just looks like progress. The specific rule, paid for four times
+in `internal/engine` now: **when a guard can ask the type checker, matching on
+an identifier name is not a shortcut, it is a different question.** A bare
+`sel.Sel.Name == "X"` matches `pkg.X`, `otherType.X` and `n.X` alike.
 
 ## Build
 
