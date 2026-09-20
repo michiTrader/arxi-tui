@@ -68,6 +68,28 @@ import (
 //
 // Neither list is written here. Both are derived, which is the only form of
 // this fix that the seventh recurrence cannot walk around.
+//
+// # Proved in both directions, by counterfactuals actually run
+//
+// A guard green on a clean tree has demonstrated nothing. Four defects were
+// constructed and measured against this file, and each number below is from a
+// run, not an argument:
+//
+//	the measured defect (Footer branch, read by renderText only)  -> 5 findings
+//	  the missing inventory row, and all four walkers skipping it
+//	a branch mentioned but not recursed into (`_ = n.Suffix`)     -> 1 finding
+//	  so the check cannot be satisfied by the line that merely names a branch
+//	an unclassified raw field (Caption json.RawMessage)           -> caught
+//	  so a raw branch cannot be exempted by omission — how `children` hid
+//	a raw branch misclassified as carrying no node (PrefixRaw "") -> caught
+//	  by the floor, since a wrong classification shrinks the derived set
+//
+// Two of this audit's own bugs were found the same way and are recorded at
+// their sites rather than here: documentWalkers checked this package under
+// the wrong import path and saw one walker instead of four (the floor caught
+// it), and branchesRecursedInto missed the `prefix := n.PrefixNode()` form and
+// accused three walkers of skipping a branch all three visit — a false alarm
+// on working code, found by reading the source the failure pointed at.
 func TestEveryNestedBranchIsInventoriedAndWalked(t *testing.T) {
 	branches := nodeBearingBranches(t)
 
