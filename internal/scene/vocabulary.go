@@ -328,6 +328,18 @@ func (d *Document) collectWarnings(n *Node, path string, vocab map[string]bool, 
 			n.Type, key)
 	})
 
+	// Every warning above this line is about a *key* the parser did not
+	// recognise. This one is about a *value*, and that gap is precisely how
+	// the defect survived: `type` is a perfectly well-known key, so the
+	// whole machinery walked past {"type": "buton"} without a word.
+	//
+	// It is guarded by nodeIsDispatched because not every *Node in the tree
+	// is one the renderer looks up by type; see that function for the
+	// measured reason.
+	if nodeIsDispatched(path) {
+		d.warnUnsignedType(n, path, out)
+	}
+
 	// The border object, when it is one. A string border ("single") has no keys
 	// to check and records no path, so the lookup simply finds nothing.
 	d.warnKeysOf(path+".border", borderVocabulary(), out, func(key string) string {
