@@ -105,6 +105,19 @@ import (
 // The last two are the pair that matters: one function, one package, differing
 // only by `switch n.Type`. That is what makes the exemption a test of the
 // claim a function makes rather than of where it lives.
+//
+// A fourth was the audit's own version of the defect again, one axis further
+// in: recursion was recognised as "a function that calls itself", so the
+// *form* the recursion takes was the enumeration. Measured:
+//
+//	a mutually recursive pair skipping suffix, before -> green (invisible)
+//	the same pair, after                              -> 1 finding
+//	the same pair with suffix restored                -> no false alarm
+//	a three-function cycle skipping suffix            -> 1 finding, all three named
+//
+// The third line is the one that justifies pooling a cycle's branches: the
+// halves of a correct pair each reach only some branches, so judging either
+// alone would fail a walker that is complete.
 func TestEveryNestedBranchIsInventoriedAndWalked(t *testing.T) {
 	branches := nodeBearingBranches(t)
 
@@ -423,9 +436,7 @@ func documentWalkers(t *testing.T) []documentWalker {
 		}
 		checked++
 
-		for _, f := range files {
-			out = append(out, walkersInFile(f, info)...)
-		}
+		out = append(out, walkersInPackage(files, info)...)
 	}
 
 	if checked == 0 {
@@ -438,46 +449,222 @@ func documentWalkers(t *testing.T) []documentWalker {
 	return out
 }
 
-// walkersInFile collects the recursive node walkers declared in one file,
-// whether written as a function or as the recursive closure eval uses.
-func walkersInFile(f *ast.File, info *types.Info) []documentWalker {
-	var out []documentWalker
+// nodeFunc is one function in a package that takes a *scene.Node: its body,
+// the object it is declared as, and the name to print.
+type nodeFunc struct {
+	name string
+	obj  types.Object
+	body *ast.BlockStmt
+}
 
-	for _, decl := range f.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Body == nil || !takesNode(fn.Type, info) {
-			continue
-		}
-		if dispatchesOnType(fn.Body, info) {
-			continue
-		}
-		if branches := branchesRecursedInto(fn.Body, fn.Name.Name, info); branches != nil {
-			out = append(out, documentWalker{name: fn.Name.Name, recursesInto: branches})
+// walkersInPackage collects the node walkers of a whole package, treating a
+// function as recursive when it can reach *itself* through the call graph —
+// directly or through any chain of other node functions.
+//
+// # Why the call graph, and not "calls itself"
+//
+// The first version asked whether a function's body contained a call spelled
+// like its own name. That is two mistakes in one line, and the second was
+// live. Measured, before this change:
+//
+//	a whole-document walker written as a mutually recursive pair
+//	(probeVisit -> probeVisitKids -> probeVisit), skipping `suffix`
+//	  -> the audit stayed green, both halves invisible
+//
+// Neither function calls itself, so `branchesRecursedInto` returned nil for
+// both and neither was a walker at all. That is the **eighth appearance** of
+// the one defect this file exists for, and it arrived through the axis the
+// seventh fix hand-enumerated: the audit derived the branches, found the
+// walkers by shape, and discovered the packages — and then fixed the *form*
+// recursion may take at "a function that calls itself".
+//
+// Mutual recursion is not an exotic spelling. It is what a walker becomes the
+// moment someone splits a long function in two, which is the most ordinary
+// refactor there is, and this package already contains one function split
+// exactly that way for readability.
+//
+// # Why the branches of the whole cycle are pooled
+//
+// A pair that recurses through each other is *one* walker with its body in
+// two places: `probeVisitKids` descends the branches and `probeVisit` does
+// the visiting, and asking either half in isolation whether it reaches every
+// branch would report a false alarm on a correct pair. So the branches of
+// every function in a recursive cycle are unioned, and the cycle is reported
+// under one name. Whether the traversal is complete is a property of the
+// cycle, not of whichever half happens to hold the `range`.
+func walkersInPackage(files []*ast.File, info *types.Info) []documentWalker {
+	funcs := nodeFuncsIn(files, info)
+	if len(funcs) == 0 {
+		return nil
+	}
+
+	// The call graph over node functions, by object identity. A name match
+	// here would be the mistake AGENTS.md records five times: `walk` in
+	// two packages, or a method and a local sharing a spelling, are
+	// different functions and must not be one edge.
+	byObj := make(map[types.Object]*nodeFunc, len(funcs))
+	for i := range funcs {
+		byObj[funcs[i].obj] = &funcs[i]
+	}
+	calls := make(map[types.Object]map[types.Object]bool, len(funcs))
+	for i := range funcs {
+		fn := &funcs[i]
+		calls[fn.obj] = make(map[types.Object]bool)
+		for _, callee := range callTargets(fn.body, info) {
+			if _, isNodeFunc := byObj[callee]; isNodeFunc {
+				calls[fn.obj][callee] = true
+			}
 		}
 	}
 
-	ast.Inspect(f, func(n ast.Node) bool {
-		as, ok := n.(*ast.AssignStmt)
+	// Reachability, so a cycle of any length counts. Direct recursion is
+	// just the length-one case, which is why this subsumes the old check
+	// rather than sitting beside it.
+	reaches := make(map[types.Object]map[types.Object]bool, len(funcs))
+	for from := range calls {
+		seen := make(map[types.Object]bool)
+		stack := []types.Object{from}
+		for len(stack) > 0 {
+			cur := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			for next := range calls[cur] {
+				if !seen[next] {
+					seen[next] = true
+					stack = append(stack, next)
+				}
+			}
+		}
+		reaches[from] = seen
+	}
+
+	// Group the recursive functions into cycles: two functions belong to
+	// the same walker when each can reach the other.
+	var out []documentWalker
+	grouped := make(map[types.Object]bool)
+
+	for i := range funcs {
+		fn := &funcs[i]
+		if grouped[fn.obj] || !reaches[fn.obj][fn.obj] {
+			continue
+		}
+
+		cycle := []*nodeFunc{fn}
+		for j := range funcs {
+			other := &funcs[j]
+			if other.obj == fn.obj || grouped[other.obj] {
+				continue
+			}
+			if reaches[fn.obj][other.obj] && reaches[other.obj][fn.obj] {
+				cycle = append(cycle, other)
+			}
+		}
+
+		// A renderer is exempt, and the exemption applies to the cycle:
+		// one half dispatching on n.Type makes the pair a renderer, and
+		// holding the other half to "visits every branch" would be the
+		// false alarm the type test exists to prevent.
+		exempt := false
+		for _, member := range cycle {
+			if dispatchesOnType(member.body, info) {
+				exempt = true
+			}
+		}
+
+		names := make([]string, 0, len(cycle))
+		union := make(map[string]bool)
+		for _, member := range cycle {
+			grouped[member.obj] = true
+			names = append(names, member.name)
+			for _, sel := range branchesReachedFrom(member.body, byObj, info) {
+				union[sel] = true
+			}
+		}
+
+		if exempt {
+			continue
+		}
+		sort.Strings(names)
+		out = append(out, documentWalker{name: strings.Join(names, "/"), recursesInto: union})
+	}
+
+	return out
+}
+
+// nodeFuncsIn lists every function in a package that takes a *scene.Node,
+// whether declared at top level or bound to a name as a closure.
+func nodeFuncsIn(files []*ast.File, info *types.Info) []nodeFunc {
+	var out []nodeFunc
+
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || !takesNode(fn.Type, info) {
+				continue
+			}
+			if obj := info.Defs[fn.Name]; obj != nil {
+				out = append(out, nodeFunc{name: fn.Name.Name, obj: obj, body: fn.Body})
+			}
+		}
+
+		ast.Inspect(f, func(n ast.Node) bool {
+			as, ok := n.(*ast.AssignStmt)
+			if !ok {
+				return true
+			}
+			for i, rhs := range as.Rhs {
+				lit, ok := rhs.(*ast.FuncLit)
+				if !ok || !takesNode(lit.Type, info) || i >= len(as.Lhs) {
+					continue
+				}
+				id, ok := as.Lhs[i].(*ast.Ident)
+				if !ok {
+					continue
+				}
+				// `var walk func(...)` then `walk = func(...)`: the
+				// assignment *uses* the name the declaration defined.
+				obj := info.Defs[id]
+				if obj == nil {
+					obj = info.Uses[id]
+				}
+				if obj != nil {
+					out = append(out, nodeFunc{name: id.Name, obj: obj, body: lit.Body})
+				}
+			}
+			return true
+		})
+	}
+
+	return out
+}
+
+// callTargets returns the objects a body calls, resolved by the type checker.
+func callTargets(body *ast.BlockStmt, info *types.Info) []types.Object {
+	var out []types.Object
+	ast.Inspect(body, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
 		if !ok {
 			return true
 		}
-		for i, rhs := range as.Rhs {
-			lit, ok := rhs.(*ast.FuncLit)
-			if !ok || !takesNode(lit.Type, info) || i >= len(as.Lhs) {
-				continue
-			}
-			id, ok := as.Lhs[i].(*ast.Ident)
-			if !ok || dispatchesOnType(lit.Body, info) {
-				continue
-			}
-			if branches := branchesRecursedInto(lit.Body, id.Name, info); branches != nil {
-				out = append(out, documentWalker{name: id.Name, recursesInto: branches})
-			}
+		if obj := calleeObject(call, info); obj != nil {
+			out = append(out, obj)
 		}
 		return true
 	})
-
 	return out
+}
+
+// calleeObject resolves what a call expression actually calls.
+func calleeObject(call *ast.CallExpr, info *types.Info) types.Object {
+	switch fn := call.Fun.(type) {
+	case *ast.Ident:
+		return info.Uses[fn]
+	case *ast.SelectorExpr:
+		if sel, ok := info.Selections[fn]; ok {
+			return sel.Obj()
+		}
+		return info.Uses[fn.Sel]
+	}
+	return nil
 }
 
 // dispatchesOnType reports whether a function chooses behaviour from a node's
@@ -599,9 +786,13 @@ func takesNode(sig *ast.FuncType, info *types.Info) bool {
 // Locals are therefore resolved to the branch they were assigned from, which
 // is the same choice the rest of this file makes: ask what a name refers to,
 // never what it is spelled.
-func branchesRecursedInto(body *ast.BlockStmt, self string, info *types.Info) map[string]bool {
+//
+// The call it looks for is a call to *any node function of the package*, not
+// to this one by name. Whether that call is part of a recursive cycle is
+// decided by walkersInPackage from the call graph; asking it here, by
+// spelling, is what made a mutually recursive walker invisible.
+func branchesReachedFrom(body *ast.BlockStmt, nodeFuncs map[types.Object]*nodeFunc, info *types.Info) []string {
 	found := make(map[string]bool)
-	recursive := false
 
 	// Locals bound from a branch of the node: `prefix := n.PrefixNode()`.
 	// Keyed by the object the type checker resolves the name to, so a
@@ -664,8 +855,7 @@ func branchesRecursedInto(body *ast.BlockStmt, self string, info *types.Info) ma
 			ranges = ranges[:len(ranges)-1]
 			return
 		}
-		if call, ok := n.(*ast.CallExpr); ok && callsSelf(call, self) {
-			recursive = true
+		if call, ok := n.(*ast.CallExpr); ok && isNodeFuncCall(call, nodeFuncs, info) {
 			for _, arg := range call.Args {
 				for _, sel := range selectorsReached(arg) {
 					found[sel] = true
@@ -683,10 +873,23 @@ func branchesRecursedInto(body *ast.BlockStmt, self string, info *types.Info) ma
 	}
 	ast.Inspect(body, func(n ast.Node) bool { visit(n); return false })
 
-	if !recursive {
-		return nil
+	out := make([]string, 0, len(found))
+	for sel := range found {
+		out = append(out, sel)
 	}
-	return found
+	sort.Strings(out)
+	return out
+}
+
+// isNodeFuncCall reports whether a call goes to one of the package's node
+// functions, by object identity.
+func isNodeFuncCall(call *ast.CallExpr, nodeFuncs map[types.Object]*nodeFunc, info *types.Info) bool {
+	obj := calleeObject(call, info)
+	if obj == nil {
+		return false
+	}
+	_, ok := nodeFuncs[obj]
+	return ok
 }
 
 // childrenOf enumerates a node's immediate children so the range stack above
@@ -702,18 +905,6 @@ func childrenOf(n ast.Node) []ast.Node {
 		return false
 	})
 	return out
-}
-
-// callsSelf reports whether a call is the walker calling itself, by either
-// spelling the walkers use: a bare `walk(...)` or a method `d.validateBinds(...)`.
-func callsSelf(call *ast.CallExpr, self string) bool {
-	switch fn := call.Fun.(type) {
-	case *ast.Ident:
-		return fn.Name == self
-	case *ast.SelectorExpr:
-		return fn.Sel.Name == self
-	}
-	return false
 }
 
 // nodeSelectorsIn returns the names of every field or method selected on a
