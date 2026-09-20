@@ -273,6 +273,14 @@ the sibling projects. Concretely:
    the edit and its commit behind a `&&` that also has to survive a test
    run.
 
+   **The sixteenth destruction.** Sixteen destructions, thirteen costing
+   nothing. Ratio only, per the rule above — it arrived mid-counterfactual,
+   with an injected field on disk and the audit commit already pushed, so
+   the injection died with the disk and nothing had to be undone. That is
+   the intended behaviour of an uncommitted probe, not a lucky outcome:
+   **an injection is the one edit that must never be committed**, so the
+   disposable disk is exactly where it belongs.
+
 ## Working rules
 
 **One step at a time, in order.** The bind vocabulary is the only hard

@@ -332,3 +332,53 @@ to the *actions*.
   fooled in principle. A commit message is the durable record of why a decision
   is right; an unverified claim in it is worse than none, because the next turn
   reads it as measurement. Re-run, then write the number.
+- **An inventory keyed on an axis still enumerates that axis somewhere.** The
+  fifth recurrence was closed by making the branch a *key* of
+  `nestedFormReaders` (`<branch>.<shape>`), so a nested branch added to `Node`
+  is "either listed or caught". That claim is true of the inventory and false
+  of the repository: nothing derived the *set* of branches, and five sites
+  declared it independently — `validateBinds`, `collectTokenErrors`,
+  `collectWarnings`, eval's `walk`, and the inventory itself. Measured with a
+  `Footer *Node` read by `renderText` and nothing else — the realistic shape,
+  since a branch nobody reads at all is already caught by the unread-field
+  audit — the whole suite stayed green while a `box` with a footer validated
+  clean, warned nothing and drew nothing. **The sixth recurrence, through the
+  axis the fifth fix held fixed.**
+- **A branch no walker enters is unvalidated, not merely undrawn.** The same
+  probe carrying `bind: "totally.invented"` inside the new branch also
+  validated clean and was never refused. Every guarantee this package makes
+  about a document — every bind resolves to a signed row in BINDS.md, every
+  token exists in the theme, every unknown key is reported with an address —
+  holds *only where a walker goes*. That is a containment failure rather than
+  a rendering gap, and no drop-warning inventory reaches it: the inventory
+  describes what the renderer composes, while the walkers decide what the
+  validator can see at all. Hence the audit checks both halves, and both are
+  derived — the branches off `Node`'s declaration, the walkers by shape (takes
+  a `*scene.Node`, calls itself) rather than by a list, because a list of
+  walkers would have been the sixth declaration of the same fact.
+- **The distinction that keeps a structural audit from becoming a false
+  alarm is the claim a function makes, not the package it lives in.** The
+  renderers also take a `*Node` and recurse, and they are *supposed* to be
+  selective: `renderText` composing no children is the fact
+  `nestedFormReaders` records, not a bug. Holding them to "every walker visits
+  every branch" would demand every node type compose every branch — a false
+  alarm on working code. The walkers audited here are the ones enforcing a
+  document-wide invariant, so a branch they skip is a branch where the
+  invariant does not hold.
+- **A guard that resolves types can still match on position.** This audit's
+  own worst bug was not a name match — selectors were resolved through
+  `go/types` throughout — it was counting a branch as walked only when the
+  selector appeared *in the recursive call or its range*. Every walker reaches
+  `prefix` as `prefix := n.PrefixNode()` and passes the local, so the first run
+  accused three walkers of skipping a branch all three visit. Resolving the
+  type is not the whole of asking the right question; the dataflow between the
+  branch and the call is part of it. Found by reading the source the failure
+  pointed at rather than believing the failure — the same thirty seconds the
+  counterfactual rule buys, spent in the other direction.
+- **Exempt what is already refused, and measure that it is.** `row_template`
+  is a nested branch with no inventory row, which this audit flagged on its
+  first run. It is in `unrenderedFields`: a document declaring one is refused
+  with an address and never reaches a frame, so there is no silent drop to
+  warn about and a warning would be the false-alarm direction again. The
+  exemption is written from the probe output, not from reading the map — the
+  difference between a claim measured and a claim argued.
