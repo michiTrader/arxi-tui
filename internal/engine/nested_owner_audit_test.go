@@ -190,8 +190,30 @@ func assertNestedShapeOnOwner(t *testing.T, owner, branch, shape, form string, s
 	// A dropped pairing must warn, with an address. Silence here is the
 	// defect itself; a warning with no Loc is a finding the author cannot
 	// act on (PLAN.md invariant 4).
+	//
+	// The warning is looked for in a document that *also* carries an
+	// unrelated misspelling, and that confounder is deliberate. Without it
+	// the probe corpus is clean, the only warning quoting the branch is the
+	// drop itself, and a matcher that searched the message prose would pass
+	// for a reason that has nothing to do with being right — measured:
+	// exactly that, latently, until this line. A guard should be exercised
+	// against the case that can fool it, or its correctness lives in the
+	// corpus instead of in the check.
 	if !shouldDraw {
-		assertNestedDropWarns(t, withDoc, owner, branch, form)
+		confounded, ok := nestedOwnerOfType(owner, branch, shape, marker, withUnrelatedTypo())
+		if !ok {
+			t.Fatalf("premise broken: the confounded %s probe on %q could not be built", form, owner)
+		}
+		doc, err := scene.ParseDocument([]byte(confounded))
+		if err != nil {
+			t.Fatalf("premise broken: the confounded %s probe on %q must parse; got %v\nsrc: %s",
+				form, owner, err, confounded)
+		}
+		if verr := doc.Validate(); verr != nil {
+			t.Fatalf("premise broken: the confounded %s probe on %q must validate clean; got %v",
+				form, owner, verr)
+		}
+		assertNestedDropWarns(t, doc, owner, branch, form)
 	}
 }
 
@@ -200,13 +222,22 @@ func assertNestedShapeOnOwner(t *testing.T, owner, branch, shape, form string, s
 // is that the author is told, at an address.
 //
 // It matches on Warning.Form, not on the message text. It used to ask
-// strings.Contains(w.Msg, branch), and that was wrong in the direction that
-// switches a guard off: the generic unknown-key warning quotes `a misspelled
-// "children" silently drops the whole subtree` in its own prose, so any
-// document with an unrelated typo satisfied the search and this function
-// returned having found someone else's finding. A guard that greps a sentence
-// written for a human is coupled to that sentence's wording; the identity is
-// the thing to match.
+// strings.Contains(w.Msg, branch), and that is satisfiable by a warning it did
+// not cause: the generic unknown-key message quotes `a misspelled "children"
+// silently drops the whole subtree` in its own explanatory prose, so a
+// document with an unrelated typo answers yes to "was the drop reported?".
+//
+// Measured honestly, because the distinction is the interesting part: in this
+// audit's own probes that false positive was **latent, not active**. The
+// probes are otherwise-clean documents, so the only warning quoting the branch
+// really was the drop, and reverting the matcher alone fails nothing. What
+// made the old matcher wrong was not a wrong answer today but where its
+// correctness lived — in the probe corpus rather than in the check. Any probe
+// that later grows a typo, or any rewording of the generic message, moves the
+// answer without touching this function. A guard whose correctness is a
+// property of its inputs is one input away from certifying the thing it exists
+// to catch, and that is the same shape as the permanently-skipping test
+// AGENTS.md records: it passes for a reason unrelated to the claim.
 func assertNestedDropWarns(t *testing.T, doc *scene.Document, owner, branch, form string) {
 	t.Helper()
 
@@ -312,11 +343,30 @@ func TestTheDropWarningIsFoundByIdentityNotByProse(t *testing.T) {
 // AGENTS.md records as "a test's own probes are code, and untested code", and
 // it was live the moment `children.array` joined the inventory. It now returns
 // ok=false, and the caller fails rather than guessing.
-func nestedOwnerOfType(owner, branch, shape, marker string) (string, bool) {
+// probeOption varies one aspect of a probe document. It exists so the
+// confounded variant is built by the same function as the plain one: two
+// builders would be two inventories of what a probe looks like, and this
+// package has watched that shape drift repeatedly.
+type probeOption func(*strings.Builder)
+
+// withUnrelatedTypo adds a misspelled key to the owner, which makes the parser
+// emit its generic unknown-key warning. That message quotes the word
+// "children" inside its own advice, so a document carrying it is exactly the
+// case that fools a matcher searching the warning prose.
+func withUnrelatedTypo() probeOption {
+	return func(b *strings.Builder) {
+		b.WriteString(`,"zzunknownkey":"x"`)
+	}
+}
+
+func nestedOwnerOfType(owner, branch, shape, marker string, opts ...probeOption) (string, bool) {
 	var b strings.Builder
 	b.WriteString(`{"root":{"type":"`)
 	b.WriteString(owner)
 	b.WriteString(`"`)
+	for _, opt := range opts {
+		opt(&b)
+	}
 
 	// Content, so the owner has something to compose the fragment beside.
 	switch owner {
