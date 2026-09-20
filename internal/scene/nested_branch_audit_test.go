@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"go/types"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -249,6 +250,65 @@ var rawBranchAccessors = map[string]string{
 	"Scroll": "",
 }
 
+// fieldTypeCarriesNode reports whether a field of Node can hold another Node,
+// whatever shape the type is built out of.
+//
+// # Why this asks the type and not the source text
+//
+// It used to compare the *spelling*: `typ == "*Node" || typ == "[]*Node"`.
+// Those are the two shapes the format happens to use today, which made the
+// set of node-bearing shapes the last thing in this audit that was
+// enumerated — every other axis is derived. Measured, with the whole suite
+// green:
+//
+//	Slots map[string]*Node `json:"slots,omitempty"`   (read by renderText only)
+//	  {"type":"box", "slots":{"footer":{…}}}                     -> clean, 0 warnings, never drawn
+//	  {"type":"text","slots":{"footer":{…,"bind":"totally.invented"}}} -> clean, never refused
+//
+// Both halves of the defect, at once: the silent drop and the containment
+// failure. `map[string]*Node` is not a contrived spelling — "named regions"
+// is exactly how a format grows slots — and neither is `[][]*Node` for a
+// grid, or a named slice type. Each would have been its own recurrence
+// against a list of two spellings.
+//
+// Reflection rather than the AST, because the question is about the type and
+// go/types already answers it: walk pointers, slices, arrays and maps (keys
+// included, since a map keyed by a node is still a node-bearing field) down
+// to whatever they are built from, and ask whether any of it is Node. A named
+// type, an alias and a package-qualified spelling are all the same
+// reflect.Type, which is the whole point — the same reason
+// TestEveryVocabularyReflectsANamedType exists.
+func fieldTypeCarriesNode(fieldName string) bool {
+	field, ok := reflect.TypeOf(Node{}).FieldByName(fieldName)
+	if !ok {
+		return false
+	}
+	return typeContainsNode(field.Type, make(map[reflect.Type]bool))
+}
+
+// typeContainsNode reports whether a type is, or is built out of, Node.
+//
+// The `seen` set is not defensive decoration: Node reaches Node through
+// Children, so an unguarded walk does not terminate.
+func typeContainsNode(t reflect.Type, seen map[reflect.Type]bool) bool {
+	if t == nil || seen[t] {
+		return false
+	}
+	seen[t] = true
+
+	if t == reflect.TypeOf(Node{}) {
+		return true
+	}
+
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		return typeContainsNode(t.Elem(), seen)
+	case reflect.Map:
+		return typeContainsNode(t.Elem(), seen) || typeContainsNode(t.Key(), seen)
+	}
+	return false
+}
+
 // nodeBearingBranches derives, from Node's declaration, the branches that
 // carry another node.
 //
@@ -330,12 +390,11 @@ func nodeBearingBranches(t *testing.T) []nestedBranchField {
 
 	var out []nestedBranchField
 	for _, f := range fields {
-		typ := types[f.name]
 		selector := ""
 		switch {
-		case typ == "*Node" || typ == "[]*Node":
+		case fieldTypeCarriesNode(f.name):
 			selector = f.name
-		case typ == "json.RawMessage":
+		case types[f.name] == "json.RawMessage":
 			selector = rawBranchAccessors[f.name]
 		}
 		if selector == "" {
