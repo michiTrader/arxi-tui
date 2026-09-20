@@ -147,8 +147,8 @@ the sibling projects. Concretely:
    derived from the repo URL and guessing it costs a later migration.
 
    **This rule has a measured price.** The development sandbox has been
-   destroyed and re-cloned from the remote **seven times** across recent
-   sessions, without warning and mid-task. Four times everything survived,
+   destroyed and re-cloned from the remote **nine times** across recent
+   sessions, without warning and mid-task. Six times everything survived,
    because every commit had been pushed and the only loss was a half-applied
    edit. The fifth time two commits — a complete audit and a 44-reference
    rename, both green — existed only on the local disk and were lost entirely;
@@ -210,6 +210,31 @@ the sibling projects. Concretely:
    rule 3 exists to remove. It is to re-check the PR at the end of the
    turn as well as at the start: an early PR is a live object, and a merge
    can happen between the first push and the last.
+
+   **The eighth destruction, and rule 6 predicting its own event.** It
+   happened again, and this time the rules held completely: all five
+   commits of the turn came back intact, because each had been pushed the
+   moment it compiled, and there was nothing to reconstruct. What is
+   worth recording is the second half. While the sandbox was down, the
+   open PR was merged and `master` advanced — exactly the scenario the
+   paragraph above describes. It had been written one turn earlier, from
+   a single occurrence, and it described the next occurrence before it
+   happened.
+
+   That is the argument for writing these down while they are fresh, and
+   the reason the count in this section is maintained. A rule derived
+   from one event reads like superstition until the second event arrives;
+   this one arrived one turn later. **On restore, always re-read
+   `origin/master` before assuming the branch state from memory** — the
+   check costs one `git fetch` and it is the check that told this turn
+   there was nothing to rebuild.
+
+   **The ninth destruction.** Clean restore, nothing lost, nothing to
+   rebuild — the sixth time the rules produced that outcome. The only
+   cost was environmental: the sandbox ships without a Go toolchain, so
+   every restore begins by installing Go 1.25 before anything can be
+   built or measured. Budget that, and do not report a test result until
+   it has actually run in the new sandbox.
 
 ## Working rules
 
