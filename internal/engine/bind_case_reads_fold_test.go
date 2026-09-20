@@ -2,8 +2,10 @@ package engine
 
 import (
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"strings"
 	"testing"
@@ -110,85 +112,176 @@ func bindCaseBodiesInEngine(t *testing.T) []bindCase {
 		t.Fatalf("parse engine package: %v", err)
 	}
 
+	// The files are type-checked, and it must be *these* files: types.Info
+	// is keyed by node pointer identity, so type-checking a separately
+	// parsed copy of the same source resolves nothing. Every lookup would
+	// miss, `readsState` would be false everywhere, and the audit would
+	// report the whole engine as constant projections. That is not a
+	// hypothetical — it is the mistake made while writing this function,
+	// caught by the floor below on the first run.
+	var files []*ast.File
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Files {
-			ast.Inspect(file, func(n ast.Node) bool {
-				fd, ok := n.(*ast.FuncDecl)
+			files = append(files, file)
+		}
+	}
+	info := &types.Info{
+		// Types is required, not decorative: foldStateParamObj asks
+		// info.TypeOf for the parameter's type, and TypeOf reads this
+		// map. Omitting it resolves no parameter, finds no bind case,
+		// and trips the floor below — which is how the omission was
+		// found rather than reasoned about.
+		Types: make(map[ast.Expr]types.TypeAndValue),
+		Defs:  make(map[*ast.Ident]types.Object),
+		Uses:  make(map[*ast.Ident]types.Object),
+	}
+	conf := types.Config{
+		Importer: importer.ForCompiler(fset, "source", nil),
+		// Type errors are tolerated rather than fatal: partial
+		// information still resolves the parameter, and a package that
+		// will not check at all is caught by the floor on resolved
+		// identifiers below.
+		Error: func(error) {},
+	}
+	_, _ = conf.Check("github.com/michiTrader/arxi_tui/internal/engine", fset, files, info)
+	if len(info.Uses) == 0 {
+		t.Fatal("type-checked the engine package and resolved no identifiers; every bind case\n" +
+			"would be reported as a constant projection, which is a wall of false alarms rather\n" +
+			"than a finding. Fix the build before trusting this test.")
+	}
+
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			fd, ok := n.(*ast.FuncDecl)
+			if !ok {
+				return true
+			}
+			// Only functions that actually take a fold state can
+			// be expected to read one. A switch on bind names
+			// inside a helper with no state parameter is not this
+			// defect.
+			stateParam := foldStateParamObj(fd, info)
+			if stateParam == nil {
+				return true
+			}
+			ast.Inspect(fd, func(m ast.Node) bool {
+				cc, ok := m.(*ast.CaseClause)
 				if !ok {
 					return true
 				}
-				// Only functions that actually take a fold state can
-				// be expected to read one. A switch on bind names
-				// inside a helper with no state parameter is not this
-				// defect.
-				stateParam := foldStateParamName(fd)
-				if stateParam == "" {
-					return true
+				for _, expr := range cc.List {
+					lit, ok := expr.(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						continue
+					}
+					label := strings.Trim(lit.Value, "`\"")
+					// Bind names are dotted paths. Restricting
+					// to them keeps the audit off the shape and
+					// anchor switches ("double", "ascii",
+					// "top-right"), which are not binds and have
+					// no fold field to read.
+					if !strings.Contains(label, ".") {
+						continue
+					}
+					if seen[label] {
+						continue
+					}
+					seen[label] = true
+					out = append(out, bindCase{
+						label:      label,
+						readsState: objUsed(cc, stateParam, info),
+					})
 				}
-				ast.Inspect(fd, func(m ast.Node) bool {
-					cc, ok := m.(*ast.CaseClause)
-					if !ok {
-						return true
-					}
-					for _, expr := range cc.List {
-						lit, ok := expr.(*ast.BasicLit)
-						if !ok || lit.Kind != token.STRING {
-							continue
-						}
-						label := strings.Trim(lit.Value, "`\"")
-						// Bind names are dotted paths. Restricting
-						// to them keeps the audit off the shape and
-						// anchor switches ("double", "ascii",
-						// "top-right"), which are not binds and have
-						// no fold field to read.
-						if !strings.Contains(label, ".") {
-							continue
-						}
-						if seen[label] {
-							continue
-						}
-						seen[label] = true
-						out = append(out, bindCase{
-							label:      label,
-							readsState: identUsed(cc, stateParam),
-						})
-					}
-					return true
-				})
-				return false
+				return true
 			})
-		}
+			return false
+		})
 	}
 	return out
 }
 
-// foldStateParamName returns the name of the fold.State parameter, or "" if
-// the function takes none.
-func foldStateParamName(fd *ast.FuncDecl) string {
+// foldStateParamObj returns the object declared by the function's fold.State
+// parameter, or nil if the function takes none.
+//
+// The type is read from the checker rather than matched as the two identifiers
+// `fold` and `State`, and the difference is not pedantry. `fold` is a package
+// name here only by convention: any local variable, parameter or struct named
+// `fold` with a field or method `State` produces the same two identifiers, and
+// a text matcher would adopt its parameter as the fold state. It would then
+// score every case in that function against the wrong object — in the
+// flattering direction, because a parameter that is genuinely used everywhere
+// makes every case look like it reads the fold.
+func foldStateParamObj(fd *ast.FuncDecl, info *types.Info) types.Object {
 	if fd.Type.Params == nil {
-		return ""
+		return nil
 	}
 	for _, field := range fd.Type.Params.List {
-		sel, ok := field.Type.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "State" {
-			continue
-		}
-		pkg, ok := sel.X.(*ast.Ident)
-		if !ok || pkg.Name != "fold" {
+		if !isFoldState(info.TypeOf(field.Type)) {
 			continue
 		}
 		if len(field.Names) > 0 {
-			return field.Names[0].Name
+			return info.Defs[field.Names[0]]
 		}
 	}
-	return ""
+	return nil
 }
 
-// identUsed reports whether an identifier appears anywhere under a node.
-func identUsed(n ast.Node, name string) bool {
+// isFoldState reports whether a type is fold.State, through any number of
+// pointers. It mirrors internal/scene's isSceneNode, which is where this
+// repository first paid for asking the type checker instead of the spelling.
+func isFoldState(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	for {
+		ptr, ok := t.(*types.Pointer)
+		if !ok {
+			break
+		}
+		t = ptr.Elem()
+	}
+	named, ok := t.(*types.Named)
+	if !ok {
+		return false
+	}
+	obj := named.Obj()
+	return obj != nil && obj.Name() == "State" &&
+		obj.Pkg() != nil && strings.HasSuffix(obj.Pkg().Path(), "internal/fold")
+}
+
+// objUsed reports whether a specific declared object is referenced anywhere
+// under a node.
+//
+// This replaced a matcher that compared identifier spellings, and the
+// replacement was justified by a counterfactual rather than by argument.
+// Adding one ordinary case to resolveBind —
+//
+//	case "ui.theme":
+//	        state := "sobria"
+//	        return state
+//
+// is the exact defect this test was written to catch: a bind whose projection
+// answers with a constant and never consults the fold. Measured on that tree,
+// with the same probe run under both matchers:
+//
+//	old (by name): 30 cases, 30 reading the fold, 0 findings  -> PASS
+//	new (by object): 30 cases, 29 reading the fold, 1 finding -> FAIL
+//
+// The shadowing local is spelled `state`, so the name matcher saw the
+// parameter it was looking for and certified the one shape the test exists to
+// reject. Note the direction, which is the thing worth recording: this axis
+// can only fail on a case that does *not* read the state, and a false positive
+// in `readsState` does not merely inflate a count — it disarms the single
+// condition the subtest can fail on. That is the third time in this package a
+// numerator has over-counted into the flattering direction, and the second
+// time it pre-empted its own failure mode.
+func objUsed(n ast.Node, obj types.Object, info *types.Info) bool {
+	if obj == nil {
+		return false
+	}
 	found := false
 	ast.Inspect(n, func(k ast.Node) bool {
-		if id, ok := k.(*ast.Ident); ok && id.Name == name {
+		if id, ok := k.(*ast.Ident); ok && info.Uses[id] == obj {
 			found = true
 		}
 		return !found
