@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -97,6 +99,17 @@ func TestTheFallbackSceneItselfShowsTheNotice(t *testing.T) {
 // because the two can regress independently: the notice node could be restored
 // to factoryRAW alone and this would stay broken, which is precisely the
 // partial fix the narrow test would have blessed.
+//
+// # A defect in this test's own first draft
+//
+// It originally rendered factorySobria — the compiled-in constant — and passed
+// the moment that constant gained the node. The binary loads
+// testdata/SOBRIA.json, and that fixture still had no notice node, so the
+// shipped product was silent while the guard for its silence was green. The
+// first draft was a test written against the thing that was easy to reach
+// rather than the thing that ships, which is the same mistake as asserting the
+// notice string instead of the frame: both measure a layer the user never sees.
+// It now reads the fixture the binary reads.
 func TestASceneThatLoadsWithAWarningAlsoShowsIt(t *testing.T) {
 	path := writeScene(t, "future.json", `{ "root": { "type": "stack", "children": [
     { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1, "reveal": "typewriter" },
@@ -116,14 +129,18 @@ func TestASceneThatLoadsWithAWarningAlsoShowsIt(t *testing.T) {
 		t.Fatalf("the document was replaced rather than loaded with a warning")
 	}
 
-	// The scene on screen here is the user's, and the user's scene has no
-	// notice node — so the delivery this test measures is the one the
-	// *shipped* documents owe. Rendering factorySobria with the notice set
-	// is the honest model of "a shipped scene is active and the host has
-	// something to say".
-	shipped, err := scene.ParseDocument([]byte(factorySobria))
+	// The shipped document, read from the path the binary reads it from —
+	// not the compiled-in constant. The two are separate objects and the
+	// first draft of this test conflated them, passing on the constant
+	// while the fixture the product actually loads stayed silent.
+	shippedData, err := os.ReadFile(filepath.Join("..", "..", "testdata", "SOBRIA.json"))
 	if err != nil {
-		t.Fatalf("ParseDocument(factorySobria): %v", err)
+		t.Fatalf("read the shipped sobria scene: %v\n"+
+			"consequence: this test would silently stop measuring the document the binary loads.", err)
+	}
+	shipped, err := scene.ParseDocument(shippedData)
+	if err != nil {
+		t.Fatalf("ParseDocument(testdata/SOBRIA.json): %v", err)
 	}
 	state := fold.Fold(nil)
 	state.SceneError = notice

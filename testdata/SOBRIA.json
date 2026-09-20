@@ -2,6 +2,9 @@
   { "type": "text", "style": {"style": "header"},
     "text": "Δr×i v0.1.0 · Run /help for commands" },
 
+  { "id": "notice", "type": "text", "bind": "host.scene.error",
+    "when": "host.scene.error", "style": {"style": "banner"} },
+
   { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
 
   { "id": "thinking", "type": "marquee", "when": "agent.working",
