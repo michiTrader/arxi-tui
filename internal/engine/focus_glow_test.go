@@ -271,3 +271,77 @@ func TestFocusGlowHonoursEveryStyleTokenSpelling(t *testing.T) {
 		})
 	}
 }
+
+// TestFocusGlowDoesNotOutliveTheFrameThatDrewIt is the multi-frame guard, and
+// injection R20h is why it exists.
+//
+// Every other assertion in this file renders one frame. That is enough to
+// check what the glow does and not enough to check how long it lasts, and the
+// difference is a whole class of defect: replacing the shallow copy in
+// withFocusGlow with the node pointer itself writes the glow token into the
+// document, and the document is what renders again on the next repaint.
+//
+// Measured under the injection, on the same parsed document:
+//
+//	frame 1, ui.focus = "a" : alpha=bright beta=text   (correct)
+//	frame 2, ui.focus = "b" : alpha=bright beta=bright (alpha is stuck)
+//	frame 3, nothing focused: alpha=bright beta=bright (both stuck)
+//
+// The glow accumulates and never clears, so after moving focus around a scene
+// every node the cursor ever touched is emphasised — which is the same as no
+// emphasis at all, arrived at one repaint at a time. The whole suite stayed
+// green, because a single-frame test cannot see it.
+//
+// It is also the arxi-sim remembered-row bug in a new place, and PLAN.md names
+// that one: state keyed to the wrong lifetime. Focus is frame state and the
+// scene document is session state; writing the first into the second is the
+// mistake, and no amount of getting the token right prevents it.
+//
+// The assertion walks focus across the nodes and then removes it, because the
+// stuck-glow only becomes visible on the *second* render. A test that rendered
+// twice with the same focus would pass under the injection.
+func TestFocusGlowDoesNotOutliveTheFrameThatDrewIt(t *testing.T) {
+	const src = `{"root":{"id":"root","type":"stack","children":[
+		{"id":"a","type":"text","text":"alpha","style":{"style":"text"},"focus_glow":{"style":"bright"}},
+		{"id":"b","type":"text","text":"beta","style":{"style":"text"},"focus_glow":{"style":"bright"}}
+	]}}`
+
+	doc, err := scene.ParseDocument([]byte(src))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	r := Renderer{Width: 40, Height: 10}
+
+	// The same document is rendered three times, as the running instance
+	// does: one parsed scene, many repaints.
+	steps := []struct {
+		focus     string
+		wantAlpha string
+		wantBeta  string
+	}{
+		{focus: "a", wantAlpha: "bright", wantBeta: "text"},
+		{focus: "b", wantAlpha: "text", wantBeta: "bright"},
+		{focus: "", wantAlpha: "text", wantBeta: "text"},
+	}
+
+	for i, step := range steps {
+		f := r.RenderFrame(doc, fold.State{UIFocus: step.focus})
+		gotAlpha := styleOfText(f, "alpha")
+		gotBeta := styleOfText(f, "beta")
+
+		if gotAlpha != step.wantAlpha || gotBeta != step.wantBeta {
+			t.Errorf("repaint %d with ui.focus=%q: alpha=%q beta=%q, want alpha=%q beta=%q.\n"+
+				"consequence: the glow outlived the frame that drew it, which means withFocusGlow\n"+
+				"wrote into the scene document rather than into a copy. The document is re-rendered\n"+
+				"on every repaint, so the emphasis accumulates and never clears: after focus has\n"+
+				"visited three nodes, three nodes glow, and the property that exists to show where\n"+
+				"focus *is* now shows everywhere it has been. That is indistinguishable from no\n"+
+				"emphasis at all.\n"+
+				"It is also the arxi-sim remembered-row bug PLAN.md warns about — state keyed to the\n"+
+				"wrong lifetime. Focus is frame state; the scene document is session state.\n"+
+				"remedy: withFocusGlow must return a shallow copy with its own style map, never the\n"+
+				"node it was given.",
+				i, step.focus, gotAlpha, gotBeta, step.wantAlpha, step.wantBeta)
+		}
+	}
+}
