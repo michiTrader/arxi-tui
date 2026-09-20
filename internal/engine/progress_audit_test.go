@@ -3,8 +3,10 @@ package engine
 import (
 	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -609,14 +611,49 @@ func animationPropertiesFromDocument(t *testing.T) []string {
 }
 
 // renderedAnimationProperties reports which animation properties the engine
-// actually reads, by looking for selector expressions on the scene node in the
-// engine source (n.FocusGlow, n.Reveal, …).
+// actually reads, by finding selector expressions that resolve to a field read
+// on scene.Node in the engine source (n.FocusGlow, n.Reveal, …).
 //
 // It asks the source rather than rendering a probe document because the
 // behavioural question is answered next door in
 // TestEveryUniversalPropertyIsHonouredOrRefused and in the focus_glow frame
 // tests; what this axis needs is the count, and a count derived from a probe
 // table would be a hand-maintained list of the very properties it counts.
+//
+// It type-checks rather than comparing selector names, and that is the whole
+// point of this helper. Every ceiling in this file guards a *denominator*; the
+// numerators were never guarded, and this one had the same defect in the more
+// dangerous direction. The old matcher asked `sel.Sel.Name == goName` — a bare
+// identifier, with no receiver — so *any* selector ending in the field's name
+// counted the property as honoured, including ones that are not field reads at
+// all. Measured against today's engine, a Scene 4 property declared as a field
+// named:
+//
+//	Repeat   -> honoured, from strings.Repeat  at render.go:78
+//	Cut      -> honoured, from ansi.Cut        at render.go:41
+//	Truncate -> honoured, from ansi.Truncate   at render.go:91
+//	Span     -> honoured, from ui.Span         at render.go:40
+//
+// none of which read the node. The direction is what matters: this axis fails
+// only on `silent`, and `rendered[p]` is tested first in the classification, so
+// a false honoured entry does not merely inflate a count — it pre-empts the one
+// state that can fail. A half-finished property whose field happens to be named
+// after a stdlib helper reports as *done*, and the subtest that exists to catch
+// silent drops goes green. That is the same shape as the universals ceiling
+// added last turn: the quantity that can fail is pinned to zero by the very
+// thing that is wrong.
+//
+// `strings.Repeat` is not a hypothetical collision either — `repeat` is an
+// ordinary name for an animation property, and the engine already calls
+// strings.Repeat ten times to build rules, padding and box edges.
+//
+// go/types answers the real question — is this selector a field read, and is
+// its receiver scene.Node — for the cost of a typecheck of one package, 1.3s
+// measured. The precedent is signed three times over in this package: R19h's
+// reflected copy, the unrenderedFields map, and this axis's own first version
+// all inferred a behavioural fact from a structural proxy, and all three
+// produced a false clean bill of health. When a guard can ask the artifact
+// directly, a proxy is not a shortcut, it is a different question.
 func renderedAnimationProperties(t *testing.T) map[string]bool {
 	t.Helper()
 	fields := scene.AnimationFieldsForAudit()
@@ -626,22 +663,108 @@ func renderedAnimationProperties(t *testing.T) map[string]bool {
 		return map[string]bool{}
 	}
 
+	byGoName := make(map[string]string, len(fields))
+	for jsonName, goName := range fields {
+		byGoName[goName] = jsonName
+	}
+
 	used := make(map[string]bool)
-	for _, file := range parseEngineSource(t) {
-		ast.Inspect(file, func(n ast.Node) bool {
-			sel, ok := n.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			for jsonName, goName := range fields {
-				if sel.Sel.Name == goName {
-					used[jsonName] = true
-				}
-			}
-			return true
-		})
+	for sel, selection := range engineSelections(t) {
+		// FieldVal is the discriminator the name comparison lacked:
+		// strings.Repeat and ansi.Cut are package members, ui.Span is a
+		// type, and none of them is a field value.
+		if selection.Kind() != types.FieldVal {
+			continue
+		}
+		jsonName, ok := byGoName[sel.Sel.Name]
+		if !ok {
+			continue
+		}
+		// The receiver must be scene.Node itself. A field of the same
+		// name on some other struct is a different property, and this
+		// axis reports on the scene format.
+		if !isSceneNode(selection.Recv()) {
+			continue
+		}
+		used[jsonName] = true
 	}
 	return used
+}
+
+// isSceneNode reports whether a selector's receiver is scene.Node, through any
+// number of pointers. Named rather than inlined because "which type is this
+// really" is the question the old matcher skipped.
+func isSceneNode(typ types.Type) bool {
+	for {
+		ptr, ok := typ.(*types.Pointer)
+		if !ok {
+			break
+		}
+		typ = ptr.Elem()
+	}
+	named, ok := typ.(*types.Named)
+	if !ok {
+		return false
+	}
+	obj := named.Obj()
+	if obj == nil || obj.Pkg() == nil {
+		return false
+	}
+	return obj.Pkg().Path() == "github.com/michiTrader/arxi_tui/internal/scene" &&
+		obj.Name() == "Node"
+}
+
+// engineSelections type-checks the engine package and returns every resolved
+// selector in it.
+//
+// The typecheck is required to fail loudly. A types.Config with a swallowing
+// Error hook returns partial information on a broken build, and partial
+// information here means "no selector resolved to a field read", which is
+// indistinguishable from "the engine honours nothing" — a silent zero in the
+// numerator of a progress report. That is the precise failure this file was
+// written to stop, so the premise is asserted instead of assumed.
+func engineSelections(t *testing.T) map[*ast.SelectorExpr]*types.Selection {
+	t.Helper()
+
+	fset := token.NewFileSet()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read engine package directory: %v", err)
+	}
+	var files []*ast.File
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		files = append(files, f)
+	}
+	if len(files) == 0 {
+		t.Fatal("parsed no non-test files from the engine package; every source-derived axis\n" +
+			"would read as empty and the audit would pass vacuously")
+	}
+
+	info := &types.Info{Selections: make(map[*ast.SelectorExpr]*types.Selection)}
+	conf := types.Config{Importer: importer.ForCompiler(fset, "source", nil)}
+	if _, err := conf.Check("github.com/michiTrader/arxi_tui/internal/engine", fset, files, info); err != nil {
+		t.Fatalf("type-check the engine package: %v\n"+
+			"consequence: without type information no selector can be resolved to a field read,\n"+
+			"so every animation property reads as unhonoured and the axis reports a numerator of\n"+
+			"zero — a measurement failure that looks exactly like a project that implemented\n"+
+			"nothing.\n"+
+			"remedy: fix the build error; this audit cannot measure a package that does not\n"+
+			"type-check.", err)
+	}
+	if len(info.Selections) == 0 {
+		t.Fatal("the engine package type-checked and produced no selector expressions at all;\n" +
+			"the numerator of the animation axis would be zero for a reason that has nothing to\n" +
+			"do with the engine.")
+	}
+	return info.Selections
 }
 
 // observeAnimationProperty loads a document that sets prop on a text node and
