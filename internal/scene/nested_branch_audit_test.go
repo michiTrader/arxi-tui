@@ -91,6 +91,20 @@ import (
 // it), and branchesRecursedInto missed the `prefix := n.PrefixNode()` form and
 // accused three walkers of skipping a branch all three visit — a false alarm
 // on working code, found by reading the source the failure pointed at.
+//
+// A third was the audit's own version of the defect it audits, and it was
+// found by pointing the rule at this file: the branches were derived and the
+// walkers were found by shape, but the *packages searched* were two
+// hand-written directories. Measured and re-measured after the fix:
+//
+//	a walker in cmd/arxi-tui skipping suffix, before -> green (invisible)
+//	the same walker, after                           -> 1 finding
+//	a type-dispatching renderer inside the search    -> exempt, no false alarm
+//	the same renderer with the type switch removed   -> 2 findings
+//
+// The last two are the pair that matters: one function, one package, differing
+// only by `switch n.Type`. That is what makes the exemption a test of the
+// claim a function makes rather than of where it lives.
 func TestEveryNestedBranchIsInventoriedAndWalked(t *testing.T) {
 	branches := nodeBearingBranches(t)
 
