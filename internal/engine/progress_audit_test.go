@@ -70,6 +70,21 @@ func TestProgressAxesAreMeasuredNotAsserted(t *testing.T) {
 		// The floor is what stops a vacuous pass: a parser that silently
 		// stops matching would report zero documented scenes and every
 		// pinned one as a surplus, which reads as a passing audit.
+		//
+		// This axis has a floor and no ceiling, and unlike the other three
+		// that is deliberate. Three of the four denominators here are
+		// backticked words scraped out of a prose paragraph, so a sentence
+		// moves them and each needed a ceiling. This one is not: it is
+		// anchored to the heading form `^## Scene \d+ — `, and that was
+		// measured rather than assumed — a `###` subheading naming four
+		// scenes, plus body prose reading "Scene 4 and Scene 11 — ANIMATED
+		// share a cadence", left the count at 11.
+		//
+		// The only edit that moves it is a real `## Scene 12 —` heading,
+		// which is a vocabulary change that announces itself in the diff.
+		// A ceiling here could therefore only fire in the one case where
+		// the count is correct, and last turn's rule says a guard that
+		// cannot be the one that fires teaches nothing when it does.
 		if len(documented) < 8 {
 			t.Fatalf("parsed only %d scene headings from docs/SCENES.md (%v); the audit is reading\n"+
 				"the wrong section and would measure nothing", len(documented), documented)
