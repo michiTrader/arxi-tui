@@ -287,6 +287,10 @@ the sibling projects. Concretely:
    now for the third time — and `git fetch` before assuming any branch
    state is again what turned it into a non-event.
 
+   **The eighteenth destruction.** Eighteen destructions, fifteen
+   costing nothing. Ratio only, per the rule above; the open PR was
+   again merged while the sandbox was down, for the fourth time.
+
 ## Working rules
 
 **One step at a time, in order.** The bind vocabulary is the only hard
