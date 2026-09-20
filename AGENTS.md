@@ -251,6 +251,10 @@ the sibling projects. Concretely:
    rules are settled, and the only open cost is that the toolchain has
    to be reinstalled before any number can honestly be reported.
 
+   **The twelfth destruction.** Twelve destructions, nine costing
+   nothing. Keeping to the rule above, this entry records only the
+   ratio; the two standing lessons applied unchanged again.
+
 ## Working rules
 
 **One step at a time, in order.** The bind vocabulary is the only hard
@@ -318,6 +322,37 @@ Every one of these was settled by constructing the defect and measuring the
 old and new matcher over the same probe, never by argument. A guard that
 passes on a clean tree has demonstrated nothing; the claim is that it fails on
 the defect, and that claim is cheap to test and routinely false.
+
+**A test that can only fail while another test is already failing is that
+test, not a second one.** `TestStylingAShippedSceneChangesItsFrame` was written
+as the reachability half of the styling sweep: does any of this happen to a
+real document? It exercises only the node types the sweep has *already*
+flagged, so the moment the sweep goes green it has nothing to stamp and
+`t.Skip`s. Measured: it has skipped since the commit that introduced it — the
+commit that fixed the defect and silenced both checks together. It is armed
+only when it is redundant and switched off exactly when it would be the sole
+evidence. This is the numerator rule arriving at a whole test instead of a
+count, and the tell is the same: the passing state and the can-fail state are
+the same condition. **`t.Skip` is a pass**; a skip that is permanent is a
+deleted test that still prints.
+
+**A sweep over one axis silently exempts every other axis.** The styling sweep
+iterates node *types* out of `renderNode`'s dispatch, and a node reached
+through `prefix`, `suffix` or `row_template` is a node *position* — no type
+name identifies it, so no widening of that loop ever arrives there. Blanking
+the declared token on both of `renderMarquee`'s nested spans left the **entire
+suite green, goldens included**. When a guard enumerates a dimension, ask what
+the other dimensions of the same object are; the enumeration reads as coverage
+and the reader cannot see the axis that was not chosen.
+
+**A golden that discards what you are asserting about is not covering it.**
+The one test that renders the marquee with its gate open is named for its
+prefix and suffix and asserts on `f.Plain()` — styling stripped. The *styled*
+golden folds to `agent.working=false`, so the marquee draws zero rows there;
+`"Thinking"` appears 0 times in `SOBRIA.styled`. Two fixtures whose names
+promise the coverage, neither delivering it, and the gap invisible because
+each looks like the other's backstop. Check what a golden actually contains,
+not what its name says.
 
 ## Build
 
