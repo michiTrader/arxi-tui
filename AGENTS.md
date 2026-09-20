@@ -255,6 +255,9 @@ the sibling projects. Concretely:
    nothing. Keeping to the rule above, this entry records only the
    ratio; the two standing lessons applied unchanged again.
 
+   **The thirteenth destruction.** Thirteen destructions, ten costing
+   nothing. Ratio only, per the rule above.
+
 ## Working rules
 
 **One step at a time, in order.** The bind vocabulary is the only hard
@@ -344,6 +347,46 @@ the declared token on both of `renderMarquee`'s nested spans left the **entire
 suite green, goldens included**. When a guard enumerates a dimension, ask what
 the other dimensions of the same object are; the enumeration reads as coverage
 and the reader cannot see the axis that was not chosen.
+
+**A guard that fixes a defect "everywhere" has fixed it everywhere along one
+axis.** `when` was once honoured by a row and an overlay and dropped by every
+other node type; a style token was read by four node types and dropped by the
+rest. Both were closed by moving the work into `renderNode`, and
+`withFocusGlow`'s comment states the reason well: that function is the one
+every node passes through, so "some node types obey and others do not" becomes
+unrepresentable rather than merely tested for. That claim is true, and it is
+about node **types**. Measured this turn: a node under `prefix` or `suffix`
+never reaches `renderNode` at all — `renderMarquee` reads `prefix.Bind`,
+`prefix.Text`, `prefix.Style` straight out of the struct — so the same `when`
+was accepted by the validator and ignored by the renderer for the third time,
+in a position the chokepoint cannot see. **A chokepoint is only a chokepoint
+for the traffic that goes through it**; when a fix is described as making a
+defect unrepresentable, name the quantifier out loud and then ask what the
+*other* quantifiers over the same object are.
+
+**The counterfactual is not a formality, and it catches the test as often as
+the code.** The guard written this turn passed on the clean tree and was
+wrong. Its `when` probe first used a *satisfied* gate — which correctly renders
+identically to no gate at all, so it accused the engine of a silent drop
+exactly when the property worked, and failed against the renderer that had just
+been fixed. The replacement used `!agent.working`, which reads like the obvious
+negation and is not: no `!` operator exists in this engine, `evalWhen` resolves
+the whole string through `resolveBind` and gets the falsey placeholder, and
+BINDS.md signs no such row — so `Validate` refused the document, the case took
+the refusal branch, and **it never rendered anything**. That version reported
+green with the engine fix reverted. Neither bug was findable by reading; both
+took thirty seconds to find by reverting the fix and re-running. **Run the
+counterfactual even when the guard is green and the fix is obviously right —
+it is the only check that can fail the checker.**
+
+**A test's own probes are code, and untested code.** Two of the defects this
+turn were in probe construction, not in the engine: `"grow":true` failed to
+decode because `grow` is an int, and a fragment whose key `scene.Node` does not
+declare is discarded by `encoding/json` in silence — producing a node identical
+to the control, which the sweep would report as an engine silent drop. A false
+accusation in the flattering direction: it looks like coverage and it measures
+the harness. Where a guard builds documents from fragments, assert that each
+fragment actually changed the parsed node.
 
 **A golden that discards what you are asserting about is not covering it.**
 The one test that renders the marquee with its gate open is named for its
