@@ -158,7 +158,7 @@ func SOBRIA() *Theme {
 		"dim":  {Attrs: ui.AttrDim},
 		// TOKENS.md signs "header": {"attrs": ["bold"]} and states this
 		// theme "defines exactly the tokens the three golden scenes
-		// reference, and nothing more". It was missing while SOARIA
+		// reference, and nothing more". It was missing while SOBRIA
 		// referenced it twice, and nothing caught that because the token
 		// validator was reading the wrong style key — so the default
 		// interface shipped a reference the product refuses in a

@@ -66,7 +66,7 @@ import (
 //
 // # Reachable from a shipped scene, and it produces a false pass
 //
-// SOARIA contains one node of each of the four: the `markdown` transcript, the
+// SOBRIA contains one node of each of the four: the `markdown` transcript, the
 // `input` prompt, the `rule` above the slash menu and the `list` of matches.
 // Styling all four — the obvious patch for an order like *"grey out the
 // command menu"*, which is almost exactly the order `sobria-dim-the-footer`
@@ -227,7 +227,7 @@ func TestEveryNodeDrawsItsOwnContentUnderItsOwnToken(t *testing.T) {
 			"ValidateTokens refuses an undefined token on any node type — and the frame is unchanged.\n"+
 			"There is no refusal to repair from, so Phase 2's repair loop has no input, and `converged`\n"+
 			"scores the answer as correct because it only asks that the document validates and binds\n"+
-			"what must_bind names. Reachable from the shipped default: SOARIA carries one node of each\n"+
+			"what must_bind names. Reachable from the shipped default: SOBRIA carries one node of each\n"+
 			"of these types, and styling them changes nothing on screen (see\n"+
 			"TestStylingAShippedSceneChangesItsFrame). That is the row_template shape, in the direction\n"+
 			"EVAL.md names as the dangerous one: a corpus over-crediting the model is the number nobody\n"+
@@ -257,7 +257,7 @@ func TestEveryNodeDrawsItsOwnContentUnderItsOwnToken(t *testing.T) {
 //
 // The sweep above is a property over constructed nodes, and a reader is
 // entitled to ask whether any of it can happen to a real document. This
-// answers with the factory scene: it takes SOARIA, applies the token a user
+// answers with the factory scene: it takes SOBRIA, applies the token a user
 // would apply, and requires the screen to respond. If styling nodes of the
 // shipped default changes nothing, the format's promise that `style` is
 // universal is false for the interface the product actually ships.
@@ -266,9 +266,9 @@ func TestEveryNodeDrawsItsOwnContentUnderItsOwnToken(t *testing.T) {
 // same reason its siblings do. Which token, and whether the result is legible,
 // is the goldens' question.
 func TestStylingAShippedSceneChangesItsFrame(t *testing.T) {
-	doc, err := scene.ParseFile("../../testdata/SOARIA.json")
+	doc, err := scene.ParseFile("../../testdata/SOBRIA.json")
 	if err != nil {
-		t.Fatalf("parse SOARIA: %v", err)
+		t.Fatalf("parse SOBRIA: %v", err)
 	}
 
 	state := fold.State{
@@ -288,14 +288,14 @@ func TestStylingAShippedSceneChangesItsFrame(t *testing.T) {
 	// check satisfied by the working case is not a reachability check.
 	styled := restyleOffendingNodes(t, doc.Root)
 	if styled == 0 {
-		t.Skip("no node type in SOARIA currently drops its declared token; " +
+		t.Skip("no node type in SOBRIA currently drops its declared token; " +
 			"this reachability check has nothing left to exercise and the sweep above owns the property")
 	}
 
 	// The witness has to be a token the theme defines, or the check would be
 	// measuring the validator instead: an undefined token is refused, and a
 	// refusal is the outcome this whole class of defect never produces. The
-	// factory tokens are carried over too, because SOARIA references `dim`
+	// factory tokens are carried over too, because SOBRIA references `dim`
 	// and `header` on nodes this patch does not touch — a theme holding only
 	// the witness would refuse the scene for reasons unrelated to what is
 	// being measured.
@@ -305,7 +305,7 @@ func TestStylingAShippedSceneChangesItsFrame(t *testing.T) {
 		tokens[name] = factory.Resolve(name)
 	}
 	if errs := scene.ValidateTokens(doc, theme.FromMap(tokens)); len(errs) > 0 {
-		t.Fatalf("the restyled SOARIA was refused by the token validator: %v\n"+
+		t.Fatalf("the restyled SOBRIA was refused by the token validator: %v\n"+
 			"consequence: this test can only demonstrate the silent failure if the document is accepted.", errs)
 	}
 

@@ -297,7 +297,7 @@ func ValidateTokens(doc *Document, thm *theme.Theme) []TokenError {
 // "style" is what the three golden scenes, every example in SCENES.md and
 // TOKENS.md, and styleName() in the render path all use, while "token" was the
 // only key this validator originally read. Checking just "token" made the
-// validator blind to the sole spelling that actually occurs — SOARIA
+// validator blind to the sole spelling that actually occurs — SOBRIA
 // referenced the undefined token "header" twice and validated clean, so the
 // factory interface failed the rule the product enforces on downloaded scenes.
 //

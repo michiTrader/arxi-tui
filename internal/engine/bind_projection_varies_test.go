@@ -27,7 +27,7 @@ import (
 // so 23 have no projection check that looks at a value at all. Worse, the
 // coverage is incidental. session.tokens_used — the fifth instance — is inside
 // those 7 only because TestDoingNothingDoesNotPass widened two weak cases and
-// needed a bind SOARIA did not already have. Had that widening chosen a
+// needed a bind SOBRIA did not already have. Had that widening chosen a
 // different field, the frame test would have rendered right past the very
 // defect it was written after.
 //

@@ -43,12 +43,12 @@ published, by handing arxi a link.
 - ✅ Token resolver with open definition (no enum)
 - ✅ Factory SOBRIA theme with OSC 11 background detection
 - ✅ Token wire-up in render pipeline (`engine.Cell.Style`)
-- ✅ Styled golden fixtures: `RAW.styled`, `SOARIA.styled`, `MAXIMUM.styled`
+- ✅ Styled golden fixtures: `RAW.styled`, `SOBRIA.styled`, `MAXIMUM.styled`
 - ✅ Theme validation (scenes reference existing tokens) — repaired during
   Phase 2: `ValidateTokens` read `style["token"]`, while the shipped scenes,
   `SCENES.md`, `TOKENS.md` and the render path all write `style["style"]`, so
   the check was blind to the only spelling that occurs. With the key fixed,
-  the defect it hid surfaced addressed: `SOARIA.json:2:3` and `:25:5`
+  the defect it hid surfaced addressed: `SOBRIA.json:2:3` and `:25:5`
   reference the token `header`, which `TOKENS.md` signs and the theme had
   dropped. Every token test had used the validator's key rather than the
   scenes', so code and tests shared one wrong assumption and agreed.
@@ -109,7 +109,7 @@ published, by handing arxi a link.
   with the bug. Two fields stay unread and say why: `filter_by` is decorative
   (the host filters regardless — verified byte-identical frames with the
   field, with a nonsense value, and with no field at all), and `categories` is
-  a real silent drop that cannot be refused because SOARIA ships eleven and
+  a real silent drop that cannot be refused because SOBRIA ships eleven and
   invariant 1 outranks this audit. Both entries fail the day the engine reads
   them, which is the signal to delete them.
 
@@ -143,7 +143,7 @@ published, by handing arxi a link.
   universal property in SCENES.md's vocabulary and `ValidateTokens` is
   type-agnostic, yet `input`, `list`, `markdown` and `rule` emitted the token
   they minted and ignored the one the scene declared. Reachable and silent:
-  SOARIA has one node of each, and styling all four is accepted by **both**
+  SOBRIA has one node of each, and styling all four is accepted by **both**
   validators while leaving the frame **byte-identical** — so nothing refuses,
   the repair loop gets no `file:line`, and `converged` scores the unchanged
   screen as a win. The fix makes a declaration replace the minted default and
@@ -202,7 +202,7 @@ feature, as `PLAN.md` requires:
   corpus measured the first shot while documenting that it measured the loop.
 - ✅ The false-pass guard (`TestDoingNothingDoesNotPass`): a scripted model that
   ignored the order and echoed the base scene back scored **2/4 converged**,
-  because both SOARIA cases demanded only fields SOARIA already binds. Every
+  because both SOBRIA cases demanded only fields SOBRIA already binds. Every
   other test stayed green — they ask whether a refusal is real, and every
   refusal was. Each case must now demand a bind its base scene lacks; the
   do-nothing model scores 0/4.
@@ -262,7 +262,7 @@ UPDATE_GOLDEN=1 go test ./internal/...   # regenerate golden fixtures
 ARXI_BIN=/path/to/arxi ./arxi-tui
 ```
 
-The default scene is `testdata/SOARIA.json` (the sobria look). If it fails to
+The default scene is `testdata/SOBRIA.json` (the sobria look). If it fails to
 load, the interface falls back to the factory RAW scene (two nodes: transcript
 and input, nothing else) and states why, addressed, on screen.
 

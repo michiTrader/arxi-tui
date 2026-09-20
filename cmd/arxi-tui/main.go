@@ -33,7 +33,7 @@ const factoryRAW = `{ "root": { "type": "stack", "children": [
 ]}}`
 
 // factorySobria is the Scene 2 sobria default, embedded as a fallback constant
-// so the interface boots even when testdata/SOARIA.json is missing.
+// so the interface boots even when testdata/SOBRIA.json is missing.
 const factorySobria = `{ "root": { "type": "stack", "children": [
   { "type": "text", "style": {"style": "header"},
     "text": "Δr×i v0.1.0 · Run /help for commands" },
@@ -79,7 +79,7 @@ func run() error {
 	// Load scene document. The default is the sobria scene (Scene 2, the
 	// fx-inspired default per PLAN.md); if it fails to parse or validate, fall
 	// back to the factory RAW scene (Scene 1) so the interface always boots.
-	doc, sceneNotice, err := loadScene("testdata/SOARIA.json", factoryRAW)
+	doc, sceneNotice, err := loadScene("testdata/SOBRIA.json", factoryRAW)
 	if err != nil {
 		return fmt.Errorf("scene load: %w", err)
 	}

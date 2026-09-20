@@ -60,7 +60,7 @@ new data.
 {
   "id": "sobria-add-model-row",
   "order": "add a row under the input showing which model is answering",
-  "base": "SOARIA.json",
+  "base": "SOBRIA.json",
   "rationale": "…the decision this case protects…",
   "attempts": [
     {
@@ -147,8 +147,8 @@ about. Two rules, both inherited from the golden discipline:
 | Case | Base | Refusal path | What it is the only cover for |
 | --- | --- | --- | --- |
 | `raw-add-tasks-panel` | RAW | unsigned bind | An order that needs a *new node*, not an edited one |
-| `sobria-add-model-row` | SOARIA | unsigned bind | A bind that sounds signed (`model.current`) and is not |
-| `sobria-dim-the-footer` | SOARIA | undefined token | The token validator, which reports through another type |
+| `sobria-add-model-row` | SOBRIA | unsigned bind | A bind that sounds signed (`model.current`) and is not |
+| `sobria-dim-the-footer` | SOBRIA | undefined token | The token validator, which reports through another type |
 | `maximum-count-the-tasks` | MAXIMUM | unsigned bind → undefined token | A repair path longer than one turn, and MAXIMUM |
 
 The last row is the one the corpus was missing in both of its dimensions, and
@@ -173,8 +173,8 @@ anything — so if every field a case demands is already bound by its own base
 scene, handing the base scene straight back passes the case.
 
 That was not hypothetical. A scripted model that ignored the order and echoed
-`req.Base` scored **2/4 converged**: both SOARIA cases demanded only
-`model.name`, which SOARIA already binds. The finish line sat behind the
+`req.Base` scored **2/4 converged**: both SOBRIA cases demanded only
+`model.name`, which SOBRIA already binds. The finish line sat behind the
 starting line, and every other test in the package stayed green throughout,
 because they all ask whether a *refusal* is real — and every refusal was real.
 What was wrong was the definition of done.
@@ -185,7 +185,7 @@ judge against the base document rather than inferred from the bind lists. The
 two weak cases were widened (`session.tokens_used`; `usage.in`/`usage.out`)
 until the do-nothing model scores **0/4**, each case reporting `incomplete`
 with the field it is missing. The first attempted widening used `agent.mode`
-and the guard rejected it — SOARIA binds that too — which is the test doing its
+and the guard rejected it — SOBRIA binds that too — which is the test doing its
 job on its own author.
 
 This is the same failure `GradeBoth` guards from the other side, and the reason
@@ -346,7 +346,7 @@ The seven are worth reading closely, because the way `session.tokens_used` got
 in is the uncomfortable part. It is not there because anyone judged the budget
 display worth pinning to a frame. It is there because
 `TestDoingNothingDoesNotPass` found two cases a do-nothing model could pass and
-needed some bind SOARIA did not already have; `session.tokens_used` was the
+needed some bind SOBRIA did not already have; `session.tokens_used` was the
 field that fit. Had that widening reached for a different bind, the frame test
 would have rendered right past the fifth instance — the defect it was written
 in response to — and reported green.
@@ -639,7 +639,7 @@ that is correct.
 
 #### It is silent, reachable, and it scores as a win
 
-SOARIA carries one node of each of the four: the `markdown` transcript, the
+SOBRIA carries one node of each of the four: the `markdown` transcript, the
 `input` prompt, the `rule` above the slash menu, and the `list` of matches.
 Styling all four — the obvious patch for *"grey out the command menu"*, which
 is nearly the order `sobria-dim-the-footer` already carries — is accepted by

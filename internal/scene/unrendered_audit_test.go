@@ -94,7 +94,7 @@ var acceptedUnreadFields = map[string]string{
 	// entirely still filters. So the field is decorative rather than
 	// silently dropped: no behaviour is lost by ignoring it.
 	//
-	// It stays accepted rather than refused because SOARIA — the shipped
+	// It stays accepted rather than refused because SOBRIA — the shipped
 	// default interface — declares it, and SCENES.md Scene 2 writes it. A
 	// refusal would break the factory scene to enforce a rule the factory
 	// scene itself predates. When list filtering becomes scene-directed
@@ -104,7 +104,7 @@ var acceptedUnreadFields = map[string]string{
 	// Measured: declared tabs never reach the screen — a list declaring a
 	// category nobody else uses renders no tab for it. Unlike FilterBy this
 	// one IS a silent drop, and unlike row_template it cannot be refused:
-	// SOARIA ships eleven of them, so refusing would break the default
+	// SOBRIA ships eleven of them, so refusing would break the default
 	// interface at boot, which invariant 1 forbids more strongly than this
 	// audit demands.
 	//
@@ -112,7 +112,7 @@ var acceptedUnreadFields = map[string]string{
 	// recorded here so it is not rediscovered as a surprise. Category tabs
 	// are Scene 5 / Phase 3 work alongside row_template; when they land,
 	// this entry fails and that is the signal to delete it.
-	"Categories": "declared by SOARIA and not yet drawn; refusing would break the factory scene (invariant 1)",
+	"Categories": "declared by SOBRIA and not yet drawn; refusing would break the factory scene (invariant 1)",
 
 	// The node's identity, used for addressing and patching rather than
 	// drawing. Phase 2's /ui commands name nodes by id; nothing paints it.

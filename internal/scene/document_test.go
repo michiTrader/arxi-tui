@@ -25,7 +25,7 @@ func TestRawParsing(t *testing.T) {
 // The golden scenes' §4.5 audit lives in binds_audit_test.go
 // (TestEveryGoldenBindIsSigned), which checks all three pinned scenes against
 // the signed document itself rather than a hardcoded subset. It replaced the
-// earlier test here, which listed only RAW and SOARIA and so never validated
+// earlier test here, which listed only RAW and SOBRIA and so never validated
 // MAXIMUM — the one scene that binds agent.todos and session.tokens_used.
 
 // TestUnsignedBindFailsValidation verifies that a scene referencing a bind

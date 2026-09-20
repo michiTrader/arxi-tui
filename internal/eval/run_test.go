@@ -107,7 +107,7 @@ func probeCase() Case {
 	return Case{
 		ID:          "probe",
 		Order:       "add a row under the input showing which model is answering",
-		Base:        "SOARIA.json",
+		Base:        "SOBRIA.json",
 		Rationale:   "runner test",
 		Convergence: Convergence{MustBind: []string{"model.name"}},
 	}
