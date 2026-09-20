@@ -1,6 +1,7 @@
 package scene
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -190,4 +191,49 @@ func nodeIsDispatched(path string) bool {
 	// would be a guard that quietly stops covering a construction on the
 	// day that construction starts working.
 	return !strings.HasSuffix(path, ".prefix") && !strings.HasSuffix(path, ".suffix")
+}
+
+// warnUnsignedType reports a `type` value outside the signed v0 vocabulary.
+//
+// It is a warning rather than a refusal, and the asymmetry is the one
+// RefuseEmpty argues for itself, resolved the other way. The question is
+// LESSONS.md's: could a later engine be right about this? For a type the
+// format has signed, yes by construction, so it must load silently. For an
+// unsigned one, a plugin fragment or a v1 primitive may well introduce it, and
+// refusing would break exactly the forward compatibility PLAN.md calls a
+// standing risk. A refusal here would also be the harsher answer to the
+// *cheaper* mistake: a misspelled type costs one node, while a misspelled
+// `children` — already only a warning — silently deletes an entire subtree.
+//
+// The message names the closest signed type when there is one. That is the
+// six letters the author was hunting for, and printing them is the whole
+// point: this repository has now paid five times for a layer that knew the
+// answer and did not say it.
+func (d *Document) warnUnsignedType(n *Node, path string, out *[]Warning) {
+	// A missing type is not an unsigned type. It is reported separately
+	// rather than folded in because a node with no type is a node that
+	// cannot draw at all, and saying `unsigned type ""` would describe it
+	// wrongly — it reads as a quoting bug and sends the author looking in
+	// the engine rather than at their own document.
+	if n.Type == "" {
+		*out = append(*out, Warning{
+			Loc: d.locOf(path),
+			Msg: "a node declares no \"type\", so the engine has nothing to draw for it and " +
+				"renders a placeholder; every node needs a type from the signed vocabulary (" +
+				strings.Join(SignedNodeTypes(), ", ") + ")",
+		})
+		return
+	}
+	if signedNodeTypes[n.Type] {
+		return
+	}
+
+	msg := fmt.Sprintf("node type %q is not in the signed v0 vocabulary, so this engine draws a "+
+		"placeholder where the node should be", n.Type)
+	if near := nearestSignedType(n.Type); near != "" {
+		msg += fmt.Sprintf("; did you mean %q?", near)
+	} else {
+		msg += fmt.Sprintf("; the settled types are %s", strings.Join(SignedNodeTypes(), ", "))
+	}
+	*out = append(*out, Warning{Loc: d.locOf(path), Msg: msg})
 }
