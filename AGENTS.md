@@ -258,6 +258,21 @@ the sibling projects. Concretely:
    **The thirteenth destruction.** Thirteen destructions, ten costing
    nothing. Ratio only, per the rule above.
 
+   **The fourteenth and fifteenth destructions.** Fifteen destructions,
+   twelve costing nothing. Ratio only, per the rule above.
+
+   The fifteenth is worth two sentences because it landed differently: it
+   arrived *mid-command*, while a single `cat >> docs/LESSONS.md &&
+   git commit && git push` chain was in flight. Three commits of the turn
+   were already on the remote and all three came back; the only casualty
+   was the documentation append, which had not reached a commit because
+   it was chained behind one. **A chain that ends in `git push` is not a
+   saved edit until it runs** — the write and the commit are one command,
+   so an interruption between them loses the write with no trace in
+   `git status`. Write the file, commit it, then continue; do not batch
+   the edit and its commit behind a `&&` that also has to survive a test
+   run.
+
 ## Working rules
 
 **One step at a time, in order.** The bind vocabulary is the only hard
