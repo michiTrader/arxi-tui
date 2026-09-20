@@ -281,6 +281,12 @@ the sibling projects. Concretely:
    **an injection is the one edit that must never be committed**, so the
    disposable disk is exactly where it belongs.
 
+   **The seventeenth destruction.** Seventeen destructions, fourteen
+   costing nothing. Ratio only, per the rule above. The open PR was
+   merged while the sandbox was down — the scenario rule 6 describes,
+   now for the third time — and `git fetch` before assuming any branch
+   state is again what turned it into a non-event.
+
 ## Working rules
 
 **One step at a time, in order.** The bind vocabulary is the only hard
