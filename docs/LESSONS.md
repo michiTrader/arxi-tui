@@ -382,3 +382,36 @@ to the *actions*.
   warn about and a warning would be the false-alarm direction again. The
   exemption is written from the probe output, not from reading the map — the
   difference between a claim measured and a claim argued.
+- **Deriving two axes out of three is still an enumeration.** The sixth fix
+  derived the *branches* from `Node` and found the *walkers* by shape rather
+  than by a list, and was argued in its own commit message as the form "the
+  seventh recurrence cannot walk around". It then searched two hand-written
+  directories. Measured: a recursive `*scene.Node` walker added to
+  `cmd/arxi-tui`, skipping `suffix`, left the audit green — **the seventh
+  appearance, inside the fix written to end the sixth.** The tell is available
+  without the injection: a fix that derives some of its inputs and hardcodes
+  the rest reads as structural because of the derived part. Count the inputs,
+  not the impression.
+- **The machinery was already in the package.** `goPackageDirs` — walk the
+  module, skip this package — had existed in `unrendered_audit_test.go` since
+  the unread-field audit, three files away from the code that hand-listed two
+  directories. Before writing an enumeration, grep for the derivation: this
+  repository has now twice written a list beside a function that computes it.
+- **An exclusion argued by one criterion and implemented by another is a
+  comment that is false.** The same audit excluded `internal/engine` by
+  package name, under a comment stating in as many words that the distinction
+  "is not which package but which claim the function makes". Both halves were
+  written in the same sitting and they disagree: a renderer moved out of
+  `engine` would have been held to the rule, and a whole-document walker added
+  *inside* `engine` would have escaped it. The remedy is to implement the
+  criterion the comment names — a walker is exempt when it dispatches on
+  `n.Type`, because choosing behaviour per node type is what a renderer does.
+  **When a comment names the real criterion and the code tests a proxy for it,
+  the comment is the specification and the code is the bug.**
+- **Two probes differing in one property are worth more than four differing in
+  many.** The exemption above was proved by injecting one function twice into
+  the same package: with `switch n.Type` it is exempt, without it the audit
+  reports two findings. Same name, same file, same body otherwise. A probe
+  that varies one thing answers "is this the property the guard keys on?",
+  which is the question an exemption always raises and which a probe varying
+  location *and* shape cannot answer.
