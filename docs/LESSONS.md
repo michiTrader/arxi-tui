@@ -415,3 +415,37 @@ to the *actions*.
   that varies one thing answers "is this the property the guard keys on?",
   which is the question an exemption always raises and which a probe varying
   location *and* shape cannot answer.
+- **The last enumeration in a derived guard is the form its subject may take.**
+  The seventh fix derived the branches from `Node`, found the walkers by shape,
+  and discovered the packages from the module — three axes derived, and it read
+  as fully structural. What stayed fixed was the *form* recursion may take:
+  `callsSelf` asked whether a body contained a call spelled like its own name.
+  Measured: a genuine whole-document walker written as a mutually recursive
+  pair, skipping `suffix`, left the audit green — neither function calls
+  itself, so neither was a walker at all. **The eighth appearance.** The
+  progression is now four fixes long and the shape never changes: each one
+  derives the axis the last defect used and hardcodes the next one down.
+- **Mutual recursion is not an exotic spelling, it is one refactor away.** A
+  self-recursive walker becomes a mutually recursive pair the moment someone
+  splits a long function in two, which is the most ordinary edit in a
+  codebase. A guard that recognises only direct recursion is not covering an
+  unusual case badly, it is covering the *normal evolution* of the thing it
+  audits not at all. When a guard keys on a code shape, ask what that shape
+  becomes under the refactors people actually perform.
+- **A property of a cycle must be judged on the cycle.** Once mutual recursion
+  counts, "does this walker reach every branch?" stops being a question about
+  a function: `probeVisitKids` descends the branches and `probeVisit` does the
+  visiting, and each half alone reaches only some of them. Judging the halves
+  separately fails a walker that is complete — the false-alarm direction,
+  measured and confirmed absent only after the branches of a whole recursive
+  cycle were unioned and reported under one name. The same applies to the
+  renderer exemption: one half dispatching on `n.Type` makes the pair a
+  renderer, and exempting only that half would hold the other to a rule it
+  was never making a claim about.
+- **Reachability subsumes the check it replaces, which is why it is the right
+  shape.** Direct recursion is the length-one cycle. A fix that *adds* a
+  mutual-recursion case beside the self-call case would have been a second
+  enumeration — two forms listed instead of one — and the three-function cycle
+  in the counterfactuals would have been the ninth recurrence. Prefer the
+  generalisation that makes the old case an instance to the one that makes it
+  a sibling.
