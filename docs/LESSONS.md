@@ -449,3 +449,35 @@ to the *actions*.
   in the counterfactuals would have been the ninth recurrence. Prefer the
   generalisation that makes the old case an instance to the one that makes it
   a sibling.
+- **A derived guard has one enumeration left, and it is a type spelling.** The
+  eighth fix derived the branches, the walkers, the packages and the recursion
+  form — four axes — and decided whether a field carries a node by comparing
+  source text: `typ == "*Node" || typ == "[]*Node"`. Measured with the whole
+  suite green: `Slots map[string]*Node`, read by `renderText` only, produced
+  **both** halves of the defect at once — a silent drop and an unsigned bind
+  never refused. **The ninth appearance.** `[][]*Node` for a grid and a named
+  slice type were each caught only after the fix, and each would otherwise
+  have been its own recurrence.
+- **The progression is now five turns long and has never changed shape.** Each
+  fix derived the axis the last defect used and hardcoded the next one in:
+  branch set -> package set -> recursion form -> type shape. Written out, the
+  pattern is obvious and it was invisible in every individual turn, because
+  the derived parts are what a reader sees. **When a guard derives most of its
+  inputs, the remaining literal is not an oversight, it is the next defect** —
+  and it is findable by listing what the guard hardcodes rather than by
+  waiting for an injection to find it.
+- **A composite type is a spelling problem, not a shape problem.** `*Node`,
+  `[]*Node`, `map[string]*Node`, `[][]*Node`, a named slice type and an alias
+  are six spellings of "this field can hold a node", and only one question
+  distinguishes them from `map[string][]string`: walk the type down to what it
+  is built from and ask what is at the bottom. `reflect` answers it in six
+  lines; the AST cannot answer it at all, because a named type and its
+  definition are different source text. **When a guard classifies a type,
+  reflection is not an implementation detail — it is the only thing that
+  resolves the alias.**
+- **A walk over a recursive type needs a `seen` set for correctness, not
+  safety.** `typeContainsNode` walks pointers, slices, arrays and map keys and
+  values, and `Node` reaches `Node` through `Children`, so the first draft did
+  not terminate. The guard against revisiting is load-bearing rather than
+  defensive decoration — worth saying out loud, because a reviewer removing it
+  as noise would hang the suite rather than fail it.
