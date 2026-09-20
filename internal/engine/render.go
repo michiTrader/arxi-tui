@@ -147,12 +147,59 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 	case "spinner":
 		return r.renderSpinner(n, state)
 	default:
-		return ui.Frame{
-			Live: []ui.Line{
-				{ui.Span{Text: "[[UNKNOWN NODE TYPE]]", Style: "error"}},
-			},
-			Width: r.Width,
-		}
+		return r.renderUnknownType(n)
+	}
+}
+
+// renderUnknownType draws the placeholder for a node type this engine does not
+// build, and it names the type because the name is the whole diagnostic.
+//
+// The placeholder used to be the constant string `[[UNKNOWN NODE TYPE]]`, and
+// measured on the tree with the suite green, that made two different mistakes
+// produce one identical pixel:
+//
+//	{"type": "button"}  -> validates clean, draws [[UNKNOWN NODE TYPE]]
+//	{"type": "buton"}   -> validates clean, draws [[UNKNOWN NODE TYPE]]
+//
+// The first is the forward-compatibility rule working as PLAN.md signs it: a
+// documented v0 primitive that Phase 3 will build, and the screen honestly
+// says the engine could not draw it. The second is a typo, and the author has
+// been handed the same sentence as the person who did nothing wrong. Nothing
+// anywhere — parse, validate, warnings, frame — mentions the six letters that
+// would end the search, so the remedy is to re-read the document and hope.
+//
+// That is the defect class this repository has already paid for four times
+// under a different name: the layer that knows the answer does not say it.
+// `refuseUnrendered` in the scene package argues the same point for properties
+// and calls the diagnosis, not the severity, the thing worth getting right —
+// telling an author "invalid" sends them hunting for a typo that is not there,
+// and telling them nothing sends them hunting for one that is.
+//
+// Naming the type is the cheap half of the fix and is deliberately all this
+// function does. Whether a *later* engine could be right about this type —
+// LESSONS.md's question that separates a documented gap from a misspelling —
+// needs an inventory of the planned vocabulary, which belongs to the package
+// that owns the format, not to the renderer. Inventing that list here would be
+// format invented in the engine, the objection that keeps row_template and
+// on_press refused.
+//
+// The `[[UNKNOWN NODE TYPE` prefix is preserved verbatim: three golden tests
+// and the boot loop assert its *absence* by substring, and a rename would
+// silently switch off all four.
+func (r *Renderer) renderUnknownType(n *scene.Node) ui.Frame {
+	// An absent type is its own mistake and reads terribly as `""`: a node
+	// that never declared a type is not a node whose type is the empty
+	// string, and `[[UNKNOWN NODE TYPE ""]]` invites a hunt for a quoting
+	// bug. Say which of the two happened.
+	label := fmt.Sprintf("[[UNKNOWN NODE TYPE %q]]", n.Type)
+	if n.Type == "" {
+		label = "[[UNKNOWN NODE TYPE: the node declares no \"type\"]]"
+	}
+	return ui.Frame{
+		Live: []ui.Line{
+			{ui.Span{Text: label, Style: "error"}},
+		},
+		Width: r.Width,
 	}
 }
 
