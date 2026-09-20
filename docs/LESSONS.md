@@ -263,3 +263,34 @@ to the *actions*.
 - The table of "features" that once overclaimed in the arxi README is the
   standing warning against aspirational tables: **a document whose rows all say
   "works" is a document nobody can trust.**
+- **"Unrepresentable" is a claim with a quantifier; name it, then ask what the
+  other axes are.** One defect — a property accepted by the validator and
+  ignored by the renderer — has now recurred four times, and each fix was
+  correct and each was scoped to the axis that produced it. `when` honoured per
+  *container*, then per *node type*, was closed by moving the work into
+  `renderNode`, which `withFocusGlow` documents as making "some node types obey
+  and others do not" unrepresentable. True — and quantified over node types.
+  The third recurrence was a nested *position*: `renderMarquee` reads
+  `prefix.Bind/.Text/.Style` out of the struct, so nothing nested is dispatched
+  and no widening of a type switch ever arrives there. **A chokepoint is only a
+  chokepoint for the traffic that goes through it.** The fourth was found by
+  turning the rule on the third fix: gating inside `renderMarquee` is
+  quantified over *one owner*, and the sweep guarding it hardcodes
+  `"type":"marquee"`, varying the property and the branch with the owner held
+  fixed. `prefix` is polymorphic — string or node — and each owner reads
+  exactly one shape (`renderInput`/`PrefixText`, `renderMarquee`/`PrefixNode`),
+  so four pairings validated clean, were walked in full by the validator, and
+  drew nothing. **A sweep is only a sweep over the axes it varies**, and the
+  axis a sweep holds fixed is invisible precisely because the sweep looks
+  exhaustive.
+- **A written inventory is allowed only if something measures it from the
+  other side.** Which *shape* an owner decodes is not a Go declaration to
+  reflect over — `PrefixText` and `PrefixNode` have the same signature and
+  differ only in the JSON branch they read — so `nestedFormReaders` is
+  hand-written, the shape this package has watched drift five times. It is
+  pinned by an engine-side audit that renders both shapes under every signed
+  node type against a control and fails in *both* directions: a pairing the map
+  calls silent that in fact draws (the false-alarm direction), and a pairing it
+  omits that in fact drops (the defect). Both were verified by counterfactual —
+  over-claiming `text` and un-claiming `input` each failed exactly one subtest,
+  and reverting the warning failed 42.

@@ -314,6 +314,49 @@ func (d *Document) warnKeysOf(path string, vocab map[string]bool, out *[]Warning
 	}
 }
 
+// warnDroppedNestedForm reports a nested prefix/suffix written in a shape the
+// owning node type has no reader for.
+//
+// The message names the owner, the shape and the owner that *does* read that
+// shape, because the mistake this catches is almost always a pairing error
+// rather than a typo: the author wrote a construction the format contains,
+// against the node that does not compose it. Telling them "unknown property"
+// would send them hunting for a misspelling that is not there, and Phase 2's
+// repair loop reads these messages — a wrong diagnosis costs a turn the corpus
+// then charges to the model.
+func (d *Document) warnDroppedNestedForm(n *Node, path, branch string, raw []byte, out *[]Warning) {
+	if len(raw) == 0 {
+		return
+	}
+	form := nestedFormLabel(branch, raw)
+	readers, known := nestedFormReaders[form]
+	if !known {
+		return
+	}
+	if _, read := readers[n.Type]; read {
+		return
+	}
+
+	shape := "a node"
+	if form == "prefix.string" {
+		shape = "a string"
+	}
+	owners := make([]string, 0, len(readers))
+	for owner := range readers {
+		owners = append(owners, owner)
+	}
+	sort.Strings(owners)
+
+	*out = append(*out, Warning{
+		Loc: d.locOf(path),
+		Msg: fmt.Sprintf("node type %q declares %q as %s, and no node type reads that shape "+
+			"except %s; it was ignored. The validator still walked it — the binds inside it "+
+			"were checked and its tokens were checked against the theme — so the document "+
+			"reports success and the span the author wrote is simply absent from the frame",
+			n.Type, branch, shape, strings.Join(owners, " or ")),
+	})
+}
+
 // collectWarnings walks the tree the same way validateBinds does: the walk
 // visits node paths, and a node path is the only place the node's own
 // vocabulary applies. The sub-objects a node owns are checked here too, each
@@ -369,6 +412,18 @@ func (d *Document) collectWarnings(n *Node, path string, vocab map[string]bool, 
 			"focus_glow property this engine knows; it was ignored, so the node keeps its "+
 			"ordinary style when focused and the glow silently never happens", n.Type, key)
 	})
+
+	// The nested positions this node declares, checked against the owners
+	// that actually read them. Every warning above this line is about a key
+	// or a value the parser did not recognise; this one is about a
+	// construction the parser recognised perfectly, validated in full, and
+	// handed to an owner with no reader for it — see nestedFormReaders for
+	// the four measured rows and why renderNode cannot be the chokepoint
+	// here.
+	d.warnDroppedNestedForm(n, path, "prefix", n.PrefixRaw, out)
+	if n.Suffix != nil {
+		d.warnDroppedNestedForm(n, path, "suffix", []byte("{}"), out)
+	}
 
 	for i, child := range n.Children {
 		d.collectWarnings(child, childPath(path, i), vocab, out)

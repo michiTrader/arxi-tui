@@ -193,6 +193,104 @@ func nodeIsDispatched(path string) bool {
 	return !strings.HasSuffix(path, ".prefix") && !strings.HasSuffix(path, ".suffix")
 }
 
+// nestedFormReaders records, for each nested position, which owning node types
+// read which *shape* of it. It is the inventory behind warnDroppedNestedForm.
+//
+// # The defect it exists for
+//
+// `prefix` and `suffix` are walked by the validator on every node — the binds
+// inside them are checked, their tokens are checked against the theme, their
+// keys are checked against the node vocabulary — and read by exactly one owner
+// each. Measured, with the whole suite green:
+//
+//	{"type":"input",  "prefix":{"type":"text","text":"X"}} -> clean, X never drawn
+//	{"type":"marquee","prefix":"X "}                        -> clean, X never drawn
+//	{"type":"text",   "prefix":{"type":"text","text":"X"}} -> clean, X never drawn
+//	{"type":"text",   "suffix":{"type":"text","text":"X"}} -> clean, X never drawn
+//
+// Each is the silent drop this package has now paid for four times, and the
+// symptom is the usual one: the document is well-formed, every layer reports
+// success, and the screen is missing a span the author wrote.
+//
+// # Why the previous fix could not reach it
+//
+// This is the fourth recurrence of a single defect, and the axis is what
+// matters. `when` was once honoured per *container*; then per *node type*; the
+// remedy both times was to move the work into renderNode, which withFocusGlow
+// documents as making "some node types obey and others do not" unrepresentable
+// — true, and quantified over node types. Last turn found the third
+// recurrence at a nested *position*, which no widening of a type switch
+// reaches, and fixed it by asking hiddenByWhen inside renderMarquee.
+//
+// That fix is quantified over *one owner*. The sweep guarding it holds the
+// owner fixed at marquee and varies the property and the branch, so it cannot
+// see an owner that ignores the branch entirely. `prefix` is polymorphic —
+// string or node — and each owner reads exactly one form: renderInput calls
+// PrefixText and renderMarquee calls PrefixNode, so handing either owner the
+// other shape lands on a reader that does not exist. A chokepoint is only a
+// chokepoint for the traffic that goes through it, and a sweep is only a sweep
+// over the axes it varies.
+//
+// # Why a warning rather than a refusal
+//
+// LESSONS.md's question: could a later engine be right about this? Yes, by
+// construction — a `text` with a prefix span, or an input with a styled
+// node prefix, are both things this format could grow, and three of the four
+// rows above are constructions the shipped scenes write in their *other*
+// pairing. Refusing would break PLAN.md's forward-compatibility rule for a
+// document that names no misspelling. A warning keeps the rule the vocabulary
+// path already follows for unknown keys and unsigned types: the document
+// loads, and the author is told what the engine did not draw, with an address.
+// What the construction may not do any more is vanish.
+//
+// The inventory is written here rather than derived, for signedNodeTypes'
+// reason: the fact being recorded is which *shape* an owner reads, and a shape
+// is not a Go declaration to reflect over — PrefixText and PrefixNode have the
+// same signature shape and differ only in which branch of the raw JSON they
+// decode. Written inventories in this package drift, so this one is pinned by
+// an audit in internal/engine that renders both shapes under every signed
+// owner type and fails if a pairing this map calls silent in fact draws, or if
+// a pairing it omits does not. That audit measures the real renderer, not a
+// mirror of it.
+var nestedFormReaders = map[string]map[string]string{
+	// prefix, node shape: read by renderMarquee via PrefixNode().
+	"prefix.node": {"marquee": "renderMarquee reads PrefixNode()"},
+	// prefix, string shape: read by renderInput via PrefixText().
+	"prefix.string": {"input": "renderInput reads PrefixText()"},
+	// suffix is always a node, and only the marquee composes one.
+	"suffix.node": {"marquee": "renderMarquee reads n.Suffix"},
+}
+
+// nestedFormLabel names the shape a nested position was written in, in the
+// vocabulary nestedFormReaders is keyed by.
+func nestedFormLabel(branch string, raw []byte) string {
+	if branch == "prefix" && len(raw) > 0 && raw[0] == '"' {
+		return "prefix.string"
+	}
+	if branch == "prefix" {
+		return "prefix.node"
+	}
+	return "suffix.node"
+}
+
+// NestedFormReadersForAudit exposes the inventory to the engine-side audit
+// that pins it against the renderer.
+//
+// Copied rather than returned, for NodeVocabularyForAudit's reason: a test
+// that can edit the contract it checks is an escape hatch that becomes a
+// blindfold.
+func NestedFormReadersForAudit() map[string]map[string]string {
+	out := make(map[string]map[string]string, len(nestedFormReaders))
+	for form, owners := range nestedFormReaders {
+		inner := make(map[string]string, len(owners))
+		for owner, why := range owners {
+			inner[owner] = why
+		}
+		out[form] = inner
+	}
+	return out
+}
+
 // warnUnsignedType reports a `type` value outside the signed v0 vocabulary.
 //
 // It is a warning rather than a refusal, and the asymmetry is the one
