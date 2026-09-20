@@ -457,7 +457,7 @@ func TestPositionAgreesWithTheDocumentItAddresses(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
-		offsets := nodeOffsets(data)
+		offsets, _ := nodeOffsets(data)
 		if len(offsets) == 0 {
 			t.Fatalf("%s: nodeOffsets recorded nothing\n"+
 				"consequence: every refusal in this scene would silently degrade to a file-only address.\n"+

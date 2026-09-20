@@ -615,6 +615,20 @@ func loadScene(path string, fallback string) (*scene.Document, string, error) {
 		}
 		return fbDoc, err.Error(), nil
 	}
+	// A document that parsed into no tree is refused before its binds are
+	// checked, because there is nothing to check and "valid" would be the
+	// wrong word for a scene that draws nothing. Measured: the whole tree
+	// under a wrong top-level key (`{"scene": …}`) parsed, validated clean,
+	// and rendered an empty screen with no statement of why — the fallback
+	// never fired, because nothing told the load path anything was wrong.
+	if err := doc.RefuseEmpty(); err != nil {
+		fbDoc, fbErr := scene.ParseDocument([]byte(fallback))
+		if fbErr != nil {
+			return doc, "", fmt.Errorf("scene %s has no root: %w (fallback also failed: %v)", path, err, fbErr)
+		}
+		return fbDoc, err.Error(), nil
+	}
+
 	if err := doc.Validate(); err != nil {
 		// Validation error (e.g. unsigned bind): same contract as a parse
 		// error. A scene that parses but cannot be satisfied fails the way a
@@ -626,7 +640,37 @@ func loadScene(path string, fallback string) (*scene.Document, string, error) {
 		}
 		return fbDoc, err.Error(), nil
 	}
+
+	// Warnings are the other half of PLAN.md's forward-compatibility rule,
+	// and they ride the channel invariant 3 already built: the scene loads,
+	// and the notice says what the engine did not understand. Reaching the
+	// screen is the whole point — a warning computed and dropped would be
+	// this project's recurring failure in its purest form, a remedy that
+	// satisfies the guard and changes nothing the user can see.
+	//
+	// The document is returned as-is, not replaced by the fallback: an
+	// unknown property is a v1 document under a v0 engine, and refusing it
+	// would break the compatibility promise the warning exists to keep.
+	if warnings := doc.Warnings(); len(warnings) > 0 {
+		return doc, warningNotice(warnings), nil
+	}
 	return doc, "", nil
+}
+
+// warningNotice renders scene warnings into the single line host.scene.error
+// carries.
+//
+// Only the first is shown in full, with a count for the rest. The notice is
+// one line of a terminal interface: printing ten warnings there would push the
+// interface off the screen to complain about properties that, by definition,
+// did not stop it from loading. The first has an address, and fixing it is how
+// the author finds the next.
+func warningNotice(warnings []scene.Warning) string {
+	first := warnings[0].String()
+	if len(warnings) == 1 {
+		return first
+	}
+	return fmt.Sprintf("%s (and %d more)", first, len(warnings)-1)
 }
 
 // render repaints the whole screen. Phase 0 uses clear-home + full redraw;

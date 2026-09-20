@@ -149,8 +149,18 @@ func templatePath(parent string) string { return parent + ".row_template" }
 // error "pointing at the offending node", and the node is the object. A bind is
 // also frequently written on the same line as its node, so the two agree in
 // practice and the object is the one the spec names.
-func nodeOffsets(data []byte) map[string]int {
+//
+// It also returns the keys each object declared, which is the evidence
+// vocabulary.go needs and the only pass that can still see it. Once
+// encoding/json has built the tree, a key it did not recognise has left no
+// trace anywhere — that absence *is* the defect, so the check has to read the
+// token stream or it has nothing to read. The two results come from one walk
+// rather than two because they must agree on the spelling of every path: a
+// second walk that disagreed would attach warnings to the wrong node, or to
+// none, and would fail silently in the way this whole file exists to prevent.
+func nodeOffsets(data []byte) (map[string]int, map[string][]string) {
 	offsets := make(map[string]int)
+	declared := make(map[string][]string)
 	dec := json.NewDecoder(bytes.NewReader(data))
 
 	// Each frame is one open container. An object frame names the value that
@@ -164,6 +174,12 @@ func nodeOffsets(data []byte) map[string]int {
 		idx     int    // next array index, only meaningful when isArray
 		key     string // last key read, only meaningful for an object
 		wantKey bool   // inside an object, keys and values alternate
+		// path is this object's own address, fixed when it opened. Keys
+		// read inside it are recorded against this rather than against
+		// pathTo(), which by then names the *value* the key introduces:
+		// attributing `chidlren` to "root.chidlren" would file the typo
+		// under an address that exists only because of the typo.
+		path string
 	}
 	var stack []frame
 
@@ -211,7 +227,7 @@ func nodeOffsets(data []byte) map[string]int {
 			// A malformed document is not this function's refusal to make:
 			// ParseDocument already rejects it carrying the syntax error's own
 			// offset. Offsets for the prefix that did parse stay useful.
-			return offsets
+			return offsets, declared
 		}
 
 		if delim, ok := tok.(json.Delim); ok {
@@ -219,10 +235,11 @@ func nodeOffsets(data []byte) map[string]int {
 			case '{':
 				// InputOffset() after a delimiter token points one byte past
 				// it, so the brace itself — the node's position — is -1.
-				if p := pathTo(); p != "" {
+				p := pathTo()
+				if p != "" {
 					offsets[p] = int(dec.InputOffset()) - 1
 				}
-				stack = append(stack, frame{wantKey: true})
+				stack = append(stack, frame{wantKey: true, path: p})
 			case '[':
 				stack = append(stack, frame{isArray: true})
 			case '}', ']':
@@ -237,10 +254,19 @@ func nodeOffsets(data []byte) map[string]int {
 
 		// A scalar: either the key naming the next value, or a value.
 		if len(stack) > 0 && !stack[len(stack)-1].isArray && stack[len(stack)-1].wantKey {
+			top := &stack[len(stack)-1]
 			if key, ok := tok.(string); ok {
-				stack[len(stack)-1].key = key
+				top.key = key
+				// Every key of every object is recorded, node or not.
+				// Filtering to node paths here would need this walk to
+				// know which objects are nodes — a second notion of the
+				// tree's shape, maintained beside the real one. The
+				// consumer already walks the tree and asks only about
+				// paths it reached, so the shape is known in exactly one
+				// place.
+				declared[top.path] = append(declared[top.path], key)
 			}
-			stack[len(stack)-1].wantKey = false
+			top.wantKey = false
 			continue
 		}
 		consumed()
