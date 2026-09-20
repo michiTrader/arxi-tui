@@ -139,12 +139,40 @@ the sibling projects. Concretely:
    files forming one atomic change (a source file and the fixture it needs) —
    immediately `git add` + `git commit` with a descriptive conventional-commit
    message **in English**.
-2. **Push whenever a remote exists.** The design work is signed and it lives
-   on one disk: the private remote must exist **before `go.mod`**, because the
-   Go module path is derived from the repo URL and guessing it costs a later
-   migration. Once created, record its URL here and push every commit.
-3. Do not batch a whole feature into one commit at the end.
-4. Before ending a turn, verify `git status` is clean.
+2. **Push in the same breath as the commit — `git commit && git push`.** Not
+   "before ending the turn", not "once the feature works": the push belongs to
+   the commit, and a commit that has not been pushed is not saved. The design
+   work is signed and the working copy lives on one disposable disk: the
+   private remote must exist **before `go.mod`**, because the Go module path is
+   derived from the repo URL and guessing it costs a later migration.
+
+   **This rule has a measured price.** The development sandbox has been
+   destroyed and re-cloned from the remote **five times** across recent
+   sessions, without warning and mid-task. Four times everything survived,
+   because every commit had been pushed and the only loss was a half-applied
+   edit. The fifth time two commits — a complete audit and a 44-reference
+   rename, both green — existed only on the local disk and were lost entirely;
+   they had to be reconstructed from scratch. The work was not lost to bad
+   luck, it was lost to the gap between `commit` and `push`. Close that gap
+   every time.
+
+3. **Open the pull request early and keep pushing to it.** A PR is not the
+   ceremony at the end of a finished feature; it is the durable record of work
+   in progress. Open it after the first pushed commit and let later commits
+   land on the same branch. A branch with an open PR is reviewable, linkable,
+   and survives the loss of every local file.
+
+4. Do not batch a whole feature into one commit at the end. This is in tension
+   with the squash convention some workflows impose, and the tension resolves
+   in favour of the separate commits: each one here carries the argument for a
+   single decision, and collapsing five of them destroys the record of which
+   defect motivated which change. Squash only when the commits are genuinely
+   one change split by accident.
+
+5. Before ending a turn, verify `git status` is clean **and** that
+   `git log origin/<branch>..HEAD` is empty. A clean working tree with
+   unpushed commits is the exact state that lost work above, and it looks
+   identical to a finished turn.
 
 ## Working rules
 
