@@ -162,8 +162,64 @@ func Vocabulary() []string {
 	return out
 }
 
+// borderVocabulary is every json key the border object form declares.
+//
+// Derived from borderObject — the single type both BorderShape() and
+// BorderStyleName() decode into — for the reason this whole file exists:
+// those two accessors are what actually reads a border, so they are the only
+// honest statement of what a border may contain.
+//
+// The first version of this function reflected over two anonymous structs
+// copied out of the accessors, and an injection showed why that was not
+// enough. Teaching BorderStyleName one further key left the copies here
+// unchanged, so a document using it rendered correctly and was warned about
+// anyway, with the whole suite green: the guard contradicting the renderer,
+// in the false-alarm direction, which is the one that gets a guard switched
+// off. Reflecting over a copy only relocates the copy. Now there is one type
+// and nothing to keep in step.
+func borderVocabulary() map[string]bool {
+	vocab := make(map[string]bool)
+	t := reflect.TypeOf(borderObject{})
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			vocab[name] = true
+		}
+	}
+	return vocab
+}
+
+// styleVocabulary is every key a node's `style` object may name.
+//
+// It is StyleTokenKeys() — the validator's own list — rather than a copy,
+// because that list is already the single statement of "a scene may be written
+// this way" and the render path reads it too. A second copy here would let the
+// three disagree, which is the exact history StyleTokenKeys' own comment
+// records.
+func styleVocabulary() map[string]bool {
+	vocab := make(map[string]bool)
+	for _, key := range StyleTokenKeys() {
+		vocab[key] = true
+	}
+	return vocab
+}
+
+// documentVocabulary is every json key Document declares — in practice `root`,
+// derived rather than written for the same reason as the rest.
+func documentVocabulary() map[string]bool {
+	vocab := make(map[string]bool)
+	t := reflect.TypeOf(Document{})
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			vocab[name] = true
+		}
+	}
+	return vocab
+}
+
 // Warnings reports every key in the document that the parser does not
-// recognise, addressed to the node that declared it.
+// recognise, addressed to the object that declared it.
 //
 // It reads the keys recorded by the parse rather than re-deriving them from
 // the tree, because by the time there is a tree the evidence is gone: an
@@ -174,36 +230,108 @@ func Vocabulary() []string {
 // A Document built by hand (no source bytes) has no recorded keys and warns
 // about nothing, which is correct: there was no text for a key to be
 // misspelled in.
+//
+// # Why this covers objects that are not nodes
+//
+// The first version of this guard visited node paths only, and said so on
+// purpose: consulting every object in the source would report `style`'s token
+// names and `border`'s `shape`/`style` as unknown node properties, a wall of
+// false alarms, and a guard that cries wolf is a guard that gets deleted.
+//
+// That reasoning was right about the danger and wrong about the remedy. It
+// treated "has its own vocabulary" as "has no vocabulary", and the difference
+// was measured on the tree with the whole suite green:
+//
+//	{"border":{"shpae":"double"}}       -> parsed, validated clean, drew the
+//	                                       default border, warned about nothing
+//	{"style":{"tokne":"no_such_token"}} -> parsed, drew unstyled, and the
+//	                                       undefined token was never checked
+//	{"root":{…},"theme":{…}}            -> accepted in silence
+//
+// The `style` case is the worst of the three and is new in kind. The other
+// silent drops in this project's history lost a property; a misspelled style
+// key also *evades the token validator*, because ValidateTokens can only check
+// a token it can find. A scene referencing a token that does not exist in the
+// theme is supposed to fail the load with an address — two transposed letters
+// turn that refusal into a clean bill of health.
+//
+// And a border typo is invisible in the way that matters least and hurts most:
+// `BorderShape()` returns "" for an unrecognised object, "" falls through to
+// the default shape, so the box still draws a border — just not the one the
+// document asked for. Nothing looks broken.
+//
+// So the rule is not "warn about node keys" but "every object in a scene
+// document has a vocabulary, and a key outside it is reported". Each
+// vocabulary is derived from the code that reads that object, never listed
+// here.
 func (d *Document) Warnings() []Warning {
 	if d == nil || d.Root == nil {
 		return nil
 	}
-	vocab := nodeVocabulary()
 	var out []Warning
-	d.collectWarnings(d.Root, nodePathRoot, vocab, &out)
+
+	// The document object itself. Its address is the empty path — the outermost
+	// object opens before any key has been read — and a stray key here is how a
+	// whole tree disappears under `{"scene": …}`. RefuseEmpty catches that one
+	// because it leaves no root at all; this catches its quieter relative, a
+	// correct `root` beside a misspelled second copy the author is editing.
+	d.warnKeysOf("", documentVocabulary(), &out, func(key string) string {
+		return fmt.Sprintf("the document declares %q, which is not a top-level key this engine "+
+			"knows; it was ignored. Only %q is read, so a tree written under any other key "+
+			"is discarded in silence", key, nodePathRoot)
+	})
+
+	d.collectWarnings(d.Root, nodePathRoot, nodeVocabulary(), &out)
 	return out
 }
 
-// collectWarnings walks the tree the same way validateBinds does, and that
-// parallel is deliberate: the walk visits node paths, and only a node path may
-// be asked for its keys. Consulting every object in the source instead would
-// report `style`'s token names and `border`'s `shape`/`style` keys as unknown
-// node properties, which is a wall of false alarms — and a guard that cries
-// wolf is a guard that gets deleted.
-func (d *Document) collectWarnings(n *Node, path string, vocab map[string]bool, out *[]Warning) {
+// warnKeysOf reports the keys recorded at one object's path that its own
+// vocabulary does not contain. The message is a parameter because each object
+// needs to say what the author lost, and a single generic sentence
+// ("unknown key") would make the cheap cases and the expensive ones read
+// alike.
+func (d *Document) warnKeysOf(path string, vocab map[string]bool, out *[]Warning, msg func(key string) string) {
 	for _, key := range d.declaredKeys[path] {
 		if vocab[key] {
 			continue
 		}
-		*out = append(*out, Warning{
-			Loc: d.locOf(path),
-			Msg: fmt.Sprintf("node type %q declares %q, which is not a property this engine "+
-				"knows; it was ignored. If it is a typo the node lost whatever it named "+
-				"(a misspelled \"children\" silently drops the whole subtree); if it is "+
-				"from a later version of the format, this engine cannot draw it",
-				n.Type, key),
-		})
+		*out = append(*out, Warning{Loc: d.locOf(path), Msg: msg(key)})
 	}
+}
+
+// collectWarnings walks the tree the same way validateBinds does: the walk
+// visits node paths, and a node path is the only place the node's own
+// vocabulary applies. The sub-objects a node owns are checked here too, each
+// against its own vocabulary, because they hang off this node's address and
+// nothing else walks them.
+func (d *Document) collectWarnings(n *Node, path string, vocab map[string]bool, out *[]Warning) {
+	d.warnKeysOf(path, vocab, out, func(key string) string {
+		return fmt.Sprintf("node type %q declares %q, which is not a property this engine "+
+			"knows; it was ignored. If it is a typo the node lost whatever it named "+
+			"(a misspelled \"children\" silently drops the whole subtree); if it is "+
+			"from a later version of the format, this engine cannot draw it",
+			n.Type, key)
+	})
+
+	// The border object, when it is one. A string border ("single") has no keys
+	// to check and records no path, so the lookup simply finds nothing.
+	d.warnKeysOf(path+".border", borderVocabulary(), out, func(key string) string {
+		return fmt.Sprintf("the border of node type %q declares %q, which is not a border "+
+			"property this engine knows; it was ignored. A misspelled \"shape\" leaves the "+
+			"box drawing this theme's default border rather than the one asked for, which "+
+			"looks like nothing went wrong", n.Type, key)
+	})
+
+	// The style object. Its keys are the spellings the validator accepts for a
+	// token reference, so an unknown one means the token was never read — and
+	// therefore never checked against the theme.
+	d.warnKeysOf(path+".style", styleVocabulary(), out, func(key string) string {
+		return fmt.Sprintf("the style of node type %q declares %q, which is not a key this "+
+			"engine reads a token from (%s); it was ignored, so the node draws unstyled and "+
+			"the token it names is never checked against the theme — a token that does not "+
+			"exist would normally fail the load with an address",
+			n.Type, key, strings.Join(StyleTokenKeys(), " or "))
+	})
 
 	for i, child := range n.Children {
 		d.collectWarnings(child, childPath(path, i), vocab, out)
