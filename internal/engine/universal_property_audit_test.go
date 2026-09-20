@@ -350,9 +350,17 @@ func universalsFromDocument(t *testing.T) []string {
 	}
 
 	// The floor guards against a pattern that silently stops matching. The
-	// paragraph lists seven properties today; a parser returning one or two
+	// paragraph lists eight properties today; a parser returning one or two
 	// is broken rather than lucky, and a vacuous pass here would hide
 	// exactly the class of gap the audit exists to find.
+	//
+	// The count in that sentence said "seven" until it was measured and
+	// found to be eight, which is the small version of this file's whole
+	// subject: a number written into a comment is not instrumented, so
+	// nothing moves it and nothing contradicts it. The instrumented
+	// ceiling on this denominator lives with the axis that reports it, in
+	// progress_audit_test.go, because that is where being wrong shows up
+	// in a printed ledger rather than in prose.
 	if len(out) < 5 {
 		t.Fatalf("parsed only %d universal properties from %s (%v); the audit is reading the\n"+
 			"wrong paragraph and would pass vacuously", len(out), path, out)
