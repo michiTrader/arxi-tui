@@ -147,7 +147,7 @@ the sibling projects. Concretely:
    derived from the repo URL and guessing it costs a later migration.
 
    **This rule has a measured price.** The development sandbox has been
-   destroyed and re-cloned from the remote **five times** across recent
+   destroyed and re-cloned from the remote **seven times** across recent
    sessions, without warning and mid-task. Four times everything survived,
    because every commit had been pushed and the only loss was a half-applied
    edit. The fifth time two commits — a complete audit and a 44-reference
@@ -155,6 +155,22 @@ the sibling projects. Concretely:
    they had to be reconstructed from scratch. The work was not lost to bad
    luck, it was lost to the gap between `commit` and `push`. Close that gap
    every time.
+
+   **The seventh destruction, and the failure mode this rule actually has.**
+   It happened again, and this time nothing had been committed at all: a
+   measured defect, a working fix, and a guard verified to fail without it —
+   all of it green on disk, none of it in a commit, because the work had not
+   reached a point that felt like a milestone. Every word of the loss was
+   avoidable and the rule above already said so.
+
+   The lesson is not "push more". It is that **this rule is obeyed at the
+   moment code compiles, not at the moment a task feels finished** — and
+   "feels finished" is the judgement that fails, because it is made by the
+   same agent that is absorbed in the work. There is no such thing as a
+   change too small or too provisional to commit; a commit that is later
+   rewritten costs a rebase, and an uncommitted one costs the whole turn.
+   The instant `go build` passes, `git commit && git push`, even mid-defect,
+   even with the fix half-argued.
 
 3. **Open the pull request early and keep pushing to it.** A PR is not the
    ceremony at the end of a finished feature; it is the durable record of work
