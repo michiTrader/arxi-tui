@@ -119,6 +119,15 @@ import (
 // The third line is the one that justifies pooling a cycle's branches: the
 // halves of a correct pair each reach only some branches, so judging either
 // alone would fail a walker that is complete.
+//
+// A fifth, one axis further in again: which *type shapes* count as carrying a
+// node was compared as source text (`"*Node"`, `"[]*Node"`). Measured:
+//
+//	Slots map[string]*Node, read by renderText only, before -> green (both halves)
+//	the same field, after                                   -> inventory + all 4 walkers
+//	Grid [][]*Node                                          -> caught
+//	Panes NodeList (named slice type)                       -> caught
+//	Labels map[string][]string and Sizes []*int             -> ignored, no false alarm
 func TestEveryNestedBranchIsInventoriedAndWalked(t *testing.T) {
 	branches := nodeBearingBranches(t)
 
