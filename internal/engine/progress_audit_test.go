@@ -486,36 +486,91 @@ func documentedNodeTypes(t *testing.T) []string {
 }
 
 // renderedNodeTypes returns the node types renderNode dispatches on, read from
-// the AST of that function specifically.
+// the switch on the node's Type field specifically.
 //
 // Scoping it to renderNode matters: the engine's other switches are on bind
 // names, border shapes and overlay anchors, and a package-wide sweep for
 // string case labels would report "double", "ascii" and "top-right" as node
 // types. The signed-bind audit's package-wide sweep filters on a dot in the
 // label, which works for binds and would silently mis-scope here.
+//
+// Scoping to the *function* is not enough, and that is this helper's own
+// version of the defect fixed in renderedAnimationProperties. The first
+// version took every string case label anywhere inside renderNode, which is
+// only correct while renderNode contains exactly one switch. Measured by
+// adding a second one to it — `switch n.Style["border"] { case "button": }`,
+// an ordinary thing to write:
+//
+//	node types: 15 documented, 12 rendered, 3 drawing [[UNKNOWN NODE TYPE]]
+//	(slider, sparkline, switch)
+//	--- PASS
+//
+// `button` moved from unrendered to rendered because of a style comparison,
+// and the axis passed. The direction is the flattering one: this is a progress
+// report, and a node type counted as rendered when the engine still draws the
+// placeholder for it overstates how far along the project is. It also disarms
+// the check below that a rendered type must be documented, since a stray label
+// now has to be documented as a primitive or reported as a divergence.
+//
+// So the switch tag itself is resolved: it must be a read of the Type field on
+// scene.Node. This is the same remedy and the same reason as the animation
+// numerator — the question is "does the engine dispatch on this type", and
+// only the type checker can say which switch is the dispatch.
 func renderedNodeTypes(t *testing.T) map[string]bool {
 	t.Helper()
+	// The files come back from engineSelections rather than from
+	// parseEngineSource: the selections map is keyed by node pointer, so it
+	// only answers questions about the tree it was built from.
+	selections, files := engineSelections(t)
+
 	out := make(map[string]bool)
-	for _, file := range parseEngineSource(t) {
+	found := false
+	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			fn, ok := n.(*ast.FuncDecl)
 			if !ok || fn.Name.Name != "renderNode" {
 				return true
 			}
 			ast.Inspect(fn, func(inner ast.Node) bool {
-				cc, ok := inner.(*ast.CaseClause)
+				sw, ok := inner.(*ast.SwitchStmt)
 				if !ok {
 					return true
 				}
-				for _, expr := range cc.List {
-					if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.STRING {
-						out[strings.Trim(lit.Value, "`\"")] = true
+				sel, ok := sw.Tag.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				selection, ok := selections[sel]
+				if !ok || selection.Kind() != types.FieldVal {
+					return true
+				}
+				if sel.Sel.Name != "Type" || !isSceneNode(selection.Recv()) {
+					return true
+				}
+				found = true
+				for _, stmt := range sw.Body.List {
+					cc, ok := stmt.(*ast.CaseClause)
+					if !ok {
+						continue
+					}
+					for _, expr := range cc.List {
+						if lit, ok := expr.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+							out[strings.Trim(lit.Value, "`\"")] = true
+						}
 					}
 				}
 				return true
 			})
 			return false
 		})
+	}
+	if !found {
+		t.Fatal("found no switch on the node's Type field inside renderNode.\n" +
+			"consequence: the node-type axis reports every documented primitive as unrendered,\n" +
+			"which reads as a project that draws nothing — and the caller's floor cannot tell\n" +
+			"that from a real regression.\n" +
+			"remedy: if dispatch moved out of a switch on scene.Node.Type, teach this helper\n" +
+			"where it went; the axis measures the dispatch, not the function name.")
 	}
 	return out
 }
@@ -685,8 +740,10 @@ func renderedAnimationProperties(t *testing.T) map[string]bool {
 		byGoName[goName] = jsonName
 	}
 
+	selections, _ := engineSelections(t)
+
 	used := make(map[string]bool)
-	for sel, selection := range engineSelections(t) {
+	for sel, selection := range selections {
 		// FieldVal is the discriminator the name comparison lacked:
 		// strings.Repeat and ansi.Cut are package members, ui.Span is a
 		// type, and none of them is a field value.
@@ -732,15 +789,25 @@ func isSceneNode(typ types.Type) bool {
 }
 
 // engineSelections type-checks the engine package and returns every resolved
-// selector in it.
+// selector in it, together with the files those selectors belong to.
 //
-// The typecheck is required to fail loudly. A types.Config with a swallowing
-// Error hook returns partial information on a broken build, and partial
-// information here means "no selector resolved to a field read", which is
-// indistinguishable from "the engine honours nothing" — a silent zero in the
-// numerator of a progress report. That is the precise failure this file was
-// written to stop, so the premise is asserted instead of assumed.
-func engineSelections(t *testing.T) map[*ast.SelectorExpr]*types.Selection {
+// It returns the files because a types.Info is keyed by *ast.SelectorExpr
+// *pointer identity*, so it can only be queried with nodes from the very parse
+// that produced it. Handing back just the map invites a caller to walk
+// parseEngineSource's independently-parsed tree and look its nodes up here,
+// where every lookup misses and the honest reading of the result is "the
+// engine does none of this". That is not hypothetical: it is what the first
+// version of renderedNodeTypes did, and the premise check at the bottom of it
+// is what caught it.
+//
+// The typecheck is required to fail loudly for the same reason. A
+// types.Config with a swallowing Error hook returns partial information on a
+// broken build, and partial information here means "no selector resolved to a
+// field read", which is indistinguishable from "the engine honours nothing" —
+// a silent zero in the numerator of a progress report. That is the precise
+// failure this file was written to stop, so the premise is asserted instead of
+// assumed.
+func engineSelections(t *testing.T) (map[*ast.SelectorExpr]*types.Selection, []*ast.File) {
 	t.Helper()
 
 	fset := token.NewFileSet()
@@ -781,7 +848,7 @@ func engineSelections(t *testing.T) map[*ast.SelectorExpr]*types.Selection {
 			"the numerator of the animation axis would be zero for a reason that has nothing to\n" +
 			"do with the engine.")
 	}
-	return info.Selections
+	return info.Selections, files
 }
 
 // observeAnimationProperty loads a document that sets prop on a text node and
