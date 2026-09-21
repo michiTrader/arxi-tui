@@ -292,3 +292,83 @@ func TestUnrenderedFieldsIsReadAsAMapNotAConstant(t *testing.T) {
 		t.Errorf("the refusal names something other than the field that was added: %q", verr.Error())
 	}
 }
+
+// TestANodeDeclaringTwoUnrenderedFieldsRefusesTheSameOneEveryRun closes a
+// hole the first mutation sweep of this package found.
+//
+// refuseUnrendered sorts its candidate list, and the comment beside the call
+// gives the reason: "with two unrendered fields on one node, an address that
+// moves between runs is not an address." The reasoning was right and nothing
+// exercised it. Deleting the sort left all 59 tests in this package green,
+// because every probe in the suite declares exactly ONE unrendered field, and
+// with one candidate every ordering is the same ordering.
+//
+// Two are needed to see it, and the source of the disorder is a Go map: the
+// candidates come from json.Marshal round-tripped into map[string]RawMessage,
+// and ranging a map is randomised by design. So the unsorted version does not
+// merely pick a different field, it picks a DIFFERENT ONE PER RUN.
+//
+// That matters past tidiness. Phase 2's repair loop feeds these messages to a
+// model and charges it a turn per attempt: a scene declaring both row_template
+// and on_press would be told to fix row_template, then -- after the model fixed
+// it -- possibly told about on_press, or told about row_template again on a
+// re-validation that happened to range the other way. The corpus would be
+// measuring the map's iteration order and scoring the model for it.
+//
+// The loop repeats because one pass of a randomised order agrees with the
+// sorted one often enough to pass by luck; with two candidates it is a coin
+// flip per run.
+func TestANodeDeclaringTwoUnrenderedFieldsRefusesTheSameOneEveryRun(t *testing.T) {
+	// A list declaring BOTH row_template and on_press. Alphabetically
+	// on_press sorts before row_template, so the stable answer is on_press
+	// -- and notably NOT row_template, which is the field every other test
+	// in this file provokes. A sorted implementation that happened to be
+	// hard-coded to the familiar answer would fail here.
+	const src = `{"root":{"type":"list","bind":"team.members",
+		"row_template":{"type":"text","text":"row"},
+		"on_press":"submit"}}`
+
+	doc, err := ParseDocument([]byte(src))
+	if err != nil {
+		t.Fatalf("premise broken: the document should parse; got %v", err)
+	}
+
+	first := doc.Validate()
+	if first == nil {
+		t.Fatalf("premise broken: a node declaring two unrendered fields must be\n" +
+			"refused, or this test is measuring nothing")
+	}
+	if !strings.Contains(first.Error(), "on_press") {
+		t.Errorf("refusal names %q, want the alphabetically first candidate on_press.\n"+
+			"consequence: the choice is being made by map iteration order rather than by a\n"+
+			"rule, so which of the two fields the author is told about is decided at random.",
+			first.Error())
+	}
+
+	// The same document, re-validated. Every answer must be byte-identical:
+	// re-parsing each time is deliberate, so that any per-document caching
+	// cannot make an unstable order look stable.
+	want := first.Error()
+	for i := 0; i < 200; i++ {
+		d, perr := ParseDocument([]byte(src))
+		if perr != nil {
+			t.Fatalf("ParseDocument on iteration %d: %v", i, perr)
+		}
+		got := d.Validate()
+		if got == nil {
+			t.Fatalf("iteration %d validated clean while the first run refused", i)
+		}
+		if got.Error() != want {
+			t.Fatalf("iteration %d refused a different field than the first run:\n"+
+				"  first: %s\n  now:   %s\n\n"+
+				"consequence: the candidates come from ranging a Go map, whose order is\n"+
+				"randomised by design, so the refusal names whichever field the runtime\n"+
+				"happened to yield. An address that moves between runs is not an address:\n"+
+				"the author fixes what they were told about and the next validation blames\n"+
+				"the other field, and Phase 2's repair loop -- which charges the model a turn\n"+
+				"per attempt -- ends up measuring map iteration order.\n"+
+				"remedy: refuseUnrendered must sort its candidate list before choosing.",
+				i, want, got.Error())
+		}
+	}
+}
