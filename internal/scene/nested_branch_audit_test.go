@@ -1,13 +1,16 @@
 package scene
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/importer"
 	"go/token"
 	"go/types"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -118,6 +121,51 @@ import (
 // The third line is the one that justifies pooling a cycle's branches: the
 // halves of a correct pair each reach only some branches, so judging either
 // alone would fail a walker that is complete.
+//
+// A fifth, one axis further in again: which *type shapes* count as carrying a
+// node was compared as source text (`"*Node"`, `"[]*Node"`). Measured:
+//
+//	Slots map[string]*Node, read by renderText only, before -> green (both halves)
+//	the same field, after                                   -> inventory + all 4 walkers
+//	Grid [][]*Node                                          -> caught
+//	Panes NodeList (named slice type)                       -> caught
+//	Labels map[string][]string and Sizes []*int             -> ignored, no false alarm
+//
+// A sixth and a seventh came from the rule those produced — list what a
+// derived guard still hardcodes, rather than guessing where to inject. The
+// list had two entries. `"json.RawMessage"`, compared as source text, let a
+// raw branch declared through an alias escape both halves. `"Type"` turned
+// out to be a **negative finding**: renaming Node.Type breaks the build at
+// every use, so the compiler pins it and it cannot drift.
+//
+// But the *shape* the exemption looked for was still enumerated, and that is
+// the seventh, in the false-alarm direction:
+//
+//	a renderer dispatching via a tagless switch -> reported as a broken walker
+//	the same, after                             -> exempt
+//	a renderer with a compound `if` condition   -> exempt
+//	a walker that only prints n.Type            -> still caught
+//	a walker that never mentions the type       -> still caught
+//
+// The middle correction is the one worth reading: the first widening asked
+// whether the body *reads* n.Type, which exempted all four real walkers —
+// they read the type to name it in diagnostics — and the floor failed the run
+// at one walker out of four. Too narrow slanders a renderer; too broad
+// deletes the audit. Only running both directions found the line, which is
+// branching on the type rather than reading it.
+//
+// An eighth, false-alarm again and on a shape this codebase already
+// contains: a branch reached through an accessor rather than by selecting
+// the field.
+//
+//	a walker reaching suffix via n.SuffixNode(), before -> accused of skipping it
+//	the same, after                                     -> accepted
+//	the accessor mentioned but not walked               -> still caught
+//	PrefixNode(), which decodes rather than returning   -> not treated as an alias
+//
+// The last two are what keep the resolution from becoming a hiding place:
+// an accessor must not launder a skipped branch, and a method that does work
+// is not an alias for the field it reads.
 func TestEveryNestedBranchIsInventoriedAndWalked(t *testing.T) {
 	branches := nodeBearingBranches(t)
 
@@ -249,6 +297,81 @@ var rawBranchAccessors = map[string]string{
 	"Scroll": "",
 }
 
+// fieldTypeCarriesNode reports whether a field of Node can hold another Node,
+// whatever shape the type is built out of.
+//
+// # Why this asks the type and not the source text
+//
+// It used to compare the *spelling*: `typ == "*Node" || typ == "[]*Node"`.
+// Those are the two shapes the format happens to use today, which made the
+// set of node-bearing shapes the last thing in this audit that was
+// enumerated — every other axis is derived. Measured, with the whole suite
+// green:
+//
+//	Slots map[string]*Node `json:"slots,omitempty"`   (read by renderText only)
+//	  {"type":"box", "slots":{"footer":{…}}}                     -> clean, 0 warnings, never drawn
+//	  {"type":"text","slots":{"footer":{…,"bind":"totally.invented"}}} -> clean, never refused
+//
+// Both halves of the defect, at once: the silent drop and the containment
+// failure. `map[string]*Node` is not a contrived spelling — "named regions"
+// is exactly how a format grows slots — and neither is `[][]*Node` for a
+// grid, or a named slice type. Each would have been its own recurrence
+// against a list of two spellings.
+//
+// Reflection rather than the AST, because the question is about the type and
+// go/types already answers it: walk pointers, slices, arrays and maps (keys
+// included, since a map keyed by a node is still a node-bearing field) down
+// to whatever they are built from, and ask whether any of it is Node. A named
+// type, an alias and a package-qualified spelling are all the same
+// reflect.Type, which is the whole point — the same reason
+// TestEveryVocabularyReflectsANamedType exists.
+func fieldTypeCarriesNode(fieldName string) bool {
+	field, ok := reflect.TypeOf(Node{}).FieldByName(fieldName)
+	if !ok {
+		return false
+	}
+	return typeContainsNode(field.Type, make(map[reflect.Type]bool))
+}
+
+// typeContainsNode reports whether a type is, or is built out of, Node.
+//
+// The `seen` set is not defensive decoration: Node reaches Node through
+// Children, so an unguarded walk does not terminate.
+func typeContainsNode(t reflect.Type, seen map[reflect.Type]bool) bool {
+	if t == nil || seen[t] {
+		return false
+	}
+	seen[t] = true
+
+	if t == reflect.TypeOf(Node{}) {
+		return true
+	}
+
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		return typeContainsNode(t.Elem(), seen)
+	case reflect.Map:
+		return typeContainsNode(t.Elem(), seen) || typeContainsNode(t.Key(), seen)
+	}
+	return false
+}
+
+// fieldTypeIsRawMessage reports whether a field defers its shape to a raw
+// JSON value, whatever that type is called at the declaration.
+//
+// json.RawMessage is an alias for []byte, so comparing the resolved type
+// accepts every spelling of it. That is the same argument fieldTypeCarriesNode
+// makes about *Node, applied to the other half of the classification: a guard
+// that asks the type checker must not be left asking about source text
+// anywhere, because the one place it still does is where the next branch hides.
+func fieldTypeIsRawMessage(fieldName string) bool {
+	field, ok := reflect.TypeOf(Node{}).FieldByName(fieldName)
+	if !ok {
+		return false
+	}
+	return field.Type == reflect.TypeOf(json.RawMessage(nil))
+}
+
 // nodeBearingBranches derives, from Node's declaration, the branches that
 // carry another node.
 //
@@ -301,9 +424,18 @@ func nodeBearingBranches(t *testing.T) []nestedBranchField {
 	// tomorrow would be silently treated as carrying no node — the same
 	// classification-by-omission that kept `children` out of
 	// nestedFormReaders for five recurrences.
+	//
+	// Which fields are raw is asked of the type rather than of its
+	// spelling, for fieldTypeCarriesNode's reason — and this line was
+	// found by the rule that came out of that fix rather than by another
+	// injection: list what a derived guard still hardcodes, and the next
+	// defect is on the list. It compared source text against
+	// "json.RawMessage", so a deferred-shape branch declared through an
+	// alias (`Caption RawSlot`) was neither raw nor node-bearing and
+	// escaped both halves of this audit with the whole suite green.
 	declaredRaw := make(map[string]bool)
-	for name, typ := range types {
-		if typ == "json.RawMessage" {
+	for name := range types {
+		if fieldTypeIsRawMessage(name) {
 			declaredRaw[name] = true
 		}
 	}
@@ -330,12 +462,11 @@ func nodeBearingBranches(t *testing.T) []nestedBranchField {
 
 	var out []nestedBranchField
 	for _, f := range fields {
-		typ := types[f.name]
 		selector := ""
 		switch {
-		case typ == "*Node" || typ == "[]*Node":
+		case fieldTypeCarriesNode(f.name):
 			selector = f.name
-		case typ == "json.RawMessage":
+		case fieldTypeIsRawMessage(f.name):
 			selector = rawBranchAccessors[f.name]
 		}
 		if selector == "" {
@@ -680,32 +811,69 @@ func calleeObject(call *ast.CallExpr, info *types.Info) types.Object {
 // Selecting `Type` is resolved through the type checker, so `c.Type` on some
 // other struct is not this field — the standing rule that a guard which can
 // ask the type checker must not match a spelling.
+//
+// # Why it asks about the whole body rather than two statement kinds
+//
+// It used to look only at a switch's tag and an if's condition, which is the
+// same enumeration this file keeps finding one level in: those are the two
+// places the *existing* renderers happen to put the test. Measured, on a
+// renderer dispatching through a tagless switch — ordinary Go, and how a
+// dispatch is written the moment one arm needs a compound condition:
+//
+//	switch {
+//	case n.Type == "text": …
+//	}
+//	  -> the audit reported it as a walker skipping prefix and row_template
+//
+// That is the **false-alarm direction**, which borderVocabulary's comment
+// records the cost of: a guard that fires on working code is one people learn
+// to switch off. A missed exemption is not a missed defect, but it is the
+// failure that gets the whole audit deleted.
+//
+// The first attempt at widening it went too far and the floor caught it
+// immediately: asking merely whether the body *reads* `n.Type` exempted all
+// four real walkers, because every one of them reads the type to name it in
+// a diagnostic (`node type %q declares …`). The audit dropped to one walker
+// and the floor failed the run. Reading the type is not the property —
+// **branching on it is.** A renderer asks what kind of node it has in order
+// to decide what to do; a walker asks in order to print it.
+//
+// So the test is: does any control-flow condition in this function depend on
+// `n.Type`? That covers a tagged switch, a tagless switch, an `if`, and the
+// compound conditions each of those can carry, without exempting a function
+// that merely mentions the field. The two failures bracket it — too narrow
+// slanders a renderer, too broad deletes the audit — and only running both
+// directions located the line between them.
 func dispatchesOnType(body *ast.BlockStmt, info *types.Info) bool {
 	found := false
+
+	// conditions are the expressions that steer control flow. A switch tag
+	// is one; so is every case expression of a tagless switch, and so is
+	// each if condition, including the ones nested inside them.
+	var conditions []ast.Expr
 	ast.Inspect(body, func(n ast.Node) bool {
-		if found {
-			return false
-		}
-		var subject ast.Expr
 		switch s := n.(type) {
 		case *ast.SwitchStmt:
-			subject = s.Tag
+			if s.Tag != nil {
+				conditions = append(conditions, s.Tag)
+			}
+		case *ast.CaseClause:
+			conditions = append(conditions, s.List...)
 		case *ast.IfStmt:
-			subject = s.Cond
-		default:
-			return true
-		}
-		if subject == nil {
-			return true
-		}
-		for _, sel := range nodeSelectorsIn(subject, info) {
-			if sel == "Type" {
-				found = true
-				return false
+			if s.Cond != nil {
+				conditions = append(conditions, s.Cond)
 			}
 		}
 		return true
 	})
+
+	for _, cond := range conditions {
+		for _, sel := range nodeSelectorsIn(cond, info) {
+			if sel == "Type" {
+				found = true
+			}
+		}
+	}
 	return found
 }
 
@@ -914,6 +1082,14 @@ func childrenOf(n ast.Node) []ast.Node {
 // and the same rule AGENTS.md states — when a guard can ask the type checker,
 // matching on an identifier name is a different question — is what keeps the
 // containment check from being satisfied by a coincidence of spelling.
+// A method is additionally resolved to the field it returns, and that is not
+// a convenience. The audit records which branch a walker reached by the
+// *name* of what was selected, so `n.Suffix` and an accessor `n.SuffixNode()`
+// returning the same field looked like two different branches. Measured: a
+// walker changed to reach suffix through such an accessor — which is how
+// `prefix` is already reached, via PrefixNode() — was reported as skipping a
+// branch it walks correctly. The false-alarm direction again, and this time
+// on a shape the codebase already contains.
 func nodeSelectorsIn(e ast.Expr, info *types.Info) []string {
 	var out []string
 	ast.Inspect(e, func(n ast.Node) bool {
@@ -923,10 +1099,93 @@ func nodeSelectorsIn(e ast.Expr, info *types.Info) []string {
 		}
 		if selection, ok := info.Selections[sel]; ok && isSceneNode(selection.Recv()) {
 			out = append(out, sel.Sel.Name)
+			if field, ok := accessorReturnsField(sel.Sel.Name); ok {
+				out = append(out, field)
+			}
 		}
 		return true
 	})
 	return out
+}
+
+// accessorFields maps each method of Node that simply hands back a branch to
+// the field it returns. It is derived from the method bodies, not written
+// down: an accessor added tomorrow is covered the day it lands, which is the
+// whole argument this file keeps making about hand-written inventories.
+var accessorFields = sync.OnceValue(func() map[string]string {
+	out := make(map[string]string)
+
+	fset := token.NewFileSet()
+	files, err := parseDir(fset, ".")
+	if err != nil {
+		return out
+	}
+
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || fn.Recv == nil {
+				continue
+			}
+			// Only methods on Node, and only ones whose result is a
+			// branch of it.
+			if !strings.Contains(exprString(fn.Recv.List[0].Type), "Node") {
+				continue
+			}
+			if field, ok := returnedNodeField(fn.Body); ok {
+				out[fn.Name.Name] = field
+			}
+		}
+	}
+	return out
+})
+
+func accessorReturnsField(method string) (string, bool) {
+	field, ok := accessorFields()[method]
+	return field, ok
+}
+
+// returnedNodeField reports the field a body hands back, when every return it
+// makes is either that field or nil.
+//
+// The "every return" condition is what keeps this from over-claiming.
+// PrefixNode() returns nil for a string prefix and a decoded node otherwise —
+// it does not hand back a field at all — so it is not an alias for PrefixRaw
+// and must not be recorded as one. A method that sometimes returns something
+// else is doing work, and what it reaches has to be read from its body like
+// any other walker's.
+func returnedNodeField(body *ast.BlockStmt) (string, bool) {
+	field := ""
+	consistent := true
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		ret, ok := n.(*ast.ReturnStmt)
+		if !ok || len(ret.Results) != 1 {
+			return true
+		}
+		switch r := ret.Results[0].(type) {
+		case *ast.Ident:
+			if r.Name != "nil" {
+				consistent = false
+			}
+		case *ast.SelectorExpr:
+			// `n.Suffix` — a field of the receiver.
+			if _, isIdent := r.X.(*ast.Ident); !isIdent {
+				consistent = false
+				return true
+			}
+			if field != "" && field != r.Sel.Name {
+				consistent = false
+				return true
+			}
+			field = r.Sel.Name
+		default:
+			consistent = false
+		}
+		return true
+	})
+
+	return field, consistent && field != ""
 }
 
 // exprString renders a type expression in the spelling the struct uses.
