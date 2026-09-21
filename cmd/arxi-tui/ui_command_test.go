@@ -1,11 +1,15 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
 	"github.com/michiTrader/arxi_tui/internal/term"
+	"github.com/michiTrader/arxi_tui/internal/theme"
 )
 
 // enter is the only key these tests send. The dispatch is defined by what it
@@ -27,8 +31,7 @@ func liveScene(t *testing.T) *scene.Document {
 }
 
 // TestACompleteUiCommandIsNotSwallowedByTheSlashMenu is the guard for the dead
-// end this wiring was written to fix, and it is the one test here that fails
-// against the code as it stood before the dispatch existed.
+// end this wiring was written to fix.
 //
 // The slash menu filters on the whole typed string, so the match count drops
 // to zero as soon as an argument is typed ("ui" -> 1, "ui style" -> 0,
@@ -38,15 +41,63 @@ func liveScene(t *testing.T) *scene.Document {
 // empty list, which reads as the interface being busy rather than as a key
 // being dropped.
 //
-// The guard asks the dispatch to claim the key. If /ui is ever moved back
-// behind the menu, this fails instead of the command silently going quiet.
+// # Why this one drives the real loop when the others call the function
+//
+// The first draft of this guard called uiCommandKey directly, as its five
+// siblings do, and it passed. So did the defect: welding the dispatch back
+// behind the slash menu — restoring the exact dead end above — left this test
+// green and the whole package green. A guard that calls the handler itself
+// can only ask whether the handler is correct, and the handler was never the
+// problem; the *order of the branches that reach it* was, and that order does
+// not exist inside the function under test.
+//
+// That is the shape this repo keeps paying for: a test measuring a component
+// while the defect lives in the composition. So this one types the command
+// into loop() through the scripted TTY the other loop tests use, which is the
+// only place the ordering is observable. Verified by injection: with the
+// dispatch moved behind the menu this fails, and it is the only test in the
+// package that does.
 func TestACompleteUiCommandIsNotSwallowedByTheSlashMenu(t *testing.T) {
+	doc, err := scene.ParseFile("../../testdata/SOBRIA.json")
+	if err != nil {
+		t.Fatalf("the shipped default scene must parse, and it did not: %v", err)
+	}
+
+	// "/ui style status dim" then Enter, then the escape gesture to leave.
+	script := []scheduledEvent{{0, keyEvent('/')}}
+	for _, r := range "ui style status dim" {
+		script = append(script, scheduledEvent{5 * time.Millisecond, keyEvent(r)})
+	}
+	script = append(script,
+		scheduledEvent{10 * time.Millisecond, enterEvent()},
+		scheduledEvent{50 * time.Millisecond, ctrlCharEvent('c')},
+		scheduledEvent{50 * time.Millisecond, ctrlCharEvent('c')},
+	)
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: make(chan fold.Event, 64), seq: 1000}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	out := tty.output()
+	if !strings.Contains(out, "styled") {
+		t.Errorf("a complete /ui command typed into the running interface produced no report of the change.\n  screen:\n%s\nConsequence: the slash menu filters on the whole typed string, so it matches nothing once an argument is present, and its Enter branch returns the buffer untouched — the command does nothing at all, with no refusal and no prompt, while the menu shows an empty list. That reads as the interface being busy rather than as a dropped key.\nRemedy: keep the /ui dispatch ahead of the slash menu in loop()'s key handler; a guard that calls uiCommandKey directly cannot see this, because the defect is in the order of the branches, not in the handler.", out)
+	}
+}
+
+// TestASubmittedUiCommandIsClaimedAndClearsTheBuffer covers the handler's own
+// contract, which the loop-level guard above deliberately does not ask about.
+func TestASubmittedUiCommandIsClaimedAndClearsTheBuffer(t *testing.T) {
 	doc := liveScene(t)
 	notice := ""
 
 	handled, next := uiCommandKey("/ui style status dim", enter(), &doc, &notice)
 	if !handled {
-		t.Fatal("a complete /ui command must be claimed by the command surface.\nConsequence: the slash menu filters on the whole typed string, so it matches nothing once an argument is present, and its Enter branch returns the buffer untouched — the command does nothing at all, with no refusal and no prompt.\nRemedy: keep the /ui dispatch ahead of the slash menu in the key handler.")
+		t.Fatal("a complete /ui command must be claimed by the command surface.\nConsequence: it falls through to the prompt path and a control command is sent to the model as chat.\nRemedy: claim the line in uiCommandKey.")
 	}
 	if next != "" {
 		t.Errorf("a submitted command must clear the input buffer.\n  got: %q\nConsequence: the line stays on screen after it ran, so the user cannot tell whether it was applied and re-submits it.\nRemedy: return an empty buffer once the command is handled.", next)
