@@ -218,6 +218,17 @@ func TestTheRealLogFoldsWithoutLosingTheRunState(t *testing.T) {
 // the log that says WHAT THE AGENT DID. That is a judgement about what a
 // person watching a run needs to see, not a result of counting, so it is
 // recorded as a judgement.
+//
+// stage.* now closes it to 120/122 (98.4%). The arithmetic was re-done here
+// rather than carried over: 113 + 7 = 120, and the pin is what forced that,
+// failing with "coverage = 120/122, want 113" the moment the cases landed.
+//
+// The number is the least interesting part of the change. Reading the
+// emission sites for these seven events contradicted the plan in four
+// places -- no stage total exists anywhere in the log, agent.turn_done was
+// erasing the submitted state one event after it was set, the two emitters
+// of stage.submitted disagree about the payload, and stage.timeout is not a
+// failure. Each is pinned by its own test below.
 func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 	events := replayBytes(t, realRunLog(t))
 
@@ -237,8 +248,8 @@ func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 	}
 	// The re-measured figure, pinned again. A Handles() that claimed
 	// everything (or nothing) would move this and say so.
-	if known != 113 {
-		t.Errorf("coverage = %d/%d events folded, want 113: the figure is pinned "+
+	if known != 120 {
+		t.Errorf("coverage = %d/%d events folded, want 120: the figure is pinned "+
 			"so that a change in what the fold handles -- or in what the core "+
 			"emits -- is a deliberate re-measurement and not a drift",
 			known, len(events))
@@ -254,6 +265,7 @@ func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 		"exec.step_completed", "exec.work_started", "exec.work_prepared",
 		"exec.work_finished", "run.result",
 		"tool.call", "tool.call_completed",
+		"stage.entered", "stage.submitted", "stage.advanced",
 	} {
 		if unhandled[ty] != 0 {
 			t.Errorf("%s went back to being unhandled: the fold learned this "+
@@ -263,14 +275,24 @@ func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 	}
 
 	// What is STILL invisible, named and counted rather than left as a
-	// rounding error. These nine are the next piece of work: stage.* is where
-	// the run sits in its blueprint and timer.* is plumbing.
+	// rounding error. Two events, both timer.*.
 	//
-	// tool.call and tool.call_completed left this list this turn. They are
-	// now asserted PRESENT in the loop above, so the two halves of the
-	// accounting cannot both be edited to agree with a wrong total.
+	// The three stage.* types left this list this turn and are asserted
+	// PRESENT in the loop above, so the two halves of the accounting cannot
+	// both be edited to agree with a wrong total.
+	//
+	// timer.* is the honest remainder and is NOT claimed as nearly-done.
+	// The pair here (one scheduled, one cancelled) is a stage deadline armed
+	// on entry and cancelled when the quorum was met -- a timer that did
+	// exactly what it should and never fired. The event a host actually
+	// needs is the one this log does not contain: stage.timeout, the case
+	// where the deadline WAS reached. The fold handles that type already
+	// (it is in the handled set and has a case explaining why its correct
+	// projection is no state change), but handling it contributes zero here,
+	// and that is stated rather than counted, because a coverage figure that
+	// scored handled TYPES instead of handled EVENTS would claim credit for
+	// an event the measured run never emits.
 	stillBlind := map[string]int{
-		"stage.entered": 2, "stage.submitted": 4, "stage.advanced": 1,
 		"timer.scheduled": 1, "timer.cancelled": 1,
 	}
 	var blindTotal int
