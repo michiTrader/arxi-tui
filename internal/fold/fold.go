@@ -24,6 +24,42 @@ type State struct {
 	TeamMembers       []TeamMember `json:"team.members"`
 	QuiescentDiag     string       `json:"run.quiescent.diagnosis"`
 
+	// Run verdict (run.result). The core emits run.result ONLY on success:
+	// kernel/decide.go's `case RunResult` sets Status = StatusSucceeded
+	// unconditionally, and the two emission sites (decide.go:554 "all stages
+	// completed" and decide.go:720 "last stage expired, advancing") are both
+	// advance paths. Failure never produces a run.result -- it produces
+	// run.cancelled, run.expired, or a status transition with no event of its
+	// own (quiescent-with-no-observer, inbox timeout with on_timeout:fail).
+	//
+	// So reading run.result answers "did the run succeed", and its ABSENCE is
+	// not "it failed" -- it is "no verdict yet". Collapsing those two into one
+	// boolean is exactly the class of error this repo keeps finding, so the
+	// bind is a three-valued string and not a bool.
+	RunOutcome string `json:"run.outcome"` // "" (no verdict yet) | "succeeded"
+	// RunSummary is run.result.summary: the run's own sentence about itself.
+	RunSummary string `json:"run.summary"`
+	// RunResultFrom is run.result.result_from: which blueprint rule produced
+	// the verdict. Present on the stage-completion path, absent on the
+	// expiry path, so an empty string here is meaningful rather than missing.
+	RunResultFrom string `json:"run.result_from"`
+
+	// Durable execution progress (exec.*). This family is 91 of the 122
+	// events in the measured real run -- 74.6% of the log -- and the fold
+	// ignored all of it, so the host was blank for the entire execution of a
+	// run and only twitched on the four llm.response events.
+	//
+	// These are operational facts, not reducer inputs: kernel/event.go says
+	// "They never wake watchers or cause quiescence decisions". The host
+	// treats them the same way -- they drive a progress indicator, never a
+	// verdict.
+	ExecActive    uint   `json:"exec.active"`    // started and not yet finished
+	ExecCompleted uint   `json:"exec.completed"` // terminal status "completed"
+	ExecFailed    uint   `json:"exec.failed"`    // terminal status "failed"
+	ExecUnknown   uint   `json:"exec.unknown"`   // terminal status "unknown"
+	ExecCursor    int64  `json:"exec.cursor"`    // highest exec.step_completed source_seq
+	ExecPhase     string `json:"exec.phase"`     // "idle" | "working"
+
 	// agent.todos is the list of pending agent tasks (BINDS.md §4.1). Each
 	// entry carries the task text, what it is blocked on, and the actor that
 	// owns it. A list node bound to agent.todos renders one row per entry.
@@ -70,6 +106,24 @@ type State struct {
 
 	// Internal state for tracking team members across events
 	members map[string]*TeamMember
+
+	// started is the set of work_ids that emitted exec.work_started.
+	//
+	// It exists because counting `started - finished` underflows. Control
+	// work (Emit, SetTimer, CancelTimer, Snapshot) never crosses the durable
+	// start boundary: exec.go's runDurableControl calls finishWork directly,
+	// so those works are prepared and finished with no start in between. In
+	// the measured log 23 works are prepared, 23 finish, and only 16 ever
+	// start -- a naive counter ends the run at -7 active.
+	//
+	// Decrementing only for work that was actually seen starting is what
+	// keeps ExecActive a count of things in flight rather than an arithmetic
+	// artefact.
+	started map[string]bool
+	// finishedWork guards against double-counting a terminal status. The
+	// core's Recover() tolerates a repeated exec.work_finished as long as the
+	// status agrees, so a replay that sees one twice must not count it twice.
+	finishedWork map[string]bool
 }
 
 // Fold is the pure reducer: events in, view-state out. It is deterministic.
@@ -85,7 +139,10 @@ func Fold(events []Event) State {
 		ModelName:    "",
 		UISurface:    "chat", // default surface per BINDS.md §4.3
 		StatusActive: "true", // status row visible unless the slash menu is open
+		ExecPhase:    "idle", // nothing in flight before the first work starts
 		members:      make(map[string]*TeamMember),
+		started:      make(map[string]bool),
+		finishedWork: make(map[string]bool),
 	}
 	for _, e := range events {
 		s.apply(e)
@@ -95,7 +152,20 @@ func Fold(events []Event) State {
 	s.deriveSessionTokensUsed()
 	s.deriveTodosCount()
 	s.deriveTeamMembers()
+	s.deriveExecPhase()
 	return s
+}
+
+// deriveExecPhase reduces the work counters to the one word a status row can
+// show. It is derived rather than set in apply() so that it cannot disagree
+// with ExecActive: a phase written at event time and a count written at event
+// time are two places to get the same fact wrong.
+func (s *State) deriveExecPhase() {
+	if s.ExecActive > 0 {
+		s.ExecPhase = "working"
+		return
+	}
+	s.ExecPhase = "idle"
 }
 
 // handled is the set of event types apply() has a case for.
@@ -103,11 +173,20 @@ func Fold(events []Event) State {
 // It exists because the coverage question could not be asked before: the only
 // events this fold had ever seen were the eight the Phase 0 mock emits, and
 // every one of them is handled by construction. Measured against a real
-// 121-event run log written by the arxi core, ten types are handled and twelve
-// are not -- and the unhandled twelve are the bulk of the file (the exec.*
-// family alone is 91 events). A fold that ignores the majority of a run is a
-// host that is blank while the run works, so the gap is named here rather than
-// discovered by watching an empty screen.
+// 122-event run log written by the arxi core, ten types were handled and
+// twelve were not -- and the unhandled twelve were the bulk of the file.
+//
+// This commit closes the largest part of that gap: the exec.* family (91
+// events, 74.6% of the log) and run.result (the run's own verdict). Coverage
+// goes 13/122 -> 105/122 (10.7% -> 86.1%).
+//
+// It does NOT close all of it, and the arithmetic is worth stating plainly
+// because the previous turn's note got it wrong: 89% (109/122) was the total
+// unhandled figure, not the exec.* share. Seventeen events remain invisible
+// after this change -- tool.call x4, tool.call_completed x4, stage.entered x2,
+// stage.submitted x4, stage.advanced x1, timer.scheduled x1,
+// timer.cancelled x1 -- and they are the next piece of work, not a rounding
+// error.
 //
 // The list must be kept beside the switch. A type added to one and not the
 // other makes Handles lie, which is why there is a test that walks the real
@@ -123,6 +202,17 @@ var handled = map[string]bool{
 	"agent.unblocked": true,
 	"run.quiescent":   true,
 	"ui.state":        true,
+
+	// Durable execution progress, per kernel/event.go's "durable execution
+	// progress" block. Operational facts: they drive a progress indicator and
+	// never a verdict.
+	"exec.work_prepared":  true,
+	"exec.work_started":   true,
+	"exec.work_finished":  true,
+	"exec.step_completed": true,
+
+	// The run's verdict. Success only -- see State.RunOutcome.
+	"run.result": true,
 }
 
 // Handles reports whether the fold does anything with this event type.
@@ -316,6 +406,112 @@ func (s *State) apply(e Event) {
 		// Quiescence diagnosis: why the run is stuck (BINDS.md §4.1)
 		if diag, ok := e.Payload["diagnosis"].(string); ok {
 			s.QuiescentDiag = diag
+		}
+
+	case "exec.work_prepared":
+		// A unit of work was bound and is about to be attempted. The fold
+		// deliberately does NOT count this as active: preparation is not
+		// dispatch, and control work is prepared and finished without ever
+		// starting. Counting it here is what would make the indicator claim
+		// work in flight that the executor never dispatched.
+		//
+		// The event is handled (not ignored) because its absence is what
+		// makes a later start or finish invalid -- the core's Recover()
+		// refuses work that "starts before it is prepared". The host does not
+		// refuse, it is not the kernel, but it does acknowledge the record.
+
+	case "exec.work_started":
+		// The durable start boundary was crossed: real, possibly paid,
+		// possibly mutating work is now in flight.
+		id, ok := e.Payload["work_id"].(string)
+		if !ok || id == "" {
+			// A start with no work_id cannot be paired with its finish, so
+			// counting it would leak an active forever.
+			break
+		}
+		if s.started[id] {
+			// Replay saw the same start twice; it is still one unit of work.
+			break
+		}
+		s.started[id] = true
+		s.ExecActive++
+
+	case "exec.work_finished":
+		// Terminal outcome for one unit of work. The status vocabulary is
+		// fixed by the core: progress.go refuses anything that is not
+		// "completed", "failed", or "unknown".
+		//
+		// "unknown" is not a synonym for "failed" and must not be folded into
+		// it. exec.go: ErrUnknownWork means "external work has an unknown
+		// outcome" -- the dispatch crossed its start boundary and no terminal
+		// truth was committed, so retrying could duplicate paid work. The run
+		// stops rather than guess. A host that displayed that as a failure
+		// would be asserting something the core explicitly refuses to assert.
+		id, _ := e.Payload["work_id"].(string)
+		if id != "" && s.finishedWork[id] {
+			break // already counted; Recover() tolerates a repeated record
+		}
+		if id != "" {
+			s.finishedWork[id] = true
+		}
+		// Only decrement for work that was seen starting. Control work
+		// (Emit/SetTimer/CancelTimer/Snapshot) finishes without a start, and
+		// subtracting for it drove the counter to -7 on the measured log.
+		if id != "" && s.started[id] {
+			delete(s.started, id)
+			if s.ExecActive > 0 {
+				s.ExecActive--
+			}
+		}
+		switch status, _ := e.Payload["status"].(string); status {
+		case "completed":
+			s.ExecCompleted++
+		case "failed":
+			s.ExecFailed++
+		case "unknown":
+			s.ExecUnknown++
+		}
+
+	case "exec.step_completed":
+		// One domain event has been fully executed. source_seq is the durable
+		// cursor: the core's Recover() uses it to know where a resumed run
+		// may safely continue, and it advances one domain event at a time.
+		//
+		// JSON numbers decode as float64. Reading it as int64 directly would
+		// leave the cursor at zero -- the same silent-zero failure the
+		// `seq`/`sequence` decoder bug produced, so it is spelled out rather
+		// than assumed.
+		if v, ok := e.Payload["source_seq"].(float64); ok {
+			if c := int64(v); c > s.ExecCursor {
+				s.ExecCursor = c
+			}
+		}
+
+	case "run.result":
+		// The run's verdict, and it only ever means success.
+		//
+		// kernel/decide.go `case RunResult` sets Status = StatusSucceeded
+		// with no branch on the payload. Both emission sites are advance
+		// paths. A failing run never emits this event at all -- it goes to
+		// run.cancelled, run.expired, or to a status change carried by no
+		// event (quiescent with no observer; inbox timeout with
+		// on_timeout:fail).
+		//
+		// Therefore: presence => succeeded, absence => no verdict yet. NOT
+		// failure. The bind is a string with an empty zero value so that the
+		// scene can distinguish "still running" from "done", which a bool
+		// cannot express.
+		//
+		// This event is also NOT the end of the log. In the measured run it
+		// lands at seq 112 and ten more events follow (one work_finished and
+		// nine step_completed, seq 113-122) as the executor drains. A fold
+		// that stopped here would truncate the tail.
+		s.RunOutcome = "succeeded"
+		if v, ok := e.Payload["summary"].(string); ok {
+			s.RunSummary = v
+		}
+		if v, ok := e.Payload["result_from"].(string); ok {
+			s.RunResultFrom = v
 		}
 
 	case "ui.state":
