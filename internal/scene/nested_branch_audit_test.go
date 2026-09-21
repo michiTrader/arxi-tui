@@ -153,6 +153,19 @@ import (
 // at one walker out of four. Too narrow slanders a renderer; too broad
 // deletes the audit. Only running both directions found the line, which is
 // branching on the type rather than reading it.
+//
+// An eighth, false-alarm again and on a shape this codebase already
+// contains: a branch reached through an accessor rather than by selecting
+// the field.
+//
+//	a walker reaching suffix via n.SuffixNode(), before -> accused of skipping it
+//	the same, after                                     -> accepted
+//	the accessor mentioned but not walked               -> still caught
+//	PrefixNode(), which decodes rather than returning   -> not treated as an alias
+//
+// The last two are what keep the resolution from becoming a hiding place:
+// an accessor must not launder a skipped branch, and a method that does work
+// is not an alias for the field it reads.
 func TestEveryNestedBranchIsInventoriedAndWalked(t *testing.T) {
 	branches := nodeBearingBranches(t)
 
