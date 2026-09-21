@@ -200,10 +200,18 @@ func TestTheRealLogFoldsWithoutLosingTheRunState(t *testing.T) {
 // TestTheRealLogCoverageIsMeasuredNotAssumed states the gap as a number under
 // test rather than a note in a comment.
 //
-// The fold recognises ten event types; the real log contains twenty-two, and
-// the twelve it does not know are the overwhelming majority of the file. Those
-// fold to nothing, so the host is silent for the entire execution of a run and
-// only reacts to the four llm.response events.
+// It has now been re-measured once, deliberately, which is what the pin was
+// for. The previous figure was 13/122: the fold knew ten event types and the
+// real log contains sixteen, so the host was blank for the entire execution
+// of a run and only twitched on the four llm.response events. Teaching it the
+// exec.* family and run.result moves the figure to 105/122.
+//
+// The arithmetic is spelled out because the note that motivated this change
+// had it wrong. "exec.* and run.result, which is 89% of the real log" was
+// two numbers welded together: 109/122 = 89.3% is EVERYTHING unhandled, while
+// exec.* (91) + run.result (1) = 92 = 75.4%. Acting on the 89% figure would
+// have meant reporting full coverage at the end of a change that leaves 17
+// events invisible.
 func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 	events := replayBytes(t, realRunLog(t))
 
@@ -221,10 +229,10 @@ func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 		t.Fatal("the fold recognised none of the core's event types, which " +
 			"means the type vocabulary is wrong end to end")
 	}
-	// The measured figure, pinned. 13 of 122 lines fold; a Handles() that
-	// claimed everything (or nothing) would move this and say so.
-	if known != 13 {
-		t.Errorf("coverage = %d/%d events folded, want 13: the figure is pinned "+
+	// The re-measured figure, pinned again. A Handles() that claimed
+	// everything (or nothing) would move this and say so.
+	if known != 105 {
+		t.Errorf("coverage = %d/%d events folded, want 105: the figure is pinned "+
 			"so that a change in what the fold handles -- or in what the core "+
 			"emits -- is a deliberate re-measurement and not a drift",
 			known, len(events))
@@ -233,27 +241,43 @@ func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 		"unhandled types %v", known, len(events), len(events)-known,
 		len(unhandled), sortedKeys(unhandled))
 
-	// The exec.* family is the bulk of a real run and none of it is handled.
-	// Pinning it keeps the gap honest: this is work the roadmap owes, not a
-	// thing that happens to be fine. If the fold learns these types the test
-	// fails and the coverage figure gets re-measured deliberately.
+	// The families that are now handled. Pinned as PRESENT so that a
+	// regression which quietly drops one of them fails here rather than
+	// showing up as a blank progress indicator.
 	for _, ty := range []string{
 		"exec.step_completed", "exec.work_started", "exec.work_prepared",
-		"exec.work_finished", "tool.call", "tool.call_completed",
-		"stage.entered", "stage.advanced", "stage.submitted", "run.result",
+		"exec.work_finished", "run.result",
 	} {
-		if unhandled[ty] == 0 {
-			t.Errorf("%s is no longer unhandled (or no longer in the log): "+
-				"re-measure the coverage figure above rather than letting it "+
-				"drift", ty)
+		if unhandled[ty] != 0 {
+			t.Errorf("%s went back to being unhandled: the fold learned this "+
+				"type deliberately and losing it makes the host silent for "+
+				"%d events", ty, unhandled[ty])
 		}
 	}
 
-	// run.result is the run's own verdict and the fold ignores it. Worth
-	// naming separately: the host cannot tell a run that succeeded from one
-	// that failed, which is the single most important thing a run says.
-	if fold.Handles("run.result") {
-		t.Skip("the fold now reads run.result: re-measure")
+	// What is STILL invisible, named and counted rather than left as a
+	// rounding error. These seventeen are the next piece of work: tool.call
+	// and tool.call_completed are what the agent actually did, and stage.*
+	// is where the run is in its blueprint.
+	stillBlind := map[string]int{
+		"tool.call": 4, "tool.call_completed": 4,
+		"stage.entered": 2, "stage.submitted": 4, "stage.advanced": 1,
+		"timer.scheduled": 1, "timer.cancelled": 1,
+	}
+	var blindTotal int
+	for ty, want := range stillBlind {
+		if unhandled[ty] != want {
+			t.Errorf("%s: %d unhandled, expected %d. The remaining blind spot "+
+				"is tracked as an exact figure so that closing part of it is a "+
+				"re-measurement and not a drift", ty, unhandled[ty], want)
+		}
+		blindTotal += want
+	}
+	if blindTotal+known != len(events) {
+		t.Errorf("the accounting does not close: %d folded + %d blind != %d "+
+			"events. Every event in the log must be either handled or named "+
+			"in the blind list, or the coverage figure is a guess",
+			known, blindTotal, len(events))
 	}
 }
 
