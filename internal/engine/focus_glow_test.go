@@ -345,3 +345,72 @@ func TestFocusGlowDoesNotOutliveTheFrameThatDrewIt(t *testing.T) {
 		}
 	}
 }
+
+// TestFocusGlowNeverMatchesAnIdLessNode closes a hole the first mutation
+// sweep of this package found.
+//
+// withFocusGlow guards with `if n.ID == "" || state.UIFocus != n.ID`, and the
+// comment beside it argues for the first clause: ui.focus is null at boot and
+// BINDS.md's empty state for it is "no node is focused", so matching ""
+// against "" would glow every id-less node in the tree at exactly the moment
+// nothing has focus -- the inverse of what the property means.
+//
+// The argument was right and nothing tested it. Deleting `n.ID == "" ||`
+// left all 62 tests in this package green, because every focus_glow probe
+// here gives its nodes an id, and an id-less node is the one shape that can
+// tell the two implementations apart. An id is not required on a node nothing
+// addresses, and the Phase 2 corpus has a model writing these scenes, so this
+// is the ordinary case rather than a contrived one.
+//
+// The node below therefore has NO id and a focus_glow, and ui.focus is left
+// empty -- the boot state.
+func TestFocusGlowNeverMatchesAnIdLessNode(t *testing.T) {
+	const src = `{"root":{"id":"root","type":"stack","children":[
+		{"type":"text","text":"alpha","style":{"style":"text"},"focus_glow":{"style":"bright"}},
+		{"id":"named","type":"text","text":"beta","style":{"style":"text"},"focus_glow":{"style":"bright"}}
+	]}}`
+
+	doc, err := scene.ParseDocument([]byte(src))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	if verr := doc.Validate(); verr != nil {
+		t.Fatalf("premise broken: the probe must validate clean, or a missing glow\n"+
+			"below could be a refusal of something else entirely; got %v", verr)
+	}
+	if warns := doc.Warnings(); len(warns) > 0 {
+		t.Fatalf("premise broken: focus_glow must be in the parser vocabulary, or\n"+
+			"the frame below cannot be attributed to the property; got %v", warns)
+	}
+
+	r := Renderer{Width: 40, Height: 10}
+
+	// ui.focus empty: the boot state, and the one that makes "" == "" true.
+	boot := r.RenderFrame(doc, fold.State{})
+	if style := styleOfText(boot, "alpha"); style != "text" {
+		t.Errorf("with ui.focus empty, the id-less node renders under token %q, want %q.\n"+
+			"consequence: \"\" == \"\" matched, so every node without an id wears its glow the\n"+
+			"moment nothing is focused. The property exists to say WHERE focus is; applied to\n"+
+			"everything at once it says nothing, and it is loudest in exactly the state where\n"+
+			"there is nothing to point at -- boot.\n"+
+			"remedy: withFocusGlow must refuse an empty id before comparing it to ui.focus.",
+			style, "text")
+	}
+
+	// The named sibling is the control: it proves the frame renders and the
+	// glow is reachable, so a pass above is the guard working rather than
+	// focus_glow being inert for some unrelated reason.
+	if style := styleOfText(boot, "beta"); style != "text" {
+		t.Errorf("with ui.focus empty, the named node renders under %q, want %q", style, "text")
+	}
+	focused := r.RenderFrame(doc, fold.State{UIFocus: "named"})
+	if style := styleOfText(focused, "beta"); style != "bright" {
+		t.Fatalf("control failed: the named node does not glow when focused (token %q, want\n"+
+			"%q), so this test cannot distinguish a working id guard from a focus_glow that\n"+
+			"never applies at all", style, "bright")
+	}
+	// And focusing a real node must still leave the id-less one alone.
+	if style := styleOfText(focused, "alpha"); style != "text" {
+		t.Errorf("with ui.focus=%q the id-less node renders under %q, want %q", "named", style, "text")
+	}
+}

@@ -23,6 +23,7 @@ Usage:  python3 scripts/weld_sweep.py
 Exit:   0 when every weld is CAUGHT; 1 if any ESCAPED or INVALID.
 """
 
+import argparse
 import hashlib
 import pathlib
 import re
@@ -34,11 +35,25 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FOLD = ROOT / "internal" / "fold" / "fold.go"
 NDJSON = ROOT / "internal" / "driver" / "ndjson.go"
+ENGINE = ROOT / "internal" / "engine" / "render.go"
+SCENE = ROOT / "internal" / "scene" / "validate.go"
 
 # The packages whose tests are the instrument. A weld is CAUGHT only if one of
 # these fails, so a weld in a file no test here exercises reports ESCAPED --
 # which is the correct answer, not a harness bug.
-TEST_PKGS = ["./internal/fold/", "./internal/driver/"]
+#
+# engine and scene joined the list after the sweep had run four times without
+# them. They are the two biggest test packages in the repo -- 62 and 59 tests
+# -- and neither had ever had a weld aimed at it, so their green was the one
+# kind this harness exists to distrust. Two consecutive turns have now found
+# real defects underneath a green suite, which makes "never measured" a
+# statement about the measurement and not about the code.
+TEST_PKGS = [
+    "./internal/fold/",
+    "./internal/driver/",
+    "./internal/engine/",
+    "./internal/scene/",
+]
 
 
 def weld_path(weld):
@@ -441,6 +456,259 @@ WELDS = [
         """		return 0, false, nil""",
         NDJSON,
     ),
+    # --- the stage.* family, and the three defects reading it exposed ---
+    (
+        "stage.entered does not clear the previous stage's submissions",
+        "lets a stale submit satisfy the next stage's advance rule, skipping a stage",
+        """\t\ts.StageSubmissions = []string{}""",
+        """\t\t_ = s.StageSubmissions""",
+    ),
+    (
+        "stage index assigned unconditionally (the silent-zero shape)",
+        "walks a run in stage 3 back to stage 0 on one event with no index key",
+        """\t\tif idx, ok := e.Payload["index"].(float64); ok {
+\t\t\ts.StageIndex = int(idx)
+\t\t}""",
+        """\t\tidx, _ := e.Payload["index"].(float64)
+\t\ts.StageIndex = int(idx)""",
+    ),
+    (
+        "stage index read as int64 rather than float64",
+        "leaves the position at its previous value on every event, with no error",
+        """\t\tif idx, ok := e.Payload["index"].(float64); ok {""",
+        """\t\tif idx, ok := e.Payload["index"].(int64); ok {""",
+    ),
+    (
+        "stage.advanced records only `from`, not the destination",
+        "shows the stage the run has already left when the log ends between the pair",
+        """\t\tif to := str(e.Payload, "to"); to != "" {
+\t\t\ts.StageName = to
+\t\t}""",
+        """\t\tif to := str(e.Payload, "to"); to != "" {
+\t\t\t_ = to
+\t\t}""",
+    ),
+    (
+        "stage.advanced does not move the index",
+        "leaves stage.index one behind stage.name on a truncated log",
+        """\t\tif idx, ok := e.Payload["to_index"].(float64); ok {
+\t\t\ts.StageIndex = int(idx)
+\t\t}""",
+        """\t\tif idx, ok := e.Payload["to_index"].(float64); ok {
+\t\t\t_ = idx
+\t\t}""",
+    ),
+    (
+        "stage.advances never counted",
+        "reports zero transitions for a run that changed stage",
+        """\t\ts.StageAdvances++""",
+        """\t\t_ = s.StageAdvances""",
+    ),
+    (
+        "stage.index defaults to 0 instead of the -1 sentinel",
+        "makes a run that has entered no stage indistinguishable from one in its first",
+        """\t\tStageIndex:   -1,""",
+        """\t\tStageIndex:   0,""",
+    ),
+    (
+        "the submitter is read from payload.agent before the top-level actor",
+        "attributes a submit to a name the core did not consider the member for it",
+        """\t\tactor := e.actorName()
+\t\tif actor != "" {
+\t\t\t// Recorded once per member per stage.""",
+        """\t\tactor := str(e.Payload, "agent")
+\t\tif actor == "" {
+\t\t\tactor = e.Actor
+\t\t}
+\t\tif actor != "" {
+\t\t\t// Recorded once per member per stage.""",
+    ),
+    (
+        "a repeated submit from one member is counted twice",
+        "reports a two-member quorum for a stage one member has answered",
+        """\t\t\tif !seen {
+\t\t\t\ts.StageSubmissions = append(s.StageSubmissions, actor)
+\t\t\t}""",
+        """\t\t\t_ = seen
+\t\t\ts.StageSubmissions = append(s.StageSubmissions, actor)""",
+    ),
+    (
+        "stage.submitted does not set the member state",
+        "the `submitted` state BINDS.md signs is never produced by the fold",
+        """\t\t\tm.State = "submitted\"""",
+        """\t\t\t_ = m""",
+    ),
+    (
+        "submitted count maintained rather than derived from the list",
+        "the badge and the list disagree after any clear",
+        """\ts.StageSubmittedCount = uint(len(s.StageSubmissions))""",
+        """\ts.StageSubmittedCount = s.StageSubmittedCount""",
+    ),
+    (
+        "stage.timeout folded as a run failure",
+        "asserts a verdict the core withheld; escalate leaves the stage open",
+        """\tcase "stage.timeout":""",
+        """\tcase "stage.timeout":
+\t\ts.RunOutcome = "failed"
+\t\ts.StageName = ""
+""",
+    ),
+    (
+        "agent.turn_done overwrites the submitted state",
+        "erases `submitted` one event after it is set; the core guards with !m.Submitted",
+        """\t\t\t\tcase "waiting", "failed", "submitted":""",
+        """\t\t\t\tcase "waiting", "failed":""",
+    ),
+    (
+        "agent.turn_done idles a member waiting on a human",
+        "reports an agent ready for work while its approval sits unanswered",
+        """\t\t\t\tcase "waiting", "failed", "submitted":
+\t\t\t\t\t// State preserved.""",
+        """\t\t\t\tcase "failed", "submitted":
+\t\t\t\t\t// State preserved.""",
+    ),
+    (
+        "agent.turn_done never returns anyone to idle",
+        "leaves every member stuck on `thinking` for the whole run",
+        """\t\t\t\tdefault:
+\t\t\t\t\tm.State = "idle"
+\t\t\t\t}""",
+        """\t\t\t\tdefault:
+\t\t\t\t}""",
+    ),
+    (
+        "agent.blocked resolved by payload.actor only",
+        "attributes every todo to nobody; the core reads out.Member(e.Actor)",
+        """\t\tactor := e.actorName()
+\t\tif actor == "" {
+\t\t\tactor = str(e.Payload, "actor")
+\t\t}
+\t\ts.Todos = append(s.Todos,""",
+        """\t\tactor := str(e.Payload, "actor")
+\t\ts.Todos = append(s.Todos,""",
+    ),
+    (
+        "team.members rendered by ranging the map (nondeterministic)",
+        "the same bytes fold to a different order; goldens and replay fail intermittently",
+        """\tfor _, id := range s.memberOrder {
+\t\tif m, ok := s.members[id]; ok {
+\t\t\ts.TeamMembers = append(s.TeamMembers, *m)
+\t\t}
+\t}""",
+        """\tfor _, m := range s.members {
+\t\ts.TeamMembers = append(s.TeamMembers, *m)
+\t}""",
+    ),
+    (
+        "a newly seen member is not appended to the order list",
+        "the member exists in the map and vanishes from the rendered panel",
+        """\t\t\t\ts.memberOrder = append(s.memberOrder, agent)""",
+        """\t\t\t\t_ = agent""",
+    ),
+
+    # --- internal/engine and internal/scene: 121 tests, never measured ---
+    #
+    # These two packages have the most tests in the repo and no weld had ever
+    # been aimed at either. That combination is exactly what this harness
+    # exists to distrust: this turn and the last both found real defects
+    # sitting under a green suite, so "green without a sweep" has now been
+    # wrong twice in a row on measured evidence.
+    #
+    # The welds below break DECISIONS the source argues for in its own
+    # comments -- the two-spelling style token, the id-equality focus glow,
+    # the placeholder-as-falsy rule -- rather than arbitrary lines. A weld on
+    # a line nobody reasoned about measures typing, not coverage.
+    (
+        "when: the placeholder is treated as a truthy value",
+        "a gated node draws because its bind is UNRESOLVED, which is the opposite of what it means",
+        """\tcase "", "0", "false", placeholderValue:""",
+        """\tcase "", "0", "false":""",
+        ENGINE,
+    ),
+    (
+        "when: \"false\" read as truthy",
+        "every `when`-gated node renders permanently",
+        """\tcase "", "0", "false", placeholderValue:""",
+        """\tcase "", "0", placeholderValue:""",
+        ENGINE,
+    ),
+    (
+        "when: a node with no `when` is hidden rather than shown",
+        "blanks the whole scene; absence of a gate is not a closed gate",
+        """\tif n == nil || n.When == "" {
+\t\treturn false
+\t}""",
+        """\tif n == nil || n.When == "" {
+\t\treturn true
+\t}""",
+        ENGINE,
+    ),
+    (
+        "focus glow: matches on empty id",
+        "glows every id-less node the moment nothing has focus -- the inverse of the property",
+        """\tif n.ID == "" || state.UIFocus != n.ID {""",
+        """\tif state.UIFocus != n.ID {""",
+        ENGINE,
+    ),
+    (
+        "focus glow: written to the document instead of a copy",
+        "the glow becomes permanent; state keyed to the wrong lifetime",
+        """\tglowed := *n
+\tglowed.Style = make(map[string]string, len(n.Style)+1)""",
+        """\tglowed := *n
+\tif n.Style == nil {
+\t\tglowed.Style = make(map[string]string, 1)
+\t\tn.Style = glowed.Style
+\t}
+\tglowed.Style = n.Style""",
+        ENGINE,
+    ),
+    (
+        "focus glow: written under the canonical key only",
+        "a node spelling its token `token` keeps its old style; the two-spelling defect again",
+        """\tfor _, key := range scene.StyleTokenKeys() {
+\t\tglowed.Style[key] = n.FocusGlow.Style
+\t}""",
+        """\tglowed.Style["style"] = n.FocusGlow.Style""",
+        ENGINE,
+    ),
+    (
+        "style token: only the canonical spelling is read",
+        "a scene using the other ACCEPTED spelling passes validation and renders unstyled",
+        """\tfor _, key := range scene.StyleTokenKeys() {
+\t\tif name := style[key]; name != "" {""",
+        """\tfor _, key := range []string{"style"} {
+\t\tif name := style[key]; name != "" {""",
+        ENGINE,
+    ),
+    (
+        "validator: the two accepted style spellings are cut to one",
+        "the validator and the renderer stop agreeing about the vocabulary",
+        """var styleTokenKeys = [...]string{"token", "style"}""",
+        """var styleTokenKeys = [...]string{"style"}""",
+        SCENE,
+    ),
+    (
+        "validator: an unrendered-but-accepted field is no longer refused",
+        "the field is silently dropped -- the checked-but-never-drawn class, with validation reporting success",
+        """\t\tbecause, ok := unrenderedFields[field]
+\t\tif !ok {
+\t\t\tcontinue
+\t\t}""",
+        """\t\tbecause, ok := unrenderedFields[field]
+\t\t_ = because
+\t\tif true || !ok {
+\t\t\tcontinue
+\t\t}""",
+        SCENE,
+    ),
+    (
+        "validator: the candidate union is not sorted before choosing",
+        "names scroll instead of on_press -- stable, and stably the wrong field",
+        """\tsort.Strings(declared)""",
+        """\t_ = sort.Strings""",
+        SCENE,
+    ),
 ]
 
 
@@ -450,7 +718,76 @@ def run(cmd, cwd):
     )
 
 
-def main():
+def parse_args(argv):
+    """--shard i/n runs one slice of the welds; --list prints the inventory.
+
+    Sharding exists because the sweep outgrew the wall-clock budget of the
+    environment it runs in. At 67 welds and a four-package suite it needs
+    roughly half an hour end to end, and this sandbox has been destroyed
+    mid-run: the harness restores sources in a `finally`, but a process that
+    is killed outright never reaches it, and the next session then inherits a
+    working tree with one weld silently pasted into it. A sweep whose failure
+    mode is "the defect is now in the source and the log that would say so is
+    gone" is worse than no sweep.
+
+    Shards are contiguous slices rather than a stride, so a shard that reports
+    an escape names a range small enough to re-run on its own. Running every
+    shard covers every weld exactly once -- asserted by --list, which prints
+    the assignment so the partition can be checked rather than trusted.
+    """
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--shard", metavar="I/N",
+                   help="run slice I of N (1-based), e.g. 2/4")
+    p.add_argument("--list", action="store_true",
+                   help="print the weld inventory and shard assignment, run nothing")
+    a = p.parse_args(argv)
+    if not a.shard:
+        return 0, 1, a.list
+    try:
+        i, n = (int(x) for x in a.shard.split("/"))
+    except ValueError:
+        p.error(f"--shard wants I/N with integers, got {a.shard!r}")
+    if not (1 <= i <= n):
+        p.error(f"--shard {a.shard}: need 1 <= I <= N")
+    return i - 1, n, a.list
+
+
+def shard_bounds(total, index, count):
+    """The [lo, hi) slice for one shard, with the remainder spread evenly.
+
+    Computed rather than rounded so that the shards partition the welds
+    exactly: sum of all shard sizes == total, and no weld is in two shards.
+    A sweep that silently skipped a weld would report a clean run it never
+    performed, which is the failure this whole harness exists to refuse.
+    """
+    base, extra = divmod(total, count)
+    lo = index * base + min(index, extra)
+    hi = lo + base + (1 if index < extra else 0)
+    return lo, hi
+
+
+def main(argv=None):
+    shard_i, shard_n, want_list = parse_args(argv if argv is not None else sys.argv[1:])
+    lo, hi = shard_bounds(len(WELDS), shard_i, shard_n)
+
+    if want_list:
+        print(f"{len(WELDS)} welds, {shard_n} shard(s)")
+        for s in range(shard_n):
+            a, b = shard_bounds(len(WELDS), s, shard_n)
+            print(f"  shard {s+1}/{shard_n}: welds {a+1}..{b} ({b-a})")
+        covered = sum(shard_bounds(len(WELDS), s, shard_n)[1]
+                      - shard_bounds(len(WELDS), s, shard_n)[0]
+                      for s in range(shard_n))
+        # The partition is asserted, not assumed. A shard arithmetic bug that
+        # dropped a weld would make every shard pass while the weld it
+        # skipped was never applied -- indistinguishable, in the summary,
+        # from a weld that was caught.
+        print(f"  total covered: {covered} "
+              f"({'exact' if covered == len(WELDS) else 'MISMATCH'})")
+        for i, w in enumerate(WELDS, 1):
+            print(f"  [{i:2d}] {weld_path(w).stem}: {w[0]}")
+        return 0 if covered == len(WELDS) else 2
+
     # Every file any weld targets, read once up front. The sweep used to hold
     # a single `original` string for fold.go, which is why the log-follow fix
     # in ndjson.go shipped unmeasured: the harness could not express a weld
@@ -490,7 +827,7 @@ def main():
 
     caught, escaped, invalid = [], [], []
 
-    for i, w in enumerate(WELDS, 1):
+    for i, w in enumerate(WELDS[lo:hi], lo + 1):
         name, why, old, new = w[0], w[1], w[2], w[3]
         path = weld_path(w)
         label = f"{path.stem}: {name}"
@@ -529,7 +866,12 @@ def main():
 
     print()
     print("=" * 62)
-    print(f"welds:   {len(WELDS)}")
+    if shard_n > 1:
+        print(f"shard:   {shard_i + 1}/{shard_n}  (welds {lo + 1}..{hi} of "
+              f"{len(WELDS)})")
+        print("         a clean shard is NOT a clean sweep; every shard must")
+        print("         be run before the result means anything")
+    print(f"welds:   {hi - lo}")
     print(f"CAUGHT:  {len(caught)}")
     print(f"ESCAPED: {len(escaped)}")
     print(f"INVALID: {len(invalid)}  (did not compile; NOT a catch)")
