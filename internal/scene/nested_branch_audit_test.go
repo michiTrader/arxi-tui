@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -1068,6 +1069,14 @@ func childrenOf(n ast.Node) []ast.Node {
 // and the same rule AGENTS.md states — when a guard can ask the type checker,
 // matching on an identifier name is a different question — is what keeps the
 // containment check from being satisfied by a coincidence of spelling.
+// A method is additionally resolved to the field it returns, and that is not
+// a convenience. The audit records which branch a walker reached by the
+// *name* of what was selected, so `n.Suffix` and an accessor `n.SuffixNode()`
+// returning the same field looked like two different branches. Measured: a
+// walker changed to reach suffix through such an accessor — which is how
+// `prefix` is already reached, via PrefixNode() — was reported as skipping a
+// branch it walks correctly. The false-alarm direction again, and this time
+// on a shape the codebase already contains.
 func nodeSelectorsIn(e ast.Expr, info *types.Info) []string {
 	var out []string
 	ast.Inspect(e, func(n ast.Node) bool {
@@ -1077,10 +1086,93 @@ func nodeSelectorsIn(e ast.Expr, info *types.Info) []string {
 		}
 		if selection, ok := info.Selections[sel]; ok && isSceneNode(selection.Recv()) {
 			out = append(out, sel.Sel.Name)
+			if field, ok := accessorReturnsField(sel.Sel.Name); ok {
+				out = append(out, field)
+			}
 		}
 		return true
 	})
 	return out
+}
+
+// accessorFields maps each method of Node that simply hands back a branch to
+// the field it returns. It is derived from the method bodies, not written
+// down: an accessor added tomorrow is covered the day it lands, which is the
+// whole argument this file keeps making about hand-written inventories.
+var accessorFields = sync.OnceValue(func() map[string]string {
+	out := make(map[string]string)
+
+	fset := token.NewFileSet()
+	files, err := parseDir(fset, ".")
+	if err != nil {
+		return out
+	}
+
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || fn.Recv == nil {
+				continue
+			}
+			// Only methods on Node, and only ones whose result is a
+			// branch of it.
+			if !strings.Contains(exprString(fn.Recv.List[0].Type), "Node") {
+				continue
+			}
+			if field, ok := returnedNodeField(fn.Body); ok {
+				out[fn.Name.Name] = field
+			}
+		}
+	}
+	return out
+})
+
+func accessorReturnsField(method string) (string, bool) {
+	field, ok := accessorFields()[method]
+	return field, ok
+}
+
+// returnedNodeField reports the field a body hands back, when every return it
+// makes is either that field or nil.
+//
+// The "every return" condition is what keeps this from over-claiming.
+// PrefixNode() returns nil for a string prefix and a decoded node otherwise —
+// it does not hand back a field at all — so it is not an alias for PrefixRaw
+// and must not be recorded as one. A method that sometimes returns something
+// else is doing work, and what it reaches has to be read from its body like
+// any other walker's.
+func returnedNodeField(body *ast.BlockStmt) (string, bool) {
+	field := ""
+	consistent := true
+
+	ast.Inspect(body, func(n ast.Node) bool {
+		ret, ok := n.(*ast.ReturnStmt)
+		if !ok || len(ret.Results) != 1 {
+			return true
+		}
+		switch r := ret.Results[0].(type) {
+		case *ast.Ident:
+			if r.Name != "nil" {
+				consistent = false
+			}
+		case *ast.SelectorExpr:
+			// `n.Suffix` — a field of the receiver.
+			if _, isIdent := r.X.(*ast.Ident); !isIdent {
+				consistent = false
+				return true
+			}
+			if field != "" && field != r.Sel.Name {
+				consistent = false
+				return true
+			}
+			field = r.Sel.Name
+		default:
+			consistent = false
+		}
+		return true
+	})
+
+	return field, consistent && field != ""
 }
 
 // exprString renders a type expression in the spelling the struct uses.
