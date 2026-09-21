@@ -441,6 +441,155 @@ WELDS = [
         """		return 0, false, nil""",
         NDJSON,
     ),
+    # --- the stage.* family, and the three defects reading it exposed ---
+    (
+        "stage.entered does not clear the previous stage's submissions",
+        "lets a stale submit satisfy the next stage's advance rule, skipping a stage",
+        """\t\ts.StageSubmissions = []string{}""",
+        """\t\t_ = s.StageSubmissions""",
+    ),
+    (
+        "stage index assigned unconditionally (the silent-zero shape)",
+        "walks a run in stage 3 back to stage 0 on one event with no index key",
+        """\t\tif idx, ok := e.Payload["index"].(float64); ok {
+\t\t\ts.StageIndex = int(idx)
+\t\t}""",
+        """\t\tidx, _ := e.Payload["index"].(float64)
+\t\ts.StageIndex = int(idx)""",
+    ),
+    (
+        "stage index read as int64 rather than float64",
+        "leaves the position at its previous value on every event, with no error",
+        """\t\tif idx, ok := e.Payload["index"].(float64); ok {""",
+        """\t\tif idx, ok := e.Payload["index"].(int64); ok {""",
+    ),
+    (
+        "stage.advanced records only `from`, not the destination",
+        "shows the stage the run has already left when the log ends between the pair",
+        """\t\tif to := str(e.Payload, "to"); to != "" {
+\t\t\ts.StageName = to
+\t\t}""",
+        """\t\tif to := str(e.Payload, "to"); to != "" {
+\t\t\t_ = to
+\t\t}""",
+    ),
+    (
+        "stage.advanced does not move the index",
+        "leaves stage.index one behind stage.name on a truncated log",
+        """\t\tif idx, ok := e.Payload["to_index"].(float64); ok {
+\t\t\ts.StageIndex = int(idx)
+\t\t}""",
+        """\t\tif idx, ok := e.Payload["to_index"].(float64); ok {
+\t\t\t_ = idx
+\t\t}""",
+    ),
+    (
+        "stage.advances never counted",
+        "reports zero transitions for a run that changed stage",
+        """\t\ts.StageAdvances++""",
+        """\t\t_ = s.StageAdvances""",
+    ),
+    (
+        "stage.index defaults to 0 instead of the -1 sentinel",
+        "makes a run that has entered no stage indistinguishable from one in its first",
+        """\t\tStageIndex:   -1,""",
+        """\t\tStageIndex:   0,""",
+    ),
+    (
+        "the submitter is read from payload.agent before the top-level actor",
+        "attributes a submit to a name the core did not consider the member for it",
+        """\t\tactor := e.actorName()
+\t\tif actor != "" {
+\t\t\t// Recorded once per member per stage.""",
+        """\t\tactor := str(e.Payload, "agent")
+\t\tif actor == "" {
+\t\t\tactor = e.Actor
+\t\t}
+\t\tif actor != "" {
+\t\t\t// Recorded once per member per stage.""",
+    ),
+    (
+        "a repeated submit from one member is counted twice",
+        "reports a two-member quorum for a stage one member has answered",
+        """\t\t\tif !seen {
+\t\t\t\ts.StageSubmissions = append(s.StageSubmissions, actor)
+\t\t\t}""",
+        """\t\t\t_ = seen
+\t\t\ts.StageSubmissions = append(s.StageSubmissions, actor)""",
+    ),
+    (
+        "stage.submitted does not set the member state",
+        "the `submitted` state BINDS.md signs is never produced by the fold",
+        """\t\t\tm.State = "submitted\"""",
+        """\t\t\t_ = m""",
+    ),
+    (
+        "submitted count maintained rather than derived from the list",
+        "the badge and the list disagree after any clear",
+        """\ts.StageSubmittedCount = uint(len(s.StageSubmissions))""",
+        """\ts.StageSubmittedCount = s.StageSubmittedCount""",
+    ),
+    (
+        "stage.timeout folded as a run failure",
+        "asserts a verdict the core withheld; escalate leaves the stage open",
+        """\tcase "stage.timeout":""",
+        """\tcase "stage.timeout":
+\t\ts.RunOutcome = "failed"
+\t\ts.StageName = ""
+""",
+    ),
+    (
+        "agent.turn_done overwrites the submitted state",
+        "erases `submitted` one event after it is set; the core guards with !m.Submitted",
+        """\t\t\t\tcase "waiting", "failed", "submitted":""",
+        """\t\t\t\tcase "waiting", "failed":""",
+    ),
+    (
+        "agent.turn_done idles a member waiting on a human",
+        "reports an agent ready for work while its approval sits unanswered",
+        """\t\t\t\tcase "waiting", "failed", "submitted":
+\t\t\t\t\t// State preserved.""",
+        """\t\t\t\tcase "failed", "submitted":
+\t\t\t\t\t// State preserved.""",
+    ),
+    (
+        "agent.turn_done never returns anyone to idle",
+        "leaves every member stuck on `thinking` for the whole run",
+        """\t\t\t\tdefault:
+\t\t\t\t\tm.State = "idle"
+\t\t\t\t}""",
+        """\t\t\t\tdefault:
+\t\t\t\t}""",
+    ),
+    (
+        "agent.blocked resolved by payload.actor only",
+        "attributes every todo to nobody; the core reads out.Member(e.Actor)",
+        """\t\tactor := e.actorName()
+\t\tif actor == "" {
+\t\t\tactor = str(e.Payload, "actor")
+\t\t}
+\t\ts.Todos = append(s.Todos,""",
+        """\t\tactor := str(e.Payload, "actor")
+\t\ts.Todos = append(s.Todos,""",
+    ),
+    (
+        "team.members rendered by ranging the map (nondeterministic)",
+        "the same bytes fold to a different order; goldens and replay fail intermittently",
+        """\tfor _, id := range s.memberOrder {
+\t\tif m, ok := s.members[id]; ok {
+\t\t\ts.TeamMembers = append(s.TeamMembers, *m)
+\t\t}
+\t}""",
+        """\tfor _, m := range s.members {
+\t\ts.TeamMembers = append(s.TeamMembers, *m)
+\t}""",
+    ),
+    (
+        "a newly seen member is not appended to the order list",
+        "the member exists in the map and vanishes from the rendered panel",
+        """\t\t\t\ts.memberOrder = append(s.memberOrder, agent)""",
+        """\t\t\t\t_ = agent""",
+    ),
 ]
 
 
