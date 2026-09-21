@@ -22,6 +22,7 @@ import (
 	"github.com/michiTrader/arxi_tui/internal/driver"
 	"github.com/michiTrader/arxi_tui/internal/engine"
 	"github.com/michiTrader/arxi_tui/internal/fold"
+	"github.com/michiTrader/arxi_tui/internal/patch"
 	"github.com/michiTrader/arxi_tui/internal/scene"
 	"github.com/michiTrader/arxi_tui/internal/term"
 	"github.com/michiTrader/arxi_tui/internal/theme"
@@ -480,7 +481,26 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					}
 				} else {
 					panicGesture.Reset() // any other key disarms the gesture
-					if strings.HasPrefix(input, "/") {
+					// The /ui dispatch is asked before the menu, and the order
+					// is the fix for a measured dead end rather than a
+					// preference. While the buffer starts with "/", every key
+					// goes to slashMenuKey, whose Enter branch returns the
+					// buffer untouched when the filter matches nothing — and
+					// the filter matches on the whole typed string, so it
+					// drops to zero the moment an argument is typed:
+					//
+					//	typed "ui"                  -> 1 match
+					//	typed "ui style"            -> 0 matches
+					//	typed "ui style status dim" -> 0 matches
+					//
+					// So a complete, correct command could be typed and Enter
+					// did nothing at all. Not a refusal, not a prompt —
+					// nothing, with the menu showing an empty list. Asking
+					// the command surface first means a line it recognises is
+					// never the menu's to swallow.
+					if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice); handled {
+						input = next
+					} else if strings.HasPrefix(input, "/") {
 						// The menu is open: navigation steers the highlight
 						// and never reaches the buffer. Ctrl-C never gets
 						// here, so the escape hatch stays uncapturable
@@ -522,9 +542,10 @@ func typeKey(input string, k term.Key, ctx context.Context, drv Driver) string {
 		if text == "" {
 			return input
 		}
-		// Slash command: the buffer starts with "/". Phase 2 introduces /ui
-		// mutation commands; for now a slash prefix is treated as a normal
-		// prompt so the transcript round-trips during Phase 0 development.
+		// Slash command: the buffer starts with "/". /ui routes to the
+		// mutation surface; every other slash line is still submitted as a
+		// prompt, which is Phase 0's contract and stays until each command
+		// has a host implementation.
 		if strings.HasPrefix(text, "/") {
 			text = strings.TrimSpace(text[1:])
 			if text == "" {
@@ -544,6 +565,72 @@ func typeKey(input string, k term.Key, ctx context.Context, drv Driver) string {
 	default:
 		return input
 	}
+}
+
+// uiCommandKey handles Enter on a `/ui …` line: it applies the patch to the
+// live scene and reports whether it took the key.
+//
+// It returns (false, _) for every key and every line that is not a submitted
+// /ui command, so the caller's ordinary paths are untouched. That shape —
+// "handled" rather than a mutation the caller must detect — is what lets the
+// dispatch sit ahead of the slash menu without the menu having to know it
+// exists.
+//
+// # Why the document and the notice are pointers
+//
+// Both are the loop's own state and both must survive the keystroke: the
+// patched scene is what the next repaint draws, and the notice is what tells
+// the user what changed. Returning them would make every caller responsible
+// for storing them, and the loop already has one such value (the input
+// buffer) whose handling is the reason slashSel exists.
+//
+// # Why a failed patch changes nothing but the notice
+//
+// PLAN.md invariant 3: an invalid patch never kills the session, the last
+// good scene stays. The refusal is addressed — the patch surface re-parses
+// its output, so the error names `file:line` — and it reaches the screen
+// through `host.scene.error`, the bind BINDS.md §2 signs for exactly this.
+// The user sees why, on the scene they still have.
+func uiCommandKey(input string, k term.Key, doc **scene.Document, notice *string) (bool, string) {
+	if k.Type != term.KeyEnter {
+		return false, input
+	}
+	text := strings.TrimSpace(input)
+	if !strings.HasPrefix(text, "/ui") {
+		return false, input
+	}
+	// "/uize the thing" is not a /ui command. Checking the prefix alone would
+	// capture every word starting with those three letters and answer it with
+	// a verb-list refusal, which is a confident wrong diagnosis — the failure
+	// mode this project charges a repair turn for.
+	if rest := text[len("/ui"):]; rest != "" && !strings.HasPrefix(rest, " ") {
+		return false, input
+	}
+
+	src := (*doc).Source()
+	if src == nil {
+		// A hand-built document has no source text, so a source-to-source
+		// patch has nothing to edit. Saying so is better than serialising the
+		// tree: that would silently produce a *different* document — one
+		// whose unknown keys were already dropped by scene.Node — and present
+		// it as the user's scene.
+		*notice = "/ui: this scene was not loaded from a file, so it has no source to patch"
+		return true, ""
+	}
+
+	res, err := patch.Apply((*doc).Name(), src, text)
+	if err != nil {
+		*notice = err.Error()
+		return true, ""
+	}
+	*doc = res.Doc
+	// The change-diff view PLAN.md requires is, at this stage, the summary
+	// line: the patch states what it altered in the user's vocabulary before
+	// the change is trusted. A diff of re-indented JSON is not a description
+	// of a change, and the full side-by-side view belongs with the
+	// agent-driven half, where the proposal arrives before it is applied.
+	*notice = "/ui: " + res.Summary
+	return true, ""
 }
 
 // isCtrlC reports whether a key event is Ctrl-C. The decoder reports control
