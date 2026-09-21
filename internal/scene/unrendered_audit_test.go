@@ -366,6 +366,36 @@ func packagePathFor(dir string) string {
 // directly has never proved the value reaches a frame either; the claim is
 // about the field being *connected to something outside this package*, and an
 // accessor is exactly that connection.
+//
+// # Proved in both directions, by counterfactuals actually run
+//
+//	TitleRaw, decoded by nobody, before        -> green (the silent drop)
+//	the same, after                            -> caught
+//	Caption read through CaptionGlyph(), before -> falsely accused
+//	the same, after                            -> accepted
+//	an accessor named for the field that reads
+//	  something else (`return n.Title`)        -> still caught
+//	Caption reachable only two hops out,
+//	  with the fixpoint disabled               -> falsely accused
+//
+// The third line is what keeps the resolution from becoming a hiding place:
+// naming a method after a field must not launder it, only reading it counts.
+// The fourth isolates the call chain, and it is the one that needed isolating
+// — see the negative finding below.
+//
+// # A negative finding, recorded because it was nearly reported as a pass
+//
+// Disabling the fixpoint on the clean tree leaves this audit green, so the
+// chaining is not load-bearing *today*. Measured rather than assumed: the
+// methods reaching BorderRaw are BorderShape, BorderStyleName, HasBorder,
+// border and declaredUnrenderedFields, and three of those are selected from
+// outside. BorderStyleName reaches the field only through border(), but
+// BorderShape and HasBorder read it directly, so a one-hop sibling already
+// covers it. The chain earns its place on the shape, not on today's tree:
+// remove the two direct readers and BorderStyleName is the only path left.
+// Stating this here rather than deleting the fixpoint, because the alternative
+// is a guard that is correct by luck and fails the first time an accessor is
+// refactored into two.
 func fieldIsRead(read map[string]bool, f nodeField) bool {
 	if read[f.name] {
 		return true
