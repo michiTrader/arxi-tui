@@ -173,12 +173,41 @@ func TestHandshakeRecordsWhatTheCoreSaysItImplements(t *testing.T) {
 		t.Skip("run.prompt is now implemented by the core: re-record " +
 			"testdata/serve/session.ndjson and re-measure the refusal path")
 	}
-	// run.attach IS implemented, which contradicts what ADR-0002 assumed when
-	// it chose log-follow: the ADR says no subscription layer exists in arxi
-	// to extend. It does, and it is one of the ten verbs this build serves.
+	// run.attach IS implemented, which contradicted ADR-0002's stated premise
+	// that "no subscription layer exists yet in arxi to extend". It does
+	// exist, and it is not a stub: serve.go has a streamingHandlers table,
+	// dispatchAttach opens a hostv1.Subscription, and serve_stream.go runs a
+	// pump per subscription with an ack-before-events guarantee and a single
+	// writer mutex. Every specific thing the ADR said arxi would have to
+	// build -- "subscription IDs, event messages, cancellation, and writer
+	// arbitration" -- was already there.
+	//
+	// ADR-0002 has now been re-decided on that evidence (docs/PLAN.md,
+	// "ADR-0002 re-decided"). The conclusion is unchanged and the reason is
+	// not: log-follow stays because it is the path replay and every golden
+	// already run through, not because subscribing is unavailable. This
+	// assertion is what keeps the availability half honest.
 	if !d.Implements("run.attach") {
-		t.Skip("run.attach is no longer implemented: ADR-0002's log-follow " +
-			"choice would need re-measuring against that")
+		t.Skip("run.attach is no longer implemented: the re-decided ADR-0002 " +
+			"treats the subscribe path as available-but-unused, and that " +
+			"premise would need re-measuring")
+	}
+	// The capability behind it, asserted separately: `implemented` says the
+	// build has an executor, `capabilities` says this session's principal may
+	// use it. A verb implemented but not permitted is still unusable, and the
+	// re-decided ADR records the subscribe path as genuinely available.
+	var subscribe bool
+	for _, c := range h.Capabilities {
+		if c == "event.subscribe" {
+			subscribe = true
+		}
+	}
+	if !subscribe {
+		t.Errorf("run.attach is implemented but event.subscribe is not in the "+
+			"session's capabilities (%v). The re-decided ADR-0002 rests on the "+
+			"subscribe path being available and unused rather than unavailable, "+
+			"so losing the capability changes the decision's basis",
+			h.Capabilities)
 	}
 }
 

@@ -33,6 +33,22 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FOLD = ROOT / "internal" / "fold" / "fold.go"
+NDJSON = ROOT / "internal" / "driver" / "ndjson.go"
+
+# The packages whose tests are the instrument. A weld is CAUGHT only if one of
+# these fails, so a weld in a file no test here exercises reports ESCAPED --
+# which is the correct answer, not a harness bug.
+TEST_PKGS = ["./internal/fold/", "./internal/driver/"]
+
+
+def weld_path(weld):
+    """The file a weld targets: its 5th element, or fold.go by default.
+
+    Defaulting keeps the 4-element welds written before the harness was
+    multi-file working unchanged, rather than rewriting 18 known-good entries
+    to add a constant.
+    """
+    return weld[4] if len(weld) > 4 else FOLD
 
 # Each weld: (name, what breaking it should be caught by, old, new).
 #
@@ -208,6 +224,223 @@ WELDS = [
         """	"run.result": true,""",
         """	"run.result": false,""",
     ),
+    # --- tool.* family ---
+    #
+    # The first weld here is the one that matters most. Reading payload.agent
+    # instead of the top-level actor passes EVERY test built on the recorded
+    # --sim log, because fake.go stamps both spellings. Only the synthetic
+    # production-shaped event catches it. If this one ESCAPES, the family's
+    # coverage claim is worthless in exactly the deployment that costs money.
+    (
+        "actor read from payload.agent instead of the top-level field",
+        "attributes tool calls in --sim and leaves them anonymous in production",
+        """	if e.Actor != "" {
+		return e.Actor
+	}
+	return str(e.Payload, "agent")""",
+        """	if a := str(e.Payload, "agent"); a != "" {
+		return a
+	}
+	return e.Actor""",
+    ),
+    (
+        "payload.agent fallback removed (actor-only reading)",
+        "leaves the whole exec.* family unattributed: 91 events carry the name only in the payload",
+        """	if e.Actor != "" {
+		return e.Actor
+	}
+	return str(e.Payload, "agent")""",
+        """	return e.Actor""",
+    ),
+    (
+        "tool calls deduped by call_id",
+        "merges four calls by two agents into one, and the count looks plausible",
+        """		s.ToolCalls = append(s.ToolCalls, a)
+		s.ToolCallsTotal++""",
+        """		dup := false
+		for _, c := range s.ToolCalls {
+			if c.CallID == a.CallID {
+				dup = true
+			}
+		}
+		if !dup {
+			s.ToolCalls = append(s.ToolCalls, a)
+		}
+		s.ToolCallsTotal++""",
+    ),
+    (
+        "terminal record with no open call is dropped",
+        "makes the effect-runner path (production) fold to an empty tool list",
+        """	s.ToolCalls = append(s.ToolCalls, ToolActivity{
+		Actor:   actor,
+		Tool:    str(e.Payload, "tool"),
+		CallID:  str(e.Payload, "call_id"),
+		Outcome: outcome,
+		Result:  result,
+		Policy:  policy,
+		Seq:     e.Seq,
+	})""",
+        """	_ = outcome""",
+    ),
+    (
+        "completion paired with any open call, ignoring the actor",
+        "credits one agent's tool result to another",
+        """		if c.Outcome != "" || c.Actor != actor {
+			continue
+		}""",
+        """		if c.Outcome != "" {
+			continue
+		}""",
+    ),
+    (
+        "ask-denial collapsed into a plain denial",
+        "reports a refusal at the moment the run is waiting to be permitted",
+        """		if policy == "ask" {
+			s.ToolsAwaitingApproval++
+		}""",
+        """		if policy == "deny" {
+			s.ToolsAwaitingApproval++
+		}""",
+    ),
+    (
+        "a denial also appended as a todo",
+        "double-counts every approval request in the badge",
+        """		s.closeToolCall(e, "denied", "", policy)
+		s.ToolsDenied++""",
+        """		s.closeToolCall(e, "denied", "", policy)
+		s.Todos = append(s.Todos, TodoItem{Task: "tool", BlockedOn: "approval"})
+		s.ToolsDenied++""",
+    ),
+    (
+        "tool result dropped rather than carried verbatim",
+        "loses the command's own output, which the core calls an answer",
+        """		s.closeToolCall(e, "completed", str(e.Payload, "result"), "")""",
+        """		s.closeToolCall(e, "completed", "", "")""",
+    ),
+    (
+        "member never enters the tool state",
+        "renders a member mid-tool-call as merely thinking",
+        """			m.State = "tool"
+			m.Busy = true""",
+        """			m.Busy = true""",
+    ),
+    (
+        "member left in the tool state after the call ended",
+        "shows a tool running forever after it returned",
+        """	if m, ok := s.members[actor]; ok && m.State == "tool" {
+		m.State = "thinking"
+	}""",
+        """	if m, ok := s.members[actor]; ok && m.State == "tool" {
+		_ = m
+	}""",
+    ),
+    (
+        "member goes idle after a tool instead of thinking",
+        "says the agent stopped while it is mid-turn",
+        """	if m, ok := s.members[actor]; ok && m.State == "tool" {
+		m.State = "thinking"
+	}
+}""",
+        """	if m, ok := s.members[actor]; ok && m.State == "tool" {
+		m.State = "idle"
+	}
+}""",
+    ),
+    (
+        "pending derived as total minus terminal (the underflow shape)",
+        "underflows on the path where completions arrive with no opening",
+        """	s.ToolsPending = 0
+	for _, c := range s.ToolCalls {
+		if c.Outcome == "" {
+			s.ToolsPending++
+		}
+	}""",
+        """	s.ToolsPending = s.ToolCallsTotal
+	for _, c := range s.ToolCalls {
+		if c.Outcome != "" {
+			s.ToolsPending--
+		}
+	}""",
+    ),
+    (
+        "tool.last pinned to the first call rather than the newest",
+        "shows a stale tool in the status row for the rest of the run",
+        """		s.ToolLast = s.ToolCalls[len(s.ToolCalls)-1]""",
+        """		s.ToolLast = s.ToolCalls[0]""",
+    ),
+    (
+        "tool.* dropped from the handled set",
+        "returns the host to showing position and plumbing but never actions",
+        """	"tool.call":           true,""",
+        """	"tool.call":           false,""",
+    ),
+    # --- log-follow confirmed reads (internal/driver/ndjson.go) ---
+    #
+    # These are the welds the harness could not express until it went
+    # multi-file, which is exactly why the log-follow fix shipped with four
+    # green tests and no evidence they measured anything. The first weld is
+    # the defect that was actually found in production code: trusting
+    # newline-termination and ignoring pending.commit.
+    (
+        "confirmed boundary ignores pending.commit (the shipped defect)",
+        "delivers events the core will truncate away; the fold cannot take them back",
+        """	rollback, ok, err := pendingRollback(logPath)
+	if err != nil {
+		return 0, err
+	}
+	if ok && rollback < end {""",
+        """	rollback, ok, err := pendingRollback(logPath)
+	if err != nil {
+		return 0, err
+	}
+	if false && ok && rollback < end {""",
+        NDJSON,
+    ),
+    (
+        "confirmed boundary ignores the newline bound",
+        "delivers a half-written record as if it were an event",
+        """	end, err := lastNewlineBefore(f, info.Size())""",
+        """	end := info.Size()
+	_ = lastNewlineBefore""",
+        NDJSON,
+    ),
+    (
+        "marker bound applied without clamping to a record boundary",
+        "cuts the confirmed prefix mid-record when a marker is not record-aligned",
+        """		return lastNewlineBefore(f, rollback)""",
+        """		return rollback, nil""",
+        NDJSON,
+    ),
+    (
+        "a retreating confirmed boundary re-emits already-delivered events",
+        "duplicates events into an append-only fold, which is not a correction",
+        """	if confirmed <= *delivered {""",
+        """	if confirmed == *delivered {""",
+        NDJSON,
+    ),
+    (
+        "delivered offset never advances",
+        "re-sends the whole confirmed prefix on every poll",
+        """	*delivered = confirmed
+	return nil""",
+        """	return nil""",
+        NDJSON,
+    ),
+    (
+        "legacy bare-integer pending marker treated as absent",
+        "silently confirms an in-flight batch, the seq/sequence failure again",
+        """	if n, perr := strconv.ParseInt(text, 10, 64); perr == nil {""",
+        """	if n, perr := strconv.ParseInt(text, 10, 64); perr != nil {""",
+        NDJSON,
+    ),
+    (
+        "an unparsable pending marker is treated as absent",
+        "turns a file the host cannot read into permission to deliver uncommitted events",
+        """		return 0, false, fmt.Errorf("ndjson: pending.commit is neither a bare "+
+			"offset nor JSON with pre_append_size: %w", jerr)""",
+        """		return 0, false, nil""",
+        NDJSON,
+    ),
 ]
 
 
@@ -218,67 +451,81 @@ def run(cmd, cwd):
 
 
 def main():
-    original = FOLD.read_text()
-    src_sha_before = hashlib.sha256(original.encode()).hexdigest()
+    # Every file any weld targets, read once up front. The sweep used to hold
+    # a single `original` string for fold.go, which is why the log-follow fix
+    # in ndjson.go shipped unmeasured: the harness could not express a weld
+    # outside one file, so the question was never asked. An instrument that
+    # can only inspect the place a defect was last found is not an instrument.
+    targets = sorted({weld_path(w) for w in WELDS})
+    originals = {t: t.read_text() for t in targets}
+    shas_before = {t: hashlib.sha256(s.encode()).hexdigest()
+                   for t, s in originals.items()}
 
     # Anchor check first. A weld whose anchor is missing or ambiguous was
     # never really applied, and an unapplied weld is indistinguishable from a
     # caught one unless it is called out here.
     bad = []
-    for name, _, old, _ in WELDS:
-        n = original.count(old)
+    for w in WELDS:
+        name, _, old, _ = w[0], w[1], w[2], w[3]
+        path = weld_path(w)
+        n = originals[path].count(old)
         if n != 1:
-            bad.append(f"  {name}: anchor appears {n} times, want exactly 1")
+            bad.append(f"  {name}: anchor appears {n} times in "
+                       f"{path.relative_to(ROOT)}, want exactly 1")
     if bad:
         print("HARNESS ERROR: welds cannot be applied unambiguously")
         print("\n".join(bad))
         return 2
 
-    print(f"baseline: verifying the suite is green before breaking anything")
-    base = run(["go", "test", "./internal/fold/", "./internal/driver/"], ROOT)
+    print("baseline: verifying the suite is green before breaking anything")
+    base = run(["go", "test"] + TEST_PKGS, ROOT)
     if base.returncode != 0:
         print("HARNESS ERROR: the suite is already failing; a sweep against a")
         print("red baseline cannot distinguish a caught weld from a pre-existing")
         print("failure.")
         print(base.stdout[-3000:])
         return 2
-    print("baseline green\n")
+    print(f"baseline green; {len(targets)} file(s) under weld: "
+          f"{', '.join(str(t.relative_to(ROOT)) for t in targets)}\n")
 
     caught, escaped, invalid = [], [], []
 
-    for i, (name, why, old, new) in enumerate(WELDS, 1):
-        FOLD.write_text(original.replace(old, new, 1))
+    for i, w in enumerate(WELDS, 1):
+        name, why, old, new = w[0], w[1], w[2], w[3]
+        path = weld_path(w)
+        label = f"{path.stem}: {name}"
+        path.write_text(originals[path].replace(old, new, 1))
         try:
             # Compile first, as its own question. Conflating "does not build"
             # with "test failed" is what produced a false catch before.
             build = run(["go", "build", "./..."], ROOT)
             if build.returncode != 0:
-                invalid.append((name, build.stderr.strip().splitlines()[:3]))
-                print(f"[{i:2d}/{len(WELDS)}] INVALID  {name}")
+                invalid.append((label, build.stderr.strip().splitlines()[:3]))
+                print(f"[{i:2d}/{len(WELDS)}] INVALID  {label}")
                 continue
 
-            res = run(
-                ["go", "test", "./internal/fold/", "./internal/driver/"], ROOT
-            )
+            res = run(["go", "test"] + TEST_PKGS, ROOT)
             out = res.stdout + res.stderr
             failed = re.search(r"^--- FAIL", out, re.M) or res.returncode != 0
             if failed:
                 names = re.findall(r"^--- FAIL: (\S+)", out, re.M)
-                caught.append((name, names))
-                print(f"[{i:2d}/{len(WELDS)}] CAUGHT   {name}")
+                caught.append((label, names))
+                print(f"[{i:2d}/{len(WELDS)}] CAUGHT   {label}")
                 for n in names[:3]:
                     print(f"              by {n}")
             else:
-                escaped.append((name, why))
-                print(f"[{i:2d}/{len(WELDS)}] ESCAPED  {name}")
+                escaped.append((label, why))
+                print(f"[{i:2d}/{len(WELDS)}] ESCAPED  {label}")
                 print(f"              would have: {why}")
         finally:
-            FOLD.write_text(original)
+            path.write_text(originals[path])
 
-    # The source must come back byte-identical, or the sweep has mutated the
-    # thing it was measuring.
-    sha_after = hashlib.sha256(FOLD.read_text().encode()).hexdigest()
-    restored = sha_after == src_sha_before
+    # Every welded file must come back byte-identical, or the sweep has
+    # mutated the thing it was measuring.
+    unrestored = []
+    for t in targets:
+        if hashlib.sha256(t.read_text().encode()).hexdigest() != shas_before[t]:
+            unrestored.append(t)
 
     print()
     print("=" * 62)
@@ -286,8 +533,9 @@ def main():
     print(f"CAUGHT:  {len(caught)}")
     print(f"ESCAPED: {len(escaped)}")
     print(f"INVALID: {len(invalid)}  (did not compile; NOT a catch)")
-    print(f"source restored byte-identical: {restored}")
-    print(f"sha256 {src_sha_before[:16]}... -> {sha_after[:16]}...")
+    print(f"sources restored byte-identical: {not unrestored}")
+    for t in targets:
+        print(f"  {t.relative_to(ROOT)}  sha256 {shas_before[t][:16]}...")
 
     if escaped:
         print("\nESCAPED welds are holes in the suite:")
@@ -300,8 +548,10 @@ def main():
             for line in err:
                 print(f"      {line}")
 
-    if not restored:
-        print("\nFATAL: fold.go was not restored. Check git diff.")
+    if unrestored:
+        print("\nFATAL: not restored: "
+              f"{', '.join(str(t.relative_to(ROOT)) for t in unrestored)}. "
+              "Check git diff.")
         return 2
     return 0 if (not escaped and not invalid) else 1
 

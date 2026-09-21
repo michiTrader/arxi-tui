@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -405,12 +407,39 @@ func (d *NDJSONDriver) readResponse(ctx context.Context) (*protoResponse, error)
 // lifted out of arxi-sim's ask.go. The log is the source of truth; snapshots
 // are cache (arxi ADR-0002).
 //
-// It reads confirmed lines only: a batch that has not been committed by the
-// logstore is held until it appears in a subsequent read, so a torn write
-// never produces a half-event.
+// It reads CONFIRMED lines only, and that word has a specific meaning here
+// which this function used to get wrong.
 //
-// LogFollow first drains any existing events from the file, then polls the
-// file for appends at the same 120ms interval arxi run attach uses.
+// The old implementation held back a trailing line with no newline and called
+// that confirmed. It does stop a torn line, but newline-termination is not
+// the commit point. arxi's commit protocol (logstore/store.go:219) is:
+//
+//  1. write pending.commit holding the log's current committed size, fsync;
+//  2. append the whole batch to events.ndjson, fsync;
+//  3. remove pending.commit -- "this is the commit point".
+//
+// Between 2 and 3 the log holds a batch of COMPLETE, newline-terminated
+// records that are not committed. If the writer dies there, the core's own
+// Open() calls rollbackPending() and TRUNCATES them away. A follower trusting
+// newlines therefore delivers events the core then revokes -- and the fold is
+// append-only, so the host cannot take them back. That is a wrong frame built
+// from correctly-read bytes, which this repo holds to be worse than an error.
+//
+// So the follower checks pending.commit beside the log and never reads past
+// the rollback point it names. Two consequences, both deliberate:
+//
+//   - The confirmed boundary is NOT monotonic. The core says so directly
+//     (logstore/pending_race_test.go): "a marker naming a rollback point
+//     behind what a caller already consumed pulls the reported boundary back
+//     ... a caller cannot treat NextOffset as a high-water mark." The
+//     follower therefore tracks its own delivered offset and never re-emits,
+//     because re-emitting a seq the fold already has is a duplicate event,
+//     not a correction.
+//   - A missing marker means everything complete is confirmed, which is the
+//     state every finished run's directory is in.
+//
+// LogFollow first drains the confirmed prefix, then polls at the same 120ms
+// interval arxi run attach uses.
 func LogFollow(ctx context.Context, logPath string) (<-chan fold.Event, error) {
 	out := make(chan fold.Event, 64)
 
@@ -423,8 +452,16 @@ func LogFollow(ctx context.Context, logPath string) (<-chan fold.Event, error) {
 		defer close(out)
 		defer f.Close()
 
-		// First: drain any events already written to the log.
-		if err := replayFile(f, out); err != nil {
+		// delivered is the byte offset through which events have been sent.
+		// It is owned here rather than inferred from the file position
+		// because the confirmed boundary can move BACKWARDS (a pending
+		// marker naming an earlier rollback point), and a follower that
+		// re-read from a rewound boundary would re-emit events the fold
+		// already holds. A duplicate is not a correction: the fold appends.
+		var delivered int64
+
+		// First: drain the confirmed prefix already on disk.
+		if err := followOnce(f, logPath, &delivered, out); err != nil {
 			return
 		}
 
@@ -437,7 +474,7 @@ func LogFollow(ctx context.Context, logPath string) (<-chan fold.Event, error) {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if err := replayFile(f, out); err != nil {
+				if err := followOnce(f, logPath, &delivered, out); err != nil {
 					return
 				}
 			}
@@ -447,39 +484,33 @@ func LogFollow(ctx context.Context, logPath string) (<-chan fold.Event, error) {
 	return out, nil
 }
 
-// replayFile reads any fully-formed lines from f (without a trailing partial
-// line) and sends them as events. It reads from the current file offset, so
-// repeated calls pick up only new appends. A trailing partial line is rewound
-// so it is picked up on the next poll.
-func replayFile(f *os.File, out chan<- fold.Event) error {
-	buf := make([]byte, 64*1024)
-	n, err := f.Read(buf)
-	if err != nil && err != io.EOF {
+// followOnce delivers every complete record between *delivered and the
+// confirmed boundary, then advances *delivered.
+//
+// It reads by absolute offset (ReadAt) rather than by the file's own cursor.
+// The cursor made the previous implementation's correctness depend on
+// seek-arithmetic around partial tails, and it cannot express the case this
+// function exists for: a confirmed boundary that moved backwards must NOT
+// rewind what has already been delivered.
+func followOnce(f *os.File, logPath string, delivered *int64, out chan<- fold.Event) error {
+	confirmed, err := confirmedEnd(f, logPath)
+	if err != nil {
 		return err
 	}
-	if n == 0 {
+	if confirmed <= *delivered {
+		// Nothing new. This includes the backwards case: the boundary
+		// retreated behind what was already sent, and the only safe action is
+		// to send nothing, because the alternative is re-emitting events the
+		// fold already has.
 		return nil
 	}
 
-	data := buf[:n]
-	// Only process complete lines; any trailing partial line is left for the
-	// next poll (rewind the file to before those bytes).
-	lastNL := bytes.LastIndexByte(data, '\n')
-	if lastNL < 0 {
-		// No complete line this round — rewind so next poll re-reads.
-		_, _ = f.Seek(-int64(n), io.SeekCurrent)
-		return nil
+	body := make([]byte, confirmed-*delivered)
+	if _, err := f.ReadAt(body, *delivered); err != nil && err != io.EOF {
+		return err
 	}
 
-	complete := data[:lastNL+1]
-	leftover := data[lastNL+1:]
-
-	// Rewind past the partial tail so next read gets it again.
-	if len(leftover) > 0 {
-		_, _ = f.Seek(-int64(len(leftover)), io.SeekCurrent)
-	}
-
-	for _, line := range bytes.Split(complete, []byte("\n")) {
+	for _, line := range bytes.Split(body, []byte("\n")) {
 		trimmed := bytes.TrimSpace(line)
 		if len(trimmed) == 0 {
 			continue
@@ -488,13 +519,135 @@ func replayFile(f *os.File, out chan<- fold.Event) error {
 		if err != nil {
 			return err
 		}
-		out <- fold.Event{
-			Type:    ev.Type,
-			Seq:     ev.Seq,
-			Payload: ev.Payload,
-		}
+		// Passed through whole rather than rebuilt field by field. The
+		// rebuild was a third place that had to know the event's shape, and
+		// it did not: it copied Type/Seq/Payload and dropped Actor, so
+		// decodeEvent could learn a field and the live stream would still not
+		// carry it. That is the same "a decoder duplicated will disagree with
+		// itself" failure this file consolidated decodeEvent to prevent,
+		// reintroduced one struct literal at a time.
+		out <- ev
 	}
+	*delivered = confirmed
 	return nil
+}
+
+// confirmedEnd is the byte offset through which the log is committed AND
+// complete: the smaller of the last newline and the pending marker's rollback
+// point.
+//
+// Both halves are required and they answer different questions. The newline
+// bound excludes a TORN record (a write in progress). The marker bound
+// excludes a WHOLE batch that is written and not yet committed -- records that
+// are individually complete and that the core will delete if the writer dies
+// before step 3. Checking only newlines was the defect; checking only the
+// marker would deliver half a line.
+func confirmedEnd(f *os.File, logPath string) (int64, error) {
+	info, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	end, err := lastNewlineBefore(f, info.Size())
+	if err != nil {
+		return 0, err
+	}
+
+	rollback, ok, err := pendingRollback(logPath)
+	if err != nil {
+		return 0, err
+	}
+	if ok && rollback < end {
+		// The marker's rollback point is a byte offset in the committed
+		// prefix, so it is already record-aligned; clamping to the previous
+		// newline as well costs nothing and protects against a marker written
+		// mid-record by a core the host has not measured.
+		return lastNewlineBefore(f, rollback)
+	}
+	return end, nil
+}
+
+// lastNewlineBefore returns the offset just past the last '\n' at or before
+// limit, i.e. the end of the last complete record.
+func lastNewlineBefore(f *os.File, limit int64) (int64, error) {
+	if limit <= 0 {
+		return 0, nil
+	}
+	const window = 64 * 1024
+	for end := limit; end > 0; {
+		start := end - window
+		if start < 0 {
+			start = 0
+		}
+		buf := make([]byte, end-start)
+		if _, err := f.ReadAt(buf, start); err != nil && err != io.EOF {
+			return 0, err
+		}
+		if i := bytes.LastIndexByte(buf, '\n'); i >= 0 {
+			return start + int64(i) + 1, nil
+		}
+		end = start
+	}
+	return 0, nil
+}
+
+// pendingRollback reads the logstore's pending.commit marker, if present.
+//
+// The marker lives beside events.ndjson in the run directory and holds the
+// log's size before the in-flight append. Two spellings are accepted because
+// the core accepts both (logstore readPendingMarker): a JSON object with
+// pre_append_size, and a bare integer, which it parses as the legacy form.
+// Reading only the JSON form would silently treat a legacy marker as absent --
+// the same class of failure as reading only `seq` and not `sequence`.
+//
+// A marker that cannot be parsed is reported as an ERROR rather than treated
+// as absent. Absent means "everything is confirmed", which is the most
+// permissive possible reading, and inferring it from a marker this host does
+// not understand would turn a file it cannot read into permission to deliver
+// uncommitted events.
+func pendingRollback(logPath string) (int64, bool, error) {
+	body, err := os.ReadFile(filepath.Join(filepath.Dir(logPath), "pending.commit"))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("ndjson: read pending.commit: %w", err)
+	}
+
+	text := strings.TrimSpace(string(body))
+	if text == "" {
+		// An empty marker names no rollback point. The core's own reader
+		// treats an unparsable marker as corruption, so this host refuses it
+		// rather than guessing which end of the log it meant.
+		return 0, false, fmt.Errorf("ndjson: pending.commit is empty, so the "+
+			"rollback point it is supposed to name is unknown: %s", logPath)
+	}
+
+	// Legacy form first: a bare integer, which is what the core's
+	// readPendingMarker parses before trying JSON.
+	if n, perr := strconv.ParseInt(text, 10, 64); perr == nil {
+		if n < 0 {
+			return 0, false, fmt.Errorf("ndjson: pending.commit names a "+
+				"negative rollback point %d", n)
+		}
+		return n, true, nil
+	}
+
+	var marker struct {
+		PreAppendSize *int64 `json:"pre_append_size"`
+	}
+	if jerr := json.Unmarshal([]byte(text), &marker); jerr != nil {
+		return 0, false, fmt.Errorf("ndjson: pending.commit is neither a bare "+
+			"offset nor JSON with pre_append_size: %w", jerr)
+	}
+	if marker.PreAppendSize == nil {
+		return 0, false, fmt.Errorf("ndjson: pending.commit carries no " +
+			"pre_append_size, so its rollback point is unknown")
+	}
+	if *marker.PreAppendSize < 0 {
+		return 0, false, fmt.Errorf("ndjson: pending.commit names a negative "+
+			"rollback point %d", *marker.PreAppendSize)
+	}
+	return *marker.PreAppendSize, true, nil
 }
 
 // Replay reads a complete NDJSON log file and returns all events.
@@ -537,12 +690,19 @@ func Replay(logPath string) ([]fold.Event, error) {
 // orders it ahead of every real event. That is a wrong frame, and this repo
 // holds a wrong frame to be worse than a refusal.
 func decodeEvent(line []byte) (fold.Event, error) {
+	// `actor` is read here and not from the payload. Both event shapes spell
+	// it at the top level (kernel.Event.Actor, host/v1.Event.Actor), and it is
+	// the field arxi's own reducer treats as the member's identity. It was
+	// absent from this struct, so every event reached the fold with no actor
+	// and the only name available was payload.agent -- which the real provider
+	// path does not write on tool events. See fold.Event.Actor.
 	var raw struct {
 		Seq      *int64         `json:"seq"`
 		Sequence *int64         `json:"sequence"`
 		Type     string         `json:"type"`
 		Ts       string         `json:"ts"`
 		Time     string         `json:"time"`
+		Actor    string         `json:"actor"`
 		Payload  map[string]any `json:"payload"`
 	}
 	if err := json.Unmarshal(line, &raw); err != nil {
@@ -564,6 +724,7 @@ func decodeEvent(line []byte) (fold.Event, error) {
 	return fold.Event{
 		Type:    raw.Type,
 		Seq:     *seq,
+		Actor:   raw.Actor,
 		Payload: raw.Payload,
 	}, nil
 }
@@ -600,11 +761,8 @@ func decodeLog(path string) ([]fold.Event, error) {
 			return nil, fmt.Errorf("decode log %s line %d: %w", path, lineNo, err)
 		}
 
-		events = append(events, fold.Event{
-			Type:    ev.Type,
-			Seq:     ev.Seq,
-			Payload: ev.Payload,
-		})
+		// Whole value, not a field-by-field copy -- see replayFile.
+		events = append(events, ev)
 	}
 	return events, nil
 }
