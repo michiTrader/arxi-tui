@@ -58,6 +58,8 @@ func TestAKeyWrittenEmptyIsStillAKeyTheAuthorWrote(t *testing.T) {
 		"row_template": `null`,
 	}
 
+	assertEveryEmptyHasAKeyToMeasure(t, empties)
+
 	for key := range unrenderedFields {
 		zero, ok := empties[key]
 		if !ok {
@@ -77,6 +79,8 @@ func TestAKeyWrittenEmptyIsStillAKeyTheAuthorWrote(t *testing.T) {
 					"remedy: fix the zero-value spelling in the empties map — a probe that does\n"+
 					"not parse measures the harness.\ndocument: %s", key, err, body)
 			}
+
+			assertSpellingIsActuallyZero(t, key, zero, doc.Root)
 
 			verr := doc.Validate()
 			if verr == nil {
@@ -100,6 +104,330 @@ func TestAKeyWrittenEmptyIsStillAKeyTheAuthorWrote(t *testing.T) {
 			}
 		})
 	}
+}
+
+// assertEveryEmptyHasAKeyToMeasure runs the containment the other way: every
+// entry of `empties` must name a key `unrenderedFields` still declares.
+//
+// # The direction the derivation does not cover
+//
+// The loop below derives its *cases* from `unrenderedFields`, so a key added
+// there fails until it has a spelling. Last turn added the second question —
+// whether each spelling is really a zero value — so a drifted case body
+// cannot pass while reporting the empty case as covered. Both checks run over
+// the keys `unrenderedFields` names. Neither one ever looks at an `empties`
+// entry that key set does not reach.
+//
+// That is not a spare-parts problem. It is the shape this file was written
+// about, arriving through the one event every entry here is scheduled for.
+// Each `because` string in `unrenderedFields` is a promise that the field
+// will be rendered later — `on_press` at Phase 3, `scroll` and `row_template`
+// after the golden set. Graduating a key means deleting its line from that
+// map. Measured, each line from a run, on `on_press` removed the way Phase 3
+// will remove it:
+//
+//	the subtest for on_press stops existing
+//	no failure names on_press, empties, or this file
+//	empties["on_press"] remains, spelling and all, measuring nothing
+//	whole suite green once the graduation's own failures are addressed
+//
+// The suite does fail loudly on that edit — `TestEveryNodeFieldIs...` and the
+// nested-branch audit both fire — which is what makes this the bad case
+// rather than a harmless one. The author is handed a list of real failures,
+// fixes every one, and reaches green with a dead entry left behind. Nothing
+// printed it, so nothing asked them to remove it.
+//
+// A dead entry is not inert. It is a spelling for a key that no longer has to
+// be refused, sitting in the map a future contributor reads to learn what the
+// convention is, next to live entries and indistinguishable from them. The
+// next key that graduates leaves a second one. This is the same accounting
+// the package has now made eight times: the derivation shrank the bug class
+// from "the two lists disagree" to "the one list is wrong", and a stale entry
+// is precisely how the one list goes wrong in the direction the derivation
+// does not look.
+//
+// # Why this is not folded into the loop below
+//
+// Because it must run even when `unrenderedFields` is empty, and a check
+// inside a `range` over that map cannot. The empty case is reachable — it is
+// what the map looks like after the last field graduates — and it is the case
+// where every remaining entry is stale at once.
+func assertEveryEmptyHasAKeyToMeasure(t *testing.T, empties map[string]string) {
+	t.Helper()
+
+	for key := range empties {
+		if !entryIsStale(key) {
+			continue
+		}
+		t.Errorf("the `empties` map has an entry for %q, which unrenderedFields no longer declares.\n\n"+
+			"consequence: nothing measures it. The loop below derives its cases from\n"+
+			"unrenderedFields, so an entry outside that key set gets no subtest, no zero-value\n"+
+			"check, and no mention in any failure — it is a spelling that looks live to the next\n"+
+			"reader and is read by nothing.\n"+
+			"cause, most likely: %q graduated. Every `because` string in unrenderedFields promises\n"+
+			"the field will be rendered eventually, and rendering one means deleting its line from\n"+
+			"that map. The suite fails loudly on that edit for other reasons, so the author fixes\n"+
+			"those, reaches green, and this entry is left behind unmentioned.\n"+
+			"remedy: if %q is now rendered, delete its entry here — the key is no longer refused,\n"+
+			"so there is nothing for this audit to assert about it. If it is still meant to be\n"+
+			"refused, the deletion from unrenderedFields is the bug, and this entry is what\n"+
+			"noticed.", key, key, key)
+	}
+}
+
+// entryIsStale is the decision assertEveryEmptyHasAKeyToMeasure reports on,
+// named and returned rather than left inline.
+//
+// The split is the rule this file paid for one turn ago, applied before
+// waiting to be bitten by it. `spellingIsAcceptableZero` had to be extracted
+// for exactly this reason: while its decision was reachable only through a
+// `t.Errorf`, the only test that could object to neutering it was the one
+// being mutated, so `true` in place of the exemption left the suite green.
+// The check above has the same shape, and confirmed it — with the condition
+// short-circuited to skip every key and `on_press` graduated in the same
+// edit, the audit went green and nothing else moved.
+//
+// So the decision gets a name, and TestAStaleEmptiesEntryIsReported calls it
+// directly. The counterfactual is only runnable because of the split.
+func entryIsStale(key string) bool {
+	_, live := unrenderedFields[key]
+	return !live
+}
+
+// The staleness decision, pinned from both sides.
+//
+// This is the assertion the inline version could not carry. Skipping the
+// check entirely is the edit that turns the stale-entry guard off, and like
+// every widening it makes the suite greener rather than redder — there is no
+// document that fails because a dead map entry exists, so no other test in
+// this package can object.
+//
+// Both directions matter and they fail differently. A live key wrongly called
+// stale is a false alarm on the map as it stands today, which is the
+// direction LESSONS.md records as getting a guard deleted as noise. A dead
+// key wrongly called live is the guard doing nothing, which is what it was
+// written to stop.
+func TestAStaleEmptiesEntryIsReported(t *testing.T) {
+	for key := range unrenderedFields {
+		if entryIsStale(key) {
+			t.Errorf("entryIsStale says %q is stale, but unrenderedFields declares it.\n\n"+
+				"consequence: a false alarm against the map as it stands, on a key that is still\n"+
+				"refused and still needs its spelling. This is the direction that gets a guard\n"+
+				"deleted as noise rather than merely doubted.\n"+
+				"remedy: an entry is stale only when unrenderedFields does not declare its key.", key)
+		}
+	}
+
+	if !entryIsStale("on_press_but_graduated") {
+		t.Errorf("entryIsStale says a key unrenderedFields does not declare is live.\n\n" +
+			"consequence: the stale-entry check passes over everything, so an entry left behind\n" +
+			"by a graduation is never reported. The loop in the audit derives its cases from\n" +
+			"unrenderedFields and cannot reach such an entry either, so the spelling sits in the\n" +
+			"map measured by nothing, next to live entries and indistinguishable from them.\n" +
+			"This failure cannot announce itself any other way: no document fails because a dead\n" +
+			"map entry exists.\n" +
+			"remedy: a key absent from unrenderedFields is stale, whatever its spelling says.")
+	}
+}
+
+// assertSpellingIsActuallyZero holds each entry of the `empties` map to the
+// property its name claims: that the spelling is one omitempty drops, so the
+// probe built from it really does exercise the union's declaredKeys half.
+//
+// # Why the map cannot be trusted to be what it is called
+//
+// `empties` is hand-written, and it is the last hand-written list in this
+// chain. Every other inventory here was collapsed into a derivation over the
+// struct — subtreeBranches, the vocabulary, the branch audit — for the reason
+// this package has now recorded seven times. This one survived because it
+// holds *json spellings*, which no derivation over Go types produces directly.
+//
+// But an untrusted spelling makes the audit vacuous in the silent direction.
+// Measured, each line from a run, on `empties["on_press"]` changed from `""`
+// to `"cmd:/help"` — one character class of edit, the kind a contributor makes
+// while copying a fixture from the sibling audit next door:
+//
+//	the probe parses, the field is set, the validator refuses it
+//	the subtest passes — via declaredUnrenderedFields, the value half
+//	the union's declaredKeys half is never consulted for that key
+//	whole suite green, including this file
+//
+// The audit still reports "on_press is refused when written empty". It is
+// measuring the non-empty case under an empty case's name, which is worse
+// than not measuring it: the passing subtest is what tells a reader the
+// zero-value direction is covered.
+//
+// This is not hypothetical for `scroll`. Its spelling is `null`, and for a
+// json.RawMessage that is four retained bytes, not a zero value — the entry
+// passes through the value half today, exactly as the drifted `on_press`
+// would. That is correct and must stay: `null` *is* how an author writes an
+// empty scroll. So the check cannot demand every entry take the union path;
+// it asserts what is actually true of each — whether the spelling survives
+// re-serialisation — and fails only when a spelling that is supposed to
+// vanish does not.
+//
+// # Why re-serialisation rather than reflect.Value.IsZero
+//
+// Because omitempty is what loses the key, and omitempty is a json rule, not
+// a Go one. The two disagree on exactly the cases that matter: a RawMessage
+// holding `null` is non-empty to json and would be a non-nil slice to
+// reflect, while a `*int` pointing at 0 is non-empty to json and zero to
+// nobody. Asking the same marshaller declaredUnrenderedFields asks is what
+// keeps this check true when either rule changes.
+func assertSpellingIsActuallyZero(t *testing.T, key, zero string, n *Node) {
+	t.Helper()
+
+	ok, err := spellingIsAcceptableZero(key, n)
+	if err != nil {
+		t.Fatalf("premise broken: the probe node for %q must round-trip to an object; got %v", key, err)
+	}
+	if ok {
+		return
+	}
+
+	t.Errorf("the `empties` entry for %q is %s, which survives re-serialisation, so it is not a\n"+
+		"zero value and this subtest is not measuring what its name says.\n\n"+
+		"consequence: the probe is refused through declaredUnrenderedFields — the *value* half\n"+
+		"of the union — so the declaredKeys half this file exists to pin is never consulted for\n"+
+		"%q. Delete the union tomorrow and this subtest still passes. A green zero-value audit\n"+
+		"measuring the non-zero case is worse than no audit: it is what tells the next reader\n"+
+		"the direction is covered.\n"+
+		"remedy: set empties[%q] to the json spelling omitempty drops for that field's type —\n"+
+		"`\"\"` for a string, `0` for a number, `false` for a bool, `[]`/`{}` for a slice or map.\n"+
+		"If the field is a json.RawMessage, it has no empty form and belongs in the raw list\n"+
+		"rawBranchAccessors records, not here.", key, zero, key, key)
+}
+
+// spellingIsAcceptableZero is the decision assertSpellingIsActuallyZero
+// reports on, split out so it can be called with no *testing.T.
+//
+// The split is the point, not tidiness. While it was inline, the guard's own
+// counterfactual could not be run: replacing the raw exemption with `true`
+// and drifting a spelling in the same edit left the whole suite green,
+// because the only test that could have objected was the one being mutated.
+// A decision reachable solely through a t.Errorf is a decision nothing can
+// measure — the same reason this package derives its lists instead of
+// writing them twice, one level up.
+//
+// It asks the marshaller, not reflect: omitempty is a json rule. A
+// json.RawMessage holding `null` is non-empty to json and a non-nil slice to
+// reflect; a `*int` pointing at 0 is non-empty to json and zero to nobody.
+// Asking the same encoder declaredUnrenderedFields asks keeps this true when
+// either rule moves.
+func spellingIsAcceptableZero(key string, n *Node) (bool, error) {
+	round, err := json.Marshal(n)
+	if err != nil {
+		return false, err
+	}
+	var back map[string]json.RawMessage
+	if err := json.Unmarshal(round, &back); err != nil {
+		return false, err
+	}
+
+	if _, survives := back[key]; !survives {
+		// The spelling vanished: this entry exercises the union, which is
+		// what the file is about.
+		return true, nil
+	}
+	// It survived. Acceptable only for a field whose json encoding has no
+	// empty form — the raw branches, where `null` is four real bytes.
+	return isRawJSONField(key), nil
+}
+
+// The raw exemption must stay an exemption, not an escape hatch.
+//
+// assertSpellingIsActuallyZero lets a surviving spelling pass when the field
+// is a json.RawMessage, because `null` really is how an author empties one.
+// That branch is the only way to pass the check while holding a non-zero
+// spelling, which makes it the place a later edit turns the whole audit off —
+// and it would do so in silence, because widening an exemption never fails a
+// test that is already green.
+//
+// Measured, from a run with the guard's `isRawJSONField(key)` replaced by
+// `true` and `empties["on_press"]` drifted to `"cmd:/help"` in the same pass:
+//
+//	assertSpellingIsActuallyZero exempts every key
+//	the drifted non-zero spelling sails through
+//	whole suite green, this file included
+//
+// So the exemption is pinned from the other side: it must say no to the
+// ordinary fields. This asks about `on_press` — a string, the field the
+// original defect was found on — rather than iterating, because a loop here
+// would re-derive the same classification the function under test makes and
+// agree with it by construction, which is the shape this package has paid for
+// seven times.
+func TestTheRawExemptionDoesNotCoverOrdinaryFields(t *testing.T) {
+	if !isRawJSONField("scroll") {
+		t.Errorf("isRawJSONField says %q is not raw, but Node declares it json.RawMessage.\n"+
+			"consequence: the zero-value audit will demand a spelling omitempty drops for a field\n"+
+			"that has none, and `null` — the way an author actually empties it — starts failing.\n"+
+			"remedy: the lookup must match on the json tag name, which is what the empties map is\n"+
+			"keyed by.", "scroll")
+	}
+	if isRawJSONField("on_press") {
+		t.Errorf("isRawJSONField says %q is raw, but Node declares it a string.\n\n"+
+			"consequence: this is the exemption swallowing an ordinary field, and it is the one\n"+
+			"failure mode of the zero-value audit that cannot announce itself. A non-zero spelling\n"+
+			"in the empties map would then pass, the subtest would go on reporting that the empty\n"+
+			"case is covered, and the union's declaredKeys half — the entire subject of this file —\n"+
+			"would be pinned by nothing.\n"+
+			"remedy: exempt a key only when Node's field for it is literally json.RawMessage.", "on_press")
+	}
+	if isRawJSONField("nonexistent_key") {
+		t.Errorf("isRawJSONField says an unknown key is raw. A key Node does not declare cannot be\n" +
+			"exempt from anything; treating it as raw means a typo in the empties map silently\n" +
+			"skips its own check.")
+	}
+
+	// The decision itself, not just its input. This is the assertion the
+	// inline version could not carry: a non-zero string spelling must be
+	// rejected, and it must be rejected by the same function the audit calls,
+	// so widening the exemption fails here rather than passing everywhere.
+	nonZero, err := ParseDocument([]byte(`{"root":{"type":"text","text":"x","on_press":"cmd:/help"}}`))
+	if err != nil {
+		t.Fatalf("premise broken: %v", err)
+	}
+	if ok, err := spellingIsAcceptableZero("on_press", nonZero.Root); err != nil {
+		t.Fatalf("premise broken: %v", err)
+	} else if ok {
+		t.Errorf("spellingIsAcceptableZero accepts a non-zero string spelling for %q.\n\n"+
+			"consequence: the zero-value audit stops checking that its probes are zero-valued, so\n"+
+			"an entry drifted to a non-zero spelling passes through declaredUnrenderedFields and\n"+
+			"reports the empty case as covered while never exercising it. This is the failure that\n"+
+			"cannot announce itself: it makes a test greener, not redder.\n"+
+			"remedy: a surviving spelling is acceptable only when Node's field is json.RawMessage.", "on_press")
+	}
+
+	// And the direction that must keep working: `null` on a raw field.
+	rawNull, err := ParseDocument([]byte(`{"root":{"type":"text","text":"x","scroll":null}}`))
+	if err != nil {
+		t.Fatalf("premise broken: %v", err)
+	}
+	if ok, err := spellingIsAcceptableZero("scroll", rawNull.Root); err != nil {
+		t.Fatalf("premise broken: %v", err)
+	} else if !ok {
+		t.Errorf("spellingIsAcceptableZero rejects `null` for %q, which is a json.RawMessage.\n"+
+			"consequence: the audit would demand a spelling that does not exist for the field, and\n"+
+			"the honest entry has nowhere to go.\n"+
+			"remedy: keep the raw exemption — for a RawMessage, `null` is how an author empties it.", "scroll")
+	}
+}
+
+// isRawJSONField reports whether Node's field for this json key is a
+// json.RawMessage, derived from the struct rather than listed. A raw field
+// keeps whatever bytes the author wrote — `null` included — so it has no
+// spelling omitempty drops, and the check above must not demand one.
+func isRawJSONField(jsonKey string) bool {
+	t := reflect.TypeOf(Node{})
+	raw := reflect.TypeOf(json.RawMessage(nil))
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == jsonKey {
+			return f.Type == raw
+		}
+	}
+	return false
 }
 
 // The union must not turn the guard off for documents with no source text.

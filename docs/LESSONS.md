@@ -596,3 +596,75 @@ to the *actions*.
   the caller cannot tell. Pinned by testing the property that keeps it dead —
   every Node-bearing field is cleared before the marshal — rather than the dead
   line itself.
+- **A probe named for a property nobody checks it has is the audit's own blind
+  spot.** The zero-value audit added last turn keyed its cases off
+  `unrenderedFields`, so a new entry cannot silently skip it — but the *json
+  spelling* of each zero value stayed hand-written, and nothing asserted the
+  spelling was a zero value. Measured, on `empties["on_press"]` changed from
+  `""` to `"cmd:/help"`, one copy-paste's worth of edit:
+
+      the probe parses, the field is set, the validator refuses it
+      the subtest passes — through `declaredUnrenderedFields`, the value half
+      the union's `declaredKeys` half is never consulted for that key
+      whole suite green, this file included
+
+  The audit goes on reporting "on_press is refused when written empty" while
+  measuring the non-empty case. That is strictly worse than the hole it
+  replaced: the passing subtest is what tells the next reader the direction is
+  covered, so the union could be deleted and three guards would still be
+  green. **Deriving the *set* of cases from the map does not make the cases
+  honest — a hand-written case body is still a hand-written list, and the
+  question to ask it is whether it has the property its name promises.** Fixed
+  by asking the same marshaller `declaredUnrenderedFields` asks whether each
+  spelling survives a round trip, rather than by writing better spellings.
+- **The exemption inside a guard is where the guard gets switched off, and
+  widening an exemption never fails a green test.** The zero-value check must
+  let `scroll: null` pass, because for a `json.RawMessage` `null` is four real
+  bytes and genuinely is how an author empties one. That branch is also the
+  only way to hold a non-zero spelling and still pass. Replacing it with
+  `true` and drifting a spelling in the same edit left the suite green,
+  because the only test that could object was the one being mutated — the
+  decision was reachable solely through a `t.Errorf`, so nothing could call
+  it. Split into a plain function returning `(bool, error)` and pinned from
+  both sides: a non-zero string must be rejected, `null` on a raw field must
+  be accepted. **A decision that only exists inside an assertion cannot be
+  measured; give it a name and a return value before trusting its
+  counterfactual.**
+- **A containment check has two directions, and deriving one of them is what
+  hides the other.** The zero-value audit derives its cases from
+  `unrenderedFields`, so a key added there fails until it has a spelling, and
+  the previous turn added the second question — whether each spelling really
+  is a zero value. Both run over the keys `unrenderedFields` names. Neither
+  ever looks at an `empties` entry outside that key set. The event that
+  produces one is not hypothetical: every `because` string in
+  `unrenderedFields` is a promise the field gets rendered later, and
+  graduating a key means deleting its line. Measured, on `on_press` removed
+  the way Phase 3 will remove it:
+
+      the subtest for on_press stops existing
+      no failure names on_press, empties, or that file
+      empties["on_press"] remains, spelling and all, measuring nothing
+
+  The suite *does* fail loudly on that edit — two sibling audits fire — which
+  is what makes it the bad case rather than a harmless one. The author is
+  handed real failures, fixes each, reaches green, and leaves a dead entry
+  behind that no message ever asked about. **The derivation that makes a list
+  complete does not make it current; "no entry can be missing" and "no entry
+  can be stale" are separate claims, and the loop that proves the first is
+  structurally unable to see the second.** Fixed by checking containment the
+  other way, outside the `range` — it has to run when the map is empty, which
+  is exactly when every remaining entry is stale at once.
+- **Apply a ledger entry to the code you are writing, not only to the code you
+  are reading.** The previous turn recorded that a decision reachable solely
+  through a `t.Errorf` cannot have its counterfactual run, and extracted
+  `spellingIsAcceptableZero` for it. The stale-entry check above was written
+  inline the very next turn, with the same shape, and reproduced the same
+  result: condition short-circuited to skip every key, `on_press` graduated in
+  the same edit, suite green. Nothing else in the package could object,
+  because no document fails on account of a dead map entry — the guard's only
+  witness is itself. Split into `entryIsStale` and pinned from both sides: a
+  live key called stale is the false-alarm direction that gets guards deleted
+  as noise, a dead key called live is the guard doing nothing. **A lesson
+  stays a description until the next thing you write is checked against it;
+  the shape it names is easiest to reintroduce while fixing the instance that
+  taught it to you.**
