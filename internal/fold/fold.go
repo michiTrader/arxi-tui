@@ -419,7 +419,19 @@ var Commands = []SlashMatch{
 	{"max", "General", "Maximize a pane by id"},
 	{"focus", "General", "Focus a node by id"},
 	{"surface", "General", "Switch active surface"},
-	{"ui", "General", "Mutate the scene (add, move, style, plugin)"},
+	// The description names the verbs that exist, not the verbs the plan
+	// sketches. It read "add, move, style, plugin" while the surface
+	// implements set and style: the menu is the only place a user learns what
+	// they may type, so advertising `add` there sends them to a refusal the
+	// interface itself invited. That is the accepted-but-not-drawn class one
+	// layer out — a capability the chrome claims and the engine does not have
+	// — and it is worse here than in a document, because the menu is read at
+	// the moment of use.
+	//
+	// It is held to patch.Verbs() by a test rather than by a comment; the
+	// import would be a cycle, and a fold that imported the patch surface
+	// would stop being the pure host-owned fold ADR-0002 requires.
+	{"ui", "General", "Mutate the scene (set, style)"},
 }
 
 // FilterSlashMatches returns the commands matching the typed substring after

@@ -95,6 +95,37 @@ func jsonError(name string, data []byte, err error) error {
 	}
 }
 
+// Source returns the bytes this document was parsed from, or nil for a
+// Document built by hand.
+//
+// It exists for the /ui patch surface, which is a source-to-source
+// transformation: the patch edits the text and re-parses it, so the document
+// it produces has its own offset table and its refusals carry `file:line`.
+// Without this accessor the host would have to keep the bytes alongside the
+// document and the two could fall out of step — and the failure would be a
+// patch applied to a stale source, silently reverting whatever the previous
+// patch did.
+//
+// The nil return for a hand-built Document is the honest answer rather than a
+// gap. Such a document has no source text, which is exactly why its refusals
+// already degrade to the file-only address; a caller that needs bytes must
+// serialise the tree and accept that it is producing a new document rather
+// than recovering the original one.
+//
+// The slice is copied. Handing out the document's own backing array would let
+// a caller mutate the text the offset table is computed against, so every
+// address the document has already reported would start pointing somewhere
+// else — a refusal whose line number changes after the fact is worse than one
+// with no line number at all.
+func (d *Document) Source() []byte {
+	if d == nil || d.src == nil {
+		return nil
+	}
+	out := make([]byte, len(d.src))
+	copy(out, d.src)
+	return out
+}
+
 // Name returns the document's origin as it will appear in errors.
 func (d *Document) Name() string {
 	if d == nil || d.file == "" {
