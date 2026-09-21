@@ -703,8 +703,8 @@ WELDS = [
         SCENE,
     ),
     (
-        "validator: unrendered fields reported in map order",
-        "the error address moves between runs, so it is not an address",
+        "validator: the candidate union is not sorted before choosing",
+        "names scroll instead of on_press -- stable, and stably the wrong field",
         """\tsort.Strings(declared)""",
         """\t_ = sort.Strings""",
         SCENE,

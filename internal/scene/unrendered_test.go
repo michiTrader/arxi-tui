@@ -293,82 +293,88 @@ func TestUnrenderedFieldsIsReadAsAMapNotAConstant(t *testing.T) {
 	}
 }
 
-// TestANodeDeclaringTwoUnrenderedFieldsRefusesTheSameOneEveryRun closes a
-// hole the first mutation sweep of this package found.
+// TestTheRefusedFieldIsChosenByRuleAndNotByArrivalOrder closes a hole the
+// first mutation sweep of this package found, and the measurement corrected
+// the weld's own premise on the way.
 //
-// refuseUnrendered sorts its candidate list, and the comment beside the call
-// gives the reason: "with two unrendered fields on one node, an address that
-// moves between runs is not an address." The reasoning was right and nothing
-// exercised it. Deleting the sort left all 59 tests in this package green,
-// because every probe in the suite declares exactly ONE unrendered field, and
-// with one candidate every ordering is the same ordering.
+// refuseUnrendered sorts its candidates, and the comment gives the reason:
+// "an address that moves between runs is not an address." Deleting the sort
+// left all 59 tests here green.
 //
-// Two are needed to see it, and the source of the disorder is a Go map: the
-// candidates come from json.Marshal round-tripped into map[string]RawMessage,
-// and ranging a map is randomised by design. So the unsorted version does not
-// merely pick a different field, it picks a DIFFERENT ONE PER RUN.
+// The first test written for it asserted the wrong property. It declared
+// row_template and on_press with real values and looped 200 times expecting
+// the unsorted version to vary -- and it did not vary, so the test passed
+// with the weld applied. Measuring instead of assuming explains why:
+// declaredUnrenderedFields ALREADY sorts what it returns, so on that path the
+// second sort is redundant and removing it changes nothing.
 //
-// That matters past tidiness. Phase 2's repair loop feeds these messages to a
-// model and charges it a turn per attempt: a scene declaring both row_template
-// and on_press would be told to fix row_template, then -- after the model fixed
-// it -- possibly told about on_press, or told about row_template again on a
-// re-validation that happened to range the other way. The corpus would be
-// measuring the map's iteration order and scoring the model for it.
+// The sort earns its place on the other path. refuseUnrendered unions that
+// sorted list with the parser's declaredKeys, APPENDING them, and
+// declaredKeys is in source order. A field reaches it only through there when
+// omitempty dropped it from the marshal -- i.e. when it is written with its
+// type's zero value, which the comment above refuseUnrendered records as a
+// real authoring shape: `"on_press": ""` while clearing a property.
 //
-// The loop repeats because one pass of a randomised order agrees with the
-// sorted one often enough to pass by luck; with two candidates it is a coin
-// flip per run.
-func TestANodeDeclaringTwoUnrenderedFieldsRefusesTheSameOneEveryRun(t *testing.T) {
-	// A list declaring BOTH row_template and on_press. Alphabetically
-	// on_press sorts before row_template, so the stable answer is on_press
-	// -- and notably NOT row_template, which is the field every other test
-	// in this file provokes. A sorted implementation that happened to be
-	// hard-coded to the familiar answer would fail here.
+// Measured, on a node declaring `"on_press": ""` and `"scroll": null`:
+//
+//	with sort:     on_press  (300/300, and 100/100 with the source keys swapped)
+//	without sort:  scroll    (200/200, both source orderings)
+//
+// So the failure is not the instability the weld's description predicted --
+// it is stable and WRONG, which is worse. It silently changes which of two
+// fields the author is told about, and Phase 2's repair loop charges the
+// model a turn per attempt against whichever answer it gets. The assertion is
+// therefore on the identity of the chosen field, not on run-to-run
+// repeatability: the version with no rule repeats perfectly well.
+func TestTheRefusedFieldIsChosenByRuleAndNotByArrivalOrder(t *testing.T) {
+	// Both fields written with their ZERO values, so omitempty drops them
+	// from the marshal and they can only arrive via declaredKeys -- the
+	// unsorted, source-ordered half of the union. A node declaring them with
+	// real values cannot distinguish the two implementations at all.
 	const src = `{"root":{"type":"list","bind":"team.members",
-		"row_template":{"type":"text","text":"row"},
-		"on_press":"submit"}}`
+		"on_press":"", "scroll":null}}`
 
 	doc, err := ParseDocument([]byte(src))
 	if err != nil {
 		t.Fatalf("premise broken: the document should parse; got %v", err)
 	}
-
-	first := doc.Validate()
-	if first == nil {
-		t.Fatalf("premise broken: a node declaring two unrendered fields must be\n" +
-			"refused, or this test is measuring nothing")
-	}
-	if !strings.Contains(first.Error(), "on_press") {
-		t.Errorf("refusal names %q, want the alphabetically first candidate on_press.\n"+
-			"consequence: the choice is being made by map iteration order rather than by a\n"+
-			"rule, so which of the two fields the author is told about is decided at random.",
-			first.Error())
+	verr := doc.Validate()
+	if verr == nil {
+		t.Fatalf("premise broken: a node declaring two unrendered fields with zero\n" +
+			"values must still be refused -- that is the omitempty hole\n" +
+			"refuseUnrendered's declaredKeys union exists to close -- or this test\n" +
+			"measures nothing")
 	}
 
-	// The same document, re-validated. Every answer must be byte-identical:
-	// re-parsing each time is deliberate, so that any per-document caching
-	// cannot make an unstable order look stable.
-	want := first.Error()
-	for i := 0; i < 200; i++ {
-		d, perr := ParseDocument([]byte(src))
-		if perr != nil {
-			t.Fatalf("ParseDocument on iteration %d: %v", i, perr)
-		}
-		got := d.Validate()
-		if got == nil {
-			t.Fatalf("iteration %d validated clean while the first run refused", i)
-		}
-		if got.Error() != want {
-			t.Fatalf("iteration %d refused a different field than the first run:\n"+
-				"  first: %s\n  now:   %s\n\n"+
-				"consequence: the candidates come from ranging a Go map, whose order is\n"+
-				"randomised by design, so the refusal names whichever field the runtime\n"+
-				"happened to yield. An address that moves between runs is not an address:\n"+
-				"the author fixes what they were told about and the next validation blames\n"+
-				"the other field, and Phase 2's repair loop -- which charges the model a turn\n"+
-				"per attempt -- ends up measuring map iteration order.\n"+
-				"remedy: refuseUnrendered must sort its candidate list before choosing.",
-				i, want, got.Error())
-		}
+	// on_press is the alphabetically first of the two, so it is the answer a
+	// rule produces. scroll is the answer arrival order produces. Naming
+	// both in the assertion is what makes the failure legible.
+	msg := verr.Error()
+	if !strings.Contains(msg, "on_press") {
+		t.Errorf("refusal names %q.\n"+
+			"want it to name on_press, the alphabetically first candidate.\n\n"+
+			"consequence: the field is being chosen by the order the parser recorded the\n"+
+			"source keys rather than by a rule. That is stable -- so it will not look\n"+
+			"flaky -- and it is stable on the WRONG field: the author is told about\n"+
+			"scroll while on_press sits equally unrendered beside it, and re-ordering two\n"+
+			"keys in the source file silently changes the diagnosis. Phase 2's repair loop\n"+
+			"charges the model a turn per attempt against whichever answer it is handed.\n"+
+			"remedy: refuseUnrendered must sort the union of declaredUnrenderedFields and\n"+
+			"declaredKeys before choosing, not just rely on the first being sorted already.",
+			msg)
+	}
+
+	// The other field must still be refusable: if scroll were unreachable
+	// the test above would pass for the wrong reason -- a single-candidate
+	// list cannot demonstrate a choice.
+	const onlyScroll = `{"root":{"type":"list","bind":"team.members","scroll":null}}`
+	d2, err := ParseDocument([]byte(onlyScroll))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	e2 := d2.Validate()
+	if e2 == nil || !strings.Contains(e2.Error(), "scroll") {
+		t.Fatalf("control failed: scroll alone is not refused (%v), so the assertion\n"+
+			"above could be satisfied by a list that never contained it", e2)
 	}
 }
