@@ -1,6 +1,7 @@
 package scene
 
 import (
+	"encoding/json"
 	"go/ast"
 	"go/importer"
 	"go/token"
@@ -318,6 +319,22 @@ func typeContainsNode(t reflect.Type, seen map[reflect.Type]bool) bool {
 	return false
 }
 
+// fieldTypeIsRawMessage reports whether a field defers its shape to a raw
+// JSON value, whatever that type is called at the declaration.
+//
+// json.RawMessage is an alias for []byte, so comparing the resolved type
+// accepts every spelling of it. That is the same argument fieldTypeCarriesNode
+// makes about *Node, applied to the other half of the classification: a guard
+// that asks the type checker must not be left asking about source text
+// anywhere, because the one place it still does is where the next branch hides.
+func fieldTypeIsRawMessage(fieldName string) bool {
+	field, ok := reflect.TypeOf(Node{}).FieldByName(fieldName)
+	if !ok {
+		return false
+	}
+	return field.Type == reflect.TypeOf(json.RawMessage(nil))
+}
+
 // nodeBearingBranches derives, from Node's declaration, the branches that
 // carry another node.
 //
@@ -370,9 +387,18 @@ func nodeBearingBranches(t *testing.T) []nestedBranchField {
 	// tomorrow would be silently treated as carrying no node — the same
 	// classification-by-omission that kept `children` out of
 	// nestedFormReaders for five recurrences.
+	//
+	// Which fields are raw is asked of the type rather than of its
+	// spelling, for fieldTypeCarriesNode's reason — and this line was
+	// found by the rule that came out of that fix rather than by another
+	// injection: list what a derived guard still hardcodes, and the next
+	// defect is on the list. It compared source text against
+	// "json.RawMessage", so a deferred-shape branch declared through an
+	// alias (`Caption RawSlot`) was neither raw nor node-bearing and
+	// escaped both halves of this audit with the whole suite green.
 	declaredRaw := make(map[string]bool)
-	for name, typ := range types {
-		if typ == "json.RawMessage" {
+	for name := range types {
+		if fieldTypeIsRawMessage(name) {
 			declaredRaw[name] = true
 		}
 	}
@@ -403,7 +429,7 @@ func nodeBearingBranches(t *testing.T) []nestedBranchField {
 		switch {
 		case fieldTypeCarriesNode(f.name):
 			selector = f.name
-		case types[f.name] == "json.RawMessage":
+		case fieldTypeIsRawMessage(f.name):
 			selector = rawBranchAccessors[f.name]
 		}
 		if selector == "" {
