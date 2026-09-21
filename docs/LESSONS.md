@@ -481,3 +481,33 @@ to the *actions*.
   not terminate. The guard against revisiting is load-bearing rather than
   defensive decoration — worth saying out loud, because a reviewer removing it
   as noise would hang the suite rather than fail it.
+- **The rule that replaced the injection worked, and it also cleared a
+  suspect.** The ninth recurrence produced "list what a derived guard still
+  hardcodes, and the next defect is on the list". Applied, the list had two
+  entries and they resolved differently: `"json.RawMessage"`, compared as
+  source text, let a raw branch declared through an alias escape both halves
+  of the audit — the tenth appearance, and the first found by reading rather
+  than by guessing where to inject. `"Type"` was a **negative finding**:
+  renaming `Node.Type` breaks the build at every use, so the compiler pins
+  it. A list of suspects is only worth keeping if entries can be cleared off
+  it, and clearing one costs a single injection that fails to compile.
+- **An enumeration can hide in the *shape* a guard looks for, not just in its
+  values.** With both literals resolved, the exemption still matched only a
+  switch tag and an `if` condition — the two places the existing renderers
+  happen to put the test. A renderer dispatching through a tagless `switch {
+  case n.Type == "text": }` — ordinary Go, and what a dispatch becomes the
+  moment one arm needs a compound condition — was reported as a walker
+  skipping two branches. **The eleventh appearance, in the false-alarm
+  direction**, which is the one that gets a guard switched off rather than
+  merely weakened.
+- **Two failures bracket a predicate; one only moves it.** The first widening
+  asked whether the body *reads* `n.Type`, and the floor failed the run
+  immediately: all four real walkers read the type to name it in diagnostics
+  (`node type %q declares …`), so the audit dropped to one walker out of
+  four. Too narrow slanders a renderer; too broad deletes the audit. The
+  line between them — **branching on the type, not reading it** — is visible
+  only from both sides, and the reasoning that produced the over-broad
+  version ("this direction is strictly more conservative") was confident and
+  wrong. When widening a predicate, run the opposite counterfactual in the
+  same breath; the argument for the widening is exactly what the argument
+  for the original narrowing looked like.
