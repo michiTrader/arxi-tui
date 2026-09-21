@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +32,9 @@ type NDJSONDriver struct {
 	scanner *bufio.Scanner
 	enc     *json.Encoder
 	mu      sync.Mutex
+	// hello is what the core announced, kept because `implemented` is the
+	// only place a client can learn that a declared verb has no executor.
+	hello *Hello
 }
 
 // protoRequest is one NDJSON request line sent to the arxi core.
@@ -47,25 +52,157 @@ type protoResponse struct {
 	Error  *protoError     `json:"error,omitempty"`
 }
 
-// protoError carries a machine code and a human message.
+// protoError carries a machine code and a human message, plus the remedy the
+// core offers. `fix` was missing from this struct and is the same shape of
+// remedy `run why` prints; dropping it threw away the one part of the refusal
+// that says what to do next -- the same defect this repo already refuses to
+// ship in scene diagnostics.
 type protoError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string   `json:"code"`
+	Message string   `json:"message"`
+	Fix     []string `json:"fix,omitempty"`
+	// Operation names the host operation that failed, when the refusal came
+	// from the core's host layer rather than the protocol layer. Measured:
+	// run.attach against a missing job answers code "not_found" with
+	// operation "event.subscribe".
+	Operation string `json:"operation,omitempty"`
 }
 
-// helloMsg is the first line the server sends on connection.
-type helloMsg struct {
-	Type           string `json:"type"`
-	Version        string `json:"version"`
-	SurfaceVersion int    `json:"surface_version"`
+// Refusal is an answered request the core declined: ok:false with a code.
+//
+// It is an error type rather than a return value because the alternative is
+// what shipped -- SubmitPrompt returned (response, nil) for a refusal, and the
+// host's call site wrote `_ = drv.SubmitPrompt(...)`, so a prompt the core
+// rejected was indistinguishable from one it accepted. serve.go made `ok` an
+// explicit boolean to keep exactly this from being ambiguous: the two
+// encodings "disagree the first time a server omits an empty error object or a
+// client checks the wrong one, and the disagreement reads as success."
+//
+// The code is preserved as a field, not folded into the message, because the
+// codes are a closed set whose whole purpose is the branch: "you asked
+// wrongly" (retrying will not help) versus "this build cannot do that yet"
+// (retrying after an upgrade will).
+type Refusal struct {
+	// Code is the core's machine code: one of malformed, unknown_type,
+	// bad_params, not_implemented, failed, line_too_long -- plus codes the
+	// host layer raises, measured live: internal, not_found,
+	// invalid_argument.
+	Code string
+	// Message is the core's own sentence, carried verbatim. It is what a
+	// person reads in the frame, so it is not paraphrased.
+	Message string
+	// Fix is the remedy the core suggests, e.g. ["arxi schema"].
+	Fix []string
+	// Operation is the host operation that failed, when the core named one.
+	Operation string
+	// Type is the request type that was refused, added by this client: the
+	// core's refusal does not echo it, and a message with no verb in it is
+	// not addressable.
+	Type string
+}
+
+func (r *Refusal) Error() string {
+	var b strings.Builder
+	b.WriteString("arxi refused ")
+	b.WriteString(r.Type)
+	b.WriteString(" [")
+	b.WriteString(r.Code)
+	b.WriteString("]: ")
+	b.WriteString(r.Message)
+	if r.Operation != "" {
+		b.WriteString(" (operation: ")
+		b.WriteString(r.Operation)
+		b.WriteString(")")
+	}
+	for _, f := range r.Fix {
+		b.WriteString("\n  try: ")
+		b.WriteString(f)
+	}
+	return b.String()
+}
+
+// Permanent reports whether retrying this request against this binary could
+// ever succeed.
+//
+// This is the branch the closed code set exists for. A host that cannot ask
+// the question either retries forever or gives up permanently, "and both are
+// wrong half the time." For a TUI the consequence is concrete: a prompt
+// answered not_implemented must be shown as a capability this build does not
+// have, not as a send that failed.
+func (r *Refusal) Permanent() bool {
+	switch r.Code {
+	case "not_implemented", "unknown_type", "bad_params", "malformed":
+		return true
+	default:
+		// `failed`, `internal` and the host-layer codes describe this
+		// attempt, not this build: a later identical request may succeed.
+		return false
+	}
+}
+
+// AsRefusal recovers a *Refusal from an error chain, so the host can branch on
+// the code instead of matching English.
+func AsRefusal(err error, target **Refusal) bool {
+	var r *Refusal
+	if errors.As(err, &r) {
+		*target = r
+		return true
+	}
+	return false
+}
+
+// Hello is the first line the server sends on connection, as the arxi core
+// actually sends it (cmd/arxi/serve.go:helloMsg).
+//
+// The three list fields were originally omitted from this struct, which made
+// the handshake drop them: json.Unmarshal into a struct without them discards
+// the keys silently. serve.go states why the core sends `implemented` at all,
+// and the sentence describes exactly the client that ignores it -- without the
+// list "a client discovers that one type at a time by sending a request and
+// reading a failure, which makes a permanent state look like a transient
+// error." Measured against arxi 0.0.1-spec, `run.prompt` (the host's only
+// verb) is in Types and absent from Implemented, so the distinction is not
+// theoretical: the host's one request is declared and has no executor.
+type Hello struct {
+	Type    string `json:"type"`
+	Version string `json:"version"`
+	// SurfaceVersion is the vocabulary number, derived by the core from
+	// surface.SurfaceVersion. This -- not Version -- is what the handshake
+	// gates on. See hostSurfaceVersion.
+	SurfaceVersion int `json:"surface_version"`
+	// Types is every message type the surface declares; Implemented is the
+	// subset this build has an executor for. A type in Types but not in
+	// Implemented is answered `not_implemented`: a permanent gap, not a
+	// transient failure.
+	Types       []string `json:"types"`
+	Implemented []string `json:"implemented"`
+	// Capabilities is the effective capability set for this session's
+	// principal, resolved by the core's host at connection time.
+	Capabilities []string `json:"capabilities"`
 }
 
 const (
 	// maxLineBytes caps a single NDJSON line at 1 MiB.
 	maxLineBytes = 1 << 20
 
-	// protocolVersion is the version string this host speaks in the handshake.
-	protocolVersion = "0.1.0"
+	// hostSurfaceVersion is the arxi surface vocabulary this host is written
+	// against.
+	//
+	// The handshake gates on THIS and not on the core's `version` string. The
+	// first implementation compared `version` against a "0.1.0" invented here,
+	// and the core sends the version of its BINARY ("0.0.1-spec",
+	// cmd/arxi/main.go:60), so the two could never be equal and every real
+	// handshake was refused -- the bridge could not have opened once. Pinning
+	// the binary version instead would only move the coupling: an arxi patch
+	// release would then break the host for no reason, because a new binary
+	// over the same surface speaks the same vocabulary.
+	//
+	// The surface version is the right gate because it is what the bind
+	// inventory, the request parameters and the event field names are all
+	// written against, and the core refuses unknown parameters rather than
+	// ignoring them -- so talking v1 to a v2 core must fail loudly here, not
+	// as a wrong frame later.
+	hostSurfaceVersion = 1
 
 	// pollInterval is how often LogFollow re-checks the event log for appends
 	// — the same cadence arxi run attach uses.
@@ -92,18 +229,67 @@ func (d *NDJSONDriver) Handshake(ctx context.Context) error {
 		return fmt.Errorf("ndjson: handshake read: %w", err)
 	}
 
-	var hello helloMsg
+	var hello Hello
 	if err := json.Unmarshal([]byte(line), &hello); err != nil {
 		return fmt.Errorf("ndjson: hello is not JSON: %w", err)
 	}
 	if hello.Type != "hello" {
 		return fmt.Errorf("ndjson: expected hello, got type %q", hello.Type)
 	}
-	if hello.Version != protocolVersion {
-		return fmt.Errorf("ndjson: version mismatch: server is %q, client is %q",
-			hello.Version, protocolVersion)
+	if hello.SurfaceVersion != hostSurfaceVersion {
+		return fmt.Errorf("ndjson: surface version mismatch: the core serves "+
+			"surface v%d and this host speaks surface v%d (core binary %q). "+
+			"The surface is the request vocabulary and the event field names; "+
+			"the core refuses parameters it does not declare, so continuing "+
+			"would produce wrong frames rather than errors",
+			hello.SurfaceVersion, hostSurfaceVersion, hello.Version)
 	}
+
+	d.mu.Lock()
+	d.hello = &hello
+	d.mu.Unlock()
 	return nil
+}
+
+// Hello returns the greeting the core sent, or nil before a successful
+// handshake. The caller needs it to tell a declared-but-unimplemented verb
+// from one the surface does not have at all.
+func (d *NDJSONDriver) Hello() *Hello {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.hello
+}
+
+// Declares reports whether the core's surface contains this message type.
+// A type that is not declared is answered `unknown_type`: the client is wrong.
+func (d *NDJSONDriver) Declares(msgType string) bool {
+	h := d.Hello()
+	if h == nil {
+		return false
+	}
+	for _, t := range h.Types {
+		if t == msgType {
+			return true
+		}
+	}
+	return false
+}
+
+// Implements reports whether THIS build of the core has an executor for the
+// type. A declared type that is not implemented is answered
+// `not_implemented`, which is permanent for this binary: retrying will not
+// help, and the host should say so rather than present it as a failed send.
+func (d *NDJSONDriver) Implements(msgType string) bool {
+	h := d.Hello()
+	if h == nil {
+		return false
+	}
+	for _, t := range h.Implemented {
+		if t == msgType {
+			return true
+		}
+	}
+	return false
 }
 
 // Run blocks until the context is cancelled. The serve protocol is
@@ -133,7 +319,43 @@ func (d *NDJSONDriver) SubmitPrompt(ctx context.Context, runID, text string) (*p
 		return nil, fmt.Errorf("ndjson: send run.prompt: %w", err)
 	}
 
-	return d.readResponse(ctx)
+	resp, err := d.readResponse(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// ok:false is an answer, not a transport success. Returning it with a nil
+	// error is the disagreement serve.go warns about, and it is what shipped:
+	// the refusal "read as success" all the way up to a call site that
+	// discarded the value. The response is still returned alongside the error
+	// so a caller that wants the raw line has it.
+	if !resp.OK {
+		return resp, resp.refusal("run.prompt")
+	}
+	return resp, nil
+}
+
+// refusal converts an ok:false response into a *Refusal, preserving the code,
+// the core's sentence and its remedy. A response with ok:false and no error
+// object still becomes a refusal: `ok` is the field of record, and inventing a
+// success because the error object was omitted is precisely the ambiguity the
+// explicit boolean removes.
+func (r *protoResponse) refusal(reqType string) *Refusal {
+	if r.Error == nil {
+		return &Refusal{
+			Code: "failed",
+			Message: "the core answered ok:false with no error object. `ok` is " +
+				"the field of record, so this is a refusal with no stated reason",
+			Type: reqType,
+		}
+	}
+	return &Refusal{
+		Code:      r.Error.Code,
+		Message:   r.Error.Message,
+		Fix:       r.Error.Fix,
+		Operation: r.Error.Operation,
+		Type:      reqType,
+	}
 }
 
 // readLine reads one line from the server, respecting context cancellation.
@@ -262,18 +484,14 @@ func replayFile(f *os.File, out chan<- fold.Event) error {
 		if len(trimmed) == 0 {
 			continue
 		}
-		var raw struct {
-			Seq     int64          `json:"seq"`
-			Type    string         `json:"type"`
-			Payload map[string]any `json:"payload"`
-		}
-		if err := json.Unmarshal(trimmed, &raw); err != nil {
+		ev, err := decodeEvent(trimmed)
+		if err != nil {
 			return err
 		}
 		out <- fold.Event{
-			Type:    raw.Type,
-			Seq:     raw.Seq,
-			Payload: raw.Payload,
+			Type:    ev.Type,
+			Seq:     ev.Seq,
+			Payload: ev.Payload,
 		}
 	}
 	return nil
@@ -287,6 +505,67 @@ func replayFile(f *os.File, out chan<- fold.Event) error {
 // state, which is what makes golden re-runs and property tests meaningful.
 func Replay(logPath string) ([]fold.Event, error) {
 	return decodeLog(logPath)
+}
+
+// decodeEvent parses one NDJSON event line.
+//
+// It is one function because it used to be two, copy-pasted between LogFollow
+// and decodeLog, and a decoder duplicated is a decoder that will disagree with
+// itself: the moment one learns a field the other does not, the live stream
+// and the replay produce different states from the same bytes -- and replay
+// determinism is the property every golden test in this repo rests on.
+//
+// The sequence number has two spellings and BOTH are real, which is the defect
+// this function exists to fix:
+//
+//   - `seq`      -- internal/kernel.Event, the on-disk log record the core's
+//     log writer appends. This is what `run attach` and every
+//     replay fixture read.
+//   - `sequence` -- host/v1.Event, the event embedded in a `run.attach`
+//     notification on the socket (cmd/arxi/serve_stream.go).
+//
+// The previous decoder read only `seq`, so it was correct about the file and
+// wrong about the wire. Being wrong did not produce an error: json.Unmarshal
+// left the field at zero, so every event arriving over a subscription folded
+// at Seq 0 and the log appeared to be one unordered batch. Timestamps differ
+// the same way (`ts` vs `time`) and are accepted from either spelling for the
+// same reason.
+//
+// A record carrying NEITHER spelling is refused rather than folded at zero.
+// Accepting both must not degrade into accepting anything: an event with no
+// sequence has an unknown position in the log, and defaulting it to zero
+// orders it ahead of every real event. That is a wrong frame, and this repo
+// holds a wrong frame to be worse than a refusal.
+func decodeEvent(line []byte) (fold.Event, error) {
+	var raw struct {
+		Seq      *int64         `json:"seq"`
+		Sequence *int64         `json:"sequence"`
+		Type     string         `json:"type"`
+		Ts       string         `json:"ts"`
+		Time     string         `json:"time"`
+		Payload  map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal(line, &raw); err != nil {
+		return fold.Event{}, fmt.Errorf("not an event: %w", err)
+	}
+
+	seq := raw.Seq
+	if seq == nil {
+		seq = raw.Sequence
+	}
+	if seq == nil {
+		return fold.Event{}, fmt.Errorf("event of type %q carries neither `seq` "+
+			"(the on-disk kernel.Event spelling) nor `sequence` (the host/v1.Event "+
+			"spelling used on the wire), so its position in the log is unknown; "+
+			"folding it at zero would order it before every real event",
+			raw.Type)
+	}
+
+	return fold.Event{
+		Type:    raw.Type,
+		Seq:     *seq,
+		Payload: raw.Payload,
+	}, nil
 }
 
 // decodeLog parses an NDJSON event log into fold events.
@@ -316,19 +595,15 @@ func decodeLog(path string) ([]fold.Event, error) {
 			continue
 		}
 
-		var raw struct {
-			Seq     int64          `json:"seq"`
-			Type    string         `json:"type"`
-			Payload map[string]any `json:"payload"`
-		}
-		if err := json.Unmarshal(trimmed, &raw); err != nil {
-			return nil, fmt.Errorf("decode log %s line %d: not an event: %w", path, lineNo, err)
+		ev, err := decodeEvent(trimmed)
+		if err != nil {
+			return nil, fmt.Errorf("decode log %s line %d: %w", path, lineNo, err)
 		}
 
 		events = append(events, fold.Event{
-			Type:    raw.Type,
-			Seq:     raw.Seq,
-			Payload: raw.Payload,
+			Type:    ev.Type,
+			Seq:     ev.Seq,
+			Payload: ev.Payload,
 		})
 	}
 	return events, nil
