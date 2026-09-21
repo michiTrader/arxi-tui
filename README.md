@@ -230,15 +230,74 @@ feature, as `PLAN.md` requires:
   The plan-block detection is confirmed against the live gateway rather than a
   captured body, and re-confirmed each session it is checked: the run that
   once reported `looped=3` now reports `model_error` on every case and exits
-  non-zero (latest check, re-run live this session: `0/4 converged,
-  model_error=4`, exit 1, with the block confirmed by a direct probe of the
-  endpoint rather than inferred from the harness). That is the
+  non-zero (latest check, re-run live this session against `gpt-5-mini`:
+  `0/4 converged, model_error=4`, exit 1, with the block confirmed by a
+  direct probe of the endpoint — HTTP 200, `x_genspark.code =
+  free_plan_block` — rather than inferred from the harness). That is the
   harness declining to score, which is the correct result and still not a
   score. The block arrives as **HTTP 200 carrying a normal-looking assistant
   message** — `x_genspark.code = free_plan_block` — which is why the detection
   has to exist at all: without it the refusal reads as a model that answered
   badly, and the corpus would record a plan limit as a capability measurement.
-- ⬜ `/ui` commands and agent-driven patches, with the change-diff view
+- ✅ The `/ui` control surface (`internal/patch`), PLAN.md's deterministic
+  half. A patch is a **source-to-source transformation** — bytes in, bytes
+  out, re-parsed through `scene.ParseNamed` — rather than a mutation of
+  `*scene.Node`, and the choice was measured rather than argued. A
+  `Document`'s address book is built by the parser and by nothing else, so a
+  Document assembled in memory has no offsets; the same refusal, on the same
+  document, both ways:
+
+  ```
+  parsed from bytes : probe.json:2:4: node type "text" declares "row_template" …
+  rebuilt by hand   : <scene>: node type "text" declares "row_template" …
+  ```
+
+  The address is gone. That is the worst place in the project to lose it,
+  because Phase 2's thesis is the repair loop and the validator error is the
+  only input the retry gets: a tree-mutating `/ui` works for every command
+  that succeeds and degrades the diagnostics of exactly the commands that
+  fail. Round-trip fidelity was measured before it was built on (both shipped
+  scenes re-marshal and re-parse tree-stable and warning-stable). The edit
+  walks a generic map rather than the typed tree, because `scene.Node` drops
+  undeclared keys and editing through it would silently delete every unknown
+  property on the way past — including every field a later phase adds and
+  every field a plugin fragment carries.
+- ✅ Two verbs, and the omissions are the substance rather than the unfinished
+  edge. `add`/`move` must answer *where*, and that addressing vocabulary is
+  Scene 5 / Phase 3; `hide`/`show` need a per-node view-state bind, and the
+  draft that invented one (`ui.hidden`) was refused by the validator against
+  the shipped scene — correctly, since every `ui.*` row BINDS.md signs is a
+  single id, so a scalar flag makes `/ui hide a` silently unhide `b`. All four
+  are refused the way `row_template` is: *"not yet"* rather than *"invalid"*,
+  because a wrong diagnosis costs the repair loop a turn.
+- ✅ Measured while wiring it: **about half of every shipped scene is
+  unaddressable** — SOBRIA declares an id on 7 of 15 nodes, MAXIMUM 7 of 13,
+  RAW 3 of 4. So "no node with that id" is the expected answer to much of what
+  a user will try, and the reason is invisible from the screen (the status
+  row's model name is a node they can see and point at, and `model.name` is
+  its *bind*). The refusal lists the ids that exist and counts the anonymous
+  ones; synthesising addresses was rejected as a second way to name a node,
+  designed here rather than in SCENES.md.
+- ✅ The dispatch runs **ahead of the slash menu**, which is a fix rather than
+  an ordering preference. The menu filters on the whole typed string, so it
+  matches nothing once an argument is present (`ui` → 1, `ui style` → 0,
+  `ui style status dim` → 0) and its Enter branch returns the buffer
+  untouched: a complete, correct command did nothing at all — no patch, no
+  refusal, no prompt — with the menu showing an empty list. The guard for it
+  had to be rewritten after an injection: the first version called the handler
+  directly, and welding the dispatch back behind the menu left it **green**,
+  because the defect is in the order of the branches and that order does not
+  exist inside the function under test. It now types the command into `loop()`
+  through the scripted TTY.
+- ✅ The slash menu advertised `add, move, style, plugin` while the surface
+  implemented two verbs — the accepted-but-not-drawn class one layer out, and
+  worse there than in a document, since the menu is read at the moment of use
+  and so invites the user into a refusal. Held in both directions by a test in
+  `patch_test`, which is where it can import both packages without `fold`
+  importing the mutation layer (ADR-0002).
+- ⬜ Agent-driven patches, with the full change-diff view. The summary line is
+  in place (`/ui: styled "status" as "dim"`); the side-by-side view belongs
+  with the agent half, where a proposal arrives *before* it is applied.
 
 ## Build
 
