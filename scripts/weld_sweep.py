@@ -34,11 +34,25 @@ import tempfile
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 FOLD = ROOT / "internal" / "fold" / "fold.go"
 NDJSON = ROOT / "internal" / "driver" / "ndjson.go"
+ENGINE = ROOT / "internal" / "engine" / "render.go"
+SCENE = ROOT / "internal" / "scene" / "validate.go"
 
 # The packages whose tests are the instrument. A weld is CAUGHT only if one of
 # these fails, so a weld in a file no test here exercises reports ESCAPED --
 # which is the correct answer, not a harness bug.
-TEST_PKGS = ["./internal/fold/", "./internal/driver/"]
+#
+# engine and scene joined the list after the sweep had run four times without
+# them. They are the two biggest test packages in the repo -- 62 and 59 tests
+# -- and neither had ever had a weld aimed at it, so their green was the one
+# kind this harness exists to distrust. Two consecutive turns have now found
+# real defects underneath a green suite, which makes "never measured" a
+# statement about the measurement and not about the code.
+TEST_PKGS = [
+    "./internal/fold/",
+    "./internal/driver/",
+    "./internal/engine/",
+    "./internal/scene/",
+]
 
 
 def weld_path(weld):
@@ -589,6 +603,110 @@ WELDS = [
         "the member exists in the map and vanishes from the rendered panel",
         """\t\t\t\ts.memberOrder = append(s.memberOrder, agent)""",
         """\t\t\t\t_ = agent""",
+    ),
+
+    # --- internal/engine and internal/scene: 121 tests, never measured ---
+    #
+    # These two packages have the most tests in the repo and no weld had ever
+    # been aimed at either. That combination is exactly what this harness
+    # exists to distrust: this turn and the last both found real defects
+    # sitting under a green suite, so "green without a sweep" has now been
+    # wrong twice in a row on measured evidence.
+    #
+    # The welds below break DECISIONS the source argues for in its own
+    # comments -- the two-spelling style token, the id-equality focus glow,
+    # the placeholder-as-falsy rule -- rather than arbitrary lines. A weld on
+    # a line nobody reasoned about measures typing, not coverage.
+    (
+        "when: the placeholder is treated as a truthy value",
+        "a gated node draws because its bind is UNRESOLVED, which is the opposite of what it means",
+        """\tcase "", "0", "false", placeholderValue:""",
+        """\tcase "", "0", "false":""",
+        ENGINE,
+    ),
+    (
+        "when: \"false\" read as truthy",
+        "every `when`-gated node renders permanently",
+        """\tcase "", "0", "false", placeholderValue:""",
+        """\tcase "", "0", placeholderValue:""",
+        ENGINE,
+    ),
+    (
+        "when: a node with no `when` is hidden rather than shown",
+        "blanks the whole scene; absence of a gate is not a closed gate",
+        """\tif n == nil || n.When == "" {
+\t\treturn false
+\t}""",
+        """\tif n == nil || n.When == "" {
+\t\treturn true
+\t}""",
+        ENGINE,
+    ),
+    (
+        "focus glow: matches on empty id",
+        "glows every id-less node the moment nothing has focus -- the inverse of the property",
+        """\tif n.ID == "" || state.UIFocus != n.ID {""",
+        """\tif state.UIFocus != n.ID {""",
+        ENGINE,
+    ),
+    (
+        "focus glow: written to the document instead of a copy",
+        "the glow becomes permanent; state keyed to the wrong lifetime",
+        """\tglowed := *n
+\tglowed.Style = make(map[string]string, len(n.Style)+1)""",
+        """\tglowed := *n
+\tglowed.Style = n.Style
+\tif glowed.Style == nil {
+\t\tglowed.Style = make(map[string]string, 1)
+\t}
+\tif false""",
+        ENGINE,
+    ),
+    (
+        "focus glow: written under the canonical key only",
+        "a node spelling its token `token` keeps its old style; the two-spelling defect again",
+        """\tfor _, key := range scene.StyleTokenKeys() {
+\t\tglowed.Style[key] = n.FocusGlow.Style
+\t}""",
+        """\tglowed.Style["style"] = n.FocusGlow.Style""",
+        ENGINE,
+    ),
+    (
+        "style token: only the canonical spelling is read",
+        "a scene using the other ACCEPTED spelling passes validation and renders unstyled",
+        """\tfor _, key := range scene.StyleTokenKeys() {
+\t\tif name := style[key]; name != "" {""",
+        """\tfor _, key := range []string{"style"} {
+\t\tif name := style[key]; name != "" {""",
+        ENGINE,
+    ),
+    (
+        "validator: the two accepted style spellings are cut to one",
+        "the validator and the renderer stop agreeing about the vocabulary",
+        """var styleTokenKeys = [...]string{"token", "style"}""",
+        """var styleTokenKeys = [...]string{"style"}""",
+        SCENE,
+    ),
+    (
+        "validator: an unrendered-but-accepted field is no longer refused",
+        "the field is silently dropped -- the checked-but-never-drawn class, with validation reporting success",
+        """\t\tbecause, ok := unrenderedFields[field]
+\t\tif !ok {
+\t\t\tcontinue
+\t\t}""",
+        """\t\tbecause, ok := unrenderedFields[field]
+\t\t_ = because
+\t\tif true || !ok {
+\t\t\tcontinue
+\t\t}""",
+        SCENE,
+    ),
+    (
+        "validator: unrendered fields reported in map order",
+        "the error address moves between runs, so it is not an address",
+        """\tsort.Strings(declared)""",
+        """\t_ = sort.Strings""",
+        SCENE,
     ),
 ]
 
