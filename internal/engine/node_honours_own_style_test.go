@@ -265,77 +265,158 @@ func TestEveryNodeDrawsItsOwnContentUnderItsOwnToken(t *testing.T) {
 // It asserts the weakest possible thing — that *something* moved — for the
 // same reason its siblings do. Which token, and whether the result is legible,
 // is the goldens' question.
+//
+// # The Skip this used to take, and why it was the finding
+//
+// The population was `restyleOffendingNodes`: the nodes the sweep above
+// measures as *dropping* their token. That set is empty whenever the engine is
+// correct, so on a clean tree the test skipped, and the only states it had were
+//
+//	                    sweep    reachability
+//	R12a injected       FAIL     FAIL
+//	clean tree          PASS     SKIP
+//
+// There is no state in which it caught something its sibling did not — 100%
+// overlap by R10c — and it announced that every run through a Skip line, which
+// next to `ok` reads as housekeeping rather than as a guard reporting it has
+// nothing to do. That is the third severity a finding has hidden behind in
+// this tree, after a t.Errorf on an unreachable decision and a t.Logf on a
+// passing run.
+//
+// Two things were wrong underneath it. The population was defined by the
+// defect's *presence*, which is the one thing a reachability question must not
+// depend on: "can a user reach this surface" is a fact about the scene, and it
+// stays true after the bug is fixed. And the probe fold was empty — no history,
+// no todos, no thinking text — so the content-bearing nodes drew their empty
+// states and the question was asked of placeholders.
+//
+// Rebuilt on both counts: the population is every node type the *sweep*
+// classifies as content-bearing, stamped in SOBRIA under a populated fold, and
+// the assertion is per type. Measured that way, with content in the fold:
+//
+//	input yes · list yes · markdown yes · marquee yes · rule yes · text yes
+//	overlay no · row no · stack no   (containers: no content of their own)
+//
+// Six of six content types present in SOBRIA respond, so the property is
+// asserted rather than skipped, and a type that stops responding is named.
 func TestStylingAShippedSceneChangesItsFrame(t *testing.T) {
-	doc, err := scene.ParseFile("../../testdata/SOBRIA.json")
-	if err != nil {
-		t.Fatalf("parse SOBRIA: %v", err)
-	}
-
+	// A populated fold, and that is the second half of the finding. With an
+	// empty fold the transcript, the todo list and the marquee all draw their
+	// empty states, which are different code paths under different tokens —
+	// the reachability of the real content would go unmeasured behind a
+	// placeholder that happened to move.
 	state := fold.State{
-		UserInput:    "",
-		SlashActive:  true,
-		SlashMatches: []fold.SlashMatch{{Name: "/help", Description: "show help", Category: "core"}},
+		UserInput:     "typed text",
+		ThinkingText:  "thinking about it",
+		AgentWorking:  true,
+		SlashActive:   true,
+		SlashSelected: 0,
+		SlashMatches: []fold.SlashMatch{
+			{Name: "/help", Description: "show help", Category: "core"},
+			{Name: "/quit", Description: "leave the session", Category: "core"},
+		},
+		History: []fold.ChatLine{
+			{Role: "user", Text: "a turn of the transcript"},
+			{Role: "assistant", Text: "the turn after it"},
+		},
+		Todos: []fold.TodoItem{{Task: "first task"}},
 	}
 	r := &Renderer{Width: 60, Height: 20}
-	before := frameSignature(r.RenderFrame(doc, state))
 
-	// The token is applied only to node types the sweep measures as dropping
-	// it, so this test cannot drift away from the one above by naming its own
-	// list of suspects — and cannot pass for the wrong reason either. An
-	// earlier draft stamped every content-bearing node, which included `text`;
-	// `text` honours its token, the frame duly changed, and the test reported
-	// success while the four broken types went unexercised. A reachability
-	// check satisfied by the working case is not a reachability check.
-	styled := restyleOffendingNodes(t, doc.Root)
-	if styled == 0 {
-		t.Skip("no node type in SOBRIA currently drops its declared token; " +
-			"this reachability check has nothing left to exercise and the sweep above owns the property")
+	// The population is every type the sweep classifies as drawing content of
+	// its own — measured by nodeDrawsOwnContent, not listed here, so the two
+	// halves cannot drift apart. Crucially it is *not* conditioned on the type
+	// currently dropping its token: that was the old Skip's mistake, and it
+	// made the check evaporate exactly when the engine was healthy.
+	var contentTypes []string
+	for _, ty := range nodeTypesInRenderNode(t) {
+		drewPlain, _ := nodeDrawsOwnContent(t, ty, false)
+		drewBordered, _ := nodeDrawsOwnContent(t, ty, true)
+		if drewPlain || drewBordered {
+			contentTypes = append(contentTypes, ty)
+		}
 	}
 
-	// The witness has to be a token the theme defines, or the check would be
-	// measuring the validator instead: an undefined token is refused, and a
-	// refusal is the outcome this whole class of defect never produces. The
-	// factory tokens are carried over too, because SOBRIA references `dim`
-	// and `header` on nodes this patch does not touch — a theme holding only
-	// the witness would refuse the scene for reasons unrelated to what is
-	// being measured.
-	factory := theme.Factory()
-	tokens := map[string]ui.Style{ownStyleWitness: {Attrs: ui.AttrDim}}
-	for _, name := range factory.Tokens() {
-		tokens[name] = factory.Resolve(name)
-	}
-	if errs := scene.ValidateTokens(doc, theme.FromMap(tokens)); len(errs) > 0 {
-		t.Fatalf("the restyled SOBRIA was refused by the token validator: %v\n"+
-			"consequence: this test can only demonstrate the silent failure if the document is accepted.", errs)
+	var inert, present []string
+
+	for _, ty := range contentTypes {
+		doc, err := scene.ParseFile("../../testdata/SOBRIA.json")
+		if err != nil {
+			t.Fatalf("parse SOBRIA: %v", err)
+		}
+
+		before := frameSignature(r.RenderFrame(doc, state))
+		if restyleNodesOfType(doc.Root, ty) == 0 {
+			// SOBRIA carries no node of this type. `box` and `spinner` are in
+			// the engine's vocabulary and not in the factory scene, which is a
+			// fact about the scene and not a defect.
+			continue
+		}
+		present = append(present, ty)
+
+		// The witness has to be a token the theme defines, or the check would
+		// be measuring the validator instead: an undefined token is refused,
+		// and a refusal is the outcome this whole class of defect never
+		// produces. The factory tokens are carried over too, because SOBRIA
+		// references `dim` and `header` on nodes this patch does not touch — a
+		// theme holding only the witness would refuse the scene for reasons
+		// unrelated to what is being measured.
+		factory := theme.Factory()
+		tokens := map[string]ui.Style{ownStyleWitness: {Attrs: ui.AttrDim}}
+		for _, name := range factory.Tokens() {
+			tokens[name] = factory.Resolve(name)
+		}
+		if errs := scene.ValidateTokens(doc, theme.FromMap(tokens)); len(errs) > 0 {
+			t.Fatalf("the restyled SOBRIA (%s) was refused by the token validator: %v\n"+
+				"consequence: this test can only demonstrate the silent failure if the document is accepted.", ty, errs)
+		}
+
+		if frameSignature(r.RenderFrame(doc, state)) == before {
+			inert = append(inert, ty)
+		}
 	}
 
-	after := frameSignature(r.RenderFrame(doc, state))
+	sort.Strings(inert)
 
-	if before == after {
-		t.Errorf("styling %d node(s) of the shipped default scene left the frame byte-identical\n\n"+
+	// The floor. If SOBRIA stopped carrying any content-bearing node — or the
+	// classifier stopped finding them — every type would be `continue`d and
+	// this would report success having stamped nothing. That is the vacuous
+	// pass the Skip used to take openly, and it must not come back silently.
+	if len(present) == 0 {
+		t.Fatal("SOBRIA carries no node of any content-bearing type, so this reachability check stamped nothing\n" +
+			"consequence: a green result would certify that the shipped scene responds to styling without\n" +
+			"having styled a single node of it.\n" +
+			"remedy: confirm nodeDrawsOwnContent still classifies the content types, and that SOBRIA still\n" +
+			"carries its markdown transcript, input prompt, rule and slash list.")
+	}
+
+	if len(inert) > 0 {
+		t.Errorf("%d content-bearing type(s) in the shipped default scene ignore a declared token: %s\n\n"+
 			"consequence: the user (or the agent patching on their behalf) declared a token on a node\n"+
 			"the format says may carry one, both validators accepted it, and the screen did not change.\n"+
 			"Nothing refuses, so there is no address to repair from and the eval corpus scores the\n"+
 			"unchanged screen as converged.\n"+
 			"remedy: see TestEveryNodeDrawsItsOwnContentUnderItsOwnToken — the node types that draw\n"+
-			"their own content must apply their declared token to it.", styled)
+			"their own content must apply their declared token to it.",
+			len(inert), strings.Join(inert, ", "))
 	}
+
+	t.Logf("stamped %d content-bearing type(s) present in SOBRIA: %s", len(present), strings.Join(present, ", "))
 }
 
-// restyleOffendingNodes stamps the witness token onto every node that draws
-// content of its own *and does not honour its own token*, and reports how many
-// it touched.
+// restyleNodesOfType stamps the witness token onto every node of one type and
+// reports how many it touched.
 //
-// Both halves of that condition are measured by nodeDrawsOwnContent rather
-// than listed here, so the population this test exercises is exactly the
-// population the sweep above complains about.
-func restyleOffendingNodes(t *testing.T, n *scene.Node) int {
-	t.Helper()
+// Unlike restyleOffendingNodes, which it replaces, the population is not
+// conditioned on the node currently dropping its token. Reachability is a
+// question about the scene, and the answer must not change when the engine is
+// repaired.
+func restyleNodesOfType(n *scene.Node, ty string) int {
 	if n == nil {
 		return 0
 	}
 	count := 0
-	if drew, honoured := nodeDrawsOwnContent(t, n.Type, false); drew && !honoured {
+	if n.Type == ty {
 		if n.Style == nil {
 			n.Style = map[string]string{}
 		}
@@ -343,7 +424,7 @@ func restyleOffendingNodes(t *testing.T, n *scene.Node) int {
 		count++
 	}
 	for _, c := range n.Children {
-		count += restyleOffendingNodes(t, c)
+		count += restyleNodesOfType(c, ty)
 	}
 	return count
 }
