@@ -23,6 +23,7 @@ Usage:  python3 scripts/weld_sweep.py
 Exit:   0 when every weld is CAUGHT; 1 if any ESCAPED or INVALID.
 """
 
+import argparse
 import hashlib
 import pathlib
 import re
@@ -717,7 +718,76 @@ def run(cmd, cwd):
     )
 
 
-def main():
+def parse_args(argv):
+    """--shard i/n runs one slice of the welds; --list prints the inventory.
+
+    Sharding exists because the sweep outgrew the wall-clock budget of the
+    environment it runs in. At 67 welds and a four-package suite it needs
+    roughly half an hour end to end, and this sandbox has been destroyed
+    mid-run: the harness restores sources in a `finally`, but a process that
+    is killed outright never reaches it, and the next session then inherits a
+    working tree with one weld silently pasted into it. A sweep whose failure
+    mode is "the defect is now in the source and the log that would say so is
+    gone" is worse than no sweep.
+
+    Shards are contiguous slices rather than a stride, so a shard that reports
+    an escape names a range small enough to re-run on its own. Running every
+    shard covers every weld exactly once -- asserted by --list, which prints
+    the assignment so the partition can be checked rather than trusted.
+    """
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--shard", metavar="I/N",
+                   help="run slice I of N (1-based), e.g. 2/4")
+    p.add_argument("--list", action="store_true",
+                   help="print the weld inventory and shard assignment, run nothing")
+    a = p.parse_args(argv)
+    if not a.shard:
+        return 0, 1, a.list
+    try:
+        i, n = (int(x) for x in a.shard.split("/"))
+    except ValueError:
+        p.error(f"--shard wants I/N with integers, got {a.shard!r}")
+    if not (1 <= i <= n):
+        p.error(f"--shard {a.shard}: need 1 <= I <= N")
+    return i - 1, n, a.list
+
+
+def shard_bounds(total, index, count):
+    """The [lo, hi) slice for one shard, with the remainder spread evenly.
+
+    Computed rather than rounded so that the shards partition the welds
+    exactly: sum of all shard sizes == total, and no weld is in two shards.
+    A sweep that silently skipped a weld would report a clean run it never
+    performed, which is the failure this whole harness exists to refuse.
+    """
+    base, extra = divmod(total, count)
+    lo = index * base + min(index, extra)
+    hi = lo + base + (1 if index < extra else 0)
+    return lo, hi
+
+
+def main(argv=None):
+    shard_i, shard_n, want_list = parse_args(argv if argv is not None else sys.argv[1:])
+    lo, hi = shard_bounds(len(WELDS), shard_i, shard_n)
+
+    if want_list:
+        print(f"{len(WELDS)} welds, {shard_n} shard(s)")
+        for s in range(shard_n):
+            a, b = shard_bounds(len(WELDS), s, shard_n)
+            print(f"  shard {s+1}/{shard_n}: welds {a+1}..{b} ({b-a})")
+        covered = sum(shard_bounds(len(WELDS), s, shard_n)[1]
+                      - shard_bounds(len(WELDS), s, shard_n)[0]
+                      for s in range(shard_n))
+        # The partition is asserted, not assumed. A shard arithmetic bug that
+        # dropped a weld would make every shard pass while the weld it
+        # skipped was never applied -- indistinguishable, in the summary,
+        # from a weld that was caught.
+        print(f"  total covered: {covered} "
+              f"({'exact' if covered == len(WELDS) else 'MISMATCH'})")
+        for i, w in enumerate(WELDS, 1):
+            print(f"  [{i:2d}] {weld_path(w).stem}: {w[0]}")
+        return 0 if covered == len(WELDS) else 2
+
     # Every file any weld targets, read once up front. The sweep used to hold
     # a single `original` string for fold.go, which is why the log-follow fix
     # in ndjson.go shipped unmeasured: the harness could not express a weld
@@ -757,7 +827,7 @@ def main():
 
     caught, escaped, invalid = [], [], []
 
-    for i, w in enumerate(WELDS, 1):
+    for i, w in enumerate(WELDS[lo:hi], lo + 1):
         name, why, old, new = w[0], w[1], w[2], w[3]
         path = weld_path(w)
         label = f"{path.stem}: {name}"
@@ -796,7 +866,12 @@ def main():
 
     print()
     print("=" * 62)
-    print(f"welds:   {len(WELDS)}")
+    if shard_n > 1:
+        print(f"shard:   {shard_i + 1}/{shard_n}  (welds {lo + 1}..{hi} of "
+              f"{len(WELDS)})")
+        print("         a clean shard is NOT a clean sweep; every shard must")
+        print("         be run before the result means anything")
+    print(f"welds:   {hi - lo}")
     print(f"CAUGHT:  {len(caught)}")
     print(f"ESCAPED: {len(escaped)}")
     print(f"INVALID: {len(invalid)}  (did not compile; NOT a catch)")
