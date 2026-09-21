@@ -630,3 +630,41 @@ to the *actions*.
   be accepted. **A decision that only exists inside an assertion cannot be
   measured; give it a name and a return value before trusting its
   counterfactual.**
+- **A containment check has two directions, and deriving one of them is what
+  hides the other.** The zero-value audit derives its cases from
+  `unrenderedFields`, so a key added there fails until it has a spelling, and
+  the previous turn added the second question — whether each spelling really
+  is a zero value. Both run over the keys `unrenderedFields` names. Neither
+  ever looks at an `empties` entry outside that key set. The event that
+  produces one is not hypothetical: every `because` string in
+  `unrenderedFields` is a promise the field gets rendered later, and
+  graduating a key means deleting its line. Measured, on `on_press` removed
+  the way Phase 3 will remove it:
+
+      the subtest for on_press stops existing
+      no failure names on_press, empties, or that file
+      empties["on_press"] remains, spelling and all, measuring nothing
+
+  The suite *does* fail loudly on that edit — two sibling audits fire — which
+  is what makes it the bad case rather than a harmless one. The author is
+  handed real failures, fixes each, reaches green, and leaves a dead entry
+  behind that no message ever asked about. **The derivation that makes a list
+  complete does not make it current; "no entry can be missing" and "no entry
+  can be stale" are separate claims, and the loop that proves the first is
+  structurally unable to see the second.** Fixed by checking containment the
+  other way, outside the `range` — it has to run when the map is empty, which
+  is exactly when every remaining entry is stale at once.
+- **Apply a ledger entry to the code you are writing, not only to the code you
+  are reading.** The previous turn recorded that a decision reachable solely
+  through a `t.Errorf` cannot have its counterfactual run, and extracted
+  `spellingIsAcceptableZero` for it. The stale-entry check above was written
+  inline the very next turn, with the same shape, and reproduced the same
+  result: condition short-circuited to skip every key, `on_press` graduated in
+  the same edit, suite green. Nothing else in the package could object,
+  because no document fails on account of a dead map entry — the guard's only
+  witness is itself. Split into `entryIsStale` and pinned from both sides: a
+  live key called stale is the false-alarm direction that gets guards deleted
+  as noise, a dead key called live is the guard doing nothing. **A lesson
+  stays a description until the next thing you write is checked against it;
+  the shape it names is easiest to reintroduce while fixing the instance that
+  taught it to you.**

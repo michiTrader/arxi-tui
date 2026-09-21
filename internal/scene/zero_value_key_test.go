@@ -58,6 +58,8 @@ func TestAKeyWrittenEmptyIsStillAKeyTheAuthorWrote(t *testing.T) {
 		"row_template": `null`,
 	}
 
+	assertEveryEmptyHasAKeyToMeasure(t, empties)
+
 	for key := range unrenderedFields {
 		zero, ok := empties[key]
 		if !ok {
@@ -101,6 +103,130 @@ func TestAKeyWrittenEmptyIsStillAKeyTheAuthorWrote(t *testing.T) {
 					"which field was rejected: %q", key, verr.Error())
 			}
 		})
+	}
+}
+
+// assertEveryEmptyHasAKeyToMeasure runs the containment the other way: every
+// entry of `empties` must name a key `unrenderedFields` still declares.
+//
+// # The direction the derivation does not cover
+//
+// The loop below derives its *cases* from `unrenderedFields`, so a key added
+// there fails until it has a spelling. Last turn added the second question —
+// whether each spelling is really a zero value — so a drifted case body
+// cannot pass while reporting the empty case as covered. Both checks run over
+// the keys `unrenderedFields` names. Neither one ever looks at an `empties`
+// entry that key set does not reach.
+//
+// That is not a spare-parts problem. It is the shape this file was written
+// about, arriving through the one event every entry here is scheduled for.
+// Each `because` string in `unrenderedFields` is a promise that the field
+// will be rendered later — `on_press` at Phase 3, `scroll` and `row_template`
+// after the golden set. Graduating a key means deleting its line from that
+// map. Measured, each line from a run, on `on_press` removed the way Phase 3
+// will remove it:
+//
+//	the subtest for on_press stops existing
+//	no failure names on_press, empties, or this file
+//	empties["on_press"] remains, spelling and all, measuring nothing
+//	whole suite green once the graduation's own failures are addressed
+//
+// The suite does fail loudly on that edit — `TestEveryNodeFieldIs...` and the
+// nested-branch audit both fire — which is what makes this the bad case
+// rather than a harmless one. The author is handed a list of real failures,
+// fixes every one, and reaches green with a dead entry left behind. Nothing
+// printed it, so nothing asked them to remove it.
+//
+// A dead entry is not inert. It is a spelling for a key that no longer has to
+// be refused, sitting in the map a future contributor reads to learn what the
+// convention is, next to live entries and indistinguishable from them. The
+// next key that graduates leaves a second one. This is the same accounting
+// the package has now made eight times: the derivation shrank the bug class
+// from "the two lists disagree" to "the one list is wrong", and a stale entry
+// is precisely how the one list goes wrong in the direction the derivation
+// does not look.
+//
+// # Why this is not folded into the loop below
+//
+// Because it must run even when `unrenderedFields` is empty, and a check
+// inside a `range` over that map cannot. The empty case is reachable — it is
+// what the map looks like after the last field graduates — and it is the case
+// where every remaining entry is stale at once.
+func assertEveryEmptyHasAKeyToMeasure(t *testing.T, empties map[string]string) {
+	t.Helper()
+
+	for key := range empties {
+		if !entryIsStale(key) {
+			continue
+		}
+		t.Errorf("the `empties` map has an entry for %q, which unrenderedFields no longer declares.\n\n"+
+			"consequence: nothing measures it. The loop below derives its cases from\n"+
+			"unrenderedFields, so an entry outside that key set gets no subtest, no zero-value\n"+
+			"check, and no mention in any failure — it is a spelling that looks live to the next\n"+
+			"reader and is read by nothing.\n"+
+			"cause, most likely: %q graduated. Every `because` string in unrenderedFields promises\n"+
+			"the field will be rendered eventually, and rendering one means deleting its line from\n"+
+			"that map. The suite fails loudly on that edit for other reasons, so the author fixes\n"+
+			"those, reaches green, and this entry is left behind unmentioned.\n"+
+			"remedy: if %q is now rendered, delete its entry here — the key is no longer refused,\n"+
+			"so there is nothing for this audit to assert about it. If it is still meant to be\n"+
+			"refused, the deletion from unrenderedFields is the bug, and this entry is what\n"+
+			"noticed.", key, key, key)
+	}
+}
+
+// entryIsStale is the decision assertEveryEmptyHasAKeyToMeasure reports on,
+// named and returned rather than left inline.
+//
+// The split is the rule this file paid for one turn ago, applied before
+// waiting to be bitten by it. `spellingIsAcceptableZero` had to be extracted
+// for exactly this reason: while its decision was reachable only through a
+// `t.Errorf`, the only test that could object to neutering it was the one
+// being mutated, so `true` in place of the exemption left the suite green.
+// The check above has the same shape, and confirmed it — with the condition
+// short-circuited to skip every key and `on_press` graduated in the same
+// edit, the audit went green and nothing else moved.
+//
+// So the decision gets a name, and TestAStaleEmptiesEntryIsReported calls it
+// directly. The counterfactual is only runnable because of the split.
+func entryIsStale(key string) bool {
+	_, live := unrenderedFields[key]
+	return !live
+}
+
+// The staleness decision, pinned from both sides.
+//
+// This is the assertion the inline version could not carry. Skipping the
+// check entirely is the edit that turns the stale-entry guard off, and like
+// every widening it makes the suite greener rather than redder — there is no
+// document that fails because a dead map entry exists, so no other test in
+// this package can object.
+//
+// Both directions matter and they fail differently. A live key wrongly called
+// stale is a false alarm on the map as it stands today, which is the
+// direction LESSONS.md records as getting a guard deleted as noise. A dead
+// key wrongly called live is the guard doing nothing, which is what it was
+// written to stop.
+func TestAStaleEmptiesEntryIsReported(t *testing.T) {
+	for key := range unrenderedFields {
+		if entryIsStale(key) {
+			t.Errorf("entryIsStale says %q is stale, but unrenderedFields declares it.\n\n"+
+				"consequence: a false alarm against the map as it stands, on a key that is still\n"+
+				"refused and still needs its spelling. This is the direction that gets a guard\n"+
+				"deleted as noise rather than merely doubted.\n"+
+				"remedy: an entry is stale only when unrenderedFields does not declare its key.", key)
+		}
+	}
+
+	if !entryIsStale("on_press_but_graduated") {
+		t.Errorf("entryIsStale says a key unrenderedFields does not declare is live.\n\n" +
+			"consequence: the stale-entry check passes over everything, so an entry left behind\n" +
+			"by a graduation is never reported. The loop in the audit derives its cases from\n" +
+			"unrenderedFields and cannot reach such an entry either, so the spelling sits in the\n" +
+			"map measured by nothing, next to live entries and indistinguishable from them.\n" +
+			"This failure cannot announce itself any other way: no document fails because a dead\n" +
+			"map entry exists.\n" +
+			"remedy: a key absent from unrenderedFields is stale, whatever its spelling says.")
 	}
 }
 
