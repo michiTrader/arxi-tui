@@ -263,8 +263,42 @@ var unrenderedFields = map[string]string{
 // taking that advice silenced the audit while refusing nothing. A guard whose
 // documented remedy is a no-op is worse than no guard, because it converts a
 // real finding into a closed ticket.
+// It asks two sources and refuses a field named by either, because neither
+// alone answers the question. `declaredUnrenderedFields` reconstructs the
+// answer from the node's *values*, and omitempty makes that reconstruction
+// lossy in exactly one direction: a key written with its type's zero value
+// (`"on_press": ""`) marshals away, so the node cannot report it. That is not
+// a hypothetical spelling — it is what an author writes while clearing a
+// property they are mid-way through removing, and it was accepted silently
+// while `"scroll": null` beside it was refused, the difference being only
+// that json.RawMessage keeps its bytes and a string does not. The parser's
+// `declaredKeys` is the exact record of what the source wrote, so it closes
+// that hole.
+//
+// The union rather than a replacement, and the reason is measured: a Document
+// built by hand — in a test, or by the patch path Phase 2 designs — has no
+// source text and therefore no declaredKeys at all. Reading only the parser's
+// record would refuse nothing for those, turning this guard off for every
+// caller that does not come from a file, which is the direction that deletes
+// a guard rather than loosening it.
 func (d *Document) refuseUnrendered(n *Node, path string) error {
-	for _, field := range n.declaredUnrenderedFields() {
+	declared := n.declaredUnrenderedFields()
+	seen := make(map[string]bool, len(declared))
+	for _, field := range declared {
+		seen[field] = true
+	}
+	for _, key := range d.declaredKeys[path] {
+		if !seen[key] {
+			seen[key] = true
+			declared = append(declared, key)
+		}
+	}
+	// Sorted for the same reason declaredUnrenderedFields sorts: with two
+	// unrendered fields on one node, an address that moves between runs is
+	// not an address.
+	sort.Strings(declared)
+
+	for _, field := range declared {
 		because, ok := unrenderedFields[field]
 		if !ok {
 			continue

@@ -110,6 +110,19 @@ type Node struct {
 // up here for free, because every optional field carries omitempty — so a key
 // present in the output is a key the document set.
 //
+// The converse does not hold, and the comment used to imply it did. omitempty
+// drops a key written with its type's zero value, so `"on_press": ""` is
+// absent from the output and this function cannot report it: what it answers
+// is "which fields does this node *hold a value for*", not "which keys did
+// the author write". The gap is invisible for the two raw fields —
+// `"scroll": null` keeps its bytes and is refused — and open for every
+// ordinary one, which is the worst shape for it to have, because the two sit
+// side by side in unrenderedFields and behave differently. refuseUnrendered
+// therefore unions this list with the parser's declaredKeys, which is the
+// exact record; see the reasoning there. This function is deliberately left
+// answering the value question, because that is the one a hand-built
+// Document — with no source text, and so no declaredKeys — can still answer.
+//
 // The subtrees are cleared before marshalling. The walk visits every node
 // itself, so serialising whole subtrees at each step would make the pass
 // quadratic and would also report a child's field as the parent's.

@@ -537,3 +537,62 @@ to the *actions*.
   accessor that *decodes* (`PrefixNode`, which returns nil for a string
   prefix and a parsed node otherwise) hands back no field and must not be an
   alias for one.
+- **A derivation can be right about every field it names and still answer the
+  wrong question.** The previous turn collapsed two hand-written lists — the
+  fields the shallow clone clears, and the ones it restores — into one
+  derivation over Node's type, and recorded that the available bug class
+  shrank from "the two lists disagree" to "the one list is wrong". It also
+  measured *widening* that derivation and found it changed nothing. Both are
+  true, and both pointed away from the defect that was actually live:
+
+      {"root":{"type":"text","text":"x","on_press":""}}   -> validated clean
+      {"root":{"type":"text","text":"x","scroll":null}}   -> refused
+
+  Both keys are in `unrenderedFields`; both were written by the author. The
+  list named the right fields. What was wrong was the *question*:
+  `declaredUnrenderedFields` reconstructs its answer by re-serialising the
+  node, and `omitempty` drops a key written with its type's zero value — so it
+  answers "which fields does this node hold a value for", while the validator
+  needs "which keys did the author write". They coincide for every non-zero
+  value, which is every fixture anyone writes by hand, including all 25 in the
+  380-line audit written the turn before to check exactly this remedy. The
+  gap showed only between two keys sitting side by side in the same map,
+  behaving differently because `json.RawMessage` keeps `null` and a string
+  does not. **When a derivation replaces a written list, the next thing to
+  check is not whether it names the right things but whether the property it
+  derives from is the property the caller needs** — and the cheapest probe is
+  the value an author writes while *removing* a property, not while adding it.
+  The fix is a union with the parser's `declaredKeys`, not a replacement: a
+  hand-built Document has no source text, and reading only the parser's record
+  switches the guard off for every caller that does not come from a file —
+  which is the Phase 2 patch path, not a hypothetical.
+- **Widening a derivation is caught; narrowing it is invisible. Measure both,
+  in the same turn.** The widening counterfactual ("accept strings and bools")
+  was run and correctly reported as inert. The opposite was not run, and it is
+  the dangerous one:
+
+      case reflect.Pointer, reflect.Slice, reflect.Array:  ->  case reflect.Pointer:
+        `children` is no longer cleared — the exact drift just fixed
+        a cyclic subtree now makes json.Marshal fail, so the function
+          returns nil and refuses *nothing* on that node — fail-open
+        the entire suite stays green, the new 380-line audit included
+
+  The asymmetry has a reason worth keeping: with clear and restore reading one
+  list, a field wrongly *included* is blanked and restored by the same list, so
+  the widening cancels out — while a field wrongly *excluded* is never cleared,
+  so nothing can report it missing. A guard built on "the two halves agree"
+  only sees errors that make them disagree. The second walk here was a comment
+  claiming the two derivations "only agree permanently when they ask the same
+  question", with nothing enforcing it; it is now a test that fails on either
+  edit. **A derived guard's blind spot is the direction in which its two halves
+  stay consistent, and that direction is never the one the last fix was about.**
+- **A `return nil` on an error path is a fail-open switch, and "unreachable
+  today" is a property of other code.** The marshal error in
+  `declaredUnrenderedFields` is genuinely unreachable — but only because the
+  clearing removes the cycles that would trigger it. That makes its deadness a
+  downstream consequence of the derivation above, not a fact about the
+  function, and the narrowing counterfactual brought it alive: nil means no
+  field is refused at all, so the guard does not weaken, it switches off, and
+  the caller cannot tell. Pinned by testing the property that keeps it dead —
+  every Node-bearing field is cleared before the marshal — rather than the dead
+  line itself.
