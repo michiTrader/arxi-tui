@@ -48,6 +48,7 @@ package patch
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/michiTrader/arxi_tui/internal/scene"
@@ -135,11 +136,31 @@ func Parse(line string) (Command, error) {
 		}
 		return Command{Verb: "style", Target: args[0], Value: args[1]}, nil
 	case "hide", "show":
-		// /ui hide <node-id> / /ui show <node-id>
-		if len(args) != 1 {
-			return Command{}, fmt.Errorf("/ui %s needs a node id: /ui %s <node-id>", verb, verb)
-		}
-		return Command{Verb: verb, Target: args[0]}, nil
+		// Refused rather than implemented, and the refusal was reached by
+		// measurement rather than by review. The draft shipped `hide` as a
+		// `when` naming `ui.hidden`, which is the natural spelling: `ui.*` is
+		// the view-state namespace, BINDS.md §82 calls it "the only writable
+		// half (through `cmd:` actions)", and a /ui command is exactly such
+		// an action. The validator refused it on the shipped scene:
+		//
+		//	SOBRIA.json:82:7: unsigned bind "ui.hidden" in when condition of
+		//	node type "row"; every bind must appear in BINDS.md §4.5
+		//
+		// That refusal is right and the guard that surfaced it is the one
+		// this project built for exactly this. Signing the bind to satisfy it
+		// would be the wrong repair twice over: the fold would have to
+		// publish it, and — the part that kills the design — `ui.max` and
+		// `ui.focus` are both *single ids*, so a scalar `ui.hidden` hides one
+		// node at a time and `/ui hide a` silently unhides `b`. A per-node
+		// hidden flag is a different shape from every `ui.*` row signed so
+		// far, so choosing it here would be designing the view-state
+		// vocabulary from inside a command implementation.
+		//
+		// So it is refused the way `row_template` is refused: the author
+		// spelled something reasonable, and the message says "not yet"
+		// rather than "invalid", because a wrong diagnosis costs the repair
+		// loop a turn.
+		return Command{}, fmt.Errorf("/ui %s is not yet available: hiding a node needs a per-node view-state bind, and the `ui.*` namespace BINDS.md signs holds single ids (`ui.focus`, `ui.max`) rather than a per-node flag — so the bind it would need is signed nowhere yet (BINDS.md §4.5). Use `/ui set <node-id> when <signed-bind>` to gate a node on a condition that does exist", verb)
 	case "set":
 		// /ui set <node-id> <key> <value…>
 		if len(args) < 3 {
@@ -164,7 +185,7 @@ func Parse(line string) (Command, error) {
 // they address a node by the id it already has and write a property the engine
 // already reads — so they are the part of the surface that can be correct
 // today.
-func Verbs() []string { return []string{"hide", "set", "show", "style"} }
+func Verbs() []string { return []string{"set", "style"} }
 
 // apply performs the source-to-source edit and re-validates the result.
 func (c Command) apply(name string, src []byte) (Result, error) {
@@ -187,7 +208,16 @@ func (c Command) apply(name string, src []byte) (Result, error) {
 	}
 
 	found := false
+	var ids []string
+	unaddressable := 0
 	edited := walk(tree, func(node map[string]any) {
+		if _, isNode := node["type"]; isNode {
+			if id, _ := node["id"].(string); id != "" {
+				ids = append(ids, id)
+			} else {
+				unaddressable++
+			}
+		}
 		if id, _ := node["id"].(string); id != c.Target {
 			return
 		}
@@ -195,7 +225,7 @@ func (c Command) apply(name string, src []byte) (Result, error) {
 		c.mutate(node)
 	})
 	if !found {
-		return Result{}, fmt.Errorf("%s: no node with id %q in this scene; /ui addresses nodes by the id they declare", name, c.Target)
+		return Result{}, unknownTargetError(name, c.Target, ids, unaddressable)
 	}
 
 	out, err := json.MarshalIndent(edited, "", "  ")
@@ -220,6 +250,45 @@ func (c Command) apply(name string, src []byte) (Result, error) {
 	return Result{Doc: doc, Source: out, Summary: c.summary()}, nil
 }
 
+// unknownTargetError explains a /ui command that named a node the scene does
+// not have, and it lists the ids that do exist.
+//
+// The listing is not politeness. Measured on the scenes this repo ships,
+// roughly half of every document's nodes carry no id at all:
+//
+//	SOBRIA.json   7/15 addressable  (8 nodes with no id)
+//	MAXIMUM.json  7/13 addressable  (6 nodes with no id)
+//	RAW.json      3/4  addressable  (1 node  with no id)
+//
+// So "no node with that id" is the *expected* answer for a large share of
+// what a user will reasonably try, and the reason is invisible from the
+// screen: the status row's model name is a node the user can see and point
+// at, and it is unaddressable because the document never named it. A bare
+// refusal there reads as "the command is broken". Naming the available ids
+// and counting the anonymous nodes turns it into the one thing the user can
+// act on, and it tells the truth about why: the ids are the scene author's to
+// give, and /ui cannot invent them.
+//
+// Inventing them was the alternative and it is refused for the same reason
+// `add` and `move` are absent. A synthesised address — an index path, a
+// bind name, a type occurrence — is a second way to name a node, and it would
+// be a naming vocabulary designed here rather than in SCENES.md, unstable
+// across any edit that reorders a list, and unreviewable because nothing else
+// in the project speaks it. The scene format already has exactly one way to
+// name a node and this surface uses it.
+func unknownTargetError(name, target string, ids []string, unaddressable int) error {
+	if len(ids) == 0 {
+		return fmt.Errorf("%s: no node in this scene declares an id, so /ui cannot address any of them; add an \"id\" to the node you want to change", name)
+	}
+	sort.Strings(ids)
+	msg := fmt.Sprintf("%s: no node with id %q in this scene; /ui addresses nodes by the id they declare, and this scene declares: %s",
+		name, target, strings.Join(ids, ", "))
+	if unaddressable > 0 {
+		msg += fmt.Sprintf(" (%d further node(s) declare no id and cannot be addressed until the scene gives them one)", unaddressable)
+	}
+	return fmt.Errorf("%s", msg)
+}
+
 // mutate writes this command's change into one node of the generic tree.
 func (c Command) mutate(node map[string]any) {
 	switch c.Verb {
@@ -237,34 +306,10 @@ func (c Command) mutate(node map[string]any) {
 		}
 		style["style"] = c.Value
 		node["style"] = style
-	case "hide":
-		// Hiding is a `when` that never holds rather than a deletion: the node
-		// keeps its id, so `/ui show` can find it again. A delete would make
-		// hide irreversible from the command surface, and the user would have
-		// to edit the file to undo a thing they did from inside the interface
-		// — which inverts the promise this surface exists to make.
-		node["when"] = hiddenCondition
-	case "show":
-		// Only the condition this surface wrote is removed. A `when` the user
-		// or a scene author put there is theirs, and dropping it would make
-		// /ui show a silent unhide of rows the document meant to gate.
-		if w, _ := node["when"].(string); w == hiddenCondition {
-			delete(node, "when")
-		}
 	case "set":
 		node[c.Key] = c.Value
 	}
 }
-
-// hiddenCondition is the `when` /ui hide writes.
-//
-// It names a bind that is signed and always absent, so the node is gated off
-// by the engine's ordinary `when` evaluation rather than by a special case in
-// the renderer. Using a real condition rather than inventing a "hidden": true
-// property keeps hiding inside the format the user already has — the equality
-// AGENTS.md calls the product — and means the change-diff view shows the user
-// a line they could have written themselves.
-const hiddenCondition = "ui.hidden"
 
 // summary is the sentence the change-diff view shows before the patch is
 // trusted. It states what changed in the user's own vocabulary, because a
@@ -273,10 +318,6 @@ func (c Command) summary() string {
 	switch c.Verb {
 	case "style":
 		return fmt.Sprintf("styled %q as %q", c.Target, c.Value)
-	case "hide":
-		return fmt.Sprintf("hid %q", c.Target)
-	case "show":
-		return fmt.Sprintf("showed %q", c.Target)
 	case "set":
 		return fmt.Sprintf("set %s of %q to %q", c.Key, c.Target, c.Value)
 	default:
