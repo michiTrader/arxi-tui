@@ -511,3 +511,29 @@ to the *actions*.
   wrong. When widening a predicate, run the opposite counterfactual in the
   same breath; the argument for the widening is exactly what the argument
   for the original narrowing looked like.
+- **The recurrences have changed direction, and that is the signal.** Nine of
+  the first eleven were silent drops — the guard missing a defect. The last
+  two were both **false alarms**: a renderer dispatching through a tagless
+  switch, and a walker reaching a branch through an accessor, each accused of
+  a fault it does not have. That is what a maturing guard looks like. The
+  remaining ways to be wrong are increasingly "correct code the guard does
+  not recognise" rather than "broken code it fails to see", and the cost
+  flips with the direction: a missed defect weakens the audit, a false alarm
+  gets the whole audit deleted.
+- **Prefer the false-alarm probe on a shape the codebase already contains.**
+  The accessor case was not hypothetical: `prefix` is *already* reached
+  through `PrefixNode()`, and the audit only survived because `Suffix` and
+  `Children` happen to be selected directly. The probe that found it —
+  rewrite one walker to use an accessor — is the cheapest possible test, and
+  the shape was visible by reading the four walkers side by side. **When
+  checking a guard for false alarms, do not invent an unusual input; take a
+  form the codebase uses in one place and apply it in another.**
+- **A resolution that widens acceptance needs the "mentioned but not done"
+  probe.** Teaching the audit that `n.SuffixNode()` means the `Suffix` branch
+  removes a false alarm and, written carelessly, would also let an accessor
+  *launder* a skipped branch: mention it, never walk it, pass. Both halves
+  had to be measured, and the condition that separates them — every return is
+  that field or nil — is exactly the line that would have been left out. An
+  accessor that *decodes* (`PrefixNode`, which returns nil for a string
+  prefix and a parsed node otherwise) hands back no field and must not be an
+  alias for one.
