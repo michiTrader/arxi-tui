@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -328,19 +329,169 @@ func packagePathFor(dir string) string {
 // (n.BorderStyleName()). The accessor case matters: BorderRaw and PrefixRaw
 // are never selected by name, and a check that only looked for the field
 // itself would have called two correctly-wired fields dead.
+//
+// # Why the accessors are derived rather than guessed from the field's name
+//
+// This resolved a field to its accessors by *spelling*: strip a `Raw` suffix
+// and accept any read method whose name starts with what is left. Both halves
+// of that are a guess about naming, and the guess is wrong in both directions
+// — which is the shape the sibling audit in this package has now had fixed
+// eight times, and the shape this file still had. Measured, each number from a
+// run rather than an argument:
+//
+//	TitleRaw json.RawMessage, decoded by nobody        -> this audit green
+//	  because CutSuffix yields "Title" and the engine reads n.Title, so an
+//	  unrelated field's name vouched for it. The sibling audit caught it on
+//	  the raw-classification floor — and then, having followed the remedy
+//	  that failure prints (classify it in rawBranchAccessors as carrying no
+//	  node), the whole suite went green again with the field still dead:
+//	  {"type":"text","title_raw":{…,"bind":"totally.invented"}}
+//	    -> validates clean, the unsigned bind is never refused, never drawn
+//
+//	Caption json.RawMessage, genuinely read by the engine through
+//	CaptionGlyph()                                     -> falsely accused
+//	  the false-alarm direction, and the one that gets an audit deleted: a
+//	  correctly wired field whose accessor is named after the concept rather
+//	  than after the field. `Scroll` is already a raw field with no `Raw`
+//	  suffix, so neither spelling holds today; it escapes notice only because
+//	  unrenderedFields refuses it.
+//
+// So the accessors are read out of the method bodies: a field is read when
+// something outside selects it, or when it selects a method of Node whose body
+// reaches that field. That is the same derivation `accessorFields` makes in
+// nested_branch_audit_test.go, pointed the other way — there, method to the
+// field it returns; here, field to the methods that read it.
+//
+// This does not weaken what the audit means by "read". Selecting `n.Title`
+// directly has never proved the value reaches a frame either; the claim is
+// about the field being *connected to something outside this package*, and an
+// accessor is exactly that connection.
 func fieldIsRead(read map[string]bool, f nodeField) bool {
 	if read[f.name] {
 		return true
 	}
-	// Raw fields are read through accessors named after the concept, not
-	// the field: BorderRaw -> BorderShape/BorderStyleName, PrefixRaw ->
-	// PrefixNode/PrefixText.
-	if base, ok := strings.CutSuffix(f.name, "Raw"); ok {
-		for name := range read {
-			if strings.HasPrefix(name, base) {
-				return true
-			}
+	for method := range read {
+		if fieldsReadByAccessors()[method][f.name] {
+			return true
 		}
 	}
 	return false
+}
+
+// fieldsReadByAccessors maps each method of Node to the fields its body
+// reaches, following calls to other methods of Node.
+//
+// # Why the call chain is followed
+//
+// BorderStyleName() selects no field at all: it calls the unexported border(),
+// which is what reads BorderRaw. A one-level version would report BorderRaw as
+// read by nobody — a false alarm on the field whose accessor motivated this
+// whole branch of the check. Chaining is not a generalisation for its own
+// sake; it is the shape the two accessors in node.go already have.
+//
+// # Why go/types rather than the spelling of the receiver
+//
+// The standing rule of this package, paid for five times: when a guard can ask
+// the type checker, matching an identifier name is a different question. A
+// body selecting `c.Style` on some other struct is not Node.Style, and a
+// method on a local type someone names Node later is not a method on this one.
+var fieldsReadByAccessors = func() func() map[string]map[string]bool {
+	var once sync.Once
+	var result map[string]map[string]bool
+	return func() map[string]map[string]bool {
+		once.Do(func() { result = computeAccessorFieldReads() })
+		return result
+	}
+}()
+
+func computeAccessorFieldReads() map[string]map[string]bool {
+	out := make(map[string]map[string]bool)
+
+	fset := token.NewFileSet()
+	files, err := parseDir(fset, ".")
+	if err != nil || len(files) == 0 {
+		return out
+	}
+	info := &types.Info{
+		Types:      make(map[ast.Expr]types.TypeAndValue),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection),
+		Uses:       make(map[*ast.Ident]types.Object),
+		Defs:       make(map[*ast.Ident]types.Object),
+	}
+	conf := types.Config{
+		Importer: importer.ForCompiler(fset, "source", nil),
+		Error:    func(error) {},
+	}
+	// The import path must end in internal/scene or isSceneNode rejects
+	// this package's own Node — the mistake documentWalkers made on its
+	// first run, where packagePathFor(".") yielded a path ending in "/.".
+	_, _ = conf.Check("github.com/michiTrader/arxi_tui/internal/scene", fset, files, info)
+
+	// What each method selects on a Node, split into fields of Node and
+	// calls to other methods of Node.
+	type methodBody struct {
+		fields  map[string]bool
+		methods map[string]bool
+	}
+	bodies := make(map[string]*methodBody)
+
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil || fn.Recv == nil || len(fn.Recv.List) == 0 {
+				continue
+			}
+			tv, ok := info.Types[fn.Recv.List[0].Type]
+			if !ok || !isSceneNode(tv.Type) {
+				continue
+			}
+			mb := &methodBody{fields: make(map[string]bool), methods: make(map[string]bool)}
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				sel, ok := n.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				selection, ok := info.Selections[sel]
+				if !ok || !isSceneNode(selection.Recv()) {
+					return true
+				}
+				if selection.Kind() == types.MethodVal {
+					mb.methods[sel.Sel.Name] = true
+				} else {
+					mb.fields[sel.Sel.Name] = true
+				}
+				return true
+			})
+			bodies[fn.Name.Name] = mb
+		}
+	}
+
+	// Fixpoint over the call chain, so BorderStyleName inherits what
+	// border() reads. Bounded by the method count: each pass either adds a
+	// field somewhere or the closure is complete.
+	for range bodies {
+		changed := false
+		for _, mb := range bodies {
+			for callee := range mb.methods {
+				cb, ok := bodies[callee]
+				if !ok {
+					continue
+				}
+				for field := range cb.fields {
+					if !mb.fields[field] {
+						mb.fields[field] = true
+						changed = true
+					}
+				}
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+
+	for name, mb := range bodies {
+		out[name] = mb.fields
+	}
+	return out
 }
