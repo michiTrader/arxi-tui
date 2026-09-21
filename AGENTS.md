@@ -294,6 +294,29 @@ the sibling projects. Concretely:
    **The nineteenth destruction.** Nineteen destructions, sixteen
    costing nothing. Ratio only, per the rule above.
 
+   **The twentieth, twenty-first and twenty-second destructions.**
+   Twenty-two destructions, nineteen costing nothing. Ratio only, per
+   the rule above; all three arrived mid-edit and in each case every
+   pushed commit came back.
+
+   Two details are worth keeping, both about what an interruption does
+   to an *edit* rather than to a commit. The twentieth hit a single
+   atomic multi-part edit: nothing partial landed, so the redo was the
+   whole edit rather than a hunt for which half had applied. **Prefer
+   one atomic edit to a chain of small ones** — not for tidiness, but
+   because a half-applied chain is indistinguishable from a finished
+   one in `git status`.
+
+   The twenty-second hit a `write && git commit && git push` chain, the
+   same shape as the fifteenth, and cost the same thing: the write was
+   gone and nothing recorded that it had been attempted. The rule
+   already exists and was not followed. **On restore, the check is not
+   "is the tree clean" but "does the file contain what the last turn
+   said it wrote"** — here, a destruction record that stopped at
+   nineteen while the turn had claimed twenty-one. A clean tree proves
+   only that nothing is half-saved; it says nothing about what never
+   got written.
+
 ## Working rules
 
 **One step at a time, in order.** The bind vocabulary is the only hard
