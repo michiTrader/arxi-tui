@@ -2,7 +2,10 @@ package scene
 
 import (
 	"encoding/json"
+	"reflect"
 	"sort"
+	"strings"
+	"sync"
 )
 
 // Node is one element in a scene document. A scene is a tree of Nodes, each
@@ -107,17 +110,57 @@ type Node struct {
 // up here for free, because every optional field carries omitempty — so a key
 // present in the output is a key the document set.
 //
-// The clone is shallow: children, template, prefix and suffix are cleared
-// before marshalling. The walk visits every node itself, so serialising whole
-// subtrees at each step would make the pass quadratic and would also report a
-// child's field as the parent's.
+// The subtrees are cleared before marshalling. The walk visits every node
+// itself, so serialising whole subtrees at each step would make the pass
+// quadratic and would also report a child's field as the parent's.
+//
+// # Why clearing and restoring are one list rather than two
+//
+// They used to be two, written four lines apart: an assignment per branch
+// blanking it, and an `if x != nil` per branch putting its name back. Two
+// hand-written statements of one fact — which fields the shallow clone drops
+// — and that is the shape this package has watched drift six times. These two
+// had already drifted, in the tree, with the whole suite green: `children` was
+// cleared and never restored, so no node has ever reported declaring it.
+//
+// The consequence is not a missing key in a diagnostic. It is that the remedy
+// both field audits print — "add it to scene.unrenderedFields so the validator
+// refuses it with an address" — is a **no-op for `children`**, and would be a
+// no-op for any node-bearing branch a contributor cleared here without
+// restoring. Measured, each line from a run, on a `Footer *Node` added to Node
+// and cleared in the clone the way the paragraph above reasons a contributor
+// would:
+//
+//	the audit fires, printing "add it to scene.unrenderedFields"
+//	following that remedy  -> the entry sits in the map, inert
+//	the next guard fires, printing "add a fixture for it"
+//	following that remedy  -> "the validator accepted it anyway", whose own
+//	                          remedy names refuseUnrendered — which is already
+//	                          correct and passes its own test
+//
+// Three remedies deep, each the correct action for the message shown, and the
+// last one points at working code. That is the printed remedy as attack
+// surface, one turn on from the composite this package recorded last: not a
+// single guard whose advice is inert, but a *chain* of them, each handing the
+// author the next plausible place to look, and none naming this function.
+//
+// So the branch list is derived from the struct once: a field whose type can
+// carry a node is cleared, and the same walk records its json name, so the
+// restore cannot fall behind the clear. A branch added to Node tomorrow is
+// handled by both halves or by neither.
 func (n *Node) declaredUnrenderedFields() []string {
 	shallow := *n
-	shallow.Children = nil
-	shallow.RowTemplate = nil
-	shallow.Suffix = nil
-	shallow.PrefixRaw = nil
-	shallow.BorderRaw = nil
+	sv := reflect.ValueOf(&shallow).Elem()
+
+	branches := subtreeBranches()
+	declared := make([]string, 0, len(branches))
+	for _, b := range branches {
+		field := sv.Field(b.index)
+		if !field.IsZero() {
+			declared = append(declared, b.jsonName)
+		}
+		field.SetZero()
+	}
 
 	encoded, err := json.Marshal(&shallow)
 	if err != nil {
@@ -128,29 +171,86 @@ func (n *Node) declaredUnrenderedFields() []string {
 		return nil
 	}
 
-	// The cleared fields are still declared by the original node, and one
-	// of them (row_template) is the map's first entry. They are restored
-	// by name rather than by value: what matters is presence.
-	out := make([]string, 0, len(keys)+4)
+	// The cleared branches are still declared by the original node, and one
+	// of them (row_template) is unrenderedFields' first entry. They are
+	// restored by name rather than by value: what matters is presence.
+	out := make([]string, 0, len(keys)+len(declared))
 	for key := range keys {
 		out = append(out, key)
 	}
-	if n.RowTemplate != nil {
-		out = append(out, "row_template")
-	}
-	if n.Suffix != nil {
-		out = append(out, "suffix")
-	}
-	if len(n.PrefixRaw) > 0 {
-		out = append(out, "prefix")
-	}
-	if len(n.BorderRaw) > 0 {
-		out = append(out, "border")
-	}
+	out = append(out, declared...)
 	// Sorted so a node declaring two unrendered fields refuses the same one
 	// every run; an address that moves between runs is not an address.
 	sort.Strings(out)
 	return out
+}
+
+// subtreeBranch is one field of Node the shallow clone must drop: a branch
+// carrying another node, or the raw JSON one may be decoded from.
+type subtreeBranch struct {
+	index    int
+	jsonName string
+}
+
+// subtreeBranches derives, from Node itself, the fields declaredUnrenderedFields
+// clears — and therefore the ones it must restore by name.
+//
+// # What counts as a subtree
+//
+// A field whose type is built out of Node (through pointers, slices, arrays or
+// maps, keys included), or a json.RawMessage. The second is not generality for
+// its own sake: `prefix` is raw precisely because it is polymorphic between a
+// string and a node, so the type cannot answer the question — which is the
+// same fact rawBranchAccessors exists to record for the sibling audit.
+//
+// # Why reflection over the type rather than a written list
+//
+// nested_branch_audit_test.go's fieldTypeCarriesNode makes this same
+// derivation and records why at length: `*Node` and `[]*Node` are the two
+// spellings the format happens to use today, while `map[string]*Node` for
+// named slots and `[][]*Node` for a grid are each how a format grows. That
+// audit asks the shape; this function has to agree with it, and two
+// derivations only agree permanently when they ask the same question of the
+// same type.
+var subtreeBranches = sync.OnceValue(func() []subtreeBranch {
+	t := reflect.TypeOf(Node{})
+	raw := reflect.TypeOf(json.RawMessage(nil))
+
+	var out []subtreeBranch
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		name, _, _ := strings.Cut(f.Tag.Get("json"), ",")
+		if name == "" || name == "-" {
+			continue
+		}
+		if f.Type != raw && !typeBuildsOnNode(f.Type, map[reflect.Type]bool{}) {
+			continue
+		}
+		out = append(out, subtreeBranch{index: i, jsonName: name})
+	}
+	return out
+})
+
+// typeBuildsOnNode reports whether a type can hold a Node, whatever shape it
+// is built out of. The seen set is what keeps Node's own recursive branches
+// from spinning: Children is []*Node, and *Node reaches Node again.
+func typeBuildsOnNode(t reflect.Type, seen map[reflect.Type]bool) bool {
+	if seen[t] {
+		return false
+	}
+	seen[t] = true
+
+	if t == reflect.TypeOf(Node{}) {
+		return true
+	}
+	switch t.Kind() {
+	case reflect.Pointer, reflect.Slice, reflect.Array:
+		return typeBuildsOnNode(t.Elem(), seen)
+	case reflect.Map:
+		return typeBuildsOnNode(t.Key(), seen) || typeBuildsOnNode(t.Elem(), seen)
+	default:
+		return false
+	}
 }
 
 // PrefixNode decodes PrefixRaw as a child Node (for marquee prefix).

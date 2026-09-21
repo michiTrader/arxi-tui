@@ -491,6 +491,51 @@ The rule generalises: the part of a fix that no counterfactual can distinguish
 from its absence is the part that will be deleted by the next reader as dead
 weight, and the comment saying why it is there is the only thing that stops it.
 
+**Remedies chain, and a chain of correct advice can end at working code.**
+The rule above was written from a *composite*: two guards overlapping on one
+object, the first firing, and following its printed remedy returning the suite
+to green with the defect intact. Used as a method this turn — by asking, of
+every key in Node's vocabulary, whether taking the advice three audits print
+actually refuses anything — it found the same shape one axis further in, and
+already live in the tree with the suite green:
+
+    unrenderedFields["children"] = "…"
+      {"type":"text","children":[…]}   -> validates clean, refuses nothing
+
+`declaredUnrenderedFields` stated one fact twice, four lines apart: an
+assignment per branch blanking it in the shallow clone, and an `if x != nil`
+per branch restoring its name. The two lists had drifted — `children` cleared,
+never restored — so no node has ever reported declaring it, and an entry for
+it could never be consulted. Then, on an injected `Footer *Node` cleared the
+way that function's own comment reasons a contributor would:
+
+    the field audit fires -> "add it to scene.unrenderedFields"
+    following it          -> the entry is inert; the next guard fires
+    that guard            -> "add a minimal document declaring it"
+    following it          -> "the validator accepted it anyway", whose own
+                             remedy names refuseUnrendered — already correct,
+                             and passing its own dedicated test
+
+Three correct actions for three accurate messages, ending at working code, and
+nothing in the chain naming the broken function. That is worse than advice
+that is merely inert: **a remedy chain that terminates at correct code argues
+the reader out of a real finding.** So the remedy is not only part of the
+guard, it is part of *every guard downstream of it*, and the thing to measure
+is where a reader who believes all of them ends up.
+
+**Two statements of one fact are a defect even when both are right today, and
+deriving them collapses the bug class rather than fixing an instance.** The
+clear list and the restore list are now one derivation over Node's type — the
+same question `fieldTypeCarriesNode` asks in the sibling audit. The measurable
+content of that change is what the *negative* finding showed: widening the
+derivation until it wrongly calls ordinary fields subtrees changes nothing,
+because a field blanked by the one list is restored by the same list. The
+available bug shrank from "the two lists disagree" to "the one list is wrong",
+and the second is not reachable by widening. Two of this turn's guards lost
+their justification to that measurement and are kept with the reason written
+down, because "another test happens to cover this today" is the argument that
+has deleted coverage here before.
+
 **A golden that discards what you are asserting about is not covering it.**
 The one test that renders the marquee with its gate open is named for its
 prefix and suffix and asserts on `f.Plain()` — styling stripped. The *styled*
