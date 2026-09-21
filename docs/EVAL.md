@@ -165,6 +165,36 @@ Its two refusals arrive through *different types* on consecutive turns — a
 combination `GradeBoth` exists for. A model that repairs the bind and stops
 reading is scored `exhausted` here, not `converged`.
 
+### Every case carries its own repair path, and the check is per case
+
+Rule 1 above is enforced case by case, not as a corpus total. The distinction
+is not pedantry — it was measured. The guard used to ask whether *any* case
+exercised a refusal (`withRepair == 0`), which is the corpus being entirely
+first-shot. That is not how a corpus decays. Cases are edited one at a time,
+and one surviving strong case satisfies a count on behalf of every weak one
+beside it. With `attempts` emptied on three of the four cases and
+`maximum-count-the-tasks` left intact:
+
+```
+withRepair == 1, so the guard is satisfied
+both refusal kinds still present, from the one remaining case
+package green
+run prints: 1 of 4 cases exercise at least one repair turn
+```
+
+Three quarters of the gate had stopped measuring the repair loop, and the
+number it produces would have been three parts first-shot accuracy — the
+metric PLAN.md rejects — reported as one figure.
+
+The finding was already being computed. The guard printed `case %q has no
+refused attempt: it measures the first shot only` for each of the three,
+through `t.Logf`, on a **passing** run. Written out in English next to a green
+result, where it reads as commentary rather than a defect.
+
+`kinds` stays corpus-wide on purpose: "both validators are represented
+somewhere" is a property of the corpus as a set, and demanding a token refusal
+from every case would invent orders to satisfy a rule.
+
 ### A case must not be passable by doing nothing
 
 A case is scored converged when its final document validates and binds every

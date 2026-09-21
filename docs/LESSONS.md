@@ -668,3 +668,36 @@ to the *actions*.
   stays a description until the next thing you write is checked against it;
   the shape it names is easiest to reintroduce while fixing the instance that
   taught it to you.**
+- **An aggregate check over a set of cases is satisfied by its strongest
+  member, and cases are edited one at a time.** The eval corpus is Phase 2's
+  gate, and PLAN.md names the repair loop the measurement of record against
+  first-shot accuracy as a vanity metric. The guard enforcing that asked
+  `withRepair == 0` — whether the corpus was *entirely* first-shot — which is
+  not a state any sequence of ordinary edits passes through. Measured, with
+  `attempts` emptied on three of four cases and one left intact:
+
+      withRepair == 1, so the guard is satisfied
+      both refusal kinds still present, from the one remaining case
+      package green
+
+  Three quarters of the gate stopped measuring the metric the plan gates on,
+  and the number it reports would have been three parts vanity metric and one
+  part repair loop, as a single figure. **A count over a set answers a
+  question about the set; the question worth asking is almost always about
+  each member, and the two differ exactly when decay is incremental — which
+  is how all decay of hand-maintained sets happens.** A per-case check also
+  fails in the unit the author edits in: "no case exercises a refusal" names
+  nothing to open, `raw-add-tasks-panel has no refused attempt` names a file.
+- **A finding printed through `t.Logf` is a defect the suite has already found
+  and decided not to report.** The guard above computed the per-case answer
+  and formatted it in English — `case %q has no refused attempt: it measures
+  the first shot only` — once per weak case, on a passing run. Nothing was
+  missing from the analysis; the severity was wrong. Sitting beside `ok`, a
+  logged finding reads as commentary about the corpus rather than a claim that
+  something is broken, and `go test` without `-v` does not print it at all.
+  This is the mirror of the entry two above: a decision reachable only through
+  a `t.Errorf` cannot be measured, and a finding emitted only through a
+  `t.Logf` is not measured by anyone. **Before adding a guard, grep the
+  package for what it already knows — `Logf` on the failure path is a guard
+  someone wrote and then downgraded, and it is cheaper to promote than to
+  rediscover.**
