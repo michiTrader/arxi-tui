@@ -227,6 +227,77 @@ because the cost the other analysis missed is that *no subscription layer
 exists yet in arxi to extend* — inventing it would make arxi-tui's success
 depend on arxi protocol work, and the eleven goldens do not need it.
 
+##### ADR-0002 re-decided (2026-09-21): keep log-follow, for a different reason
+
+**The stated premise was false.** "No subscription layer exists yet in arxi to
+extend" is wrong, and it was wrong when it was written. Measured against the
+real core (`testdata/serve/session.ndjson`, arxi 0.0.1-spec, surface v1):
+
+- `run.attach` is in the hello's `implemented` list — one of only ten verbs
+  this build serves, alongside `run.start`, `run.cancel` and `run.show`.
+- `event.subscribe` is in the session's `capabilities`.
+- It is a full streaming implementation, not a stub: `cmd/arxi/serve.go` has a
+  separate `streamingHandlers` table, `dispatchAttach` opens a
+  `hostv1.Subscription`, and `serve_stream.go` has a `subscriptionPump` per
+  subscription, an ack-before-events guarantee, terminal markers gated on the
+  inspect capability, and a single `connWriter` mutex as "the entire
+  arbitration".
+
+Every specific thing ADR-0002 said arxi would have to build — "subscription
+IDs, event messages, cancellation, and writer arbitration" — already exists,
+with a named contract (ADR-0016) and tests.
+
+**The decision stands anyway, and the honest reason is the opposite of the
+original one.** It is not that subscribing is unavailable. It is that
+subscribing is a *second* implementation of the one thing this host cannot
+afford to get wrong twice.
+
+- **Log-follow is not the cheap option, it is the one already measured.** This
+  turn found that `LogFollow` delivered uncommitted events: it trusted
+  newline-termination, while the commit point is the removal of
+  `pending.commit` (logstore step 3). Two committed events plus a two-event
+  in-flight batch produced four delivered events. That defect is now fixed and
+  pinned by four tests. A subscription path would have to earn the same
+  confidence separately — `Subscription.Next` returns confirmed batches, so
+  the core does that work server-side, but the host would then have two
+  ingestion paths with two different confirmation models, and the failure mode
+  of the pair disagreeing is a wrong frame, which this repo holds to be worse
+  than an error.
+- **Replay is the property everything else rests on.** Goldens, the eval
+  corpus and the fold's determinism all run by feeding a captured log to
+  `Replay`. That path IS log-follow minus the polling. A socket stream is not
+  replayable from a file, so adopting it as the primary path would mean the
+  thing under test and the thing in production stop being the same code — and
+  the `seq`/`sequence` defect is exactly what that costs: the decoder was
+  right about the file and silently wrong about the wire for as long as only
+  the file was exercised.
+- **What `run.attach` genuinely offers that log-follow cannot**, recorded so
+  this stays a comparison and not a preference: confirmed batching without
+  the host parsing `pending.commit` at all; `after_seq` resumption; server-side
+  `EventFilter` by type/source/actor; terminal markers, so the host learns a
+  run ended instead of inferring it; and principal-scoped authorization. The
+  terminal marker is the strongest of these — `run.result` is NOT the last
+  event (it lands at seq 112 of 122 in the measured run), so a host reading
+  the file has no positive signal that the log is complete.
+
+**Therefore: log-follow remains the primary path, and the subscribe path is
+promoted from "requested of arxi when multi-client justifies it" to a known,
+available capability this host has chosen not to use yet.** The trigger for
+adopting it is no longer multi-client. It is either of:
+
+1. the host needing a positive end-of-run signal (the terminal marker), which
+   `run.result` cannot provide; or
+2. the host reading a log it does not own the directory of, where
+   `pending.commit` is not beside the file — at which point parsing the
+   marker stops being possible and the server's confirmed batches are the only
+   correct source.
+
+The premise that was wrong is recorded here rather than deleted: the ADR was
+acted on for two turns on the strength of "no subscription layer exists", and
+a decision that survives the removal of its own stated reason needs its real
+reason written down, or the next re-reading will assume the original one still
+holds.
+
 #### ADR-0003 — binds are view projections, never expressions
 
 Binds are read-only addresses into host state the node names; the host computes

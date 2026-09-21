@@ -200,18 +200,24 @@ func TestTheRealLogFoldsWithoutLosingTheRunState(t *testing.T) {
 // TestTheRealLogCoverageIsMeasuredNotAssumed states the gap as a number under
 // test rather than a note in a comment.
 //
-// It has now been re-measured once, deliberately, which is what the pin was
-// for. The previous figure was 13/122: the fold knew ten event types and the
-// real log contains sixteen, so the host was blank for the entire execution
-// of a run and only twitched on the four llm.response events. Teaching it the
-// exec.* family and run.result moves the figure to 105/122.
+// It has now been re-measured twice, deliberately, which is what the pin is
+// for -- and both times the pin is what forced the arithmetic to be redone
+// rather than assumed. 13/122 -> 105/122 (exec.* and run.result) -> 113/122
+// (the tool.* family).
 //
-// The arithmetic is spelled out because the note that motivated this change
-// had it wrong. "exec.* and run.result, which is 89% of the real log" was
-// two numbers welded together: 109/122 = 89.3% is EVERYTHING unhandled, while
-// exec.* (91) + run.result (1) = 92 = 75.4%. Acting on the 89% figure would
-// have meant reporting full coverage at the end of a change that leaves 17
-// events invisible.
+// The arithmetic is spelled out because the note that motivated the previous
+// change had it wrong. "exec.* and run.result, which is 89% of the real log"
+// was two numbers welded together: 109/122 = 89.3% is EVERYTHING unhandled,
+// while exec.* (91) + run.result (1) = 92 = 75.4%. Acting on the 89% figure
+// would have meant reporting full coverage at the end of a change that left
+// 17 events invisible.
+//
+// tool.* is 8 events and takes the figure to 92.6%. It is NOT the largest
+// remaining family -- stage.* is 7 and would have been a comparable
+// arithmetic win -- and it was taken first because it is the only family in
+// the log that says WHAT THE AGENT DID. That is a judgement about what a
+// person watching a run needs to see, not a result of counting, so it is
+// recorded as a judgement.
 func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 	events := replayBytes(t, realRunLog(t))
 
@@ -231,8 +237,8 @@ func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 	}
 	// The re-measured figure, pinned again. A Handles() that claimed
 	// everything (or nothing) would move this and say so.
-	if known != 105 {
-		t.Errorf("coverage = %d/%d events folded, want 105: the figure is pinned "+
+	if known != 113 {
+		t.Errorf("coverage = %d/%d events folded, want 113: the figure is pinned "+
 			"so that a change in what the fold handles -- or in what the core "+
 			"emits -- is a deliberate re-measurement and not a drift",
 			known, len(events))
@@ -247,6 +253,7 @@ func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 	for _, ty := range []string{
 		"exec.step_completed", "exec.work_started", "exec.work_prepared",
 		"exec.work_finished", "run.result",
+		"tool.call", "tool.call_completed",
 	} {
 		if unhandled[ty] != 0 {
 			t.Errorf("%s went back to being unhandled: the fold learned this "+
@@ -256,11 +263,13 @@ func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 	}
 
 	// What is STILL invisible, named and counted rather than left as a
-	// rounding error. These seventeen are the next piece of work: tool.call
-	// and tool.call_completed are what the agent actually did, and stage.*
-	// is where the run is in its blueprint.
+	// rounding error. These nine are the next piece of work: stage.* is where
+	// the run sits in its blueprint and timer.* is plumbing.
+	//
+	// tool.call and tool.call_completed left this list this turn. They are
+	// now asserted PRESENT in the loop above, so the two halves of the
+	// accounting cannot both be edited to agree with a wrong total.
 	stillBlind := map[string]int{
-		"tool.call": 4, "tool.call_completed": 4,
 		"stage.entered": 2, "stage.submitted": 4, "stage.advanced": 1,
 		"timer.scheduled": 1, "timer.cancelled": 1,
 	}

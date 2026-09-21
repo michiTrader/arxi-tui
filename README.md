@@ -341,9 +341,25 @@ work:
   host now reads the hello's `implemented` list, so a permanent gap is
   distinguishable from a transient failure instead of being rediscovered one
   refused request at a time.
-- **`run.attach` *is* implemented**, which contradicts ADR-0002's premise that
-  no subscription layer exists in arxi to extend. The log-follow decision needs
-  re-deciding on that evidence, not on the assumption.
+- **`run.attach` *is* implemented**, which contradicted ADR-0002's premise that
+  no subscription layer exists in arxi to extend. **Re-decided** (docs/PLAN.md,
+  "ADR-0002 re-decided"): log-follow stays, but for the opposite reason to the
+  one recorded. Not because subscribing is unavailable — it is implemented,
+  `event.subscribe` is in the session capabilities, and `serve_stream.go`
+  already has subscription IDs, pumps, cancellation and writer arbitration —
+  but because log-follow is the path `Replay`, the goldens and the eval corpus
+  all run through, and a second ingestion path with a different confirmation
+  model is two chances at a wrong frame. The adoption trigger is now specific:
+  a positive end-of-run signal (`run.result` is *not* the last event — seq 112
+  of 122), or reading a log whose directory the host does not own.
+- **Log-follow said "confirmed" and meant "newline-terminated".** The commit
+  point is the *removal* of `pending.commit` (logstore step 3), so between the
+  batch append and the commit the log holds complete, newline-terminated
+  records that the core's own `Open()` truncates away. Measured: two committed
+  events plus a two-event in-flight batch delivered **four**. The follower now
+  stops at the smaller of the last newline and the marker's rollback point,
+  and tracks its own delivered offset because the confirmed boundary can move
+  *backwards*.
 - **A refusal read as success.** `ok:false` came back with a nil error, and the
   host's only call site was `_ = drv.SubmitPrompt(...)`. Refusals are now a
   `driver.Refusal` carrying the core's code, sentence, `fix` and `operation`,
@@ -357,11 +373,17 @@ work:
   `AgentMode`, conflating "who is working" with "whose money is at stake". The
   mock could not catch it; its `run.started` carries `simulated:false`.
 
-Fold coverage against a real run is **13 of 122 events**. The unhandled 109
-span twelve event types, including the whole `exec.*` family (91 events) and
-`run.result` — so the host cannot currently tell a run that succeeded from one
-that failed. That gap is pinned by a test rather than left to be discovered on
-screen.
+Fold coverage against a real run is **113 of 122 events** (92.6%), re-measured
+twice from a starting point of 13/122. The `exec.*` family (91 events) and
+`run.result` came first; then the `tool.*` family (8 events), which is not the
+largest remaining count — `stage.*` is 7 — but is the only family in the log
+that says *what the agent did*. The nine still invisible are `stage.*` (7) and
+`timer.*` (2): position and plumbing.
+
+The figure is pinned by a test that also asserts the accounting closes against
+the log's length, so every event is either handled or named in the blind list.
+Both re-measurements were *forced* by that pin rather than reported alongside
+it.
 
 The default scene is `testdata/SOBRIA.json` (the sobria look). If it fails to
 load, the interface falls back to the factory RAW scene (two nodes: transcript

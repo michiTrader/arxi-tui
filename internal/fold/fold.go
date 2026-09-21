@@ -60,6 +60,51 @@ type State struct {
 	ExecCursor    int64  `json:"exec.cursor"`    // highest exec.step_completed source_seq
 	ExecPhase     string `json:"exec.phase"`     // "idle" | "working"
 
+	// Tool activity (tool.*). Eight events in the measured run, and the only
+	// ones in the whole log that say WHAT THE AGENT DID. exec.* is how much
+	// durable work is in flight and stage.* is where the run sits in its
+	// blueprint; both are position and plumbing. "read README.md" is the thing
+	// a person watching the run is actually trying to see, and the host showed
+	// none of it.
+	//
+	// The count is deliberately not the reason this family was chosen over
+	// stage.* (7 events). A progress bar that moves without saying what moved
+	// it is the blank screen with extra steps.
+	ToolCalls []ToolActivity `json:"tool.calls"`
+	// ToolLast is the most recent call, which is what a one-line status row
+	// shows. Derived from the list rather than maintained separately: two
+	// places writing the same fact is two places to get it wrong, the same
+	// reason ExecPhase is derived.
+	ToolLast ToolActivity `json:"tool.last"`
+	// ToolCallsTotal counts tool.call events seen. Equal to len(ToolCalls)
+	// today; asserted so that a future change which trims the list is a
+	// deliberate re-measurement rather than a drift.
+	ToolCallsTotal uint `json:"tool.calls_total"`
+	// ToolsPending is calls with no terminal record yet.
+	//
+	// It is derived from the call list and NOT from a "started minus
+	// finished" counter, because that arithmetic is exactly what drove
+	// ExecActive to -7: tool.call_completed can arrive with no preceding
+	// tool.call at all. executor.go's CallTool -- the effect-runner path,
+	// used when a tool is invoked as a blueprint effect rather than from
+	// inside the canonical turn loop -- emits ONLY the completion or the
+	// denial. FinishTurn (the turn-loop path) emits the pair. So a log may
+	// legally contain terminal records that never had an opening, and a
+	// decrementing counter would underflow on precisely the path that runs in
+	// production.
+	ToolsPending uint `json:"tool.pending"`
+	// ToolsDenied counts tool.call_denied. It is NOT an error count: the spec
+	// is explicit that policy:"ask" is "not an error: it is a question". See
+	// the tool.call_denied case in apply().
+	ToolsDenied uint `json:"tool.denied"`
+	// ToolsAwaitingApproval counts denials with policy "ask" -- the ones a
+	// human can unblock by answering. Separated from ToolsDenied because the
+	// remedies differ: "deny" needs a policy change, "ask" needs a reply, and
+	// the core keeps them apart for that reason (executor.go: "Losing it would
+	// collapse 'not allowed' and 'not yet approved' into one outcome, and
+	// those have different remedies").
+	ToolsAwaitingApproval uint `json:"tool.awaiting_approval"`
+
 	// agent.todos is the list of pending agent tasks (BINDS.md §4.1). Each
 	// entry carries the task text, what it is blocked on, and the actor that
 	// owns it. A list node bound to agent.todos renders one row per entry.
@@ -153,7 +198,123 @@ func Fold(events []Event) State {
 	s.deriveTodosCount()
 	s.deriveTeamMembers()
 	s.deriveExecPhase()
+	s.deriveToolSurface()
 	return s
+}
+
+// actorName is the member this event is about.
+//
+// Top-level `actor` first, payload.agent second. Both spellings exist and the
+// order matters: internal/exec/fake.go writes both, so a simulated log cannot
+// tell the two apart, while internal/provider/executor.go's FinishTurn writes
+// the tool payload as {tool, call_id, args, argument_digest} and puts the name
+// only in Actor. Reading the payload first would therefore pass every test
+// built on the recorded --sim log and attribute nothing on the real provider
+// path.
+func (e Event) actorName() string {
+	if e.Actor != "" {
+		return e.Actor
+	}
+	return str(e.Payload, "agent")
+}
+
+// str reads a string key, returning "" when absent or of another type. The
+// fold never errors on a missing key -- the log belongs to the core -- but it
+// must not panic on one either.
+func str(p map[string]any, key string) string {
+	v, _ := p[key].(string)
+	return v
+}
+
+// closeToolCall attaches a terminal outcome to the most recent unfinished call
+// by the same actor, or records a standalone terminal event when there is no
+// open call to attach it to.
+//
+// Two things force this shape, and both were measured rather than assumed:
+//
+//  1. call_id cannot be a key. All four tool.call events in the recorded run
+//     carry "sim-provider-call-1" (fake.go:245 hardcodes it), so keying on it
+//     would merge four calls by two agents into one entry.
+//
+//  2. A terminal record may have no opening. executor.go's CallTool -- the
+//     effect-runner path -- emits tool.call_completed or tool.call_denied and
+//     never a preceding tool.call. So "find the open call and close it" must
+//     have an else branch, or the production path loses the only record that
+//     the tool ran at all. A subtract-on-finish counter would underflow here
+//     for the same reason ExecActive went to -7.
+//
+// Scanning backwards is what makes the pairing correct under duplicate ids:
+// the spec guarantees "calls from one response and their results preserve
+// provider order", so the newest unfinished call by that actor is the one this
+// result belongs to.
+func (s *State) closeToolCall(e Event, outcome, result, policy string) {
+	actor := e.actorName()
+	for i := len(s.ToolCalls) - 1; i >= 0; i-- {
+		c := &s.ToolCalls[i]
+		if c.Outcome != "" || c.Actor != actor {
+			continue
+		}
+		c.Outcome = outcome
+		c.Result = result
+		c.Policy = policy
+		// The terminal record is authoritative for the tool name: the effect
+		// path's payload is the one place the two could disagree, and an empty
+		// name would blank a row that had one.
+		if t := str(e.Payload, "tool"); t != "" {
+			c.Tool = t
+		}
+		s.markToolIdle(actor)
+		return
+	}
+
+	// No open call: a terminal record from the effect-runner path. Recorded as
+	// a complete entry rather than dropped -- it is the only evidence the tool
+	// ran, and discarding it would make the production path look idle.
+	s.ToolCalls = append(s.ToolCalls, ToolActivity{
+		Actor:   actor,
+		Tool:    str(e.Payload, "tool"),
+		CallID:  str(e.Payload, "call_id"),
+		Outcome: outcome,
+		Result:  result,
+		Policy:  policy,
+		Seq:     e.Seq,
+	})
+	s.markToolIdle(actor)
+}
+
+// markToolIdle takes a member out of the "tool" state once its call ended.
+//
+// It moves to "thinking" and not "idle", matching arxi's own reducer
+// (decide.go ToolCallCompleted: `if m.State == MemberTool { m.State =
+// MemberThinking }`). The turn is not over -- the result gets reinjected and
+// the model is called again -- so reporting the member idle would say the
+// agent stopped when it is mid-turn. The State == "tool" guard is the core's
+// too: a completion for a member that moved on must not drag it backwards.
+func (s *State) markToolIdle(actor string) {
+	if actor == "" {
+		return
+	}
+	if m, ok := s.members[actor]; ok && m.State == "tool" {
+		m.State = "thinking"
+	}
+}
+
+// deriveToolSurface reduces the call list to the summary binds a status row
+// reads. Derived rather than maintained in apply() for the same reason
+// ExecPhase is: a count written at event time and a list written at event time
+// are two places to get one fact wrong.
+func (s *State) deriveToolSurface() {
+	s.ToolsPending = 0
+	for _, c := range s.ToolCalls {
+		if c.Outcome == "" {
+			s.ToolsPending++
+		}
+	}
+	if len(s.ToolCalls) > 0 {
+		s.ToolLast = s.ToolCalls[len(s.ToolCalls)-1]
+	} else {
+		s.ToolLast = ToolActivity{}
+	}
 }
 
 // deriveExecPhase reduces the work counters to the one word a status row can
@@ -176,17 +337,28 @@ func (s *State) deriveExecPhase() {
 // 122-event run log written by the arxi core, ten types were handled and
 // twelve were not -- and the unhandled twelve were the bulk of the file.
 //
-// This commit closes the largest part of that gap: the exec.* family (91
-// events, 74.6% of the log) and run.result (the run's own verdict). Coverage
-// goes 13/122 -> 105/122 (10.7% -> 86.1%).
+// The previous commit closed the largest part of that gap: the exec.* family
+// (91 events, 74.6% of the log) and run.result. Coverage went 13/122 ->
+// 105/122.
 //
-// It does NOT close all of it, and the arithmetic is worth stating plainly
-// because the previous turn's note got it wrong: 89% (109/122) was the total
-// unhandled figure, not the exec.* share. Seventeen events remain invisible
-// after this change -- tool.call x4, tool.call_completed x4, stage.entered x2,
-// stage.submitted x4, stage.advanced x1, timer.scheduled x1,
-// timer.cancelled x1 -- and they are the next piece of work, not a rounding
-// error.
+// This one adds the tool.* family: 113/122 (92.6%). It is eight events, not
+// the biggest remaining count -- stage.* is seven and timer.* two -- and it
+// was chosen anyway because it is the only family in the log that says WHAT
+// THE AGENT DID. exec.* counts durable work and stage.* names a position in
+// the blueprint; both are plumbing. A host that shows a moving progress
+// indicator and never the words "read README.md" has replaced a blank screen
+// with a busy one.
+//
+// Nine events remain invisible: stage.entered x2, stage.submitted x4,
+// stage.advanced x1, timer.scheduled x1, timer.cancelled x1. They are
+// position and plumbing, they are tracked by exact count in
+// TestTheRealLogCoverageIsMeasuredNotAssumed, and they are the next piece of
+// work rather than a rounding error.
+//
+// tool.call_denied is in the handled set and contributes ZERO to that figure:
+// the recorded run allows every tool, so the log contains none. That is
+// stated rather than hidden, because a coverage number that counted handled
+// types instead of handled events would claim credit for it.
 //
 // The list must be kept beside the switch. A type added to one and not the
 // other makes Handles lie, which is why there is a test that walks the real
@@ -213,6 +385,15 @@ var handled = map[string]bool{
 
 	// The run's verdict. Success only -- see State.RunOutcome.
 	"run.result": true,
+
+	// Tool activity: what the agent actually did. tool.call_denied is handled
+	// although the measured log contains none -- the simulated run allows
+	// every tool -- because the denial is the half with a human in the loop,
+	// and a host that only understands the happy path goes blank at exactly
+	// the moment someone is waiting to be asked something.
+	"tool.call":           true,
+	"tool.call_completed": true,
+	"tool.call_denied":    true,
 }
 
 // Handles reports whether the fold does anything with this event type.
@@ -512,6 +693,68 @@ func (s *State) apply(e Event) {
 		}
 		if v, ok := e.Payload["result_from"].(string); ok {
 			s.RunResultFrom = v
+		}
+
+	case "tool.call":
+		// The agent asked for a tool. Recorded as pending: the call has been
+		// issued and no terminal record has arrived, which is a third state
+		// distinct from completed and denied.
+		//
+		// The actor comes from e.Actor (top-level), with payload.agent as a
+		// fallback only. That order is deliberate and is the opposite of what
+		// the rest of this fold does: the simulated path writes both, so
+		// either would have passed the measurement, while the real provider
+		// path (executor.go FinishTurn) writes ONLY the top-level field. A
+		// payload-first reading works in every test and attributes nothing in
+		// production.
+		a := ToolActivity{
+			Actor:  e.actorName(),
+			Tool:   str(e.Payload, "tool"),
+			CallID: str(e.Payload, "call_id"),
+			Seq:    e.Seq,
+		}
+		s.ToolCalls = append(s.ToolCalls, a)
+		s.ToolCallsTotal++
+
+		// A member running a tool is in the "tool" state, which is in the
+		// documented vocabulary (event.go: idle/thinking/tool/...) and was
+		// the one value nothing ever set. arxi's reducer does the same thing
+		// on this event (decide.go: m.State = MemberTool, m.Detail = tool).
+		if m, ok := s.members[a.Actor]; ok && a.Actor != "" {
+			m.State = "tool"
+			m.Busy = true
+		}
+
+	case "tool.call_completed":
+		// The tool ran and returned. `result` is carried verbatim and not
+		// inspected: the core is explicit that a non-zero exit is an answer,
+		// not an error ("the tests fail" is what the agent asked to find
+		// out), so a host that scanned it for failure strings would invent a
+		// verdict the core never gave.
+		s.closeToolCall(e, "completed", str(e.Payload, "result"), "")
+
+	case "tool.call_denied":
+		// Policy refused the call. This is NOT an error branch.
+		//
+		// spec/events.md: `tool.call_denied` with policy:"ask" "is **not an
+		// error**: it is a question." The core turns it into an inbox item and
+		// a blocked_ref, and the run continues waiting for a human. "deny" is
+		// the other meaning: a decision, final, nothing ran.
+		//
+		// Both are counted in ToolsDenied and only "ask" in
+		// ToolsAwaitingApproval, because the remedies differ -- a policy
+		// change versus an answer.
+		//
+		// No todo is appended here. The core emits its own agent.blocked for
+		// the ask path (applyToolDenied returns an AskHuman effect and sets
+		// the member to MemberWaiting), and this fold already turns
+		// agent.blocked into a todo. Adding one here too would double-count
+		// every approval request in the todo list.
+		policy := str(e.Payload, "policy")
+		s.closeToolCall(e, "denied", "", policy)
+		s.ToolsDenied++
+		if policy == "ask" {
+			s.ToolsAwaitingApproval++
 		}
 
 	case "ui.state":
