@@ -774,32 +774,69 @@ func calleeObject(call *ast.CallExpr, info *types.Info) types.Object {
 // Selecting `Type` is resolved through the type checker, so `c.Type` on some
 // other struct is not this field — the standing rule that a guard which can
 // ask the type checker must not match a spelling.
+//
+// # Why it asks about the whole body rather than two statement kinds
+//
+// It used to look only at a switch's tag and an if's condition, which is the
+// same enumeration this file keeps finding one level in: those are the two
+// places the *existing* renderers happen to put the test. Measured, on a
+// renderer dispatching through a tagless switch — ordinary Go, and how a
+// dispatch is written the moment one arm needs a compound condition:
+//
+//	switch {
+//	case n.Type == "text": …
+//	}
+//	  -> the audit reported it as a walker skipping prefix and row_template
+//
+// That is the **false-alarm direction**, which borderVocabulary's comment
+// records the cost of: a guard that fires on working code is one people learn
+// to switch off. A missed exemption is not a missed defect, but it is the
+// failure that gets the whole audit deleted.
+//
+// The first attempt at widening it went too far and the floor caught it
+// immediately: asking merely whether the body *reads* `n.Type` exempted all
+// four real walkers, because every one of them reads the type to name it in
+// a diagnostic (`node type %q declares …`). The audit dropped to one walker
+// and the floor failed the run. Reading the type is not the property —
+// **branching on it is.** A renderer asks what kind of node it has in order
+// to decide what to do; a walker asks in order to print it.
+//
+// So the test is: does any control-flow condition in this function depend on
+// `n.Type`? That covers a tagged switch, a tagless switch, an `if`, and the
+// compound conditions each of those can carry, without exempting a function
+// that merely mentions the field. The two failures bracket it — too narrow
+// slanders a renderer, too broad deletes the audit — and only running both
+// directions located the line between them.
 func dispatchesOnType(body *ast.BlockStmt, info *types.Info) bool {
 	found := false
+
+	// conditions are the expressions that steer control flow. A switch tag
+	// is one; so is every case expression of a tagless switch, and so is
+	// each if condition, including the ones nested inside them.
+	var conditions []ast.Expr
 	ast.Inspect(body, func(n ast.Node) bool {
-		if found {
-			return false
-		}
-		var subject ast.Expr
 		switch s := n.(type) {
 		case *ast.SwitchStmt:
-			subject = s.Tag
+			if s.Tag != nil {
+				conditions = append(conditions, s.Tag)
+			}
+		case *ast.CaseClause:
+			conditions = append(conditions, s.List...)
 		case *ast.IfStmt:
-			subject = s.Cond
-		default:
-			return true
-		}
-		if subject == nil {
-			return true
-		}
-		for _, sel := range nodeSelectorsIn(subject, info) {
-			if sel == "Type" {
-				found = true
-				return false
+			if s.Cond != nil {
+				conditions = append(conditions, s.Cond)
 			}
 		}
 		return true
 	})
+
+	for _, cond := range conditions {
+		for _, sel := range nodeSelectorsIn(cond, info) {
+			if sel == "Type" {
+				found = true
+			}
+		}
+	}
 	return found
 }
 
