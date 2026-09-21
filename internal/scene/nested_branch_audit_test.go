@@ -129,6 +129,29 @@ import (
 //	Grid [][]*Node                                          -> caught
 //	Panes NodeList (named slice type)                       -> caught
 //	Labels map[string][]string and Sizes []*int             -> ignored, no false alarm
+//
+// A sixth and a seventh came from the rule those produced — list what a
+// derived guard still hardcodes, rather than guessing where to inject. The
+// list had two entries. `"json.RawMessage"`, compared as source text, let a
+// raw branch declared through an alias escape both halves. `"Type"` turned
+// out to be a **negative finding**: renaming Node.Type breaks the build at
+// every use, so the compiler pins it and it cannot drift.
+//
+// But the *shape* the exemption looked for was still enumerated, and that is
+// the seventh, in the false-alarm direction:
+//
+//	a renderer dispatching via a tagless switch -> reported as a broken walker
+//	the same, after                             -> exempt
+//	a renderer with a compound `if` condition   -> exempt
+//	a walker that only prints n.Type            -> still caught
+//	a walker that never mentions the type       -> still caught
+//
+// The middle correction is the one worth reading: the first widening asked
+// whether the body *reads* n.Type, which exempted all four real walkers —
+// they read the type to name it in diagnostics — and the floor failed the run
+// at one walker out of four. Too narrow slanders a renderer; too broad
+// deletes the audit. Only running both directions found the line, which is
+// branching on the type rather than reading it.
 func TestEveryNestedBranchIsInventoriedAndWalked(t *testing.T) {
 	branches := nodeBearingBranches(t)
 
