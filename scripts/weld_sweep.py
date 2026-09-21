@@ -656,11 +656,11 @@ WELDS = [
         """\tglowed := *n
 \tglowed.Style = make(map[string]string, len(n.Style)+1)""",
         """\tglowed := *n
-\tglowed.Style = n.Style
-\tif glowed.Style == nil {
+\tif n.Style == nil {
 \t\tglowed.Style = make(map[string]string, 1)
+\t\tn.Style = glowed.Style
 \t}
-\tif false""",
+\tglowed.Style = n.Style""",
         ENGINE,
     ),
     (
