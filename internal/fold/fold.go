@@ -98,6 +98,40 @@ func Fold(events []Event) State {
 	return s
 }
 
+// handled is the set of event types apply() has a case for.
+//
+// It exists because the coverage question could not be asked before: the only
+// events this fold had ever seen were the eight the Phase 0 mock emits, and
+// every one of them is handled by construction. Measured against a real
+// 121-event run log written by the arxi core, ten types are handled and twelve
+// are not -- and the unhandled twelve are the bulk of the file (the exec.*
+// family alone is 91 events). A fold that ignores the majority of a run is a
+// host that is blank while the run works, so the gap is named here rather than
+// discovered by watching an empty screen.
+//
+// The list must be kept beside the switch. A type added to one and not the
+// other makes Handles lie, which is why there is a test that walks the real
+// log and compares the two.
+var handled = map[string]bool{
+	"run.prompt":      true,
+	"llm.response":    true,
+	"agent.activated": true,
+	"agent.turn_done": true,
+	"agent.failed":    true,
+	"run.started":     true,
+	"agent.blocked":   true,
+	"agent.unblocked": true,
+	"run.quiescent":   true,
+	"ui.state":        true,
+}
+
+// Handles reports whether the fold does anything with this event type.
+//
+// An unhandled event is not an error -- the log is the core's, not the host's,
+// and a host that refused unknown types could not read a log written by a
+// newer core -- but it is invisible, and invisible is worth measuring.
+func Handles(eventType string) bool { return handled[eventType] }
+
 func (s *State) apply(e Event) {
 	switch e.Type {
 	case "run.prompt":
@@ -147,9 +181,21 @@ func (s *State) apply(e Event) {
 		}
 
 	case "agent.activated":
-		// A member began a turn: the run is live and not simulated-idle.
+		// A member began a turn. That is all this event knows.
+		//
+		// It used to also set AgentMode = "live", with a comment reading "the
+		// run is live and not simulated-idle". That conflated two different
+		// questions: who is working, which is AgentWorking on the line below,
+		// and whose money is being spent, which only run.started answers via
+		// `simulated`. A simulated run activates agents exactly like a real
+		// one, so the overwrite relabelled every sim run as live the instant
+		// it did any work -- and for a host that displays cost, claiming a
+		// simulation is live is the one error that cannot be tolerated.
+		//
+		// The mock could never catch it: its run.started carries
+		// simulated:false, so the overwrite wrote the value already there.
+		// A real 121-event core log caught it on the first run.
 		s.AgentWorking = true
-		s.AgentMode = "live"
 
 		// Track the activated agent in team.members
 		agent := ""

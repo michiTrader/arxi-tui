@@ -321,6 +321,48 @@ UPDATE_GOLDEN=1 go test ./internal/...   # regenerate golden fixtures
 ARXI_BIN=/path/to/arxi ./arxi-tui
 ```
 
+### What the NDJSON bridge actually does today
+
+Measured on 2026-09-21 against a real `arxi serve` (arxi 0.0.1-spec, surface
+v1) built from `michiTrader/arxi@main`, not against the mock. The transcripts
+are committed as `testdata/serve/session.ndjson` (a live protocol session) and
+`testdata/serve/real_run.ndjson` (121 events the core wrote for a simulated
+run). Both are regenerable; the commands are in the test headers.
+
+The bridge had never been run against the core before this, and it did not
+work:
+
+- **The handshake could never succeed.** It compared the hello's `version`
+  against a `"0.1.0"` invented in this repo; the core sends its *binary*
+  version, `"0.0.1-spec"`. Fixed to gate on `surface_version`, which is the
+  vocabulary number and the thing the bind inventory is written against.
+- **`run.prompt` is declared and not implemented.** It is the only request
+  arxi-tui sends, and this build of the core answers it `not_implemented`. The
+  host now reads the hello's `implemented` list, so a permanent gap is
+  distinguishable from a transient failure instead of being rediscovered one
+  refused request at a time.
+- **`run.attach` *is* implemented**, which contradicts ADR-0002's premise that
+  no subscription layer exists in arxi to extend. The log-follow decision needs
+  re-deciding on that evidence, not on the assumption.
+- **A refusal read as success.** `ok:false` came back with a nil error, and the
+  host's only call site was `_ = drv.SubmitPrompt(...)`. Refusals are now a
+  `driver.Refusal` carrying the core's code, sentence, `fix` and `operation`,
+  with `Permanent()` for the retry branch.
+- **The event decoder was right about the file and wrong about the socket.**
+  `kernel.Event` on disk spells the sequence `seq`; `host/v1.Event` on the wire
+  spells it `sequence`. Reading only `seq` left every subscription event at
+  Seq 0 — silently. Unified into one `decodeEvent` that accepts either and
+  refuses a record with neither.
+- **Every simulated run was labelled live.** `agent.activated` overwrote
+  `AgentMode`, conflating "who is working" with "whose money is at stake". The
+  mock could not catch it; its `run.started` carries `simulated:false`.
+
+Fold coverage against a real run is **13 of 122 events**. The unhandled 109
+span twelve event types, including the whole `exec.*` family (91 events) and
+`run.result` — so the host cannot currently tell a run that succeeded from one
+that failed. That gap is pinned by a test rather than left to be discovered on
+screen.
+
 The default scene is `testdata/SOBRIA.json` (the sobria look). If it fails to
 load, the interface falls back to the factory RAW scene (two nodes: transcript
 and input, nothing else) and states why, addressed, on screen.
