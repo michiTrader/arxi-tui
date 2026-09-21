@@ -156,6 +156,38 @@ func TestEveryConvergenceDocumentActuallyConverges(t *testing.T) {
 // measurement of record is the repair loop. A corpus of cases with no refusal
 // path would satisfy every other test in this file and measure precisely the
 // metric the plan rejects, so the corpus has to be held to its own purpose.
+//
+// # Why the repair check is per case and not a corpus total
+//
+// It was a total, and the total was `withRepair == 0`. That is the corpus
+// being *entirely* first-shot, which is not the way a corpus decays. Cases
+// are edited one at a time, and a single surviving strong case satisfies a
+// count for all of them. Measured, each line from a run, with `attempts`
+// emptied on three of the four cases and `maximum-count-the-tasks` left
+// intact:
+//
+//	withRepair == 1, so the guard is satisfied
+//	kinds still has both bind and token, from the one remaining case
+//	the whole package stays green
+//	the run prints "1 of 4 cases exercise at least one repair turn"
+//
+// Three quarters of Phase 2's gate stopped measuring the metric PLAN.md says
+// is the measurement of record, and the suite reported success. The number
+// the gate produces would then be three parts first-shot accuracy — the
+// vanity metric — and one part repair loop, reported as one figure.
+//
+// The knowledge was already here and was not an assertion. The `else` branch
+// above printed "case %q has no refused attempt: it measures the first shot
+// only" for each of the three, through `t.Logf`, on a passing run — so the
+// finding was computed, formatted, and discarded. That is the same shape this
+// project recorded in internal/scene one turn ago from the other direction: a
+// decision that lives only inside a `t.Errorf` cannot be measured. A finding
+// that lives only inside a `t.Logf` is worse, because it is written out in
+// English next to a green result and reads as commentary.
+//
+// A per-case check also fails in the unit the author fixes in. "No case
+// exercises a refusal" names nothing to edit; "raw-add-tasks-panel has no
+// refused attempt" names a file.
 func TestCorpusExercisesTheRepairLoopNotTheFirstShot(t *testing.T) {
 	cases, err := LoadAll(corpusDir())
 	if err != nil {
@@ -168,7 +200,19 @@ func TestCorpusExercisesTheRepairLoopNotTheFirstShot(t *testing.T) {
 		if len(c.Attempts) > 0 {
 			withRepair++
 		} else {
-			t.Logf("case %q has no refused attempt: it measures the first shot only", c.ID)
+			t.Errorf("case %q carries no refused attempt, so it measures the first shot only.\n"+
+				"  order: %s\n"+
+				"consequence: PLAN.md names first-shot accuracy a vanity metric and the repair loop the\n"+
+				"measurement of record — \"the real use is exactly the case where the engine said\n"+
+				"file:line: and the model had to read it\". This case contributes to the gate's number\n"+
+				"while measuring the metric the plan rejects, and the two are reported as one figure.\n"+
+				"This is checked per case rather than as a corpus total because cases are edited one at\n"+
+				"a time: a single strong case satisfies a total for every weak one beside it. Measured,\n"+
+				"with three of four cases emptied this way, the count-based guard stayed green.\n"+
+				"remedy: give %q the refusals its order plausibly provokes, each with the reason and\n"+
+				"address the engine actually produces — TestEveryExpectedRefusalIsTheRefusalTheEngineGives\n"+
+				"will hold them to that. If the order genuinely cannot provoke one, the case belongs to a\n"+
+				"different suite than Phase 2's gate.", c.ID, c.Order, c.ID)
 		}
 		for _, a := range c.Attempts {
 			kinds[a.Refused.Kind]++
