@@ -447,6 +447,50 @@ accusation in the flattering direction: it looks like coverage and it measures
 the harness. Where a guard builds documents from fragments, assert that each
 fragment actually changed the parsed node.
 
+**The cheapest probe is a form the codebase already uses, applied where it
+is not.** This was written last turn as an observation and used this turn as a
+method, which is the only evidence that matters for a rule. The form was the
+*accessor*: `nodeSelectorsIn` had just been taught to resolve a method to the
+field it returns, because a walker reaching `suffix` through `n.SuffixNode()`
+looked like a walker skipping the branch. The sibling audit in the same
+package — `TestEveryNodeFieldIsEitherRenderedRefusedOrJustified`, older, for a
+different defect class — still resolved a field to its accessors by *spelling*:
+strip a `Raw` suffix, accept any read method whose name starts with what is
+left. Both halves guess at naming, and both guesses were wrong. No invention
+was required to find it; the probe was to take the shape one file had just been
+fixed for and point it at the file that had not.
+
+The two directions, each measured rather than argued:
+
+    TitleRaw, decoded by nobody               -> audit green
+      CutSuffix yields "Title", the engine reads n.Title, and an
+      unrelated field's name vouched for the dead one
+    Caption, genuinely read via CaptionGlyph() -> falsely accused
+
+**A remedy a guard prints is part of the guard, and it can hand the author a
+way to make the defect invisible.** The dead field above was not entirely
+unseen: the *sibling* audit failed it, on a different axis — an unclassified
+raw field. But the remedy that failure printed is "classify it as carrying no
+node", and following that remedy — the correct action for the message shown —
+returned the whole suite to green with the field still dead: the document
+validated clean, the unsigned bind inside it was never refused, nothing was
+drawn. Two audits, one of which fired, and the composite still had a path to
+silence. When two guards overlap on an object, check the state the *first
+one's remedy* leaves behind, not just the state it fires on.
+
+**Report the negative finding even when it costs the fix its justification.**
+The accessor derivation follows calls between methods, so `BorderStyleName`
+inherits what `border()` reads. Disabling that chain on the clean tree left the
+audit green: chaining is not load-bearing today, because `BorderShape` and
+`HasBorder` read `BorderRaw` directly and a one-hop sibling already covers it.
+That is the sort of measurement it is tempting to skip, since the honest answer
+weakens the change just made. It is kept — with the reason, and with the
+counterfactual that does isolate the chain — because the alternative is a guard
+that is correct by luck and fails the first time an accessor is split in two.
+The rule generalises: the part of a fix that no counterfactual can distinguish
+from its absence is the part that will be deleted by the next reader as dead
+weight, and the comment saying why it is there is the only thing that stops it.
+
 **A golden that discards what you are asserting about is not covering it.**
 The one test that renders the marquee with its gate open is named for its
 prefix and suffix and asserts on `f.Plain()` — styling stripped. The *styled*
