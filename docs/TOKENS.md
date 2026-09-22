@@ -161,6 +161,76 @@ without declaring it is rejected at plugin-install time.
 
 This is Phase 3 work. Phase 1 implements the resolver and factory theme only.
 
+## Timing tokens — the `[anim]` vocabulary
+
+Signed 2026-09-22 (D4, `docs/DESIGN-BLOCK-D.md`, owner-accepted). A **timing
+token** is a named duration-and-curve, referenced by animation props the way a
+style token is referenced by `style`. It answers Scene 4 / Q8 ("timing is a
+global `[anim]` token with per-node override") and unblocks the four props
+`internal/scene/node.go` parses and warns about today (`transition`, `scroll`,
+`reveal`, `enter`); `focus_glow` never needed it because it has no clock.
+
+Timing tokens live in a **separate theme section**, `anim`, so a timing name can
+never collide with a style-token name:
+
+```json
+"anim": {
+  "default":     { "duration_ms": 200, "curve": "ease_out", "fps": 30 },
+  "marquee":     { "duration_ms": 0,   "curve": "linear",   "fps": 20 },
+  "reveal.fast": { "duration_ms": 120, "curve": "ease_out", "fps": 30 }
+}
+```
+
+### Shape of a timing definition
+
+- `duration_ms` (int): how long one pass runs. `0` means **continuous** — no
+  end, driven at `fps` — which is the marquee case.
+- `curve` (name from the closed set below): the easing applied over the run.
+- `fps` (int, optional): the tick rate; defaults to a host constant.
+
+### The curve set is closed
+
+`linear`, `ease_in`, `ease_out`, `ease_in_out`, `step`. This is the one D-block
+vocabulary deliberately **not** open, and the reason is the plugin boundary: a
+style token is pure data the emitter interprets, but a curve is an **easing
+function** — code. An open curve namespace would be "bring your own render/timing
+code into the mother renderer", exactly what the sparkline rule (Scene 6: the
+plugin composes our primitives, it does not bring render code) and Q14 (a render
+that is none of our nodes is the Phase-4 wasm ADR) forbid. Adding a curve is a
+mother-binary change with its own freeze, like adding a node type.
+
+### Global default + per-node override (Q8)
+
+Every animated prop uses `anim.default` unless the node names a timing token. A
+node overrides by naming one: `"transition": { "anim": "reveal.fast" }`,
+`"reveal": { "anim": "<token>" }`, `"enter": { "row": true, "stagger":
+"<token>" }`. `scroll` keeps its own `speed` (cells per tick) and `pause_when`
+(a bind) from SCENES.md and takes its *clock* — the tick rate — from a timing
+token (`anim.marquee` by default), so its continuous cadence is defined in one
+place rather than reinvented in the renderer.
+
+### The fold never sees this (Q9)
+
+A timing token is consumed only by the render/emit layer that owns the host
+clock; it never enters the fold. "The fold never waits on a scene, an animation,
+or a plugin" — a timing token *is* the animation, and it stays on the far side
+of that line.
+
+### Validation
+
+- A prop naming an `anim` token absent from the active theme → load-time error
+  with `file:line`, naming the token and the node — the same net as an undefined
+  style token.
+- A timing definition with a curve outside the closed set, or a negative
+  `duration_ms`/`fps` → theme-load error naming the offending key and listing the
+  legal curves. The remedy differs from a style token's on purpose: "choose a
+  supported curve", not "define it", because a curve is code the theme cannot
+  supply.
+
+When this is implemented, SCENES.md's Scene 4 status paragraph (which says it
+"is what should be updated first") and the `Scroll`/`FocusGlow` comments in
+`node.go` that cite the missing token move from "warned" to "implemented".
+
 ## Signed contract (Phase 1 freeze)
 
 The token format described here is frozen for Phase 1. The three elements —
