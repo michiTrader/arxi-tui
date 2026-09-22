@@ -88,20 +88,24 @@ signed row/token to the relevant doc, before any code depends on it.
 - **0.3** Add `bin/` (or `/bin/arxi-tui`) to `.gitignore` so the compiled
   binary is never accidentally committed (correction 7).
 
-### Block C — Finish fold coverage (nearly closed)
+### Block C — Finish fold coverage (DONE 2026-09-22)
 
-Old Block C assumed 9 missing events; the audit shows 7 already handled.
+Old Block C assumed 9 missing events; the audit showed 7 already handled, and
+this session closed the last 2.
 
 - **C1 — DONE.** `stage.*` (7 events) is folded
-  (`internal/fold/fold.go:499-502,928,949,990,1012`).
-- **C2** Implement fold handlers for `timer.scheduled` and `timer.cancelled`
-  (the only 2 unhandled events, `real_run_log_folds_test.go:295-296`).
-- **C3** [C2] Re-measure and flip the pin in
-  `TestTheRealLogCoverageIsMeasuredNotAssumed` from 120 to 122
-  (`real_run_log_folds_test.go:251`).
-- **C4** Correct the stale coverage comment at
-  `internal/fold/fold.go:439-451` (says 113/122; reality is 122/122 after C3).
-- **C5** Update the coverage line in `README.md` to match.
+  (`internal/fold/fold.go` handled map + switch cases).
+- **C2 — DONE.** `timer.scheduled` and `timer.cancelled` are handled as a
+  read-and-understood no-op (a stage deadline that arms and cancels without
+  firing has no host-facing projection).
+- **C3 — DONE.** The pin in `TestTheRealLogCoverageIsMeasuredNotAssumed` is
+  122; the two events moved from the blind list to the PRESENT assertion, and
+  the now-empty blind list has a fail-loud check for any future unaccounted
+  type. Counterfactual run: reverting the handlers fails the guard in four
+  places.
+- **C4 — DONE.** The stale 113/122 comment block in `internal/fold/fold.go` is
+  corrected to 122/122.
+- **C5 — DONE.** The README coverage line reads 122 of 122.
 
 ### Block A — Close Phase 2: run the repair loop against a real model
 

@@ -373,17 +373,21 @@ work:
   `AgentMode`, conflating "who is working" with "whose money is at stake". The
   mock could not catch it; its `run.started` carries `simulated:false`.
 
-Fold coverage against a real run is **113 of 122 events** (92.6%), re-measured
-twice from a starting point of 13/122. The `exec.*` family (91 events) and
+Fold coverage against a real run is **122 of 122 events** (100%), re-measured
+from a starting point of 13/122. The `exec.*` family (91 events) and
 `run.result` came first; then the `tool.*` family (8 events), which is not the
 largest remaining count — `stage.*` is 7 — but is the only family in the log
-that says *what the agent did*. The nine still invisible are `stage.*` (7) and
-`timer.*` (2): position and plumbing.
+that says *what the agent did*; then `stage.*` (blueprint position, 120/122);
+and finally the `timer.*` pair (2 events) that closed it. The last two are a
+stage deadline that armed and cancelled without firing, handled as a
+read-and-understood no-op: a scheduled deadline has no host-facing projection,
+because the user-visible half of *a timer exists* is an agent blocked on one
+(`blocked_on=timer`), which folds into a todo already.
 
 The figure is pinned by a test that also asserts the accounting closes against
-the log's length, so every event is either handled or named in the blind list.
-Both re-measurements were *forced* by that pin rather than reported alongside
-it.
+the log's length, so every event is either handled or named in the blind list
+(now empty, with a fail-loud check for any future unaccounted type). Every
+re-measurement was *forced* by that pin rather than reported alongside it.
 
 The default scene is `testdata/SOBRIA.json` (the sobria look). If it fails to
 load, the interface falls back to the factory RAW scene (two nodes: transcript
