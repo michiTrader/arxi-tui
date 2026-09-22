@@ -157,6 +157,31 @@ written only through registered commands (`cmd:/slash`, `cmd:/max`,
 | `ui.focus` | text \| null | the `id` of the currently focused node; set by `cmd:/focus <node>` or Tab navigation | on `focus:<node>` action, on Tab/Shift-Tab | null — focus defaults to the input node at boot |
 | `ui.max` | text \| null | the `id` of the maximized pane; set by `cmd:/max <pane>` (Scene 10) | on `cmd:/max` action | null — no pane is maximized |
 | `ui.surface` | text | the active surface/page identifier (e.g. `"chat"`, `"config"`, `"plugins"`) | on `cmd:/surface <name>` | `"chat"` — the default surface |
+| `ui.hidden` | set of node ids | the ids the user has hidden via `cmd:/ui hide <id>`; `cmd:/ui show <id>` removes one, `cmd:/ui show *` clears the set | on `cmd:/ui hide`/`show` | empty set — every node's visibility is decided by its `when` alone |
+
+**Consumption of `ui.hidden` (signed 2026-09-22, D3).** Unlike every other row
+in this table, `ui.hidden` is consumed by the **engine walk**, not by a scene
+`when`: the walk drops any node whose id is in the set, together with its
+subtree. A node renders iff its `when` is truthy **and** its id is not in
+`ui.hidden`. The two compose by conjunction and order does not matter — either
+one removes the node.
+
+It is a *set of ids*, not a scalar bool, and not consumed through `when`, for
+reasons that were paid for and must not be re-litigated (`docs/DESIGN-BLOCK-D.md`
+D3, and `TestHideAndShowAreRefusedRatherThanInventingABind`):
+
+- A **scalar** `ui.hidden` would make `/ui hide a` unhide `b`, because every
+  other `ui.*` row is a single id.
+- A `when`-based hide cannot be written: `when` shows a node when its bind is
+  *truthy* and this engine has **no negation** (`evalWhen` resolves the whole
+  string through `resolveBind`), so "show when not hidden" is unspellable.
+- The inverse "visible-set" (default-visible) would invert §4.6's signed rule
+  that an unresolved bind is *falsy* — a fresh document would render with
+  everything hidden.
+
+The empty set is the default and a no-op, so signing this row moves no existing
+golden. `ui.hidden.<id>` MAY later be exposed as a derived truthy membership
+bind (for a "N hidden" badge); that is secondary and not signed here.
 
 ### 4.4 Plugin namespace contract
 
