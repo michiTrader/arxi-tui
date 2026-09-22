@@ -1,22 +1,25 @@
 {
   "id": "raw-model-name-while-working",
-  "order": "show the answering model's name at the very bottom, but only while the agent is working",
+  "order": "show the answering model's name at the bottom, with a dot next to it while the agent is working",
   "base": "RAW.json",
-  "rationale": "The only case that exercises the when-condition arm of the bind validator (validate.go: 'unsigned bind %q in when condition of node type %q'), which reports through the same scene.Error type as a node bind but from a different walk and so can regress independently. That validator coverage is the reason it stays, because measured against a real model (deepseek-v4.1-flash, two live runs 2026-09-22) it converged in one turn both times: the model spelled the boolean agent.working directly and did not take the predicted agent.busy miss. EVAL.md is explicit that a case converging in one turn every time measures the first shot -- a vanity metric -- and stays only if its refusal path is still worth pinning for the validator's sake; this one's is, since the attempt reproduces the when-condition refusal against the real validator and holds its wording and address. must_bind names agent.working as well as model.name because CollectBinds counts a when condition's first field, so a converged document that dropped the condition -- showing the name always -- fails must_bind rather than scoring a false pass by ignoring the 'only while' half of the order. The predicted miss is left recorded in the attempt (agent.busy) because it is the refusal a model that did guess from intuition would receive, and pinning it is what keeps the diagnostic honest even though this model did not need the repair turn.",
+  "rationale": "The only case that exercises the when-condition arm of the bind validator (validate.go: 'unsigned bind %q in when condition of node type %q'), which reports through the same scene.Error type as a node bind but from a different walk and so can regress independently. That validator coverage is the reason it stays, and it is carried entirely by the attempt: TestEveryExpectedRefusalIsTheRefusalTheEngineGives holds the attempt to reproducing that exact refusal at its address, so the diagnostic cannot rot silently. Measured against a real model (deepseek-v4.1-flash) it converged in one turn, spelling agent.working directly rather than taking the predicted agent.busy miss, so per EVAL.md it measures the first shot and stays only for that validator coverage. The design keeps two nodes deliberately apart: model.name is ungated so it is the must_bind field (a must_bind field has to reach the frame -- TestEveryCorpusMustBindFieldReachesTheFrame renders the convergence document with agent.working=false and requires the value to appear -- and a field hidden behind its own when would never render there), while the working-dot is the node that carries the when, so the unsigned-when refusal is provoked without hiding the content the frame test checks. model.name is novel against RAW, which binds it nowhere, so doing nothing does not pass.",
   "attempts": [
     {
-      "note": "right node, right bind, but the when-condition guesses agent.busy; a when is validated against the same signed set as a bind, and BINDS.md signs the boolean as agent.working",
+      "note": "model.name is right, but the working-dot guesses agent.busy in its when; a when is validated against the same signed set as a bind, and BINDS.md signs the boolean as agent.working",
       "document": {
         "root": {
           "type": "stack",
           "children": [
             { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
             { "id": "prompt", "type": "input", "bind": "user.input", "placeholder": "> " },
-            { "id": "model", "type": "text", "bind": "model.name", "when": "agent.busy", "style": { "style": "dim" } }
+            { "id": "model", "type": "row", "children": [
+              { "type": "text", "bind": "model.name" },
+              { "type": "text", "text": " \u25cf", "when": "agent.busy", "style": { "style": "dim" } }
+            ] }
           ]
         }
       },
-      "expect_refused": { "reason": "unsigned bind \"agent.busy\" in when condition", "line": 7 }
+      "expect_refused": { "reason": "unsigned bind \"agent.busy\" in when condition", "line": 9 }
     }
   ],
   "convergence": {
@@ -26,10 +29,13 @@
         "children": [
           { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
           { "id": "prompt", "type": "input", "bind": "user.input", "placeholder": "> " },
-          { "id": "model", "type": "text", "bind": "model.name", "when": "agent.working", "style": { "style": "dim" } }
+          { "id": "model", "type": "row", "children": [
+            { "type": "text", "bind": "model.name" },
+            { "type": "text", "text": " \u25cf", "when": "agent.working", "style": { "style": "dim" } }
+          ] }
         ]
       }
     },
-    "must_bind": ["model.name", "agent.working"]
+    "must_bind": ["model.name"]
   }
 }
