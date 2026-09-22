@@ -197,16 +197,24 @@ Consequences for the plan:
   not a new engine capability — the dogfooding choice, needing only three new
   theme tokens (`diff.del`/`diff.add`/`diff.context`) the open token system
   already permits.
-- **B4** [B3] Implement `Diff -> *scene.Node` (a scene fragment), mint the three
-  theme tokens, render side by side. Golden the fragment like any other scene.
+- **B4 — DONE.** `Diff.Scene(title)` in `internal/patch/diff.go` authors the
+  view as a titled box over a two-column row (old | new) of styled `text`
+  nodes. Tokens `diff.context`/`diff.del`/`diff.add` minted in `SOBRIA()` and
+  `Factory()`, colourless. Rendered through the normal engine path and pinned
+  by a golden (`testdata/DIFF.styled`); a second test holds the scene to both
+  validators against both themes and asserts the change lands on the correct
+  side. (This subsumes B8's diff-view goldens.)
 - **B5** [B4] Wire propose→apply: agent proposes a patch → host shows the diff
-  → applied on approval.
+  → applied on approval. **Note:** this depends on the agent-proposes-a-patch
+  channel, which is the same surface Block M feeds (the agent's turn produces a
+  proposed document). B5 is where the diff view meets the live agent, so it is
+  gated on M being far enough that an agent turn can carry a patch.
 - **B6** [B5] Consent gate per Q23 (show diff + log attribution; no blocking
   per-step menu).
 - **B7** [B5] Log attribution: every agent patch is an attributed event in the
   arxi log.
-- **B8** [B4] Diff-view goldens + tests whose failure messages name consequence
-  and remedy.
+- **B8 — DONE (folded into B4).** The diff-view golden and the failure-message
+  tests landed with B4.
 - **B9** [B5] Update the verbs advertised in the slash menu
   (`internal/fold/fold.go:1204`, held by
   `internal/patch/menu_agrees_with_the_surface_test.go:40`) and the README
