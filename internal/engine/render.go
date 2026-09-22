@@ -97,6 +97,17 @@ func truncateText(s string, width int) string {
 type Renderer struct {
 	Width  int
 	Height int
+
+	// curRow is the current template row's fields while a row_template is being
+	// instantiated, and nil everywhere else. A `row.<field>` bind resolves
+	// against it (D1 / BINDS.md §4.7). It lives on the Renderer rather than in
+	// every render method's signature because a row is just extra resolution
+	// context the whole subtree under one template instance shares, and
+	// threading it through the render methods would be a fresh chance to forget
+	// it at each -- the same arithmetic withFocusGlow avoids. renderList saves
+	// and restores it around each row, so a template nested inside a template
+	// row still resolves its own row rather than its parent's.
+	curRow map[string]string
 }
 
 // RenderFrame renders a scene document into a frame, binding fold.State into
@@ -119,7 +130,7 @@ func (r *Renderer) RenderFrame(doc *scene.Document, state fold.State) ui.Frame {
 // unconditionally anywhere else, and the axis was the parent rather than the
 // node: the same `text` hid under a `row` and drew under a `stack`.
 func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Frame {
-	if hiddenByWhen(n, state) {
+	if hiddenByWhenRow(n, state, r.curRow) {
 		return ui.Frame{Width: r.Width, Height: 0}
 	}
 	n = withFocusGlow(n, state)
@@ -248,7 +259,7 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		// either way; a *grow* child would otherwise still take its share of
 		// the remaining space and paint that share as blank rows — hiding the
 		// content while keeping the hole it sat in.
-		if hiddenByWhen(c, state) {
+		if hiddenByWhenRow(c, state, r.curRow) {
 			continue
 		}
 		if c.Type == "overlay" {
@@ -418,7 +429,7 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 	// and leave its share as padding.
 	visible := make([]*scene.Node, 0, len(children))
 	for _, c := range children {
-		if hiddenByWhen(c, state) {
+		if hiddenByWhenRow(c, state, r.curRow) {
 			continue
 		}
 		visible = append(visible, c)
@@ -640,7 +651,7 @@ func (r *Renderer) renderText(n *scene.Node, state fold.State) ui.Frame {
 	style := styleName(n.Style)
 	text := n.Text
 	if n.Bind != "" {
-		text = resolveBind(n.Bind, state)
+		text = resolveBindRow(n.Bind, state, r.curRow)
 	}
 	return ui.Frame{
 		Live:   []ui.Line{{ui.Span{Text: text, Style: style}}},
@@ -827,7 +838,7 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 func (r *Renderer) renderSpinner(n *scene.Node, state fold.State) ui.Frame {
 	active := false
 	if n.Bind != "" {
-		active = evalWhen(n.Bind, state)
+		active = evalWhenRow(n.Bind, state, r.curRow)
 	}
 	var glyph string
 	if active {
@@ -885,11 +896,11 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 	// byte-identically under `agent.working` and `!agent.working`, and the
 	// validator accepted both.
 	prefix := n.PrefixNode()
-	if prefix != nil && !hiddenByWhen(prefix, state) {
+	if prefix != nil && !hiddenByWhenRow(prefix, state, r.curRow) {
 		// A prefix is a text-bearing node: either Type=="text" or an
 		// untyped node with Text set (the sobria prefix omits the type).
 		if prefix.Bind != "" {
-			cells = append(cells, ui.Span{Text: resolveBind(prefix.Bind, state), Style: styleName(prefix.Style)})
+			cells = append(cells, ui.Span{Text: resolveBindRow(prefix.Bind, state, r.curRow), Style: styleName(prefix.Style)})
 		} else {
 			cells = append(cells, ui.Span{Text: prefix.Text, Style: styleName(prefix.Style)})
 		}
@@ -901,9 +912,9 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 
 	// Suffix: a child node (bind or text) rendered after the main text.
 	// The sobria marquee's suffix binds usage.delta with style "dim".
-	if n.Suffix != nil && !hiddenByWhen(n.Suffix, state) {
+	if n.Suffix != nil && !hiddenByWhenRow(n.Suffix, state, r.curRow) {
 		if n.Suffix.Bind != "" {
-			cells = append(cells, ui.Span{Text: resolveBind(n.Suffix.Bind, state), Style: styleName(n.Suffix.Style)})
+			cells = append(cells, ui.Span{Text: resolveBindRow(n.Suffix.Bind, state, r.curRow), Style: styleName(n.Suffix.Style)})
 		} else if n.Suffix.Text != "" {
 			cells = append(cells, ui.Span{Text: n.Suffix.Text, Style: styleName(n.Suffix.Style)})
 		}
@@ -1188,6 +1199,24 @@ func slashRow(m fold.SlashMatch, nameW, width int, style string) ui.Line {
 // resolveBind resolves a bind string into its current value from fold.State.
 // This is the read-only projection layer: scenes name addresses, the host
 // computes them (ADR-0003). Unknown binds render as a placeholder.
+// resolveBindRow resolves a bind that may be relative to a template row. A
+// `row.<field>` bind reads the current row's field (D1 / BINDS.md §4.7); with
+// no row in scope it is the falsy placeholder, exactly like any unresolved
+// bind, so a relative bind that leaks outside a template degrades rather than
+// crashes. Every other bind is absolute and delegates to resolveBind unchanged.
+func resolveBindRow(bind string, state fold.State, row map[string]string) string {
+	if strings.HasPrefix(bind, "row.") {
+		if row == nil {
+			return placeholderValue
+		}
+		if v, ok := row[bind]; ok {
+			return v
+		}
+		return placeholderValue
+	}
+	return resolveBind(bind, state)
+}
+
 func resolveBind(bind string, state fold.State) string {
 	switch bind {
 	case "chat.history":
@@ -1327,10 +1356,16 @@ const placeholderValue = "[…]"
 // hides the content and keeps the blank rows it occupied — and two spellings
 // of the same predicate is how they drift apart.
 func hiddenByWhen(n *scene.Node, state fold.State) bool {
+	return hiddenByWhenRow(n, state, nil)
+}
+
+// hiddenByWhenRow is hiddenByWhen with a template row in scope, so a per-row
+// `when: "row.busy"` gates that row's node against its own element (Scene 9).
+func hiddenByWhenRow(n *scene.Node, state fold.State, row map[string]string) bool {
 	if n == nil || n.When == "" {
 		return false
 	}
-	return !evalWhen(n.When, state)
+	return !evalWhenRow(n.When, state, row)
 }
 
 // withFocusGlow returns the node the rest of the render path should draw: the
@@ -1389,7 +1424,12 @@ func withFocusGlow(n *scene.Node, state fold.State) *scene.Node {
 }
 
 func evalWhen(bind string, state fold.State) bool {
-	val := resolveBind(bind, state)
+	return evalWhenRow(bind, state, nil)
+}
+
+// evalWhenRow is evalWhen with a template row in scope; see resolveBindRow.
+func evalWhenRow(bind string, state fold.State, row map[string]string) bool {
+	val := resolveBindRow(bind, state, row)
 	switch val {
 	case "", "0", "false", placeholderValue:
 		return false
