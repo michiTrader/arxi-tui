@@ -10,30 +10,24 @@ import (
 // construction the engine draws. Where that is not true yet, the validator
 // must refuse with an address — never accept in silence.
 //
-// This is the third instance of one defect class, and the first to reach the
-// measuring instrument rather than a scene. The first two were a style key the
-// validator accepted and styleName() dropped, and a border token the validator
-// checked and both drawing paths ignored; each reported success and showed the
-// wrong screen. `row_template` is the same shape one level up: the validator
-// walks into it for binds *and* for tokens, loc.go gives it an address
-// (templatePath), binds_audit_test.go collects through it, and eval/grade.go's
-// CollectBinds walks it by name with a comment citing SCENES.md Q10 — five
-// places that all say the field is live — while internal/engine reads it in
-// exactly zero.
-//
-// Why refusing is the fix and implementing is not. `row_template`'s semantics
-// are relative binds (`row.kind`, Q10), and the `row.*` namespace is signed
-// nowhere in BINDS.md — it belongs to Scene 5, which is Phase 3 work. Drawing
-// the field "somehow" now would invent format ahead of the phase meant to
-// design it, the same mistake PLAN.md names about pinning a golden before the
-// phase that needs it. The honest engine behaviour is a refusal that says the
-// field is not rendered yet, and says where.
-func TestRowTemplateIsRefusedWhileTheEngineCannotDrawIt(t *testing.T) {
-	// A well-formed, fully signed document whose only sin is using a field
-	// the render path does not read.
+// `row_template` used to be the flagship instance of that rule: the validator
+// walked into it for binds and tokens, loc.go addressed it, binds_audit_test.go
+// and eval/grade.go collected through it — five places calling it live — while
+// internal/engine read it in exactly zero, so a template drew nothing while
+// every signal said the document was fine. It graduated: D1 signed the `row.*`
+// namespace (BINDS.md §4.7) and the engine's renderRowTemplate draws it, so the
+// refusal became a rendering. What remains refused is the case the format
+// cannot honour — a template over a bind that signs no row schema, which has no
+// rows to instantiate — and that refusal must still carry an address and reach
+// every position the walk covers, because the silent-drop shape is the same.
+func TestRowTemplateOverABindWithNoRowSchemaIsRefused(t *testing.T) {
+	// A list whose bind is a scalar (model.name), carrying a row_template. There
+	// are no rows to instantiate the template over, so it is refused — with an
+	// address, and naming §4.7 so the reader knows this is a sequencing rule and
+	// which binds do carry a schema.
 	body := `{ "root": { "type": "stack", "children": [
-	  { "id": "cmds", "type": "list", "bind": "agent.todos",
-	    "row_template": { "type": "text", "bind": "model.name" } }
+	  { "id": "cfg", "type": "list", "bind": "model.name",
+	    "row_template": { "type": "text", "bind": "row.state" } }
 	]}}`
 
 	doc, err := ParseDocument([]byte(body))
@@ -43,18 +37,13 @@ func TestRowTemplateIsRefusedWhileTheEngineCannotDrawIt(t *testing.T) {
 
 	verr := doc.Validate()
 	if verr == nil {
-		t.Fatalf("row_template validated clean.\n" +
-			"consequence: the scene loads, reports success, and the engine draws the\n" +
-			"list without the template — the outcome that shows the wrong screen while\n" +
-			"every signal says the document is fine. Worse here than in a scene: the\n" +
-			"eval grader counts a bind it finds inside the template, so a corpus answer\n" +
-			"can score converged with the field never on screen.\n" +
-			"remedy: refuse the field until internal/engine renders it.")
+		t.Fatalf("row_template over a scalar bind validated clean.\n" +
+			"consequence: the list has no rows to instantiate the template over, so it\n" +
+			"renders nothing while reporting success — the silent-drop outcome this file\n" +
+			"exists to close.\n" +
+			"remedy: refuse a row_template whose bind signs no row schema (BINDS.md §4.7).")
 	}
 
-	// The refusal has to carry an address, like every other refusal in this
-	// package (Phase 1.6). A reason with no file:line is a reason the model
-	// in Phase 2's repair loop cannot act on.
 	var se *Error
 	if !errors.As(verr, &se) {
 		t.Fatalf("refusal is not a *scene.Error, so it carries no address: %v", verr)
@@ -62,25 +51,21 @@ func TestRowTemplateIsRefusedWhileTheEngineCannotDrawIt(t *testing.T) {
 	if se.Loc == (Loc{}) {
 		t.Errorf("refusal carries no address: %v", verr)
 	}
-
-	// The message must name the field and say it is unimplemented rather
-	// than malformed. "invalid" would send the model hunting for a typo in
-	// a field it spelled correctly.
 	msg := verr.Error()
 	if !strings.Contains(msg, "row_template") {
 		t.Errorf("refusal does not name the offending field: %q", msg)
 	}
-	if !strings.Contains(msg, "not yet rendered") {
-		t.Errorf("refusal does not say the field is unimplemented, so a reader cannot\n"+
-			"tell a missing feature from a malformed document: %q", msg)
+	if !strings.Contains(msg, "§4.7") {
+		t.Errorf("refusal does not name the document that governs it, so a reader cannot\n"+
+			"tell a missing schema from a malformed document: %q", msg)
 	}
 }
 
-// The refusal must reach every arm the walk already covers. A guard that only
-// checked the root would let the same silent drop through one level down —
-// and nesting a list inside a box or an overlay is how real scenes are written
-// (it is exactly how the shipped SOBRIA menu is built).
-func TestRowTemplateIsRefusedWhereverItAppears(t *testing.T) {
+// The remaining refusal must reach every arm the walk covers. A guard that only
+// checked the root would let the same silent drop through one level down — and
+// nesting a list inside a box or an overlay is how real scenes are written (it
+// is exactly how the shipped SOBRIA menu is built).
+func TestRowTemplateOverAScalarIsRefusedWhereverItAppears(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		body string
@@ -89,16 +74,16 @@ func TestRowTemplateIsRefusedWhereverItAppears(t *testing.T) {
 			name: "nested in a box",
 			body: `{ "root": { "type": "stack", "children": [
 			  { "type": "box", "border": "single", "children": [
-			    { "type": "list", "bind": "agent.todos",
-			      "row_template": { "type": "text", "bind": "model.name" } } ] }
+			    { "type": "list", "bind": "model.name",
+			      "row_template": { "type": "text", "bind": "row.id" } } ] }
 			]}}`,
 		},
 		{
 			name: "inside an overlay",
 			body: `{ "root": { "type": "stack", "children": [
 			  { "type": "overlay", "anchor": "bottom", "children": [
-			    { "type": "list", "bind": "slash.matches",
-			      "row_template": { "type": "text", "bind": "model.name" } } ] }
+			    { "type": "list", "bind": "chat.history",
+			      "row_template": { "type": "text", "bind": "row.id" } } ] }
 			]}}`,
 		},
 	} {
@@ -108,9 +93,71 @@ func TestRowTemplateIsRefusedWhereverItAppears(t *testing.T) {
 				t.Fatalf("premise broken: %v", err)
 			}
 			if err := doc.Validate(); err == nil {
-				t.Errorf("row_template %s validated clean; the guard only covers the root", tc.name)
+				t.Errorf("row_template over a scalar %s validated clean; the guard only covers the root", tc.name)
 			}
 		})
+	}
+}
+
+// A row_template over a signed array bind (agent.todos), with correctly-spelled
+// relative and absolute binds inside it, validates clean — the positive half of
+// the graduation above. Without this the two refusal tests could both pass while
+// the engine refused every template, which is the failure D1 exists to end.
+func TestAWellFormedRowTemplateValidates(t *testing.T) {
+	body := `{ "root": { "type": "stack", "children": [
+	  { "id": "todos", "type": "list", "bind": "agent.todos",
+	    "row_template": { "type": "text", "bind": "row.task",
+	      "suffix": { "type": "text", "bind": "model.name" } } }
+	]}}`
+	doc, err := ParseDocument([]byte(body))
+	if err != nil {
+		t.Fatalf("premise broken: %v", err)
+	}
+	if err := doc.Validate(); err != nil {
+		t.Errorf("a well-formed row_template over agent.todos was refused: %v\n"+
+			"consequence: D1 signed row.* (BINDS.md §4.7) and the engine renders it, so a\n"+
+			"template with a correctly-spelled row field must load.\n"+
+			"remedy: validateBindsScoped must accept a row.<field> that is in the source schema.", err)
+	}
+}
+
+// A row.* field the source schema does not declare is a misspelling, and the
+// misspelling net absolute binds get must cover relative ones too: it is refused
+// with an address, not left to render as a per-row placeholder.
+func TestAnUnknownRowFieldIsRefused(t *testing.T) {
+	body := `{ "root": { "type": "stack", "children": [
+	  { "type": "list", "bind": "agent.todos",
+	    "row_template": { "type": "text", "bind": "row.state" } }
+	]}}`
+	doc, err := ParseDocument([]byte(body))
+	if err != nil {
+		t.Fatalf("premise broken: %v", err)
+	}
+	verr := doc.Validate()
+	if verr == nil {
+		t.Fatal("row.state over agent.todos validated clean; agent.todos rows have no state field")
+	}
+	if !strings.Contains(verr.Error(), "row.state") || !strings.Contains(verr.Error(), "§4.7") {
+		t.Errorf("the refusal must name the bad field and §4.7: %q", verr.Error())
+	}
+}
+
+// A row.* bind outside any template has no row to be relative to, and must be
+// refused there rather than silently resolving to a placeholder.
+func TestARelativeBindOutsideATemplateIsRefused(t *testing.T) {
+	body := `{ "root": { "type": "stack", "children": [
+	  { "type": "text", "bind": "row.id" }
+	]}}`
+	doc, err := ParseDocument([]byte(body))
+	if err != nil {
+		t.Fatalf("premise broken: %v", err)
+	}
+	verr := doc.Validate()
+	if verr == nil {
+		t.Fatal("a row.* bind outside a row_template validated clean")
+	}
+	if !strings.Contains(verr.Error(), "row_template") {
+		t.Errorf("the refusal must say relative binds are template-only: %q", verr.Error())
 	}
 }
 

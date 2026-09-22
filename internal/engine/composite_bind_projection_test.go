@@ -259,6 +259,43 @@ func renderBindToText(t *testing.T, bind, nodeType string, state fold.State) str
 	return b.String()
 }
 
+// templateProjectedBinds are collection binds whose projection is one
+// row_template instance per element (D1 / BINDS.md §4.7), not a scalar a bare
+// `bind: X` node can draw. The sweep over bare node types cannot witness them —
+// a `list` with no row_template shows the placeholder by design — so this guard
+// witnesses each through a template render instead, which is the path that
+// actually draws it. The witness is a `row.<field>` the perturbed fold fills,
+// so a template over it varies between the empty and witnessed states.
+var templateProjectedBinds = map[string]struct {
+	witness string
+	reason  string
+}{
+	"team.members": {
+		witness: "row.state",
+		reason:  "one row_template instance per member (Scene 9); a bare bind has no scalar projection",
+	},
+}
+
+// rowTemplateVaries reports whether a list whose row_template draws `witness`
+// (a `row.<field>`) over `bind` produces different frames for two fold states.
+// It is the template-aware counterpart to the bare-node sweep: the mechanism
+// that draws a collection is a template, so that is where its projection is
+// witnessed.
+func rowTemplateVaries(t *testing.T, bind, witness string, a, b fold.State) bool {
+	t.Helper()
+	r := &Renderer{Width: 120, Height: 24}
+	list := &scene.Node{Type: "list", Bind: bind, RowTemplate: &scene.Node{Type: "text", Bind: witness}}
+	render := func(st fold.State) string {
+		var sb strings.Builder
+		for _, l := range r.renderNode(list, st, 24).Live {
+			sb.WriteString(l.Text())
+			sb.WriteString("\n")
+		}
+		return sb.String()
+	}
+	return render(a) != render(b)
+}
+
 func TestEverySignedCompositeBindIsDrawnOrRecordedUnprojected(t *testing.T) {
 	stateType := reflect.TypeOf(fold.State{})
 
@@ -332,6 +369,7 @@ func TestEverySignedCompositeBindIsDrawnOrRecordedUnprojected(t *testing.T) {
 		resolveVaries := hasResolveCase && resolveBind(bind, fold.State{}) != resolveBind(bind, perturbed)
 
 		reason, recordedUnprojected := acceptedUnprojectedBinds[bind]
+		tp, templateProjected := templateProjectedBinds[bind]
 
 		switch {
 		case recordedUnprojected && len(variesIn) > 0:
@@ -339,6 +377,15 @@ func TestEverySignedCompositeBindIsDrawnOrRecordedUnprojected(t *testing.T) {
 
 		case recordedUnprojected:
 			// Correct today: the placeholder, with the blocker on record.
+
+		case templateProjected && rowTemplateVaries(t, bind, tp.witness, fold.State{}, perturbed):
+			// Projected through a row_template, not as a bare bind: a
+			// collection has no scalar value, so the sweep over bare node types
+			// above cannot witness it. It is witnessed here through the
+			// mechanism that actually draws it (BINDS.md §4.7), and it varies.
+
+		case templateProjected:
+			inert = append(inert, bind+" (template-projected but a row_template over it did not vary with its fold field — "+tp.reason+")")
 
 		case len(variesIn) == 0:
 			inert = append(inert, bind+" (no node type's frame changed when its fold field did)")

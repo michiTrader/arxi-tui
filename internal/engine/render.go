@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/x/ansi"
@@ -1048,6 +1049,16 @@ func (r *Renderer) wrapWithBorder(lines []ui.Line, n *scene.Node, contentWidth i
 func (r *Renderer) renderList(n *scene.Node, state fold.State, budget int) ui.Frame {
 	var lines []ui.Line
 
+	// A row_template turns the list into one instance of the template per
+	// element of the array its bind names (Scene 5/9, D1 / BINDS.md §4.7). Each
+	// element's fields answer the template's `row.*` binds; the rest of the
+	// render path is the ordinary one, so a template row is just a subtree drawn
+	// with a row in scope. This precedes the bind-specific rendering below: a
+	// list that carries a template asked for the template, whatever its bind.
+	if n.RowTemplate != nil {
+		return r.renderRowTemplate(n, state, budget)
+	}
+
 	// The token for an ordinary, unemphasized row. The list mints one per
 	// bind ("text" for a todo, "dim" for a non-selected command) and a token
 	// the scene declares replaces it: the rows are content this node draws
@@ -1170,6 +1181,83 @@ func (r *Renderer) renderList(n *scene.Node, state fold.State, budget int) ui.Fr
 	}
 
 	return ui.Frame{Live: lines, Width: r.Width, Height: len(lines)}
+}
+
+// renderRowTemplate instantiates a list's row_template once per element of the
+// array its bind names, resolving each `row.<field>` against that element
+// (BINDS.md §4.7). The row scope is set on the Renderer and restored after, so
+// a template nested in a template row still resolves its own element and the
+// caller's row is not clobbered. An empty array draws nothing, which is the
+// signed empty state for the list binds this serves (team.members, agent.todos,
+// slash.matches all render zero rows when empty).
+func (r *Renderer) renderRowTemplate(n *scene.Node, state fold.State, budget int) ui.Frame {
+	saved := r.curRow
+	defer func() { r.curRow = saved }()
+
+	var lines []ui.Line
+	for _, row := range rowScopesFor(n.Bind, state) {
+		r.curRow = row
+		frame := r.renderNode(n.RowTemplate, state, budget)
+		lines = append(lines, frame.Live...)
+	}
+	return ui.Frame{Live: lines, Width: r.Width, Height: len(lines)}
+}
+
+// rowScopesFor returns one row scope per element of a known array bind, each a
+// map from the full `row.<field>` bind string to that element's value. The
+// field names are the schemas scene.RowSchemas signs (BINDS.md §4.7); the
+// validator refuses a row_template over any other bind at load time, so the
+// default here draws nothing rather than guessing a projection.
+//
+// The keys are the full "row.<field>" strings, not bare fields, so the lookup
+// in resolveBindRow is a direct map read on the bind it already holds.
+func rowScopesFor(bind string, state fold.State) []map[string]string {
+	switch bind {
+	case "team.members":
+		rows := make([]map[string]string, 0, len(state.TeamMembers))
+		for _, m := range state.TeamMembers {
+			rows = append(rows, map[string]string{
+				"row.id":        m.ID,
+				"row.state":     m.State,
+				"row.role":      m.Role,
+				"row.busy":      boolField(m.Busy),
+				"row.turns":     strconv.FormatUint(uint64(m.Turns), 10),
+				"row.spent_usd": strconv.FormatFloat(m.SpentUSD, 'f', -1, 64),
+			})
+		}
+		return rows
+	case "agent.todos":
+		rows := make([]map[string]string, 0, len(state.Todos))
+		for _, t := range state.Todos {
+			rows = append(rows, map[string]string{
+				"row.task":       t.Task,
+				"row.blocked_on": t.BlockedOn,
+				"row.actor":      t.Actor,
+			})
+		}
+		return rows
+	case "slash.matches":
+		rows := make([]map[string]string, 0, len(state.SlashMatches))
+		for _, m := range state.SlashMatches {
+			rows = append(rows, map[string]string{
+				"row.name":        m.Name,
+				"row.category":    m.Category,
+				"row.description": m.Description,
+			})
+		}
+		return rows
+	default:
+		return nil
+	}
+}
+
+// boolField renders a bool row field as the truthy/falsy string evalWhenRow
+// reads, so `when: "row.busy"` gates a per-row node (Scene 9's spinner).
+func boolField(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
 }
 
 // slashRow builds one menu row: name, two spaces, description, and the

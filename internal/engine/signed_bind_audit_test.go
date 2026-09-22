@@ -90,14 +90,19 @@ func TestEverySignedBindIsHandledOrJustified(t *testing.T) {
 // design it. That was the argument for refusing row_template rather than
 // drawing it, and it applies unchanged here.
 var acceptedUnprojectedBinds = map[string]string{
-	// A collection, not a scalar: SCENES.md Scene 9 renders it as a list with
-	// a per-row spinner-or-glyph driven by each member's state, and Q20 has
-	// action arguments interpolating relative binds — the same `row.*`
-	// machinery as Q10 that row_template is refused for. resolveBind returns
-	// a string and cannot express it; renderList is where it belongs, and the
-	// row vocabulary it needs is unsigned. The fold does maintain
-	// State.TeamMembers, so this is a rendering gap, not a data one.
-	"team.members": "Scene 9 needs per-row templates, and the relative-bind namespace they use is unsigned (same blocker as row_template)",
+	// team.members WAS here — a collection blocked on the unsigned `row.*`
+	// namespace. D1 signed that namespace (BINDS.md §4.7) and renderList now
+	// instantiates a row_template over it (rowScopesFor's "team.members" case),
+	// so it is handled and this entry was removed: keeping it would be the false
+	// comment this audit's own remedy warns about.
+
+	// A set of node ids consumed by the engine walk as a visibility filter, not
+	// a scalar resolveBind can return and not a value to print. D3 signed the
+	// name and its set semantics (BINDS.md §4.3), but the walk filter that
+	// consumes it is Block F (`/ui hide`/`show`), not yet implemented — so it is
+	// signed-not-projected exactly as §4.6 describes, and drawn nowhere until
+	// that block lands.
+	"ui.hidden": "a set of node ids consumed by the engine walk (D3); the walk filter is Block F, not yet built — signed to reserve the name and its collection semantics",
 
 	// An object, not text. BINDS.md is explicit that the remedy is not a
 	// separate bind: the engine is meant to read blocked_on together with
