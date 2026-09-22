@@ -451,7 +451,7 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 	for i, child := range children {
 		// Render with full budget to get natural height; use a large width
 		// to avoid truncation during measurement.
-		mr := Renderer{Width: totalWidth, Height: r.Height}
+		mr := Renderer{Width: totalWidth, Height: r.Height, curRow: r.curRow}
 		f := mr.renderNode(child, state, budget)
 		frames[i] = f
 		w := 0
@@ -508,7 +508,7 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 	for i, child := range children {
 		if weighted && child.Weight != nil {
 			if colWidths[i] != totalWidth {
-				subR := Renderer{Width: colWidths[i], Height: r.Height}
+				subR := Renderer{Width: colWidths[i], Height: r.Height, curRow: r.curRow}
 				frames[i] = subR.renderNode(child, state, budget)
 			}
 		}
@@ -768,7 +768,7 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 	// content block renders top border + content + bottom border, and the
 	// surrounding stack provides any vertical spacing (Q6: fixed children
 	// take only what they need).
-	innerRenderer := Renderer{Width: innerWidth, Height: innerHeight}
+	innerRenderer := Renderer{Width: innerWidth, Height: innerHeight, curRow: r.curRow}
 	var content ui.Frame
 	if len(n.Children) > 0 {
 		content = innerRenderer.renderStack(&scene.Node{
@@ -959,7 +959,7 @@ func (r *Renderer) renderOverlay(n *scene.Node, state fold.State) ui.Frame {
 	}
 
 	// Layout the overlay's children as a vertical column within the content width.
-	innerRenderer := Renderer{Width: contentWidth, Height: r.Height}
+	innerRenderer := Renderer{Width: contentWidth, Height: r.Height, curRow: r.curRow}
 	var lines []ui.Line
 	for _, child := range n.Children {
 		f := innerRenderer.renderNode(child, state, r.Height)
