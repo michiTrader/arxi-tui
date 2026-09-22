@@ -45,14 +45,16 @@ is cheap and belongs at the front of the relevant block; each is a task below.
    `stage.*` (`docs/BINDS.md:104,110`), and `stage.*` is now folded, so the
    dependency is already satisfied.
 
-3. **OSC 11 background detection does not exist.** `internal/theme/theme.go:148`
-   explicitly disclaims it ("adapts ... without OSC 11 queries");
-   `internal/term/decode.go:127` only generically skips OSC replies. Yet
-   `README.md:44`, `internal/theme/factory.go:10` and `cmd/arxi-tui/main.go:135`
-   claim OSC 11 detection is implemented. This is a claim/code contradiction:
-   either the claim is corrected to describe the relative dim/bright SGR
-   mechanism that actually ships, or OSC 11 is implemented. Decision required
-   (task L4 / N-series below).
+3. **OSC 11 background detection does not exist — RESOLVED by correcting the
+   claim (L4 done).** `internal/theme/theme.go:148` explicitly disclaims it
+   ("adapts ... without OSC 11 queries"); `internal/term/decode.go:127` only
+   generically skips OSC replies; `factory.go` already described the shipped
+   mechanism (fixed with B4). The remaining stale claims —
+   `README.md:44`, `cmd/arxi-tui/main.go:135`, `docs/TOKENS.md`, `docs/SCENES.md`
+   and `docs/PLAN.md` — were corrected to describe the relative dim/bright SGR
+   mechanism that actually ships (the terminal resolves the attributes; there is
+   no query). Implementing an explicit OSC 11 query remains an *optional* future
+   enhancement, not foreclosed, and is noted at each site.
 
 4. **No CI exists.** There is no `.github/` directory. The double-Ctrl-C
    escape-hatch tests exist and are platform-agnostic
@@ -318,9 +320,12 @@ per-platform build tooling). All aspirational in `docs/PLAN.md:107`.
 - **L2** Per-platform static builds (`CGO_ENABLED=0`): linux, macos, windows,
   android-arm64 (Termux).
 - **L3** [L2] GitHub Releases publication + artifact wiring.
-- **L4** Resolve the OSC 11 claim (correction 3): either implement OSC 11
-  light/dark detection or correct `README.md:44`, `theme/factory.go:10`,
-  `main.go:135` to describe the relative dim/bright SGR mechanism that ships.
+- **L4 — DONE (correct-the-claim).** The OSC 11 claim (correction 3) is
+  resolved by correcting the docs/comments to the relative dim/bright SGR
+  mechanism that ships: `README.md`, `cmd/arxi-tui/main.go`, `docs/TOKENS.md`,
+  `docs/SCENES.md`, `docs/PLAN.md`. `factory.go`/`theme.go` were already correct.
+  Implementing an explicit OSC 11 query is left as an optional future
+  enhancement (noted at each site), not a blocker.
 - **L5** Stand up CI (`.github/workflows`) that runs `go test ./...` including
   the double-Ctrl-C escape-hatch tests on Windows (correction 4).
 
