@@ -134,11 +134,40 @@ with `x_genspark.code=free_plan_block` (`internal/eval/openai.go:174`,
 core reports as not in `implemented` (`testdata/serve/session.ndjson:1`);
 `run.start` is implemented by the core but never sent by the client.
 
-- **M1** Migrate `SubmitPrompt` from `run.prompt` to `run.start`
-  (`internal/driver/ndjson.go:307-315`), or coordinate `run.prompt` in the
-  arxi repo. Prefer `run.start` — it already exists in the hello.
-- **M2** [M1] Verify a real round-trip prompt→response against a live
-  `arxi serve`.
+**Correction (2026-09-22): M1 is a design change, not a rename.** Investigating
+before implementing showed `run.prompt` and `run.start` are semantically
+different verbs, so the client cannot simply swap the type string:
+
+- `run.prompt` sends text to an **already-running** run. Its params are
+  `if_seq, on_busy, run, text, to` (named verbatim by the core's `bad_params`
+  refusal at `testdata/serve/session.ndjson:3`). The current client models
+  exactly this: `serveDriver.runID()` derives the run id from the log
+  directory (`cmd/arxi-tui/main.go:356`) and `SubmitPrompt` posts
+  `{run, text}` to it (`ndjson.go:307`). The run is started **outside** the
+  TUI (e.g. `arxi run start …`), and the TUI attaches to its log.
+- `run.start` **creates** a run. Its CLI form is
+  `arxi run start "<prompt>" --actor <blueprint> --budget <n> --sim`
+  (`real_run_log_folds_test.go:20`), so it needs an actor blueprint and a
+  budget, not just text — and its JSON param names appear in **no fixture** in
+  this repo.
+
+Consequences for the plan:
+
+- **M1a** Obtain the `run.start` request/response schema — either from a live
+  `arxi serve` via the implemented `schema` verb, or from the arxi repo.
+  Guessing the param names is a `bad_params` refusal waiting to happen and is
+  exactly the "verify, do not assume" rule; do not implement blind.
+- **M1b** [M1a] Decide the interaction model the swap forces: if the TUI starts
+  runs itself via `run.start`, the **first** user turn creates the run, but
+  **subsequent** turns still need a send-to-existing-run verb — and the only
+  such verb this build implements is `run.steer` (in the hello), because
+  `run.prompt` is `not_implemented`. So the real migration is likely
+  `run.start` for turn one + `run.steer` for the rest, not `run.start` alone.
+  This needs the user's product call on how a TUI session maps to runs.
+- **M1c** [M1a,M1b] Implement the chosen verbs in `internal/driver/ndjson.go`
+  and the `serveDriver` (`cmd/arxi-tui/main.go:364`), keeping the
+  `not_implemented`/refusal handling that already exists.
+- **M2** [M1c] Verify a real round-trip against a live `arxi serve`.
 - **M3** [M2] Evaluate adopting the `run.attach`/`event.subscribe` path (a
   positive end-of-run marker) — deferred per ADR-0002
   (`docs/PLAN.md:230-280`); the trigger is needing that positive signal.
