@@ -120,11 +120,16 @@ case-runs converged**.
   `ok`), not a plan block.
 - **A3 — DONE.** `arxi-eval -model deepseek-v4.1-flash -v` run three times;
   outcomes and turns captured (see `docs/EVAL.md` "First live run").
-- **A4 — OPEN.** Widen the corpus with new cases over the three frozen scenes
-  (RAW/SOBRIA/MAXIMUM), one atomic case at a time: one `order` + `attempts`
-  (with a reproducible `expect_refused` against the validator) + `convergence`
-  + `rationale`. This is what moves the claim from "reliable for this model" to
-  "reliable". (More scenes need their goldens frozen first — later phases.)
+- **A4 — IN PROGRESS.** Corpus widened from 4 to 5 cases:
+  `raw-model-name-while-working` covers the when-condition arm of the bind
+  validator (`validate.go` "unsigned bind … in when condition"), which no other
+  case pinned. All four corpus invariants hold and it was verified live. Note:
+  it converges in one turn against this model (validator coverage, not a
+  repair-loop case, and its rationale says so). Further cases that reliably
+  exercise the *repair* loop against a given model remain valuable but require
+  per-model engineering; widening across more scenes needs those goldens frozen
+  first (later phases). This is the work that moves the claim from "reliable for
+  this model" to "reliable".
 - **A5 — DONE.** Finding written into `docs/EVAL.md` (First live run) and
   `docs/PLAN.md` (Phase 2 measured result). The gating question is answered:
   the repair loop works against a real model.
