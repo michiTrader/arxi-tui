@@ -4,4 +4,8 @@
 # noise that hides the change the commit is actually about.
 /arxi-tui
 /arxi-tui.exe
+/bin/arxi-tui
+/bin/arxi-tui.exe
+/bin/arxi-eval
+/bin/arxi-eval.exe
 /bin/__pycache__/

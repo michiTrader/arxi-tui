@@ -1,0 +1,287 @@
+# NEXT — verified state and the atomic plan
+
+This document is the ordered, dependency-aware task plan for the phases still
+open. It was written after a green baseline and a three-track code audit, not
+from the prose in the other docs — several claims in `README.md`,
+`docs/PLAN.md` and `internal/fold/fold.go` were found **stale**, and the
+corrections are recorded below so the plan targets the real tree, not the
+remembered one.
+
+Every claim here cites `file:line`. Where a number differs from what an older
+doc asserts, the measured number wins and the stale source is named so it can
+be fixed.
+
+## Baseline (measured 2026-09-22)
+
+- `go build ./cmd/...` — exit 0.
+- `go vet ./...` — exit 0.
+- `gofmt -l .` — no files listed.
+- `go test -count=1 ./...` — all packages `ok` (engine 19s, scene 36s, the
+  rest under 6s).
+- `git status` clean apart from untracked `bin/`; `git log origin/master..HEAD`
+  empty; `git log HEAD..origin/master` empty after `git fetch`.
+
+The shell and workspace path are fixed: the earlier `spawn bash.exe ENOENT`
+was the `arxi_tui` (underscore) vs `arxi-tui` (hyphen) directory mismatch, now
+resolved. The whole "lost code" scare was that path confusion; nothing was
+lost.
+
+## Corrections to prior claims (found by the audit)
+
+These are the doc-vs-code contradictions the audit surfaced. Fixing the docs
+is cheap and belongs at the front of the relevant block; each is a task below.
+
+1. **Fold coverage is 120/122, not 113/122.** The pinning test
+   `TestTheRealLogCoverageIsMeasuredNotAssumed`
+   (`internal/driver/real_run_log_folds_test.go:232`, asserting `known == 120`)
+   already counts `stage.*` as handled (`internal/fold/fold.go:499-502`, switch
+   cases at `fold.go:928,949,990,1012`). Only `timer.scheduled` and
+   `timer.cancelled` remain unhandled (`real_run_log_folds_test.go:295-296`).
+   The comment block at `internal/fold/fold.go:439-451` still says
+   "113/122 (92.6%)" and lists `stage.*` as invisible — **that comment is
+   stale** and must be corrected. This collapses old Block C almost entirely.
+
+2. **`agent.mode` and `session.new_milestone` are NOT blocked.** They depend on
+   `stage.*` (`docs/BINDS.md:104,110`), and `stage.*` is now folded, so the
+   dependency is already satisfied.
+
+3. **OSC 11 background detection does not exist.** `internal/theme/theme.go:148`
+   explicitly disclaims it ("adapts ... without OSC 11 queries");
+   `internal/term/decode.go:127` only generically skips OSC replies. Yet
+   `README.md:44`, `internal/theme/factory.go:10` and `cmd/arxi-tui/main.go:135`
+   claim OSC 11 detection is implemented. This is a claim/code contradiction:
+   either the claim is corrected to describe the relative dim/bright SGR
+   mechanism that actually ships, or OSC 11 is implemented. Decision required
+   (task L4 / N-series below).
+
+4. **No CI exists.** There is no `.github/` directory. The double-Ctrl-C
+   escape-hatch tests exist and are platform-agnostic
+   (`cmd/arxi-tui/loop_test.go`: `TestLoopExitsOnCtrlCImmediate:110`,
+   `TestLoopFirstCtrlCClearsInput:135`), so they *run* on Windows when invoked,
+   but AGENTS.md's "runs on Windows CI from Phase 0" is not backed by a
+   pipeline. Standing up CI is a real, currently-missing task.
+
+5. **`row_template` is refused in `internal/scene`, not `internal/engine`.**
+   The refusal lives at `internal/scene/validate.go:241` (message names
+   SCENES.md Q10 / Scene 5 and the unsigned `row.*` namespace). The field
+   exists only to be refused (`internal/scene/node.go:36,49`).
+
+6. **`scroll` is a declared-but-refused field** (`internal/scene/node.go:69`,
+   refusal `validate.go:245`); `transition`, `reveal`, `enter`, `stagger` are
+   **not even struct fields** (`node.go:82-86`) — they need the `[anim]` timing
+   token that `docs/TOKENS.md` does not define.
+
+7. **`bin/arxi-tui` is an untracked 4.8 MB compiled binary.** `.gitignore`
+   covers `/arxi-tui` and `/arxi-tui.exe` but not `bin/arxi-tui`. It should be
+   ignored, never committed.
+
+## The plan — atomic tasks, ordered by dependency
+
+Each task is an independently executable unit. A hard dependency is noted in
+`[]`. "Sign" means the SCENES/BINDS/TOKENS method: design on paper, add the
+signed row/token to the relevant doc, before any code depends on it.
+
+### Block 0 — Housekeeping (done except one)
+
+- **0.1 — DONE.** Workspace path fixed (`arxi-tui`, hyphen); shell works.
+- **0.2 — DONE.** Green baseline captured (see above).
+- **0.3** Add `bin/` (or `/bin/arxi-tui`) to `.gitignore` so the compiled
+  binary is never accidentally committed (correction 7).
+
+### Block C — Finish fold coverage (nearly closed)
+
+Old Block C assumed 9 missing events; the audit shows 7 already handled.
+
+- **C1 — DONE.** `stage.*` (7 events) is folded
+  (`internal/fold/fold.go:499-502,928,949,990,1012`).
+- **C2** Implement fold handlers for `timer.scheduled` and `timer.cancelled`
+  (the only 2 unhandled events, `real_run_log_folds_test.go:295-296`).
+- **C3** [C2] Re-measure and flip the pin in
+  `TestTheRealLogCoverageIsMeasuredNotAssumed` from 120 to 122
+  (`real_run_log_folds_test.go:251`).
+- **C4** Correct the stale coverage comment at
+  `internal/fold/fold.go:439-451` (says 113/122; reality is 122/122 after C3).
+- **C5** Update the coverage line in `README.md` to match.
+
+### Block A — Close Phase 2: run the repair loop against a real model
+
+The corpus has never run against a live model; the gateway returns HTTP 200
+with `x_genspark.code=free_plan_block` (`internal/eval/openai.go:174`,
+`README.md:224`). This is the question that gates Phase 2.
+
+- **A1** Obtain an OpenAI-compatible endpoint + key that does not hit
+  `free_plan_block`.
+- **A2** [A1] Probe the endpoint directly; confirm a real completion (not the
+  plan block); document it.
+- **A3** [A2] Run `arxi-eval -model <name> -v` over the 4 corpus cases
+  (`testdata/eval/*.json`); capture outcome + turns per case.
+- **A4** Extend the corpus with new cases over the three frozen scenes
+  (RAW/SOBRIA/MAXIMUM), one atomic case at a time: one `order` + `attempts`
+  (with a reproducible `expect_refused` against the validator) + `convergence`
+  + `rationale`. (More scenes need their goldens frozen first — later phases.)
+- **A5** [A3,A4] Interpret results; write the finding into
+  `docs/EVAL.md` / `docs/PLAN.md` (answer the Phase 2 gating question).
+- **A6** [A5] Record the ship/no-ship decision for agent-command-driven `/ui`
+  self-extension in `docs/PLAN.md`.
+
+### Block M — arxi core integration (cross-repo, high value)
+
+`SubmitPrompt` sends `run.prompt` (`internal/driver/ndjson.go:307`), which the
+core reports as not in `implemented` (`testdata/serve/session.ndjson:1`);
+`run.start` is implemented by the core but never sent by the client.
+
+- **M1** Migrate `SubmitPrompt` from `run.prompt` to `run.start`
+  (`internal/driver/ndjson.go:307-315`), or coordinate `run.prompt` in the
+  arxi repo. Prefer `run.start` — it already exists in the hello.
+- **M2** [M1] Verify a real round-trip prompt→response against a live
+  `arxi serve`.
+- **M3** [M2] Evaluate adopting the `run.attach`/`event.subscribe` path (a
+  positive end-of-run marker) — deferred per ADR-0002
+  (`docs/PLAN.md:230-280`); the trigger is needing that positive signal.
+
+### Block B — Agent patches + side-by-side diff (gated by A6)
+
+Today only the summary line exists (`cmd/arxi-tui/main.go:631`); no `Diff`
+function in `internal/patch`.
+
+- **B1** Define the diff model (old→new bytes; hunks addressed by node id;
+  reuse the `ParseNamed` round-trip that `internal/patch` already does).
+- **B2** [B1] Compute the diff over `internal/patch`'s source-to-source form
+  (`patch.go:293` `mutate`).
+- **B3** [B1] ADR: is the diff view a scene (dogfooding) or a new engine
+  capability?
+- **B4** [B2,B3] Render the change side by side.
+- **B5** [B4] Wire propose→apply: agent proposes a patch → host shows the diff
+  → applied on approval.
+- **B6** [B5] Consent gate per Q23 (show diff + log attribution; no blocking
+  per-step menu).
+- **B7** [B5] Log attribution: every agent patch is an attributed event in the
+  arxi log.
+- **B8** [B4] Diff-view goldens + tests whose failure messages name consequence
+  and remedy.
+- **B9** [B5] Update the verbs advertised in the slash menu
+  (`internal/fold/fold.go:1204`, held by
+  `internal/patch/menu_agrees_with_the_surface_test.go:40`) and the README
+  Status section.
+
+### Block D — Phase 3 design gate (paper; unblocks E/F/G)
+
+Each is an independent design+sign (SCENES/BINDS/TOKENS method).
+
+- **D1** Design and sign the relative `row.*` bind namespace in `docs/BINDS.md`
+  (Scene 5 / Q10) — unblocks the `internal/scene/validate.go:241` refusal.
+- **D2** Design and sign the addressing vocabulary for `add`/`move` (the
+  "where": `below_input`, `above <id>`, etc.).
+- **D3** Design and sign the per-node view-state bind for `hide`/`show` with
+  collection semantics (not the rejected scalar `ui.hidden`,
+  `internal/patch/patch_test.go:165`).
+- **D4** Sign the `[anim]` timing token in `docs/TOKENS.md` (Q8) — unblocks the
+  four animation props.
+
+### Block E — Phase 3: row_template + relative binds [D1]
+
+- **E1** Implement `row_template` render in `internal/engine` (today refused).
+- **E2** Implement relative-bind resolution (`row.field` inside templates).
+- **E3** [E1,E2] Implement the `team.members` projection.
+- **E4** [E3] Freeze the Scene 9 golden (subagents).
+- **E5** [E1,E2] Freeze the Scene 5 golden (CONFIG — the `/config` dogfood).
+- **E6** [E1-E3] Remove obsolete "not yet" refusals
+  (`internal/scene/validate.go:241`) and `acceptedUnprojectedBinds` entries;
+  update the audits.
+
+### Block F — Phase 3: /ui add and move verbs [D2]
+
+- **F1** Implement `/ui add node <where> <fragment>`.
+- **F2** Implement `/ui move <id> <where>`.
+- **F3** [D3] Implement `/ui hide` / `show`.
+- **F4** [F1-F3] Update advertised verbs in the slash menu; goldens; tests.
+
+### Block G — Phase 3: animation props [D4]
+
+- **G1** Implement `transition`. **G2** `scroll {speed, pause_when}` (field
+  exists refused at `node.go:69`). **G3** `reveal`. **G4** `enter {row,
+  stagger}`. (Each atomic.)
+- **G5** [G1-G4] Freeze the Scene 4 golden and update its status paragraph.
+
+### Block H — Phase 3: declarative plugin mounting (heart of the phase)
+
+- **H1** Design and sign the plugin manifest schema (executable, capabilities,
+  consent_required, mounts, tokens, streamed binds) — Scene 6.
+- **H2** [H1] Load a declarative plugin (scene fragment + tokens, zero code).
+- **H3** [H2] Mount fragments by id into the scene tree.
+- **H4** [H2] Merge plugin tokens with precedence (user > plugin > factory).
+- **H5** [H2] Validate the `<plugin-id>.*` namespace (declared vs used, with
+  `file:line`).
+- **H6** [H3,H5] Implement `/ui plugin add <url>` (fetch, validate, mount) for
+  the declarative path.
+- **H7** [H6] Freeze the Scene 6 golden (community ticker).
+- **H8** Implement `on_press` action routing (`cmd:/slash`, `focus:<node>`,
+  `answer:<kind>`) — needed for interactive fragments (Scene 8 buttons).
+
+### Block I — Phase 3: behavioral plugins (NDJSON subprocess) [H]
+
+- **I1** Design the subprocess plugin protocol (NDJSON frames → bind
+  namespace).
+- **I2** [I1] Implement the subprocess lifecycle (spawn/supervise/kill),
+  porting arxi-sim's procgroup supervisor.
+- **I3** [I2] Stream NDJSON frames into `<plugin-id>.*` binds.
+- **I4** [H8,I3] Route input via `on_press` to plugin actions.
+- **I5** [I2] Consent gate by identity (name/version/executable/args/capability
+  set/digest) with "remember" — Q15.
+- **I6** [I5] Gate B (tools): a plugin-by-link teaches the agent a tool, running
+  as its own process, under the consent contract.
+
+### Block J — Phase 3: the community installer as a scene (Scene 7) [H]
+
+- **J1** Preview mode: render unsatisfied binds as placeholders from
+  `community.*` manifest mocks (engine contract, Q16).
+- **J2** Registry as a JSON index in a repo (no servers) — Q17.
+- **J3** [J1,J2] Installer scene: entry list + markdown preview panel + search
+  input + `i` to install.
+- **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent
+  screen).
+- **J5** [J3] Freeze the Scene 7 golden.
+
+### Block K — Phase 4: behavior + wasm [I]
+
+- **K1** Gate C (behavior hooks): gate tool calls, prompt tweaks, custom
+  compaction, with identity-ordered stacking.
+- **K2** Gate D (providers): wire provider plugins (nearly free; exists in the
+  core).
+- **K3** [K1,K2] Self-extension over the gates the user opened, only on user
+  order (diff + attribution).
+- **K4** Costed ADR on embedded wasm (wazero) for renders that are none of our
+  nodes (Scene 14 / Q14).
+
+### Block L — Distribution and install
+
+Nothing here exists yet (audit correction: no `install.sh`, no CI, no
+per-platform build tooling). All aspirational in `docs/PLAN.md:107`.
+
+- **L1** `install.sh` in the repo, served from the release host.
+- **L2** Per-platform static builds (`CGO_ENABLED=0`): linux, macos, windows,
+  android-arm64 (Termux).
+- **L3** [L2] GitHub Releases publication + artifact wiring.
+- **L4** Resolve the OSC 11 claim (correction 3): either implement OSC 11
+  light/dark detection or correct `README.md:44`, `theme/factory.go:10`,
+  `main.go:135` to describe the relative dim/bright SGR mechanism that ships.
+- **L5** Stand up CI (`.github/workflows`) that runs `go test ./...` including
+  the double-Ctrl-C escape-hatch tests on Windows (correction 4).
+
+## Recommended critical path
+
+1. **Block 0.3** (gitignore the binary) — trivial, do first.
+2. In parallel: **C2-C5** (2 events + doc fixes; nearly free), **A**
+   (run the eval — gates Phase 2), **M** (core integration — so the TUI drives
+   a real agent), and **D** (paper design — touches no code).
+3. **B** once A6 gives the ship verdict.
+4. With D signed: **E → F → G** (the Phase 3 work that was blocked on paper).
+5. **H → I → J** (declarative plugins, then behavioral, then the installer).
+6. **K** (Phase 4) and **L** (distribution) last, though L can start as soon as
+   there is something shippable.
+
+Architect's note: **A and M unblock the product** — without A the self-extend
+ship decision cannot be made, and without M the TUI never draws a real agent;
+put them first after Block 0. **D is the bottleneck for all of Phase 3**: four
+paper decisions (`row.*`, add/move addressing, per-node view-state, `[anim]`)
+unblock six implementation blocks.
