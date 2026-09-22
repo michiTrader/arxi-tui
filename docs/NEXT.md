@@ -247,14 +247,29 @@ counterfactual test).
 
 ### Block E — Phase 3: row_template + relative binds [D1]
 
-- **E1** Implement `row_template` render in `internal/engine` (today refused).
-- **E2** Implement relative-bind resolution (`row.field` inside templates).
-- **E3** [E1,E2] Implement the `team.members` projection.
-- **E4** [E3] Freeze the Scene 9 golden (subagents).
-- **E5** [E1,E2] Freeze the Scene 5 golden (CONFIG — the `/config` dogfood).
-- **E6** [E1-E3] Remove obsolete "not yet" refusals
-  (`internal/scene/validate.go:241`) and `acceptedUnprojectedBinds` entries;
-  update the audits.
+- **E1 — DONE.** `renderRowTemplate` in `internal/engine` instantiates a list's
+  `row_template` once per element of the array its bind names. The row scope
+  lives on the Renderer and is propagated into every sub-renderer (row/stack/
+  box/overlay build fresh ones), so a `row.*` bind under a container inside a
+  template resolves — the gap the per-row `when` counterfactual caught.
+- **E2 — DONE.** `resolveBindRow`/`evalWhenRow`/`hiddenByWhenRow` resolve a
+  `row.<field>` against the current element; a relative bind with no row in
+  scope is the falsy placeholder. `validateBindsScoped` accepts `row.<field>`
+  against the source list's schema (`scene.RowSchema`), refuses it elsewhere,
+  refuses an unknown field, and refuses a `row_template` over a schema-less
+  bind — all with `file:line`.
+- **E3 — DONE (rendering).** `team.members` renders through a `row_template`
+  (`rowScopesFor`); the fold already projected `State.TeamMembers`. Removed from
+  `acceptedUnprojectedBinds`; the composite audit now witnesses it through a
+  template (`templateProjectedBinds`).
+- **E4 — TODO.** Freeze the Scene 9 golden (subagents). Rendering is covered by
+  `row_template_test.go`; the golden is the remaining durable pin.
+- **E5 — TODO.** Freeze the Scene 5 golden (CONFIG). Blocked on `switch`/`input`
+  rendering inside a template — `switch` is not yet in `renderNode`'s dispatch,
+  so the `/config` dogfood needs those primitives first.
+- **E6 — DONE.** The `row_template` refusal left `unrenderedFields`; the
+  `team.members` entry left `acceptedUnprojectedBinds`; the nested-branch,
+  nested-owner, zero-value-key and composite-projection audits were reconciled.
 
 ### Block F — Phase 3: /ui add and move verbs [D2]
 
