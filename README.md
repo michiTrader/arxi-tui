@@ -41,7 +41,8 @@ published, by handing arxi a link.
 
 - ✅ Token format and JSON schema (`internal/theme/theme.go`)
 - ✅ Token resolver with open definition (no enum)
-- ✅ Factory SOBRIA theme with OSC 11 background detection
+- ✅ Factory SOBRIA theme: light/dark adaptation via relative dim/bright
+  attributes the terminal resolves (no OSC 11 query; see `theme.SOBRIA`)
 - ✅ Token wire-up in render pipeline (`engine.Cell.Style`)
 - ✅ Styled golden fixtures: `RAW.styled`, `SOBRIA.styled`, `MAXIMUM.styled`
 - ✅ Theme validation (scenes reference existing tokens) — repaired during

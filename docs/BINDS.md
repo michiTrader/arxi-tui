@@ -10,7 +10,7 @@ unsigned bind may appear in a golden scene.
 ## 1. What a bind is
 
 A bind is a read-only address into host state that a node's `bind`/`when`
-field names. Three namespaces, three authorities:
+field names. Four namespaces, four authorities:
 
 - **`chat.*`, `agent.*`, `run.*`, `usage.*`, `session.*`, `team.*`, `model.*`
   — run state.** Its truth is the arxi core's event log (`spec/events.md`,
@@ -25,6 +25,13 @@ field names. Three namespaces, three authorities:
 - **`<plugin-id>.*` — open namespace.** Anything a gated plugin streams via
   NDJSON lands here. Not inventoried, by construction: the gate is the
   boundary, not the name list.
+- **`row.*` — relative, template-scoped.** Legal only inside a `row_template`
+  subtree and the `on_press` args of nodes in it. `row.<field>` resolves to
+  `<field>` of the current element of the array the enclosing `list` binds to;
+  the legal field names are that array's element schema (§4.7). Validated at
+  load time against the source schema; `{row.<field>}` interpolates the same
+  value into an action argument (Q20). This is the one namespace not resolved
+  against host state — its authority is the row the template is rendering.
 
 Rules that apply to every bind, frozen by the scenes exercise:
 
@@ -150,6 +157,31 @@ written only through registered commands (`cmd:/slash`, `cmd:/max`,
 | `ui.focus` | text \| null | the `id` of the currently focused node; set by `cmd:/focus <node>` or Tab navigation | on `focus:<node>` action, on Tab/Shift-Tab | null — focus defaults to the input node at boot |
 | `ui.max` | text \| null | the `id` of the maximized pane; set by `cmd:/max <pane>` (Scene 10) | on `cmd:/max` action | null — no pane is maximized |
 | `ui.surface` | text | the active surface/page identifier (e.g. `"chat"`, `"config"`, `"plugins"`) | on `cmd:/surface <name>` | `"chat"` — the default surface |
+| `ui.hidden` | set of node ids | the ids the user has hidden via `cmd:/ui hide <id>`; `cmd:/ui show <id>` removes one, `cmd:/ui show *` clears the set | on `cmd:/ui hide`/`show` | empty set — every node's visibility is decided by its `when` alone |
+
+**Consumption of `ui.hidden` (signed 2026-09-22, D3).** Unlike every other row
+in this table, `ui.hidden` is consumed by the **engine walk**, not by a scene
+`when`: the walk drops any node whose id is in the set, together with its
+subtree. A node renders iff its `when` is truthy **and** its id is not in
+`ui.hidden`. The two compose by conjunction and order does not matter — either
+one removes the node.
+
+It is a *set of ids*, not a scalar bool, and not consumed through `when`, for
+reasons that were paid for and must not be re-litigated (`docs/DESIGN-BLOCK-D.md`
+D3, and `TestHideAndShowAreRefusedRatherThanInventingABind`):
+
+- A **scalar** `ui.hidden` would make `/ui hide a` unhide `b`, because every
+  other `ui.*` row is a single id.
+- A `when`-based hide cannot be written: `when` shows a node when its bind is
+  *truthy* and this engine has **no negation** (`evalWhen` resolves the whole
+  string through `resolveBind`), so "show when not hidden" is unspellable.
+- The inverse "visible-set" (default-visible) would invert §4.6's signed rule
+  that an unresolved bind is *falsy* — a fresh document would render with
+  everything hidden.
+
+The empty set is the default and a no-op, so signing this row moves no existing
+golden. `ui.hidden.<id>` MAY later be exposed as a derived truthy membership
+bind (for a "N hidden" badge); that is secondary and not signed here.
 
 ### 4.4 Plugin namespace contract
 
@@ -211,3 +243,43 @@ as an ordinary non-empty string, so every unresolved gate rendered its node
 **on** — inverting `ui.max`'s signed empty-state exactly, and Scene 10 gates
 each pane on it. A dropped value degrades toward the empty state; a gate that
 fails open degrades toward chrome the user cannot dismiss.
+
+## 4.7 Relative row schemas (the `row.*` namespace)
+
+Signed 2026-09-22 (D1, `docs/DESIGN-BLOCK-D.md`). A `row.*` bind is relative to
+the current element of the array its enclosing `list` binds to. It is resolved
+against that element, not against host state — the one namespace §1 marks as
+having the row for its authority. The `row_template` is instantiated once per
+element; inside a given instance, `row.<field>` reads that element's `<field>`.
+
+The **legal field names** for a template are the element schema of the list's
+own `bind`, copied here from §4.1 so the two never drift. A `row.<field>` naming
+a field the source schema does not declare is a load-time refusal, exactly as a
+misspelled absolute bind is.
+
+| list `bind` | element schema — the `row.<field>` names it may address |
+|---|---|
+| `team.members` | `row.id`, `row.state`, `row.role`, `row.busy`, `row.turns`, `row.spent_usd` |
+| `agent.todos` | `row.task`, `row.blocked_on`, `row.actor` |
+| `slash.matches` | `row.name`, `row.category`, `row.description` |
+
+Interpolation (Q20): in an `on_press` argument, `{row.<field>}` is replaced by
+the element's field. Scene 9's row is `on_press: "cmd:/agent {row.id}"`. The
+SCENES.md prose spelling `{m.id}` (line 200) is illustrative; the signed
+vocabulary has **no per-list alias** — one relative namespace keeps every
+template in the ecosystem uniform, the arxi-sim lesson that a shared closed
+vocabulary is what lets one tool read another's document.
+
+Refusals, each addressed with `file:line`:
+
+- `row.<field>` where `<field>` is not in the source array's element schema:
+  refusal naming the field, the node, and the source `bind` whose schema was
+  checked (the misspelling net absolute binds already get).
+- `row.*` outside any `row_template`: refusal naming the node and stating that
+  relative binds are template-only.
+- A `list` with a `row_template` whose own `bind` is a scalar, not an
+  array-of-objects: refusal, because a scalar has no rows to instantiate over.
+
+A field declared by the schema but absent or empty in a *particular* element is
+falsy and renders as the `"[…]"` placeholder (§4.6) — never a crash. Misspelled
+is a load-time refusal; absent-in-one-row is a run-time placeholder.

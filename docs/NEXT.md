@@ -45,14 +45,16 @@ is cheap and belongs at the front of the relevant block; each is a task below.
    `stage.*` (`docs/BINDS.md:104,110`), and `stage.*` is now folded, so the
    dependency is already satisfied.
 
-3. **OSC 11 background detection does not exist.** `internal/theme/theme.go:148`
-   explicitly disclaims it ("adapts ... without OSC 11 queries");
-   `internal/term/decode.go:127` only generically skips OSC replies. Yet
-   `README.md:44`, `internal/theme/factory.go:10` and `cmd/arxi-tui/main.go:135`
-   claim OSC 11 detection is implemented. This is a claim/code contradiction:
-   either the claim is corrected to describe the relative dim/bright SGR
-   mechanism that actually ships, or OSC 11 is implemented. Decision required
-   (task L4 / N-series below).
+3. **OSC 11 background detection does not exist — RESOLVED by correcting the
+   claim (L4 done).** `internal/theme/theme.go:148` explicitly disclaims it
+   ("adapts ... without OSC 11 queries"); `internal/term/decode.go:127` only
+   generically skips OSC replies; `factory.go` already described the shipped
+   mechanism (fixed with B4). The remaining stale claims —
+   `README.md:44`, `cmd/arxi-tui/main.go:135`, `docs/TOKENS.md`, `docs/SCENES.md`
+   and `docs/PLAN.md` — were corrected to describe the relative dim/bright SGR
+   mechanism that actually ships (the terminal resolves the attributes; there is
+   no query). Implementing an explicit OSC 11 query remains an *optional* future
+   enhancement, not foreclosed, and is noted at each site.
 
 4. **No CI existed — RESOLVED (L5 done).** `.github/workflows/ci.yml` now runs
    `go build`/`vet`/`gofmt`/`go test -count=1 ./...` on a `windows-latest` +
@@ -222,17 +224,28 @@ Consequences for the plan:
 
 ### Block D — Phase 3 design gate (paper; unblocks E/F/G)
 
-Each is an independent design+sign (SCENES/BINDS/TOKENS method).
+Each is an independent design+sign (SCENES/BINDS/TOKENS method). All four were
+drafted as reviewable proposals in `docs/DESIGN-BLOCK-D.md` (PR #44) and
+**owner-accepted 2026-09-22**; the signed text now lives in the frozen docs. The
+code guards that refuse these features stay until each is *implemented* (signing
+the design does not lift a refusal — the implementation does, with its own
+counterfactual test).
 
-- **D1** Design and sign the relative `row.*` bind namespace in `docs/BINDS.md`
-  (Scene 5 / Q10) — unblocks the `internal/scene/validate.go:241` refusal.
-- **D2** Design and sign the addressing vocabulary for `add`/`move` (the
-  "where": `below_input`, `above <id>`, etc.).
-- **D3** Design and sign the per-node view-state bind for `hide`/`show` with
-  collection semantics (not the rejected scalar `ui.hidden`,
-  `internal/patch/patch_test.go:165`).
-- **D4** Sign the `[anim]` timing token in `docs/TOKENS.md` (Q8) — unblocks the
-  four animation props.
+- **D1 — SIGNED** (BINDS.md §1 + §4.7). `row.*` relative bind namespace:
+  template-scoped, resolved against the enclosing list's element schema,
+  `{row.field}` interpolation (Q10/Q20). Unblocks Block E.
+- **D2 — SIGNED** (new `docs/ADDRESSING.md`). The `where` addressing vocabulary
+  for `/ui add`/`move` (`above`/`below <id>`, `into <id> [top]`,
+  `below_input`/`above_input`), with the id-uniqueness invariant and cycle
+  refusal. Write-path, kept out of read-path BINDS.md. Unblocks Block F.
+- **D3 — SIGNED** (BINDS.md §4.3). `ui.hidden` as a **set of node ids** consumed
+  by the engine walk (a node renders iff `when` truthy AND id ∉ `ui.hidden`);
+  the scalar and default-visible spellings are rejected with reasons. Unblocks
+  F3.
+- **D4 — SIGNED** (TOKENS.md "Timing tokens"). The `[anim]` timing token: an
+  `anim` theme section of `{duration_ms, curve, fps}`, a **closed** curve set (a
+  curve is code), global default + per-node override (Q8), fold boundary kept
+  (Q9). Unblocks Block G.
 
 ### Block E — Phase 3: row_template + relative binds [D1]
 
@@ -318,9 +331,12 @@ per-platform build tooling). All aspirational in `docs/PLAN.md:107`.
 - **L2** Per-platform static builds (`CGO_ENABLED=0`): linux, macos, windows,
   android-arm64 (Termux).
 - **L3** [L2] GitHub Releases publication + artifact wiring.
-- **L4** Resolve the OSC 11 claim (correction 3): either implement OSC 11
-  light/dark detection or correct `README.md:44`, `theme/factory.go:10`,
-  `main.go:135` to describe the relative dim/bright SGR mechanism that ships.
+- **L4 — DONE (correct-the-claim).** The OSC 11 claim (correction 3) is
+  resolved by correcting the docs/comments to the relative dim/bright SGR
+  mechanism that ships: `README.md`, `cmd/arxi-tui/main.go`, `docs/TOKENS.md`,
+  `docs/SCENES.md`, `docs/PLAN.md`. `factory.go`/`theme.go` were already correct.
+  Implementing an explicit OSC 11 query is left as an optional future
+  enhancement (noted at each site), not a blocker.
 - **L5 — DONE.** `.github/workflows/ci.yml` runs `go build`/`vet`/`gofmt`/
   `go test -count=1 ./...` on a `windows-latest` + `ubuntu-latest` matrix,
   `fail-fast: false`. The double-Ctrl-C escape-hatch tests run inside
