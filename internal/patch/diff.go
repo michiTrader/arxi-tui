@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/michiTrader/arxi_tui/internal/scene"
 )
 
 // This file computes the change one patch made, as a line-level diff over the
@@ -186,4 +188,72 @@ func diffLines(a, b []string) Diff {
 		lines = append(lines, DiffLine{Op: OpInsert, Text: b[j], NewLine: j + 1})
 	}
 	return Diff{Lines: lines}
+}
+
+// Scene renders this diff as a scene document: the change-diff view PLAN.md
+// gates Phase 2 on, built the way ADR-0003 decided — a host-generated scene of
+// node types the engine already renders, not a bespoke engine capability.
+//
+// The shape is a titled box over a two-column row: the left column is the old
+// document, the right the new. Each column is a stack of one text node per
+// line, styled diff.del / diff.add for the changed lines and diff.context for
+// the unchanged ones. The columns are independent rather than line-aligned:
+// each is just its side of the change with the differences marked, which needs
+// no pairing of deletes to inserts and cannot draw a change on the wrong row.
+// The column a line sits in already says old-or-new, so the tokens carry only
+// changed-or-not and can stay colourless (see the theme).
+//
+// It returns a parsed *scene.Document rather than a fragment so the caller can
+// render it directly and a golden can pin it, and so the host authors this view
+// through exactly the parse path a user's scene takes — the dogfooding ADR-0003
+// is about. title is the human sentence (Result.Summary) shown on the box.
+func (d Diff) Scene(title string) (*scene.Document, error) {
+	oldCol := make([]any, 0, len(d.Lines))
+	newCol := make([]any, 0, len(d.Lines))
+	for _, l := range d.Lines {
+		switch l.Op {
+		case OpEqual:
+			oldCol = append(oldCol, lineNode(l.Text, "diff.context"))
+			newCol = append(newCol, lineNode(l.Text, "diff.context"))
+		case OpDelete:
+			oldCol = append(oldCol, lineNode(l.Text, "diff.del"))
+		case OpInsert:
+			newCol = append(newCol, lineNode(l.Text, "diff.add"))
+		}
+	}
+
+	doc := map[string]any{
+		"root": map[string]any{
+			"type":   "box",
+			"border": "single",
+			"title":  title,
+			"children": []any{
+				map[string]any{
+					"type": "row",
+					"children": []any{
+						map[string]any{"type": "stack", "weight": 1, "children": oldCol},
+						map[string]any{"type": "stack", "weight": 1, "children": newCol},
+					},
+				},
+			},
+		},
+	}
+
+	out, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("could not serialise the diff scene: %w", err)
+	}
+	return scene.ParseNamed("diff", out)
+}
+
+// lineNode is one line of a diff column: a text node carrying the literal line
+// under the token that marks it. The empty string is preserved as a blank line
+// rather than dropped, so the two columns keep the vertical rhythm of the
+// document they came from.
+func lineNode(text, token string) map[string]any {
+	return map[string]any{
+		"type":  "text",
+		"text":  text,
+		"style": map[string]any{"style": token},
+	}
 }

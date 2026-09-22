@@ -177,5 +177,14 @@ func SOBRIA() *Theme {
 		"markdown.strong":    {Attrs: ui.AttrBold},
 		"markdown.code":      {}, // no style: same as surrounding text
 		"markdown.codeblock": {Attrs: ui.AttrDim},
+		// The change-diff view (PLAN.md ADR-0003) is a host-generated scene,
+		// so its three tokens are signed here like any other. They stay
+		// colourless to keep sobria's identity -- the meaning is carried by
+		// attribute and by column, not by red/green, and a user theme is free
+		// to map them to colour: context is de-emphasised, a removed line is
+		// struck through, an added line is emphasised.
+		"diff.context": {Attrs: ui.AttrDim},
+		"diff.del":     {Attrs: ui.AttrStrike},
+		"diff.add":     {Attrs: ui.AttrBold},
 	})
 }

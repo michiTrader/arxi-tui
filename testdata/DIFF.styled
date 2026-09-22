@@ -1,0 +1,22 @@
+«border:┌ styled "note" as "banner" ───────────────────────────────────────────┐»
+«border:│»«diff.context:{»                                  «diff.context:{»                                  «border:│»
+«border:│»«diff.context:  "root": {»                        «diff.context:  "root": {»                        «border:│»
+«border:│»«diff.context:    "children": [»                  «diff.context:    "children": [»                  «border:│»
+«border:│»«diff.context:      {»                            «diff.context:      {»                            «border:│»
+«border:│»«diff.context:        "bind": "chat.history",»    «diff.context:        "bind": "chat.history",»    «border:│»
+«border:│»«diff.context:        "id": "chat",»              «diff.context:        "id": "chat",»              «border:│»
+«border:│»«diff.context:        "type": "markdown"»         «diff.context:        "type": "markdown"»         «border:│»
+«border:│»«diff.context:      },»                           «diff.context:      },»                           «border:│»
+«border:│»«diff.context:      {»                            «diff.context:      {»                            «border:│»
+«border:│»«diff.context:        "bind": "model.name",»      «diff.context:        "bind": "model.name",»      «border:│»
+«border:│»«diff.context:        "id": "note",»              «diff.context:        "id": "note",»              «border:│»
+«border:│»«diff.context:        "style": {»                 «diff.context:        "style": {»                 «border:│»
+«border:│»«diff.del:          "style": "dim"»           «diff.add:          "style": "banner"»        «border:│»
+«border:│»«diff.context:        },»                         «diff.context:        },»                         «border:│»
+«border:│»«diff.context:        "type": "text"»             «diff.context:        "type": "text"»             «border:│»
+«border:│»«diff.context:      }»                            «diff.context:      }»                            «border:│»
+«border:│»«diff.context:    ],»                             «diff.context:    ],»                             «border:│»
+«border:│»«diff.context:    "type": "stack"»                «diff.context:    "type": "stack"»                «border:│»
+«border:│»«diff.context:  }»                                «diff.context:  }»                                «border:│»
+«border:│»«diff.context:}»                                  «diff.context:}»                                  «border:│»
+«border:└──────────────────────────────────────────────────────────────────────┘»
