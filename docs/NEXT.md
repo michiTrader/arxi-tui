@@ -222,28 +222,28 @@ Consequences for the plan:
 
 ### Block D — Phase 3 design gate (paper; unblocks E/F/G)
 
-Each is an independent design+sign (SCENES/BINDS/TOKENS method). **All four are
-now drafted as reviewable proposals in `docs/DESIGN-BLOCK-D.md`** (PR #44) —
-argued, with the exact text to paste into the frozen doc on approval. They are
-**proposals, not signatures**: BINDS.md/TOKENS.md still hold only what the owner
-signed, and the code guards that refuse these features stay until the owner
-signs. Awaiting owner review.
+Each is an independent design+sign (SCENES/BINDS/TOKENS method). All four were
+drafted as reviewable proposals in `docs/DESIGN-BLOCK-D.md` (PR #44) and
+**owner-accepted 2026-09-22**; the signed text now lives in the frozen docs. The
+code guards that refuse these features stay until each is *implemented* (signing
+the design does not lift a refusal — the implementation does, with its own
+counterfactual test).
 
-- **D1 — DRAFTED.** `row.*` relative bind namespace: template-scoped, resolved
-  against the enclosing list's element schema, `{row.field}` interpolation
-  (Q10/Q20). Sign-text targets BINDS.md §1 + new §4.7.
-- **D2 — DRAFTED.** The `where` addressing vocabulary for `/ui add`/`move`
-  (`above`/`below <id>`, `into <id> [top]`, `below_input`/`above_input`), with
-  the id-uniqueness and cycle refusals. Proposed home: new `docs/ADDRESSING.md`
-  (write-path, kept out of read-path BINDS.md).
-- **D3 — DRAFTED.** `ui.hidden` as a **set of node ids** consumed by the engine
-  walk (a node renders iff `when` truthy AND id ∉ `ui.hidden`), rejecting the
-  scalar and the default-visible spellings for stated reasons. Sign-text targets
-  BINDS.md §4.3.
-- **D4 — DRAFTED.** The `[anim]` timing token: an `anim` theme section of
-  `{duration_ms, curve, fps}`, a **closed** curve set (a curve is code), global
-  default + per-node override (Q8), fold boundary kept (Q9). Sign-text targets a
-  new TOKENS.md section.
+- **D1 — SIGNED** (BINDS.md §1 + §4.7). `row.*` relative bind namespace:
+  template-scoped, resolved against the enclosing list's element schema,
+  `{row.field}` interpolation (Q10/Q20). Unblocks Block E.
+- **D2 — SIGNED** (new `docs/ADDRESSING.md`). The `where` addressing vocabulary
+  for `/ui add`/`move` (`above`/`below <id>`, `into <id> [top]`,
+  `below_input`/`above_input`), with the id-uniqueness invariant and cycle
+  refusal. Write-path, kept out of read-path BINDS.md. Unblocks Block F.
+- **D3 — SIGNED** (BINDS.md §4.3). `ui.hidden` as a **set of node ids** consumed
+  by the engine walk (a node renders iff `when` truthy AND id ∉ `ui.hidden`);
+  the scalar and default-visible spellings are rejected with reasons. Unblocks
+  F3.
+- **D4 — SIGNED** (TOKENS.md "Timing tokens"). The `[anim]` timing token: an
+  `anim` theme section of `{duration_ms, curve, fps}`, a **closed** curve set (a
+  curve is code), global default + per-node override (Q8), fold boundary kept
+  (Q9). Unblocks Block G.
 
 ### Block E — Phase 3: row_template + relative binds [D1]
 

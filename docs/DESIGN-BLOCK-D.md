@@ -5,15 +5,15 @@ Each unblocks a Phase 3 implementation block (E/F/G) and touches no code: it is
 vocabulary, designed on paper the SCENES/BINDS/TOKENS way so the format is
 frozen *before* a renderer or a command depends on it.
 
-**These are proposals, not signatures.** The frozen docs (`docs/BINDS.md`,
-`docs/TOKENS.md`) record what the owner has signed; this file records what is
-proposed for signing. Nothing here is a signed row yet. Each proposal ends with
-the exact text to paste into the frozen doc **on approval**, so signing is a
-review of an argued decision and a copy, not a fresh authoring pass. Until then
-the code guards that refuse these features (the `row_template`/`on_press`/
-`scroll` refusals in `internal/scene/validate.go`, and
-`TestHideAndShowAreRefusedRatherThanInventingABind` in `internal/patch`) stay as
-they are: a refusal is cheaper to lift than a wrong format is to unship.
+**Status: owner-accepted 2026-09-22.** All four proposals below were signed
+into the frozen docs on that date — D1 into `docs/BINDS.md` §1 + §4.7, D2 into
+the new `docs/ADDRESSING.md`, D3 into `docs/BINDS.md` §4.3, D4 into
+`docs/TOKENS.md`. This file is kept as the argued record behind those
+signatures. Signing the *design* does not lift the code guards that refuse these
+features (the `row_template`/`on_press`/`scroll` refusals in
+`internal/scene/validate.go`, and `TestHideAndShowAreRefusedRatherThanInventingABind`
+in `internal/patch`): a refusal is lifted by the *implementation* that replaces
+it, each with its own counterfactual test (blocks E/F/G).
 
 Order of dependency: D1 unblocks Block E, D2 and D3 unblock Block F, D4 unblocks
 Block G. None depends on another, so they can be signed in any order or
