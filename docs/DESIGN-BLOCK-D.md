@@ -108,3 +108,75 @@ Add §4.7 "Relative row schemas": a table stating, for each array-of-objects
 bind in §4.1, the element field set its templates may address (copied from the
 `source events / payload` column so the two never drift), plus the three
 refusal rules above.
+
+---
+
+## D2 — the `where` addressing vocabulary for `/ui add` and `/ui move`
+
+**Unblocks:** F1 (`/ui add node <where> <fragment>`), F2 (`/ui move <id>
+<where>`). **Scenes:** the `/ui` self-extension surface (Q23's diff-and-attribute
+model). **Home:** a new write-path doc, `docs/ADDRESSING.md` — see "Where this
+is signed" below.
+
+### The problem it solves
+
+`/ui add` and `/ui move` both take a "where": a way to name a position in the
+scene tree. BINDS.md addresses *read* state (what a node may display); it says
+nothing about *where a node goes* when a patch inserts or moves it. Without a
+signed vocabulary the position is invented inside the command implementation —
+the exact "format designed inside a command ahead of the phase meant to choose
+it" failure the hide/show refusal already names. This proposal signs the write
+path.
+
+### The decision
+
+A `where` expression names one insertion point. Four forms, all resolving to
+"a parent and an index":
+
+1. **`above <id>`** — insert as the previous sibling of the node with that id.
+2. **`below <id>`** — insert as the next sibling.
+3. **`into <id>`** — append as the last child of the container `<id>`;
+   **`into <id> top`** prepends as the first child. Refused if `<id>` is not a
+   container (`stack`/`row`/`box`/`overlay`) — only containers hold children.
+4. **Semantic anchors** — `below_input` / `above_input`, which resolve to the
+   sibling position adjacent to the surface's input node **without naming an
+   id**. The id of the input node is a scene-authoring detail that changes
+   between themes; its *role* (the one node the user types into) is stable, so
+   the anchor addresses the role. This is what lets a downloaded theme accept
+   `/ui add node below_input …` without the user first reading the theme to
+   learn the input node's id.
+
+An `<id>` is resolved against the *active document*, so `/ui` addresses the
+scene the user is actually looking at, not a remembered one.
+
+### Refusals (each addressed, each with `file:line` into the active document)
+
+1. `<id>` not found → error naming the id and that no node carries it.
+2. `<id>` found more than once → error. Ids must be unique for addressing to
+   mean anything; a duplicate id makes every `where` ambiguous. **This proposal
+   also asks that id-uniqueness become a load-time scene invariant** if it is
+   not already one, because `move`/`add` are unsafe without it — noted here so
+   the dependency is not discovered inside F2.
+3. `into <non-container>` → error naming the node's type and that only
+   containers take children.
+4. `move <id> <where>` where `<where>` resolves to a position inside `<id>`'s
+   own subtree → cycle refusal: a node cannot become its own descendant. This
+   is the one refusal unique to `move`; `add` cannot form a cycle because the
+   fragment is new.
+5. `below_input` / `above_input` with zero or more than one input node on the
+   active surface → addressed refusal. Ambiguity here is a real scene defect
+   (which input did you mean?), not something to resolve by guessing.
+
+### Where this is signed
+
+This is a **write-path** vocabulary — how a command names the tree — and
+BINDS.md is deliberately read-path only ("a read-only address into host
+state", §1). Mixing a write vocabulary into it would blur the one boundary
+that doc is careful about. **Proposal: a new `docs/ADDRESSING.md`** that owns
+the `/ui` verbs' tree-addressing grammar (the `where` forms here now, and D3's
+hide/show target grammar next), leaving BINDS.md for read state. The
+alternative — a "Patch addressing" section in PLAN.md — keeps the doc count
+lower but buries a frozen vocabulary inside a narrative doc; the SCENES/BINDS/
+TOKENS method exists because a frozen vocabulary wants its own signable home.
+Recommendation: `docs/ADDRESSING.md`. Its initial content is the four forms and
+five refusals above, written as a signed table with an example per form.
