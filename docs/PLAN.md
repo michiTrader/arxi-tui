@@ -116,7 +116,9 @@ advertising an installer site that does not exist is worse than no site.
 Plugins never add a
 user-side dependency: declarative is data, subprocess plugins ship as their
 own static binary, wasm plugins are interpreted inside ours. Inherited from
-fx: auto light/dark detection via the OSC 11 query.
+fx: automatic light/dark adaptation — achieved here without an OSC 11 query, via
+relative dim/bright attributes the terminal resolves (see `theme.SOBRIA`; an
+explicit OSC 11 query is a possible future enhancement, NEXT.md L4).
 
 ## The default scene: the sobria look, written in the user's own format
 
