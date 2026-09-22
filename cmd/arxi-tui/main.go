@@ -132,7 +132,9 @@ func run() error {
 	}
 
 	// Load theme. The factory SOBRIA theme is compiled in and adapts to the
-	// terminal's background (light/dark detection via OSC 11).
+	// terminal's background through relative dim/bright attributes the terminal
+	// itself resolves -- there is no OSC 11 background query (theme.SOBRIA
+	// argues why: dim and bright already read correctly on light and dark).
 	theme := theme.SOBRIA()
 
 	// Initialize terminal

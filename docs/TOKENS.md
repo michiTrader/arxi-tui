@@ -76,7 +76,8 @@ Three spellings are legal:
 ## Factory theme: SOBRIA
 
 The default theme shipped with arxi-tui is **sobria** — no color, emphasis by
-brightening text only, light/dark auto-detected via OSC 11. It defines exactly
+brightening text only, light/dark adaptation handled by the terminal itself
+through relative dim/bright attributes (no OSC 11 query). It defines exactly
 the tokens the three golden scenes (RAW, SOBRIA, MAXIMUM) reference, and
 nothing more:
 
@@ -89,10 +90,14 @@ nothing more:
 }
 ```
 
-The OSC 11 query reports the terminal's background color, which the resolver
-uses to invert the sense of "dim" and "bold" on light backgrounds. That logic
-lives in the emit layer (`internal/term`), not in the theme file — the theme
-says what to emphasize, and the terminal backend decides how.
+`dim` and `bold` are *relative* attributes: the terminal resolves them against
+whatever foreground and background it is already using, so `dim` reads as
+de-emphasis and `bold` as emphasis on both light and dark backgrounds without
+arxi-tui ever querying the background color. There is no OSC 11 round-trip — the
+adaptation is the terminal's own, and the theme only says what to emphasize.
+(An explicit OSC 11 background query, to drive a light/dark inversion in the
+emit layer rather than leaning on the terminal's relative resolution, remains a
+possible future enhancement — NEXT.md L4 — but is not what ships.)
 
 ## Token resolution at emit time
 

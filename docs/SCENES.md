@@ -95,8 +95,10 @@ the `input` node.
 ```
 
 No color: emphasis by brightening text, never painting backgrounds; light/dark
-auto-detected via the OSC 11 query (inherited from fx). From this scaffolding
-forward, the backend stays ours: transcript, markdown, tools, fold.
+adaptation is the terminal's own, through relative dim/bright attributes (the fx
+look, achieved without an OSC 11 query — see TOKENS.md and `theme.SOBRIA`). From
+this scaffolding forward, the backend stays ours: transcript, markdown, tools,
+fold.
 
 Decided here: Q1 marquee scrolls only its bound text; Q2 the menu is an
 overlay, not a stack row (the transcript must not jump); Q3 derivatives are
