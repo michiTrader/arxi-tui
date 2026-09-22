@@ -385,6 +385,39 @@ not the first.
   Phase 0's acceptance suite from the start. If the model cannot patch scenes
   reliably, "autoextendable by command" is not a feature and the document
   must say so.
+
+  **Measured (2026-09-22), and the ship decision.** The corpus ran against a
+  real model for the first time: `deepseek-v4.1-flash` on an OpenAI-compatible
+  endpoint, three runs (a single run of a non-deterministic model is weak
+  evidence). **11 of 12 case-runs converged.** The two findings that decide the
+  question are not the ratio:
+
+  1. *The repair loop works against a real model.* In two of three runs a
+     turn-1 JSON syntax error was returned as an addressed refusal and the
+     model self-corrected on turn 2. That is the ask→grade→hand-back mechanism
+     this phase exists to prove, exercised end to end by a real model rather
+     than a stub.
+  2. *The single miss is the one the corpus was built to detect, not a
+     repair-loop fault.* `raw-add-tasks-panel` predicts the model guesses a
+     bind name (`tasks.list`) for what BINDS.md signs as `agent.todos`; because
+     an unknown-but-parseable bind is a warning, not a refusal (invariant
+     below), there is no validator message to repair from, so it scores
+     `incomplete`. It converged in the other two runs — a probabilistic
+     bind-naming slip against a deliberate product tradeoff, not an inability
+     to read addresses.
+
+  **Decision: ship agent-command-driven `/ui` self-extension**, under the
+  consent contract that already governs every other agent effect — the agent
+  proposes a patch, the host shows the change (the change-diff view, still to
+  build), it is applied on approval, and it is an attributed event in the log.
+  The evidence answers "can a model patch scenes reliably" with *yes* for this
+  model, and the failure mode that remains is a naming slip a diff-and-approve
+  step catches by eye, not a class of silent corruption. The caveat is written
+  down rather than left implicit: this is one model, one provider, and the
+  four-case corpus — so the decision is *ship behind the diff/consent gate*,
+  and Block A4 (widen the corpus) and re-runs on other models stay on the plan
+  as the thing that would move it from "reliable for this model" to "reliable".
+
 - **Phase 3 — Third-party mounting.** Plugins as scene fragments mounted by
   id; overlays, banners, input-adjacent rows, per-node focus and input;
   `/ui plugin add <url>`; the community installer itself as a scene (Q16/17).

@@ -107,26 +107,30 @@ this session closed the last 2.
   corrected to 122/122.
 - **C5 — DONE.** The README coverage line reads 122 of 122.
 
-### Block A — Close Phase 2: run the repair loop against a real model
+### Block A — Close Phase 2: run the repair loop against a real model (DONE 2026-09-22, except A4)
 
-The corpus has never run against a live model; the gateway returns HTTP 200
-with `x_genspark.code=free_plan_block` (`internal/eval/openai.go:174`,
-`README.md:224`). This is the question that gates Phase 2.
+The corpus had never run against a live model. It has now:
+`deepseek-v4.1-flash` on an OpenAI-compatible endpoint, three runs, **11/12
+case-runs converged**.
 
-- **A1** Obtain an OpenAI-compatible endpoint + key that does not hit
-  `free_plan_block`.
-- **A2** [A1] Probe the endpoint directly; confirm a real completion (not the
-  plan block); document it.
-- **A3** [A2] Run `arxi-eval -model <name> -v` over the 4 corpus cases
-  (`testdata/eval/*.json`); capture outcome + turns per case.
-- **A4** Extend the corpus with new cases over the three frozen scenes
+- **A1 — DONE.** Working endpoint obtained (vyceai.com, OpenAI-compatible). The
+  earlier gateways were blocked: genspark `free_plan_block`, AgentRouter 401
+  `unauthorized_client`.
+- **A2 — DONE.** Direct probe returned a real completion (HTTP 200, content
+  `ok`), not a plan block.
+- **A3 — DONE.** `arxi-eval -model deepseek-v4.1-flash -v` run three times;
+  outcomes and turns captured (see `docs/EVAL.md` "First live run").
+- **A4 — OPEN.** Widen the corpus with new cases over the three frozen scenes
   (RAW/SOBRIA/MAXIMUM), one atomic case at a time: one `order` + `attempts`
   (with a reproducible `expect_refused` against the validator) + `convergence`
-  + `rationale`. (More scenes need their goldens frozen first — later phases.)
-- **A5** [A3,A4] Interpret results; write the finding into
-  `docs/EVAL.md` / `docs/PLAN.md` (answer the Phase 2 gating question).
-- **A6** [A5] Record the ship/no-ship decision for agent-command-driven `/ui`
-  self-extension in `docs/PLAN.md`.
+  + `rationale`. This is what moves the claim from "reliable for this model" to
+  "reliable". (More scenes need their goldens frozen first — later phases.)
+- **A5 — DONE.** Finding written into `docs/EVAL.md` (First live run) and
+  `docs/PLAN.md` (Phase 2 measured result). The gating question is answered:
+  the repair loop works against a real model.
+- **A6 — DONE.** Ship decision recorded in `docs/PLAN.md`: **ship**
+  agent-command-driven `/ui` self-extension behind the diff + consent gate,
+  with the one-model/one-provider/four-case caveat written down.
 
 ### Block M — arxi core integration (cross-repo, high value)
 

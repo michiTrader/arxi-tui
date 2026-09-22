@@ -233,6 +233,43 @@ The runner has landed: `internal/eval/run.go`, driven by `cmd/arxi-eval`.
   the model's first shot, which PLAN.md names a vanity metric. It stays only if
   its refusal path is still worth pinning for the validator's sake.
 
+### First live run (2026-09-22), and what it showed
+
+Before this the corpus had only ever run against a local stub and a
+plan-blocked gateway. It ran against a real model — `deepseek-v4.1-flash` on an
+OpenAI-compatible endpoint — three times, because one run of a
+non-deterministic model is weak evidence. Result: **11 of 12 case-runs
+converged.**
+
+| Case | Run 1 | Run 2 | Run 3 |
+| --- | --- | --- | --- |
+| `maximum-count-the-tasks` | converged (1) | converged (1) | converged (1) |
+| `raw-add-tasks-panel` | **incomplete** | converged (1) | converged (1) |
+| `sobria-add-model-row` | converged (1) | converged (2) | converged (1) |
+| `sobria-dim-the-footer` | converged (2) | converged (1) | converged (1) |
+
+Two of the five outcomes stopped being theoretical:
+
+- **`converged` via the repair loop, not the first shot.** In two runs a turn-1
+  answer was refused for a JSON syntax error (`invalid character ']' after
+  object key:value pair`, `invalid character '}' after top-level value`) and
+  the model fixed it on turn 2. That is the metric of record — turns to
+  convergence — behaving exactly as the phase claims: the model read an
+  addressed refusal and acted on it.
+- **`incomplete` fired for the reason the case was written.**
+  `raw-add-tasks-panel` predicts the model will guess `tasks.list` for what
+  BINDS.md signs as `agent.todos`. Because an unknown-but-parseable bind is a
+  warning and not a refusal, the document validated and `must_bind` was
+  unsatisfied with no message to repair from — precisely why that outcome is
+  not folded into `exhausted`. It converged in the other two runs, so it is a
+  probabilistic naming slip, not an inability to read addresses.
+
+The finding fed the ship decision recorded in `PLAN.md` (Phase 2): the repair
+loop works against a real model, and the residual failure is a naming slip a
+diff-and-approve step catches by eye. The caveat is one model, one provider,
+and four cases — widening the corpus (Block A4) is what would move the claim
+from "reliable for this model" to "reliable".
+
 ### "Not converged" is not one fact
 
 The runner reports five outcomes, because collapsing them points a reader at

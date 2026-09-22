@@ -221,24 +221,41 @@ feature, as `PLAN.md` requires:
 - ✅ `cmd/arxi-eval` — runs the corpus against an OpenAI-compatible endpoint.
   A separate binary: the shipped interface carries no eval harness and no
   reason to read `OPENAI_API_KEY`.
-- ⬜ **The corpus has not yet been run against a real model.** The harness is
-  verified end to end against a local stub (4/4 converged, turns 3×2 1×3,
-  driven by real addressed refusals from the real validator), but the gateway
-  available here refuses on plan grounds, so there is no score for any model
-  yet. Phase 2's question — can a model patch scenes reliably — is therefore
-  still open, and `PLAN.md` gates `/ui` on the answer.
-  The plan-block detection is confirmed against the live gateway rather than a
-  captured body, and re-confirmed each session it is checked: the run that
-  once reported `looped=3` now reports `model_error` on every case and exits
-  non-zero (latest check, re-run live this session against `gpt-5-mini`:
-  `0/4 converged, model_error=4`, exit 1, with the block confirmed by a
-  direct probe of the endpoint — HTTP 200, `x_genspark.code =
-  free_plan_block` — rather than inferred from the harness). That is the
-  harness declining to score, which is the correct result and still not a
-  score. The block arrives as **HTTP 200 carrying a normal-looking assistant
-  message** — `x_genspark.code = free_plan_block` — which is why the detection
-  has to exist at all: without it the refusal reads as a model that answered
-  badly, and the corpus would record a plan limit as a capability measurement.
+- ✅ **The corpus has been run against a real model.** First live run on
+  2026-09-22 against `deepseek-v4.1-flash` on an OpenAI-compatible endpoint
+  (not the plan-blocked gateway below). Three runs, because a single run of a
+  non-deterministic model is weak evidence: **11 of 12 case-runs converged**.
+  - Run 1: 3/4 converged (turns 1,1,2); `raw-add-tasks-panel` scored
+    `incomplete` (`unbound: agent.todos`).
+  - Run 2: 4/4 converged (turns 1,1,2,1).
+  - Run 3: 4/4 converged (all 1 turn).
+
+  Two facts matter more than the ratio. **The repair loop demonstrably works
+  against a real model**: in two of the three runs a turn-1 JSON syntax error
+  (`invalid character ']' after object key:value pair`) was handed back as an
+  addressed refusal and the model self-corrected on turn 2 — the exact
+  ask→grade→hand-back mechanism Phase 2 exists to prove. And **the one
+  non-convergence is the failure the corpus was built to detect, not a
+  repair-loop fault**: `raw-add-tasks-panel` predicts the model will guess
+  `tasks.list` for what BINDS.md signs as `agent.todos`, and because PLAN.md
+  decided an unknown-but-parseable bind is a *warning*, not a load-time
+  refusal, there is no validator message to repair from — so it scores
+  `incomplete` rather than `exhausted`. It converged in the other two runs, so
+  the miss is a probabilistic bind-naming slip against a deliberate product
+  tradeoff, not evidence the model cannot read addresses.
+
+  Phase 2's question — can a model patch scenes reliably — is answered *yes*
+  for this model: it reads the format, converges mostly on the first turn, and
+  uses addressed refusals to recover. The ship/no-ship call for
+  agent-command-driven `/ui` self-extension is recorded in `docs/PLAN.md`.
+
+  The plan-block detection below stays because it guards a real hazard: the
+  gateway once available here refused on plan grounds with **HTTP 200 carrying
+  a normal-looking assistant message** — `x_genspark.code = free_plan_block` —
+  so without the detection a plan limit would record as a capability
+  measurement. It was re-confirmed live each session it was checked (latest,
+  against `gpt-5-mini`: `0/4 converged, model_error=4`, exit 1, block confirmed
+  by a direct probe rather than inferred from the harness).
 - ✅ The `/ui` control surface (`internal/patch`), PLAN.md's deterministic
   half. A patch is a **source-to-source transformation** — bytes in, bytes
   out, re-parsed through `scene.ParseNamed` — rather than a mutation of
