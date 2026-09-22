@@ -418,6 +418,47 @@ not the first.
   and Block A4 (widen the corpus) and re-runs on other models stay on the plan
   as the thing that would move it from "reliable for this model" to "reliable".
 
+  ##### ADR-0003 (2026-09-22): the change-diff view is a host-generated scene, not an engine capability
+
+  Building the change-diff view (Block B) forces a fork: is it a *scene* the
+  engine renders like any other, or a *new engine capability* drawn by
+  dedicated code? The fork matters because it is the project's thesis in
+  miniature — "the factory-default interface is written with exactly the same
+  format the user has" (AGENTS.md). A diff view drawn by bespoke engine code is
+  chrome the user cannot rewrite, which is the arxi-sim closed-vocabulary
+  mistake in a new place.
+
+  **Decision: the diff view is a scene the host generates from the `Diff`, using
+  only node types the engine already renders.** Measured against
+  `renderNode`'s dispatch, the available types are enough: a side-by-side view
+  is a `row` of two `stack`s (old / new), each `stack` a sequence of `text`
+  nodes whose literal content is one diff line and whose `style` token is
+  `diff.del` / `diff.add` / `diff.context`. Those three tokens are new, but the
+  token namespace is open by design (TOKENS.md), so minting them in the factory
+  theme is the intended path, not an engine change. The host already ships
+  scenes it authored (SOBRIA.json); a diff scene it authors from the patch
+  result is the same move, just built at runtime instead of read from disk, and
+  it is shown transiently (an `overlay`, the type that already exists for
+  exactly this) rather than merged into the user's document.
+
+  **Why not a new node type or a host-drawn frame.** Either would render a diff
+  the user cannot restyle, reposition, or replace — and the diff view is the
+  one surface where the user most needs to trust what they see, so it is the
+  worst place to make it un-rewritable. A `diff` node was considered and
+  rejected: it would bind the diff shape into the engine, where a plugin or a
+  future phase could not change how a change is shown, and it buys nothing the
+  `row`/`stack`/`text`/`overlay` composition does not already give. The one
+  thing the engine may still need is confirmed by measurement before B4 builds
+  on it: that a `text` node renders its literal `text` under a per-node `style`
+  token (it does — `renderNode`'s `text` case), so no per-item list styling and
+  no new binding is required.
+
+  **What this leaves for B4.** A pure function `Diff -> *scene.Node` (or a
+  scene fragment), tested by a golden the same way every other scene is, plus
+  the three theme tokens. The consent/attribution wiring (B5-B7) is unchanged
+  by this decision, because it operates on the patch `Result`, not on how the
+  diff is drawn.
+
 - **Phase 3 — Third-party mounting.** Plugins as scene fragments mounted by
   id; overlays, banners, input-adjacent rows, per-node focus and input;
   `/ui plugin add <url>`; the community installer itself as a scene (Q16/17).

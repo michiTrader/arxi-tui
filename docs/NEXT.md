@@ -181,18 +181,24 @@ Consequences for the plan:
   positive end-of-run marker) — deferred per ADR-0002
   (`docs/PLAN.md:230-280`); the trigger is needing that positive signal.
 
-### Block B — Agent patches + side-by-side diff (gated by A6)
+### Block B — Agent patches + side-by-side diff (A6 said ship behind this gate)
 
-Today only the summary line exists (`cmd/arxi-tui/main.go:631`); no `Diff`
-function in `internal/patch`.
-
-- **B1** Define the diff model (old→new bytes; hunks addressed by node id;
-  reuse the `ParseNamed` round-trip that `internal/patch` already does).
-- **B2** [B1] Compute the diff over `internal/patch`'s source-to-source form
-  (`patch.go:293` `mutate`).
-- **B3** [B1] ADR: is the diff view a scene (dogfooding) or a new engine
-  capability?
-- **B4** [B2,B3] Render the change side by side.
+- **B1 — DONE.** Diff model defined in `internal/patch/diff.go`: `Op`,
+  `DiffLine` (both 1-based line numbers), `Diff`. Line-level over the canonical
+  serialisation, argued in the file comment; node-addressing is a presentation
+  the view can layer on, not a different truth.
+- **B2 — DONE.** `DiffSource` computes an exact LCS line diff against the
+  canonical form of both sides, so reformatting is never reported as a change.
+  `Result.Diff` is populated by `apply`. Tests pin both properties;
+  counterfactual (canonicalization disabled) fails the reformatting test on
+  minified and tab-indented input.
+- **B3 — DONE.** ADR-0003 in `docs/PLAN.md`: the diff view is a **host-generated
+  scene** (a `row` of two `stack`s of styled `text` nodes in an `overlay`),
+  not a new engine capability — the dogfooding choice, needing only three new
+  theme tokens (`diff.del`/`diff.add`/`diff.context`) the open token system
+  already permits.
+- **B4** [B3] Implement `Diff -> *scene.Node` (a scene fragment), mint the three
+  theme tokens, render side by side. Golden the fragment like any other scene.
 - **B5** [B4] Wire propose→apply: agent proposes a patch → host shows the diff
   → applied on approval.
 - **B6** [B5] Consent gate per Q23 (show diff + log attribution; no blocking
