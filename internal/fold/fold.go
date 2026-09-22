@@ -434,26 +434,29 @@ func (s *State) deriveExecPhase() {
 //
 // The previous commit closed the largest part of that gap: the exec.* family
 // (91 events, 74.6% of the log) and run.result. Coverage went 13/122 ->
-// 105/122.
+// 105/122. The commit after added the tool.* family (the only family in the
+// log that says WHAT THE AGENT DID) for 113/122, and the stage.* family
+// (blueprint position) for 120/122.
 //
-// This one adds the tool.* family: 113/122 (92.6%). It is eight events, not
-// the biggest remaining count -- stage.* is seven and timer.* two -- and it
-// was chosen anyway because it is the only family in the log that says WHAT
-// THE AGENT DID. exec.* counts durable work and stage.* names a position in
-// the blueprint; both are plumbing. A host that shows a moving progress
-// indicator and never the words "read README.md" has replaced a blank screen
-// with a busy one.
+// This one closes the remainder: timer.scheduled and timer.cancelled, the two
+// events the log still left invisible, for 122/122. They are handled as a
+// read-and-understood no-op -- see the case and the handled-map note below for
+// why a stage deadline arming and cancelling without firing has no host-facing
+// projection. The figure is pinned in
+// TestTheRealLogCoverageIsMeasuredNotAssumed so that a change in what the fold
+// handles, or in what the core emits, is a deliberate re-measurement.
 //
-// Nine events remain invisible: stage.entered x2, stage.submitted x4,
-// stage.advanced x1, timer.scheduled x1, timer.cancelled x1. They are
-// position and plumbing, they are tracked by exact count in
-// TestTheRealLogCoverageIsMeasuredNotAssumed, and they are the next piece of
-// work rather than a rounding error.
+// exec.* counts durable work and stage.* names a position in the blueprint;
+// both are plumbing. A host that shows a moving progress indicator and never
+// the words "read README.md" has replaced a blank screen with a busy one --
+// which is why tool.* was chosen before either even though it is not the
+// biggest count.
 //
-// tool.call_denied is in the handled set and contributes ZERO to that figure:
-// the recorded run allows every tool, so the log contains none. That is
-// stated rather than hidden, because a coverage number that counted handled
-// types instead of handled events would claim credit for it.
+// tool.call_denied and stage.timeout are in the handled set and contribute
+// ZERO to the figure: the recorded run allows every tool and never exceeds a
+// stage deadline, so the log contains neither. That is stated rather than
+// hidden, because a coverage number that counted handled TYPES instead of
+// handled EVENTS would claim credit for them.
 //
 // The list must be kept beside the switch. A type added to one and not the
 // other makes Handles lie, which is why there is a test that walks the real
@@ -500,6 +503,20 @@ var handled = map[string]bool{
 	"stage.submitted": true,
 	"stage.advanced":  true,
 	"stage.timeout":   true,
+
+	// Stage-deadline scheduling. Handled although neither moves any host state,
+	// for the same reason stage.timeout is: "handled" means read and
+	// understood, and the understanding here is that these two are the core's
+	// internal bookkeeping, not a fact the user needs. A deadline the user must
+	// know about surfaces as agent.blocked with blocked_on=timer (BINDS.md
+	// §4.2), which already has a handler and a todo; the scheduling of the
+	// deadline itself, and its cancellation when the stage resolved in time,
+	// are the timer doing its job invisibly. Unlike stage.timeout, these two DO
+	// appear in the measured log, so recognising them moves coverage -- that is
+	// the difference between an event read and understood as a no-op and an
+	// unhandled type that looks like an oversight.
+	"timer.scheduled": true,
+	"timer.cancelled": true,
 }
 
 // Handles reports whether the fold does anything with this event type.
@@ -1028,6 +1045,23 @@ func (s *State) apply(e Event) {
 		// "handled" must mean "read and understood": an event whose correct
 		// projection is 'no state change' is a decision, and the alternative
 		// is an unhandled type that looks like an oversight.
+
+	case "timer.scheduled", "timer.cancelled":
+		// A stage deadline was armed (timer.scheduled, payload after_ms /
+		// deadline_ms / timer_id) or disarmed because the stage resolved in
+		// time (timer.cancelled, payload timer_id). Neither moves host state,
+		// and the case exists rather than falling to the default for the same
+		// reason stage.timeout does: to record that the no-op is a decision.
+		//
+		// The user-facing half of "a timer exists" is not the scheduling, it
+		// is an agent waiting on one -- agent.blocked with blocked_on=timer
+		// (BINDS.md §4.2) -- and that already folds into a todo. Projecting a
+		// countdown here would invent host state the scene vocabulary has no
+		// bind for and the core does not ask the host to show; the deadlines
+		// are long (the measured log arms 1_800_000 ms) and the product's
+		// signal is escalate-on-timeout, not a ticking clock. So a deadline
+		// that arms and cancels without firing is exactly the timer doing its
+		// job invisibly, and the honest projection of it is nothing.
 
 	case "ui.state":
 		// Generic UI state updates for view-state binds (BINDS.md §4.3).

@@ -248,8 +248,8 @@ func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 	}
 	// The re-measured figure, pinned again. A Handles() that claimed
 	// everything (or nothing) would move this and say so.
-	if known != 120 {
-		t.Errorf("coverage = %d/%d events folded, want 120: the figure is pinned "+
+	if known != 122 {
+		t.Errorf("coverage = %d/%d events folded, want 122: the figure is pinned "+
 			"so that a change in what the fold handles -- or in what the core "+
 			"emits -- is a deliberate re-measurement and not a drift",
 			known, len(events))
@@ -266,6 +266,7 @@ func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 		"exec.work_finished", "run.result",
 		"tool.call", "tool.call_completed",
 		"stage.entered", "stage.submitted", "stage.advanced",
+		"timer.scheduled", "timer.cancelled",
 	} {
 		if unhandled[ty] != 0 {
 			t.Errorf("%s went back to being unhandled: the fold learned this "+
@@ -274,27 +275,22 @@ func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 		}
 	}
 
-	// What is STILL invisible, named and counted rather than left as a
-	// rounding error. Two events, both timer.*.
+	// Nothing in the measured log is invisible any more: coverage is 122/122.
+	// The blind list is kept as an explicit empty set rather than deleted so
+	// that a NEW unhandled type -- introduced by a newer core, or by a
+	// regression that drops a handler without failing the count above -- has a
+	// place that fails loudly instead of being silently tolerated by the
+	// default branch. The accounting check below still has to close.
 	//
-	// The three stage.* types left this list this turn and are asserted
-	// PRESENT in the loop above, so the two halves of the accounting cannot
-	// both be edited to agree with a wrong total.
-	//
-	// timer.* is the honest remainder and is NOT claimed as nearly-done.
-	// The pair here (one scheduled, one cancelled) is a stage deadline armed
-	// on entry and cancelled when the quorum was met -- a timer that did
-	// exactly what it should and never fired. The event a host actually
-	// needs is the one this log does not contain: stage.timeout, the case
-	// where the deadline WAS reached. The fold handles that type already
-	// (it is in the handled set and has a case explaining why its correct
-	// projection is no state change), but handling it contributes zero here,
-	// and that is stated rather than counted, because a coverage figure that
-	// scored handled TYPES instead of handled EVENTS would claim credit for
-	// an event the measured run never emits.
-	stillBlind := map[string]int{
-		"timer.scheduled": 1, "timer.cancelled": 1,
-	}
+	// timer.scheduled and timer.cancelled left this list this turn and are
+	// asserted PRESENT in the loop above, so the two halves of the accounting
+	// cannot both be edited to agree with a wrong total. They are handled as a
+	// read-and-understood no-op (a stage deadline armed and then cancelled
+	// without firing has no host-facing projection -- see the fold's timer
+	// case), which is why recognising them moves the count even though they
+	// change no state, exactly the distinction stage.timeout is on the other
+	// side of: handled, but absent from this log, so contributing zero.
+	stillBlind := map[string]int{}
 	var blindTotal int
 	for ty, want := range stillBlind {
 		if unhandled[ty] != want {
@@ -303,6 +299,16 @@ func TestTheRealLogCoverageIsMeasuredNotAssumed(t *testing.T) {
 				"re-measurement and not a drift", ty, unhandled[ty], want)
 		}
 		blindTotal += want
+	}
+	// A type unhandled but not named in stillBlind is a genuine surprise: fail
+	// with its name so the remedy is to decide its projection, not to nudge the
+	// count.
+	for ty, n := range unhandled {
+		if _, named := stillBlind[ty]; !named {
+			t.Errorf("%s is unhandled and unaccounted for (%d events): either the "+
+				"fold should read it or it belongs in the blind list with a "+
+				"reason", ty, n)
+		}
 	}
 	if blindTotal+known != len(events) {
 		t.Errorf("the accounting does not close: %d folded + %d blind != %d "+
