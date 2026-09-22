@@ -66,6 +66,13 @@ type Result struct {
 	Doc     *scene.Document
 	Source  []byte
 	Summary string
+	// Diff is the line-level change from the source Apply was given to the
+	// source it produced, computed against the canonical form of both so that
+	// reformatting is not reported as a change. It is the data the change-diff
+	// view renders before the patch is trusted (PLAN.md, Phase 2): the Summary
+	// says what changed in the user's vocabulary, the Diff shows it in the
+	// document's.
+	Diff Diff
 }
 
 // Apply runs one /ui command against a scene document's source bytes.
@@ -247,7 +254,16 @@ func (c Command) apply(name string, src []byte) (Result, error) {
 		return Result{}, err
 	}
 
-	return Result{Doc: doc, Source: out, Summary: c.summary()}, nil
+	// The diff is computed against the source Apply was handed, not against a
+	// second re-serialisation, so it is exactly the change the caller will
+	// persist. DiffSource canonicalises both sides, so passing the raw src is
+	// correct even when it was not canonically formatted.
+	diff, err := DiffSource(src, out)
+	if err != nil {
+		return Result{}, fmt.Errorf("%s: could not diff the patched scene: %w", name, err)
+	}
+
+	return Result{Doc: doc, Source: out, Summary: c.summary(), Diff: diff}, nil
 }
 
 // unknownTargetError explains a /ui command that named a node the scene does
