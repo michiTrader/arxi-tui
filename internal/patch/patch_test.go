@@ -252,6 +252,7 @@ func TestStyleWritesTheSpellingTheRendererReads(t *testing.T) {
 func TestEveryVerbRoundTripsThroughTheValidator(t *testing.T) {
 	name, src := sobria(t)
 	lines := map[string]string{
+		"add":   `/ui add node below status {"type":"text","text":"hello"}`,
 		"style": "/ui style status dim",
 		"set":   "/ui set status text hello",
 	}
