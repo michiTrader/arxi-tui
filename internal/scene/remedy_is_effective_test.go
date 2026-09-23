@@ -319,6 +319,14 @@ func remedyProbeDocuments(t *testing.T) []remedyProbe {
 		// and the anim token is checked separately by ValidateTokens.
 		"reveal": `{"root":{"type":"text","text":"x","reveal":{"anim":"reveal.fast"}}}`,
 
+		// transition graduated (G1): the engine draws it at the renderNode
+		// chokepoint on every node type, so like scroll and reveal it is not in
+		// unrenderedFields. Its axis is universal (no node-type refusal), so the
+		// fixture is a plain text node with a transition, which validates clean —
+		// doc.Validate() is theme-agnostic and the anim token is checked separately
+		// by ValidateTokens.
+		"transition": `{"root":{"type":"text","text":"x","transition":{"anim":"default"}}}`,
+
 		// Already in unrenderedFields, so the subtest returns early — their
 		// promise is checked by TestEveryUnrenderedFieldIsActuallyRefused with
 		// the real reason string. They are listed so a key cannot be missing

@@ -421,18 +421,35 @@ counterfactual test).
   look. Counterfactuals run in three places: reverting the phase mapping fails
   the render's start/mid/absent cases, disabling the axis check fails the
   off-text refusals, disabling the token check fails the undefined-token case.
-- **G1** Implement `transition`. **G4** `enter {row, stagger}`. Each atomic, each
-  now implementable against the signed contract, the host clock G-A built, *and*
-  the one-shot pattern G3 set as the template — `transition` rides the same
-  `AnimPhase` phase (curve-eased `elapsed / duration_ms`) onto the SGR-intensity
-  axis, and `enter` schedules per-row `transition`/`reveal`. The pattern: graduate
-  the field on `scene.Node` if it is not already there, sign its refusals in
+- **G1 — DONE (2026-09-23).** `transition` is the second one-shot prop, landed on
+  the clock G-A/G2 built and the one-shot pattern G3 set (PR #58). It graduated
+  from parsed-and-warned to a read `*Transition{Anim}` struct on `scene.Node` (the
+  `anim:"1"` tag puts it on the progress audit's animation axis): the engine draws
+  it at the `renderNode` chokepoint — the node wears the theme's dim intensity
+  while `AnimPhase[id] < 1` and its settled style once the phase reaches `1`, the
+  SGR dim→bright intensity axis SCENES.md Scene 4 / G-B signs. Unlike scroll
+  (marquee) and reveal (text) there is **no node-type refusal**: the intensity
+  axis is universal, so transition is honoured everywhere the way `focus_glow` is
+  (which is also what makes `enter`'s `row:false` container entrance well-defined).
+  It reuses the host clock unchanged — it reports the same one-shot activity
+  (`OneShot`, `Token`) reveal does, so the loop cannot tell the two apart and
+  needs no new code — and `ValidateTokens` refuses a transition naming an `anim`
+  token the theme lacks (empty resolves `anim.default`, Q8), its only load-time
+  refusal. A nil `AnimPhase` draws the settled style, so no golden moves.
+  Counterfactuals run: always-settled fails the running/dim cases, never-settle
+  fails the settled and nil cases, and disabling the token check fails the
+  undefined-token case.
+- **G4** `enter {row, stagger}` — atomic, now implementable against the signed
+  contract, the host clock G-A built, *and* the one-shot pattern G3/G1 set as the
+  template: `enter` schedules per-row `transition`/`reveal`, so it composes the
+  two one-shot props rather than adding an axis. The pattern: graduate the field
+  on `scene.Node` if it is not already there, sign its refusals in
   `validateScroll`/`validateReveal`'s shape, read the phase in the renderer, and
   land a golden pinned at chosen phases with a counterfactual that reverts the
   phase mapping.
-- **G5** [G1,G4] Freeze the remaining Scene 4 golden(s) and update the status
-  paragraph as each prop lands (scroll's and reveal's paragraphs are already
-  updated).
+- **G5** [G4] Freeze the remaining Scene 4 golden(s) and update the status
+  paragraph as each prop lands (scroll's, reveal's and transition's paragraphs are
+  already updated).
 
 ### Block H — Phase 3: declarative plugin mounting (heart of the phase)
 

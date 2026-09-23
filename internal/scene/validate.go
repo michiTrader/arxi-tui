@@ -556,6 +556,29 @@ func (d *Document) collectTokenErrors(n *Node, path string, thm *theme.Theme, er
 		}
 	}
 
+	// Check the transition's timing token against the theme's anim section (G1).
+	// Same net as the reveal above and for the same reason (Q8, TOKENS.md): an
+	// entrance resolves anim.default when it names none, and a transition naming a
+	// timing token the active theme does not define fails the load with an address
+	// rather than silently never animating. HasAnim, not Has: the anim section is a
+	// separate namespace, so a style token spelled like the timing token must not
+	// satisfy this. Unlike scroll and reveal there is no node-type refusal to pair
+	// this with — the intensity axis is universal (see node.go) — so this token
+	// check is transition's only load-time refusal.
+	if n.Transition != nil {
+		token := n.Transition.Anim
+		if token == "" {
+			token = "default"
+		}
+		if !thm.HasAnim(token) {
+			*errs = append(*errs, TokenError{
+				Token:    token,
+				NodeType: n.Type + " transition",
+				Loc:      d.locOf(path),
+			})
+		}
+	}
+
 	// Recurse into children for nested structures (box nodes, overlays).
 	for i, child := range n.Children {
 		d.collectTokenErrors(child, childPath(path, i), thm, errs)

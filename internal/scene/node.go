@@ -107,6 +107,43 @@ type Node struct {
 	// Scroll and FocusGlow — a marker rather than a name convention because a
 	// name-based rule silently captures an unrelated field added later.
 	Reveal *Reveal `json:"reveal,omitempty" anim:"1"`
+	// Transition is Scene 4's entrance animation (G1), `{ "anim": "<token>" }`.
+	// It graduated from a parsed-and-warned key to a read struct the same way
+	// scroll (G2) and reveal (G3) did: the render semantics are signed (SCENES.md
+	// Scene 4, G-B — the SGR dim→bright intensity axis) and the host clock that
+	// drives it is signed (ADR-0005), so the shape is now read rather than warned
+	// about.
+	//
+	// A struct rather than json.RawMessage, for Scroll's, Reveal's and FocusGlow's
+	// stated reason: the engine reads `{anim}` now, so leaving it raw would mean
+	// parsing it at the render site, and a shape parsed where it is used is a shape
+	// with no single definition.
+	//
+	// The axis it rides is SGR intensity — a node's content ramps from the theme's
+	// dim intensity to its settled style as the phase rises — and that axis is not
+	// type-specific the way scroll's horizontal offset (marquee) and reveal's
+	// character count (text) are: every node that draws styled content can be
+	// dimmed. So transition is honoured at the one function every node passes
+	// through (renderNode's withTransition), exactly as FocusGlow resolves its
+	// token there, and there is no node-type refusal for it — unlike Scroll and
+	// Reveal, whose axes belong to a single type. The design places transition on
+	// both text nodes and containers (G-B: `enter` with `row:false` is "identical
+	// to putting transition on the container itself"), which is the same universal
+	// reach FocusGlow already has; a container has no own content to dim, so it is
+	// unaffected in G1 the way it is for a glow, and that composition is `enter`'s
+	// (G4) scheduler question, not this one. An absent transition (nil) is the
+	// ordinary no-op — most nodes do not animate in.
+	//
+	// Anim names a timing token (Q8); empty means anim.default. A named token
+	// absent from the active theme is refused at load by ValidateTokens (the same
+	// net a style token and a reveal token get), so an entrance naming a duration
+	// the theme never declared is a load error with an address, not a node that
+	// silently never animates.
+	//
+	// The `anim:"1"` tag puts it on the progress audit's animation axis, beside
+	// Scroll, Reveal and FocusGlow — a marker rather than a name convention because
+	// a name-based rule silently captures an unrelated field added later.
+	Transition *Transition `json:"transition,omitempty" anim:"1"`
 	// MinWidth is the minimum content width an overlay will accept before
 	// its content wraps. The overlay never shrinks below this (Q7).
 	MinWidth *int `json:"min_width,omitempty"`
@@ -120,11 +157,12 @@ type Node struct {
 	// oversight. focus_glow's input is the focused node's id: `ui.focus` is
 	// signed in BINDS.md, maintained by the fold and already projected, so
 	// the property is expressible with no new vocabulary and no clock.
-	// transition and enter still need their own render semantics read in the
-	// engine; scroll was the same until G2 signed those (SCENES.md Scene 4,
-	// G-B) and built the clock (ADR-0005), and reveal followed in G3 on that
-	// clock, so both scroll and reveal now read their structs above and this
-	// list is down to the two that remain warnings.
+	// scroll was the same until G2 signed its render semantics (SCENES.md Scene
+	// 4, G-B) and built the clock (ADR-0005); reveal followed in G3 on that
+	// clock, and transition in G1 on the one-shot pattern reveal set — so scroll,
+	// reveal and transition now read their structs above, and this list is down to
+	// the one that remains a warning: enter, whose per-row scheduler (G4) is the
+	// only Scene 4 prop still parsed-and-warned rather than read.
 	//
 	// A struct rather than json.RawMessage: the shape is being read now, so
 	// leaving it raw would mean parsing it at the render site, and a shape
@@ -429,6 +467,27 @@ type Scroll struct {
 // the active theme does not define is refused at load (ValidateTokens), the same
 // net an undefined style token gets.
 type Reveal struct {
+	Anim string `json:"anim,omitempty"`
+}
+
+// Transition is the object form of Scene 4's transition (G1): the entrance
+// intensity ramp, `{ "anim": "<token>" }`.
+//
+// One named type, read by the engine and inventoried by the validator, for the
+// reason Reveal/Scroll/FocusGlow/borderObject are named types: the shape the
+// renderer reads and the shape the validator checks are the same declaration,
+// so they cannot drift.
+//
+// Anim names a timing token whose duration_ms and curve the host clock measures
+// elapsed time against (ADR-0005); over that duration the renderer draws the
+// node dim, then in its settled style, along the SGR intensity axis. Empty means
+// anim.default (Q8 — every animated prop uses the default token unless it names
+// one), and a named token the active theme does not define is refused at load
+// (ValidateTokens), the same net an undefined style token gets. It is the same
+// one-field shape Reveal has, and for the same reason: a transition is a
+// duration and a curve, nothing more — the axis it rides is fixed by the prop,
+// not chosen per node.
+type Transition struct {
 	Anim string `json:"anim,omitempty"`
 }
 

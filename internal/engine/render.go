@@ -230,6 +230,7 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 		return ui.Frame{Width: r.Width, Height: 0}
 	}
 	n = withFocusGlow(n, state)
+	n = r.withTransition(n)
 	switch n.Type {
 	case "stack":
 		return r.renderStack(n, state, budget)
@@ -1745,6 +1746,90 @@ func withFocusGlow(n *scene.Node, state fold.State) *scene.Node {
 		glowed.Style[key] = n.FocusGlow.Style
 	}
 	return &glowed
+}
+
+// transitionDimToken is the intensity a node wears while its entrance
+// (transition, G1) is running. It is the theme's dim token — the low end of the
+// SGR intensity axis SCENES.md Scene 4 signs the prop onto — named as a constant
+// rather than spelled at the write site so the one place the entrance's start
+// intensity is decided is greppable. A theme that defines no `dim` resolves it to
+// no style (normal), which degrades the entrance to normal→settled rather than
+// refusing; the token is injected by the renderer, not written by the scene, so
+// it never reaches ValidateTokens.
+const transitionDimToken = "dim"
+
+// withTransition returns the node the rest of the render path should draw while
+// a transition (G1) is running: a shallow copy dimmed to the theme's dim
+// intensity, or the node itself once the entrance has settled. It also reports
+// the node active so the host clock keeps ticking through the entrance
+// (ADR-0005).
+//
+// It sits in renderNode beside withFocusGlow, and for the same reason: the SGR
+// intensity axis a transition rides is universal, and renderNode is the one
+// function every node passes through, so "some node types transition and others
+// do not" is unrepresentable rather than merely tested for. It is a method
+// rather than the free function withFocusGlow is because it reads two things a
+// pure (node, state) transform cannot: the per-node phase the loop computed
+// (r.AnimPhase) and the activity accumulator (r.active).
+//
+// Why dim-while-running, settled-when-done and nothing in between. The intensity
+// axis is discrete — the SGR vocabulary this project ships is dim, normal and
+// bold — so the two endpoints G-B signs ("0 draws the node dim, 1 draws it in
+// its ordinary style") are the whole of it. A finer ramp would need true opacity
+// or colour interpolation, which G-B refuses as the fifth axis. This is the axis
+// being honest about its own resolution, not a shortcut: reveal's character
+// count is continuous and draws a growing prefix, intensity is not and draws two
+// states.
+func (r *Renderer) withTransition(n *scene.Node) *scene.Node {
+	if n == nil || n.Transition == nil {
+		return n
+	}
+	// A transitioning node is an animating node, present or settled: report it
+	// active with its one-shot marker and token, the way a reveal reports itself.
+	// The clock — not the renderer — decides settled-ness from elapsed against the
+	// token's duration and stops forcing ticks once past it, so reporting
+	// unconditionally is correct and a settled transition is present but quiet.
+	if r.active != nil {
+		*r.active = append(*r.active, AnimActivity{
+			NodeID:  n.ID,
+			OneShot: true,
+			Token:   n.Transition.Anim,
+		})
+	}
+	// nil AnimPhase is the pure/golden path with no clock: the node draws settled,
+	// the no-op guarantee that keeps every non-motion golden unchanged. A non-nil
+	// map missing this id is the first appearance in the live loop — phase 0, the
+	// dim start — so the map's nil-ness is checked before it is indexed, exactly as
+	// revealPrefix does.
+	if r.AnimPhase == nil {
+		return n
+	}
+	if r.AnimPhase[n.ID] >= 1 {
+		return n // settled: the node's own style
+	}
+
+	// Running: the node wears the theme's dim intensity. The style map is
+	// rewritten rather than a token threaded alongside it, for withFocusGlow's
+	// reason — every downstream site resolves a token out of n.Style through
+	// styleName, so a copy with its own map keeps a transitioning node just a node
+	// with a style. It is written under every key styleName consults, not only the
+	// canonical one, so a node spelling its token "token" dims too: the
+	// two-spelling obligation withFocusGlow documents, at the second place the
+	// engine writes a token.
+	//
+	// The copy is shallow and local: the document must not be mutated, because the
+	// same document renders again next repaint with the phase advanced, and a dim
+	// token written into the tree would be permanent — the arxi-sim remembered-row
+	// shape withFocusGlow's comment names.
+	dimmed := *n
+	dimmed.Style = make(map[string]string, len(n.Style)+1)
+	for k, v := range n.Style {
+		dimmed.Style[k] = v
+	}
+	for _, key := range scene.StyleTokenKeys() {
+		dimmed.Style[key] = transitionDimToken
+	}
+	return &dimmed
 }
 
 func evalWhen(bind string, state fold.State) bool {
