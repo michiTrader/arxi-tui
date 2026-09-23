@@ -383,29 +383,37 @@ counterfactual test).
   defaults (on-demand ticker; `transition` triggers on appearance; re-entry
   re-animates), recorded in ADR-0005. Signing lifts no code guard — G1–G4 do,
   each with its own counterfactual.
-- **G1** Implement `transition`. **G2** `scroll {speed, pause_when}` (field
-  exists refused at `node.go:72`). **G3** `reveal`. **G4** `enter {row,
-  stagger}`. Each atomic, each now implementable against the signed contract.
-  **Implementation note, measured before starting G2:** graduating `scroll` from
-  refused to rendered is not a local change. The `scroll` field is the *subject*
-  of two foundational guard tests that encode the current "refused raw field"
-  design — `unrendered_test.go` (asserts `"scroll": null` is refused where a
-  string zero-value is not) and `zero_value_key_test.go` (uses `scroll` as its
-  worked example that a `json.RawMessage` keeps its `null` bytes so it can be
-  refused) — plus the `nested_branch_audit_test.go` inventory. Lifting the
-  refusal means deciding scroll's scope (proposal: honoured on the `marquee`
-  node type, refused elsewhere with an address, per G-B's "a prop on the wrong
-  node type is a scene defect") and its empty spelling (proposal: absent/`null`
-  = no scroll, an accepted no-op, not a refusal), then rewriting those guard
-  tests to the new behaviour with a counterfactual each — a review event, not a
-  silent edit. The clock (G-A) is simpler code — the ticker and the phase input
-  add no field graduation — but it earns its place only once a prop consumes it,
-  so G-A and G2 land together: `renderMarquee` (`render.go:910-912`, the
-  explicit "Phase 0: static display … clock comes later" placeholder) is where
-  the phase first bites, and it bites on a `scroll` prop the validator must
-  first graduate.
-- **G5** [G1-G4] Freeze the Scene 4 golden and update its status paragraph.
-- **G5** [G1-G4] Freeze the Scene 4 golden and update its status paragraph.
+- **G-A + G2 — DONE (2026-09-23).** The host animation clock and the `scroll`
+  marquee landed together (PR #56), because the clock earns its place only once
+  a prop consumes it. `scroll` graduated from a refused `json.RawMessage` to a
+  read `*Scroll{Speed, PauseWhen}` struct: `validateScroll` honours it on a
+  `marquee` and refuses it elsewhere (wrong node type, non-positive speed, or an
+  unsigned `pause_when` bind) with an address, and it left `unrenderedFields`.
+  The two foundational guards that encoded the refused-raw design
+  (`unrendered_test.go`, `zero_value_key_test.go`) and the sibling audits
+  (`rawBranchAccessors`, the remedy fixtures) were rewritten to the graduated
+  behaviour, each with a counterfactual run — the review event the note below
+  predicted, not a silent edit. The sub-forks the design left open were resolved
+  as proposed: honoured on `marquee` only, and absent/`nil` is the accepted
+  no-op. `renderMarquee` now windows the overflowing text at
+  `(ticks * speed) mod (width + gap)`; the phase reaches it as `Renderer.AnimTicks`,
+  an input separate from `fold.State`, so `RenderFrame` stays pure and every
+  golden is unchanged. The clock is a `time.Ticker` fourth `select` case
+  (`cmd/arxi-tui/anim.go`): per-node elapsed time held across frames like
+  `ui.hidden`, advanced by wall time, armed only while a visible marquee is
+  unpaused-active, and `pause_when` freezes the offset. The tick case only
+  repaints, so the escape hatch stays uncapturable (invariant 6).
+- **G1** Implement `transition`. **G3** `reveal`. **G4** `enter {row, stagger}`.
+  Each atomic, each now implementable against the signed contract *and* the host
+  clock G-A built — `transition` and `reveal` ride the same `AnimTicks` phase
+  (curve-eased `elapsed / duration_ms` for a one-shot rather than scroll's
+  continuous tick count), and `enter` schedules per-row `transition`/`reveal`.
+  The pattern G2 set is the template: graduate the field on `scene.Node` if it
+  is not already there, sign its refusals in `validateScroll`'s shape, read the
+  phase in the renderer, and land a golden pinned at chosen phases with a
+  counterfactual that reverts the phase mapping.
+- **G5** [G1,G3,G4] Freeze the remaining Scene 4 golden(s) and update the status
+  paragraph as each prop lands (scroll's paragraph is already updated).
 
 ### Block H — Phase 3: declarative plugin mounting (heart of the phase)
 

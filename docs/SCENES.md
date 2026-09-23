@@ -144,12 +144,24 @@ is a global `[anim]` token with per-node override; Q9 the host announces
 **Implementation status.** `focus_glow: { "style": "<token>" }` is implemented:
 when a node's `id` equals `ui.focus`, the engine renders its content under the
 named token. It needs no clock — its only input is the focused node's id, which
-`ui.focus` already supplies — so it is the one property of this scene that
-could land before Phase 4.
+`ui.focus` already supplies — so it was the one property of this scene that
+could land before the host clock existed.
 
-The other four are **signed** (`docs/DESIGN-BLOCK-G.md`, G-B) and now
-implementable against a frozen contract. Until each lands it is still parsed and
-**warned about with an address**, not silently dropped (PLAN.md's
+`scroll: { "speed": <cells/tick>, "pause_when": "<bind>" }` is now implemented
+too (G2), and it is what built the host animation clock (ADR-0005): a marquee
+whose content overflows its budget advances a horizontal window at
+`(ticks * speed) mod (width + gap)`, the tick count coming from the loop's
+`time.Ticker`, and `pause_when` freezes the offset while its bind is truthy. A
+`scroll` on any node type but `marquee` is refused with an address — the axis
+belongs to the marquee — and a non-positive `speed` or an unsigned `pause_when`
+bind is refused the same way. Every existing golden is unchanged: the phase is
+an input separate from the fold, so a document with no scroll renders exactly
+as before.
+
+The other three — `transition`, `reveal`, `enter` — are **signed**
+(`docs/DESIGN-BLOCK-G.md`, G-B) and now implementable against a frozen contract,
+with the clock they need already in the loop. Until each lands it is still
+parsed and **warned about with an address**, not silently dropped (PLAN.md's
 forward-compatibility rule); the warning is lifted by the implementation, not by
 this signature. The clock those props measure elapsed time against is
 ADR-0005 (`docs/PLAN.md`); the timing vocabulary they consume is D4's `anim`
