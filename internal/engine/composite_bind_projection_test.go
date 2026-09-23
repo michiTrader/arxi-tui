@@ -296,6 +296,31 @@ func rowTemplateVaries(t *testing.T, bind, witness string, a, b fold.State) bool
 	return render(a) != render(b)
 }
 
+// hiddenFilterVaries reports whether the ui.hidden walk filter actually removes
+// a node whose id enters the set. It is the witness for a walk-consumed bind:
+// ui.hidden is never drawn, so the frame's dependence on it is the drop itself.
+// A node with a fixed id renders its text with the empty set and must render
+// nothing once its id is a member — if reverting hiddenByWhenRow's membership
+// test leaves the node on screen, this returns false and the composite guard
+// reports ui.hidden inert, which is the counterfactual that keeps the filter
+// honest.
+func hiddenFilterVaries(t *testing.T) bool {
+	t.Helper()
+	r := &Renderer{Width: 120, Height: 24}
+	n := &scene.Node{Type: "text", ID: "witnessnode", Text: "VISIBLEWITNESS"}
+	render := func(st fold.State) string {
+		var sb strings.Builder
+		for _, l := range r.renderNode(n, st, 24).Live {
+			sb.WriteString(l.Text())
+			sb.WriteString("\n")
+		}
+		return sb.String()
+	}
+	visible := render(fold.State{})
+	hidden := render(fold.State{UIHidden: map[string]bool{"witnessnode": true}})
+	return visible != hidden
+}
+
 func TestEverySignedCompositeBindIsDrawnOrRecordedUnprojected(t *testing.T) {
 	stateType := reflect.TypeOf(fold.State{})
 
@@ -338,6 +363,22 @@ func TestEverySignedCompositeBindIsDrawnOrRecordedUnprojected(t *testing.T) {
 		probe := reflect.New(stateType).Elem()
 		if perturbScalar(probe.Field(idx)) {
 			// A scalar: the sibling guard measures it on resolveBind.
+			continue
+		}
+
+		// A walk-consumed bind (ui.hidden, D3) is a composite the engine reads
+		// as a visibility filter, never draws as a value — so the witness sweep
+		// below, which searches a rendered frame for a string, cannot see it: it
+		// produces no text. It is measured instead through the mechanism that
+		// consumes it, exactly as templateProjectedBinds are measured through the
+		// template that draws them. Handling it here rather than in the sweep
+		// keeps the witness/inert machinery from flagging it "unwitnessed" for a
+		// value it will never render.
+		if reason, ok := walkConsumedBinds[bind]; ok {
+			if !hiddenFilterVaries(t) {
+				inert = append(inert, bind+" (walk-consumed but hiding a node's id did not change the frame — "+reason+")")
+			}
+			checked++
 			continue
 		}
 

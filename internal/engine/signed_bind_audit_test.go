@@ -65,6 +65,24 @@ func TestEverySignedBindIsHandledOrJustified(t *testing.T) {
 				return
 			}
 
+			if reason, ok := walkConsumedBinds[bind]; ok {
+				// Handled, but not by a switch case this audit can read. A
+				// walk-consumed bind is turned into no text — it filters the
+				// tree instead — so the label scan below cannot see it and
+				// would wrongly report it unhandled. The stale direction still
+				// matters: if such a bind ALSO gained a resolveBind case, the
+				// two would be independent projections of one name and the
+				// entry would be hiding that. So the exemption is refused the
+				// moment a label appears.
+				if handled[bind] {
+					t.Errorf("%q is listed in walkConsumedBinds (%q) but also has a resolveBind case;\n"+
+						"the walk filter and a resolved value are two projections of one bind, and this entry now\n"+
+						"conceals the second. Reconcile them: either the value is real and the entry is wrong, or\n"+
+						"the case is spurious and should be removed.", bind, reason)
+				}
+				return
+			}
+
 			if !handled[bind] {
 				t.Errorf("bind %q is signed in docs/BINDS.md and accepted by validate.go, and the engine has no case for it.\n"+
 					"consequence: a scene naming it validates clean and draws the placeholder, so spelling the bind\n"+
@@ -98,11 +116,12 @@ var acceptedUnprojectedBinds = map[string]string{
 
 	// A set of node ids consumed by the engine walk as a visibility filter, not
 	// a scalar resolveBind can return and not a value to print. D3 signed the
-	// name and its set semantics (BINDS.md §4.3), but the walk filter that
-	// consumes it is Block F (`/ui hide`/`show`), not yet implemented — so it is
-	// signed-not-projected exactly as §4.6 describes, and drawn nowhere until
-	// that block lands.
-	"ui.hidden": "a set of node ids consumed by the engine walk (D3); the walk filter is Block F, not yet built — signed to reserve the name and its collection semantics",
+	// name and its set semantics (BINDS.md §4.3); F3 built the walk filter that
+	// consumes it. It is therefore handled — but by the walk, not by a switch
+	// case this audit's label scan can see — so it lives in walkConsumedBinds
+	// below rather than here. Keeping it in this "cannot be projected yet" list
+	// after the filter shipped would be the stale-comment failure this audit's
+	// own remedy warns about.
 
 	// An object, not text. BINDS.md is explicit that the remedy is not a
 	// separate bind: the engine is meant to read blocked_on together with
@@ -126,6 +145,26 @@ var acceptedUnprojectedBinds = map[string]string{
 	// something a scene displays. It is signed to stop the name being taken
 	// by something else, which is a reservation working exactly as intended.
 	"user.input.submitted": "a reserved name for the host's enter-key pulse; signed so it cannot be reused, never displayed",
+}
+
+// walkConsumedBinds are signed binds the engine consumes structurally in the
+// render walk as a filter, rather than resolving them to a value or drawing
+// them as a collection. They are handled — the frame changes with the fold
+// field — but the two label/witness audits cannot see them, because a bind that
+// is never turned into text has no switch case to read and no rendered witness
+// to search for. Listing them here is the same on-the-record exemption
+// acceptedUnprojectedBinds is, for the opposite reason: not "cannot be projected
+// yet" but "projected by the walk, proven by a behavioural drop test rather than
+// a label". Each entry names the guard that actually measures it, so the
+// exemption is a pointer to a live check and not a place a bind can hide.
+//
+//   - ui.hidden: a set of node ids; a node renders iff its id is not a member
+//     (BINDS.md §4.3, D3; filter in hiddenByWhenRow). Proven by
+//     hiddenFilterVaries in composite_bind_projection_test.go, which drops a
+//     node when its id enters the set and would fail if the walk stopped
+//     reading it.
+var walkConsumedBinds = map[string]string{
+	"ui.hidden": "a set of node ids consumed by the render walk as a visibility filter (BINDS.md §4.3, D3); proven by hiddenFilterVaries",
 }
 
 // bindCaseLabelsInEngine collects the string literals the engine switches on,
