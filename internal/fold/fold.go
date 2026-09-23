@@ -195,8 +195,19 @@ type State struct {
 	UIFocus       string `json:"ui.focus"`
 	UIMax         string `json:"ui.max"`
 	UISurface     string `json:"ui.surface"`
-	EscapeArmed   bool   `json:"host.escape.armed"`
-	SceneError    string `json:"host.scene.error"`
+	// UIHidden is the set of node ids the user has hidden through `/ui hide <id>`
+	// (BINDS.md §4.3, signed as D3). It is a set and not a scalar for the reason
+	// the design pinned: every other `ui.*` row is a single id, so a scalar
+	// `ui.hidden` would make `/ui hide a` silently unhide `b`. Unlike every other
+	// bind in this struct it is not resolved to a value the engine draws; the
+	// render walk consumes it as a visibility filter — a node renders iff its id
+	// is not a member — so the map is membership-shaped rather than a displayed
+	// slice, and its order (which a map does not have) never reaches a frame. The
+	// host owns it across frames the way it owns the input buffer; the empty set
+	// is the default and a no-op, so carrying it moves no golden.
+	UIHidden    map[string]bool `json:"ui.hidden"`
+	EscapeArmed bool            `json:"host.escape.armed"`
+	SceneError  string          `json:"host.scene.error"`
 
 	// BudgetMicrounits is run.started.budget_usd × 1000, captured when the run
 	// starts. Combined with CostMicrounits it produces session.tokens_used.
