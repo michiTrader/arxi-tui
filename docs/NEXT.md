@@ -341,8 +341,18 @@ counterfactual test).
   `TestUIHidden*` tests and the composite audit's `ui.hidden` case, nothing
   else. The §3 id-uniqueness invariant is still enforced at the verb boundary,
   not yet load-time.
-- **F4** [F1-F3] Update advertised verbs in the slash menu; goldens; tests.
-  (The menu advertisement for `add` landed with F1.)
+- **F4 — DONE (2026-09-23).** The slash-menu advertisement and the sweeps
+  landed incrementally with F1–F3 (each verb was added to `Verbs()`, the `ui`
+  description, the menu-agreement test and the verb-round-trip sweep in the same
+  PR that implemented it), so the surface and its chrome never drifted. This
+  task closed the one remaining gap: the README **Status** section still
+  described "two verbs" with `add`/`move`/`hide`/`show` all refused as "not
+  yet", which was stale after F1–F3 — the accepted-but-not-drawn class pointed
+  at the docs. It now describes the six implemented verbs (`add`, `move`, `set`,
+  `style`, `hide`, `show`), the D2 addressing and D3 view-state notes as
+  *implemented*, and the menu-drift bullet as a resolved past defect. No golden
+  moves: the empty `ui.hidden` set is a no-op, so nothing new was frozen. Block
+  F is complete.
 
 ### Block G — Phase 3: animation props [D4]
 
