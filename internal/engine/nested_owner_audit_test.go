@@ -414,6 +414,8 @@ func nestedFragmentReachedNode(n *scene.Node, branch string) bool {
 		return n.Suffix != nil
 	case "children":
 		return len(n.Children) > 0
+	case "row_template":
+		return n.RowTemplate != nil
 	default:
 		return false
 	}

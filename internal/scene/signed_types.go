@@ -272,6 +272,12 @@ var nestedFormReaders = map[string]map[string]string{
 	"prefix.string": {"input": "renderInput reads PrefixText()"},
 	// suffix is always a node, and only the marquee composes one.
 	"suffix.node": {"marquee": "renderMarquee reads n.Suffix"},
+	// row_template is always a node, and only the list composes one: renderList
+	// instantiates it once per element of the array its bind names (D1). Before
+	// D1 it was refused rather than read, so it had no owner here; now it does,
+	// and this row keeps the drop-warning path from taking its silent early
+	// return for a template.
+	"row_template.node": {"list": "renderList instantiates n.RowTemplate per row via renderRowTemplate"},
 	// children is always an array, and four owners compose it. The box and
 	// the overlay are containers with a frame; the row and the stack are the
 	// two layout primitives. Every other signed type draws from its own

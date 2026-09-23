@@ -90,6 +90,7 @@ var signedBinds = map[string]bool{
 	"ui.focus":       true,
 	"ui.max":         true,
 	"ui.surface":     true,
+	"ui.hidden":      true,
 
 	// §2 bootstrap set — host survival state the raw scene may display
 	"user.input":           true,
@@ -133,49 +134,76 @@ func SignedBinds() []string {
 // stored on Node because the tree is also built by hand and by future patch
 // code, and a position field would then be a field that is sometimes a lie.
 func (d *Document) validateBinds(n *Node, path string) error {
+	return d.validateBindsScoped(n, path, nil)
+}
+
+// rowSchemas signs, per array-of-objects bind, the `row.<field>` names a
+// row_template over it may address (BINDS.md §4.7). It is the validation
+// authority; the engine's rowScopesFor produces values under these same keys,
+// and a test holds the two identical so the vocabulary the validator accepts
+// and the vocabulary the renderer draws cannot drift apart.
+var rowSchemas = map[string]map[string]bool{
+	"team.members":  {"row.id": true, "row.state": true, "row.role": true, "row.busy": true, "row.turns": true, "row.spent_usd": true},
+	"agent.todos":   {"row.task": true, "row.blocked_on": true, "row.actor": true},
+	"slash.matches": {"row.name": true, "row.category": true, "row.description": true},
+}
+
+// RowSchema returns the signed `row.<field>` names for a list bind, or nil if
+// the bind carries no row schema. Exported so the engine can prove its own
+// projection keys match this contract rather than restating it.
+func RowSchema(bind string) map[string]bool { return rowSchemas[bind] }
+
+// validateBindsScoped walks a subtree, carrying the access path (so a refusal
+// names where it happened) and the row scope in effect. The scope is non-nil
+// only inside a row_template: it holds the source list's bind and the
+// `row.<field>` names that template may address (D1 / BINDS.md §4.7). A `row.*`
+// bind is checked against it, and refused with an address outside any template.
+func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bool) error {
 	// Check this node's bind.
-	if n.Bind != "" && !signedBinds[n.Bind] {
-		return &Error{
-			Loc: d.locOf(path),
-			Msg: fmt.Sprintf("unsigned bind %q in node type %q; every bind must appear in BINDS.md §4.5", n.Bind, n.Type),
-		}
+	if err := d.validateOneBind(n.Bind, "bind", n, path, scope); err != nil {
+		return err
 	}
 
-	// Check when conditions (they reference the same namespace).
+	// Check when conditions (they reference the same namespace). A `when` may
+	// carry an operator like "!=", so the bind is its leading field.
 	if n.When != "" {
-		// When conditions may use operators like "!=", extract the bind path.
-		parts := strings.Fields(n.When)
-		if len(parts) > 0 {
-			bindPath := parts[0]
-			if !signedBinds[bindPath] && bindPath != "" {
-				return &Error{
-					Loc: d.locOf(path),
-					Msg: fmt.Sprintf("unsigned bind %q in when condition of node type %q; every bind must appear in BINDS.md §4.5", bindPath, n.Type),
-				}
+		if parts := strings.Fields(n.When); len(parts) > 0 && parts[0] != "" {
+			if err := d.validateOneBind(parts[0], "when condition", n, path, scope); err != nil {
+				return err
 			}
 		}
 	}
 
-	// Recurse into children.
+	// Recurse into children, carrying the same scope: a node nested under a
+	// template row is still inside that template and may still read row.*.
 	for i, child := range n.Children {
-		if err := d.validateBinds(child, childPath(path, i)); err != nil {
+		if err := d.validateBindsScoped(child, childPath(path, i), scope); err != nil {
 			return err
 		}
 	}
-
-	// Recurse into prefix/suffix/template.
 	if prefix := n.PrefixNode(); prefix != nil {
-		if err := d.validateBinds(prefix, prefixPath(path)); err != nil {
+		if err := d.validateBindsScoped(prefix, prefixPath(path), scope); err != nil {
 			return err
 		}
 	}
 	if n.Suffix != nil {
-		if err := d.validateBinds(n.Suffix, suffixPath(path)); err != nil {
+		if err := d.validateBindsScoped(n.Suffix, suffixPath(path), scope); err != nil {
 			return err
 		}
 	}
+	// A row_template opens a new scope from this list's own bind. A template
+	// over a bind that signs no row schema (a scalar, or an unknown source) is
+	// refused here: a template has no rows to instantiate over, and the author
+	// is better told that than left with a list that silently draws nothing.
 	if n.RowTemplate != nil {
-		if err := d.validateBinds(n.RowTemplate, templatePath(path)); err != nil {
+		childScope := rowSchemas[n.Bind]
+		if childScope == nil {
+			return &Error{
+				Loc: d.locOf(path),
+				Msg: fmt.Sprintf("row_template on node type %q binds %q, which signs no row schema in BINDS.md §4.7; a template needs an array-of-objects bind (team.members, agent.todos, slash.matches) to instantiate rows over", n.Type, n.Bind),
+			}
+		}
+		if err := d.validateBindsScoped(n.RowTemplate, templatePath(path), childScope); err != nil {
 			return err
 		}
 	}
@@ -192,6 +220,39 @@ func (d *Document) validateBinds(n *Node, path string) error {
 	return nil
 }
 
+// validateOneBind refuses a bind that is neither a signed absolute bind nor a
+// legal relative one. A `row.*` bind is legal only inside a row_template and
+// only when its field is in that template's source schema; every other bind
+// must appear in the §4.5 inventory. `where` names the field for the message
+// ("bind" or "when condition").
+func (d *Document) validateOneBind(bind, where string, n *Node, path string, scope map[string]bool) error {
+	if bind == "" {
+		return nil
+	}
+	if strings.HasPrefix(bind, "row.") {
+		if scope == nil {
+			return &Error{
+				Loc: d.locOf(path),
+				Msg: fmt.Sprintf("relative bind %q in %s of node type %q is only legal inside a row_template (BINDS.md §4.7); there is no row to be relative to here", bind, where, n.Type),
+			}
+		}
+		if !scope[bind] {
+			return &Error{
+				Loc: d.locOf(path),
+				Msg: fmt.Sprintf("relative bind %q in %s of node type %q is not in the row schema of the enclosing list (BINDS.md §4.7); check the field name against the list's element type", bind, where, n.Type),
+			}
+		}
+		return nil
+	}
+	if !signedBinds[bind] {
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("unsigned bind %q in %s of node type %q; every bind must appear in BINDS.md §4.5", bind, where, n.Type),
+		}
+	}
+	return nil
+}
+
 // unrenderedFields are constructions this package validates but internal/engine
 // does not draw. Accepting one is the failure mode this project has now paid
 // for three times: a style key the validator learned and styleName() did not,
@@ -200,20 +261,17 @@ func (d *Document) validateBinds(n *Node, path string) error {
 // with no diagnostic anywhere, because clearing validation is precisely the
 // signal that says the document is fine.
 //
-// `row_template` is the most expensive of the three, because it reaches past a
-// scene and into the instrument. internal/eval's CollectBinds walks templates
-// by name, citing SCENES.md Q10, so a corpus answer that satisfies must_bind
-// only inside a template scores converged while the list renders "[…]". That
-// is reachable from a case the corpus already ships — raw-add-tasks-panel,
-// whose order is "put a tasks panel on the right" — so Phase 2's number could
-// have recorded a model success for a document that draws an empty panel.
+// `row_template` was the most expensive of these, because it reaches past a
+// scene and into the instrument: internal/eval's CollectBinds walks templates
+// by name, citing SCENES.md Q10, so a corpus answer that satisfied must_bind
+// only inside a template would have scored converged while the list rendered
+// "[…]". It was refused until D1 signed the `row.*` namespace (BINDS.md §4.7)
+// and the engine's renderRowTemplate learned to draw it; its entry has left
+// this map, and validateBinds now checks relative binds against the source
+// list's row schema. That graduation is exactly what this map exists to permit:
+// a field leaves the moment the renderer draws it, and unrendered_test.go is
+// what notices if the map and the renderer ever disagree again.
 //
-// The fix is a refusal rather than an implementation, deliberately. The field's
-// semantics are relative binds (`row.kind`), and `row.*` is signed nowhere in
-// BINDS.md: it is Scene 5, which is Phase 3. Rendering it "somehow" now would
-// invent format ahead of the phase meant to design it. When the engine learns
-// to draw one of these, its entry leaves this map and the guard in
-// unrendered_test.go is what notices the map and the renderer disagree.
 // `on_press` and `scroll` are the same class one step earlier, and they are
 // the reason this map's generality had to be real before they could be added.
 // SCENES.md calls both universal; neither was a field on Node, so
@@ -238,8 +296,6 @@ func (d *Document) validateBinds(n *Node, path string) error {
 // design it. A refusal costs the author one addressed message and costs the
 // project nothing it has to keep.
 var unrenderedFields = map[string]string{
-	"row_template": "relative binds inside templates are SCENES.md Q10 / Scene 5, " +
-		"and the `row.*` namespace they need is signed nowhere in BINDS.md yet",
 	"on_press": "the action vocabulary is closed per surface (SCENES.md Q18) and " +
 		"dispatch is Phase 3 interaction work; no node type presses anything yet",
 	"scroll": "scroll: {speed, pause_when} runs on the host animation clock " +

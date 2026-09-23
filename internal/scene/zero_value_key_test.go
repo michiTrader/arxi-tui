@@ -53,9 +53,10 @@ func TestAKeyWrittenEmptyIsStillAKeyTheAuthorWrote(t *testing.T) {
 	// unrenderedFields tomorrow fails here until it has a case: a key with no
 	// case is how this hole stayed open in the first place.
 	empties := map[string]string{
-		"on_press":     `""`,
-		"scroll":       `null`,
-		"row_template": `null`,
+		"on_press": `""`,
+		"scroll":   `null`,
+		// row_template graduated (D1): it is rendered now, so it is no longer in
+		// unrenderedFields and there is nothing here to measure about it.
 	}
 
 	assertEveryEmptyHasAKeyToMeasure(t, empties)
