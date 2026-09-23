@@ -79,6 +79,34 @@ type Node struct {
 	// FocusGlow. It is a marker rather than a name convention because a name-based
 	// rule silently captures an unrelated field added later.
 	Scroll *Scroll `json:"scroll,omitempty" anim:"1"`
+	// Reveal is Scene 4's typewriter animation (G3), `{ "anim": "<token>" }`.
+	// It graduated from a parsed-and-warned key to a read struct the same way
+	// scroll did in G2: the render semantics are signed (SCENES.md Scene 4, G-B
+	// — the character-count axis) and the host clock that drives it is signed
+	// (ADR-0005), so the shape is now read rather than warned about.
+	//
+	// A struct rather than json.RawMessage, for Scroll's and FocusGlow's stated
+	// reason: the engine reads `{anim}` now, so leaving it raw would mean parsing
+	// it at the render site, and a shape parsed where it is used is a shape with
+	// no single definition.
+	//
+	// The axis it rides is character count — a growing prefix of the node's own
+	// text — and only a text node draws that axis (SCENES.md Scene 4). validate.go
+	// refuses a reveal on any other node type with an address, the same way scroll
+	// is refused off a marquee and a row.* bind outside a template is: a prop on
+	// the wrong node type is a scene defect, not a silent no-op. An absent reveal
+	// (nil) is the ordinary no-op — most text nodes do not reveal.
+	//
+	// Anim names a timing token (Q8); empty means anim.default. A named token
+	// absent from the active theme is refused at load by ValidateTokens (the same
+	// net a style token gets), so a typewriter naming a duration the theme never
+	// declared is a load error with an address, not a node that silently never
+	// animates.
+	//
+	// The `anim:"1"` tag puts it on the progress audit's animation axis, beside
+	// Scroll and FocusGlow — a marker rather than a name convention because a
+	// name-based rule silently captures an unrelated field added later.
+	Reveal *Reveal `json:"reveal,omitempty" anim:"1"`
 	// MinWidth is the minimum content width an overlay will accept before
 	// its content wraps. The overlay never shrinks below this (Q7).
 	MinWidth *int `json:"min_width,omitempty"`
@@ -383,6 +411,24 @@ type FocusGlow struct {
 type Scroll struct {
 	Speed     int    `json:"speed"`
 	PauseWhen string `json:"pause_when,omitempty"`
+}
+
+// Reveal is the object form of Scene 4's reveal (G3): the typewriter's growing
+// prefix, `{ "anim": "<token>" }`.
+//
+// One named type, read by the engine and inventoried by the validator, for the
+// reason Scroll/FocusGlow/borderObject are named types: the shape the renderer
+// reads and the shape the validator checks are the same declaration, so they
+// cannot drift.
+//
+// Anim names a timing token whose duration_ms and curve the host clock measures
+// elapsed time against (ADR-0005); the eased fraction of that duration is the
+// share of the content the renderer draws. Empty means anim.default (Q8 — every
+// animated prop uses the default token unless it names one), and a named token
+// the active theme does not define is refused at load (ValidateTokens), the same
+// net an undefined style token gets.
+type Reveal struct {
+	Anim string `json:"anim,omitempty"`
 }
 
 // border decodes the object form. It reports false for the string form and
