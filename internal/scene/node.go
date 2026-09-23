@@ -144,6 +144,48 @@ type Node struct {
 	// Scroll, Reveal and FocusGlow — a marker rather than a name convention because
 	// a name-based rule silently captures an unrelated field added later.
 	Transition *Transition `json:"transition,omitempty" anim:"1"`
+	// Enter is Scene 4's staggered list entrance (G4), `{ "row": true, "stagger":
+	// "<token>" }`. It is the last Scene 4 animation prop to graduate from a
+	// parsed-and-warned key to a read struct, and it composes the two the earlier
+	// beats built: enter is a **scheduler** over transition/reveal, not a fifth
+	// axis (SCENES.md Scene 4, G-B). The clock it needs is signed (ADR-0005) and
+	// the one-shot pattern reveal (G3) and transition (G1) set is its template.
+	//
+	// The axis it rides is row count: with `row:true`, row i begins its own
+	// entrance at offset `i * stagger.duration_ms`, so a row past its
+	// offset+duration is settled, a row mid-entrance draws dim, and a row before
+	// its offset is not drawn at all — the visible row count grows top-to-bottom
+	// as the stagger advances. That growing count is the whole point of enter, and
+	// it is what distinguishes it from putting transition on every row (which draws
+	// all rows dim at once): the rows *arrive*, they do not merely brighten.
+	//
+	// `row:false` (or omitted) is the degenerate whole-container entrance: the
+	// container transitions in as one unit, its whole subtree dimmed together until
+	// settled. It is named alongside `row:true` rather than being a separate prop so
+	// the degenerate case is not a special path (G-B) — and it is what dims a
+	// *subtree*, the composition transition (G1) deliberately left to enter because
+	// a container has no own content to dim.
+	//
+	// A struct rather than json.RawMessage, for Transition's/Reveal's/Scroll's
+	// stated reason: the engine reads `{row, stagger}` now, so leaving it raw would
+	// mean parsing it at the render site, and a shape parsed where it is used is a
+	// shape with no single definition.
+	//
+	// Stagger names a timing token (Q8) whose duration_ms is both the inter-row
+	// delay and each row's own entrance duration — one token, so the shape is
+	// `{row, stagger}` with no second token for the per-row ramp. A `row:true`
+	// enter with no stagger token is refused at load (validate.go), and a named
+	// token the theme does not define is refused by ValidateTokens, the same net a
+	// reveal's and a transition's token get. A `row:true` enter on a node with no
+	// rows to stagger (neither children nor a row_template) is refused too, the way
+	// reveal off a text node is: the row-count axis is part of enter's signature,
+	// so a node that draws no rows is a scene defect, not a silent no-op.
+	//
+	// The `anim:"1"` tag puts it on the progress audit's animation axis, beside
+	// Scroll, Reveal, Transition and FocusGlow — a marker rather than a name
+	// convention because a name-based rule silently captures an unrelated field
+	// added later.
+	Enter *Enter `json:"enter,omitempty" anim:"1"`
 	// MinWidth is the minimum content width an overlay will accept before
 	// its content wraps. The overlay never shrinks below this (Q7).
 	MinWidth *int `json:"min_width,omitempty"`
@@ -159,10 +201,10 @@ type Node struct {
 	// the property is expressible with no new vocabulary and no clock.
 	// scroll was the same until G2 signed its render semantics (SCENES.md Scene
 	// 4, G-B) and built the clock (ADR-0005); reveal followed in G3 on that
-	// clock, and transition in G1 on the one-shot pattern reveal set — so scroll,
-	// reveal and transition now read their structs above, and this list is down to
-	// the one that remains a warning: enter, whose per-row scheduler (G4) is the
-	// only Scene 4 prop still parsed-and-warned rather than read.
+	// clock, transition in G1 on the one-shot pattern reveal set, and enter in G4
+	// as the scheduler that composes them — so all five of Scene 4's animation
+	// props now read their structs above, and focus_glow remains the one that was
+	// always clockless because its only input is the focused node's id.
 	//
 	// A struct rather than json.RawMessage: the shape is being read now, so
 	// leaving it raw would mean parsing it at the render site, and a shape
@@ -489,6 +531,32 @@ type Reveal struct {
 // not chosen per node.
 type Transition struct {
 	Anim string `json:"anim,omitempty"`
+}
+
+// Enter is the object form of Scene 4's staggered entrance (G4): the list
+// scheduler, `{ "row": true, "stagger": "<token>" }`.
+//
+// One named type, read by the engine and inventoried by the validator, for the
+// reason Transition/Reveal/Scroll/FocusGlow/borderObject are named types: the
+// shape the renderer reads and the shape the validator checks are the same
+// declaration, so they cannot drift.
+//
+// Row selects the scheduler. With Row true the container staggers its rows —
+// row i enters at offset i * stagger.duration_ms — so the visible row count
+// grows as time passes (the row-count axis, G-B). With Row false (the zero
+// value, so an omitted "row" too) the container enters as one unit, its whole
+// subtree dimmed together until settled.
+//
+// Stagger names a timing token whose duration_ms and curve the host clock
+// measures elapsed against (ADR-0005). It is required when Row is true — a
+// stagger with no interval has nothing to schedule — and a token the active
+// theme does not define is refused at load (ValidateTokens), the same net a
+// reveal's and a transition's token get. When Row is false the whole-container
+// entrance runs on anim.default (Q8) and Stagger is not consulted, so it may be
+// omitted.
+type Enter struct {
+	Row     bool   `json:"row,omitempty"`
+	Stagger string `json:"stagger,omitempty"`
 }
 
 // border decodes the object form. It reports false for the string form and

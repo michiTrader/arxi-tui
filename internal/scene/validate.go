@@ -189,6 +189,13 @@ func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bo
 		return err
 	}
 
+	// An enter with row:true needs a stagger token and rows to stagger over
+	// (G4 / SCENES.md Scene 4). Same walk, same reason as scroll and reveal
+	// above: a mis-declared enter on a nested node is refused at its own position.
+	if err := d.validateEnter(n, path); err != nil {
+		return err
+	}
+
 	// Recurse into children, carrying the same scope: a node nested under a
 	// template row is still inside that template and may still read row.*.
 	for i, child := range n.Children {
@@ -332,6 +339,52 @@ func (d *Document) validateReveal(n *Node, path string) error {
 		return &Error{
 			Loc: d.locOf(path),
 			Msg: fmt.Sprintf("node type %q declares reveal, which rides the character-count axis only a text node draws (SCENES.md Scene 4); a reveal on a %q node is a scene defect — move it onto a text node or remove it", n.Type, n.Type),
+		}
+	}
+	return nil
+}
+
+// validateEnter refuses an enter that cannot be honoured, with an address.
+//
+// enter rides the row-count axis: with row:true the container staggers its
+// rows, so it needs both a stagger interval to schedule against and rows to
+// schedule (SCENES.md Scene 4, G-B). Two refusals follow, and neither is a
+// no-op the way a silent drop would be:
+//
+//   - row:true with no stagger token. A stagger names the inter-row delay; with
+//     no interval there is nothing to stagger, so the author wrote a scheduler
+//     with no schedule. It is refused rather than defaulted because the whole
+//     point of row:true is the delay, and a zero delay is the row:false case the
+//     author did not ask for — telling them is cheaper than drawing something
+//     they did not mean.
+//   - row:true on a node with no rows. The row-count axis is a container's:
+//     enter staggers `children` (a stack/row/box/overlay) or the rows of a
+//     row_template (a list). A row:true enter on a leaf — a text or a marquee,
+//     with neither children nor a template — has no rows to bring in one at a
+//     time, and is a scene defect the same way a reveal off a text node is: the
+//     axis a prop rides is part of its signature.
+//
+// row:false carries neither refusal: the whole-container entrance applies to
+// any node (it dims the node's subtree as one unit, and a leaf's subtree is
+// itself), exactly as transition is universal. The stagger token, when row:true
+// names one, is checked against the active theme by ValidateTokens rather than
+// here, for validateReveal's reason: this walk has no theme, and an empty
+// stagger under row:true is already refused above before any token lookup would
+// run.
+func (d *Document) validateEnter(n *Node, path string) error {
+	if n.Enter == nil || !n.Enter.Row {
+		return nil
+	}
+	if n.Enter.Stagger == "" {
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("node type %q declares enter with row:true but no stagger token; row:true is the per-row scheduler and its stagger names the inter-row delay (SCENES.md Scene 4) — a stagger with no interval has nothing to schedule, so name a timing token or drop row:true for the whole-container entrance", n.Type),
+		}
+	}
+	if len(n.Children) == 0 && n.RowTemplate == nil {
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("node type %q declares enter with row:true but has no rows to stagger; the row-count axis brings a container's children or a list's row_template in one at a time (SCENES.md Scene 4), and a %q node with neither has none — move the enter onto the container, or use row:false for the whole-node entrance", n.Type, n.Type),
 		}
 	}
 	return nil
@@ -574,6 +627,26 @@ func (d *Document) collectTokenErrors(n *Node, path string, thm *theme.Theme, er
 			*errs = append(*errs, TokenError{
 				Token:    token,
 				NodeType: n.Type + " transition",
+				Loc:      d.locOf(path),
+			})
+		}
+	}
+
+	// Check the enter's stagger token against the theme's anim section (G4).
+	// Only row:true consults a stagger — it is the inter-row delay the scheduler
+	// runs against — and validateEnter has already refused a row:true enter with
+	// an empty stagger, so a token reaching here is a non-empty name that must
+	// resolve. row:false runs the whole-container entrance on anim.default and
+	// names no stagger, so it is not checked here (there is no token to undefine).
+	// HasAnim, not Has: the anim section is a separate namespace, so a style token
+	// spelled like the stagger token must not satisfy this. NodeType names "enter"
+	// so a reader can tell which prop's token was undefined when a node carries
+	// more than one.
+	if n.Enter != nil && n.Enter.Row && n.Enter.Stagger != "" {
+		if !thm.HasAnim(n.Enter.Stagger) {
+			*errs = append(*errs, TokenError{
+				Token:    n.Enter.Stagger,
+				NodeType: n.Type + " enter",
 				Loc:      d.locOf(path),
 			})
 		}

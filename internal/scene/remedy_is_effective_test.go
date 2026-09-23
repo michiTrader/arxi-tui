@@ -327,6 +327,15 @@ func remedyProbeDocuments(t *testing.T) []remedyProbe {
 		// by ValidateTokens.
 		"transition": `{"root":{"type":"text","text":"x","transition":{"anim":"default"}}}`,
 
+		// enter graduated (G4): the engine draws it as a per-row scheduler on a
+		// container (or a row_template list) and refuses a row:true with no
+		// stagger or no rows, so like scroll/reveal/transition it is not in
+		// unrenderedFields. The fixture is a stack with a valid row:true enter and
+		// a child to stagger, which validates clean — doc.Validate() checks the
+		// axis (rows present) and the required stagger field, and the stagger
+		// token is checked separately by ValidateTokens.
+		"enter": `{"root":{"type":"stack","enter":{"row":true,"stagger":"default"},"children":[{"type":"text","text":"x"}]}}`,
+
 		// Already in unrenderedFields, so the subtest returns early — their
 		// promise is checked by TestEveryUnrenderedFieldIsActuallyRefused with
 		// the real reason string. They are listed so a key cannot be missing

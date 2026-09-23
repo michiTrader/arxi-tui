@@ -439,17 +439,28 @@ counterfactual test).
   Counterfactuals run: always-settled fails the running/dim cases, never-settle
   fails the settled and nil cases, and disabling the token check fails the
   undefined-token case.
-- **G4** `enter {row, stagger}` — atomic, now implementable against the signed
-  contract, the host clock G-A built, *and* the one-shot pattern G3/G1 set as the
-  template: `enter` schedules per-row `transition`/`reveal`, so it composes the
-  two one-shot props rather than adding an axis. The pattern: graduate the field
-  on `scene.Node` if it is not already there, sign its refusals in
-  `validateScroll`/`validateReveal`'s shape, read the phase in the renderer, and
-  land a golden pinned at chosen phases with a counterfactual that reverts the
-  phase mapping.
+- **G4 — DONE (2026-09-23).** `enter` is the scheduler that closes Scene 4's
+  animation vocabulary, landed on the clock G-A/G2 built and the one-shot pattern
+  G3/G1 set (PR #59). It graduated from parsed-and-warned to a read struct
+  `{row, stagger}` with `anim:"1"`; `validateEnter` refuses a `row:true` with no
+  `stagger` token and a `row:true` on a node with no rows (children or a
+  `row_template`), and `ValidateTokens` refuses a stagger naming an absent `anim`
+  token — while `row:false` is universal (the whole-container entrance, transition
+  on the container). The engine draws it by splitting `renderNode`'s type switch
+  into `renderByType`: `renderEnterRows` stands each row up as its own frame and
+  places it not-drawn / dim / settled by its personal clock (the row-count axis),
+  `enterWhole` dims the whole subtree for `row:false` (the subtree dimming
+  transition left to enter), and `dimFrame` rewrites a frame's spans to the dim
+  token. The clock learned the per-row offset (`AnimActivity.Row` →
+  `rowOffset`): row *i*'s phase is `elapsed/durMS − i`, absent until its offset,
+  and `running()` settles it at `(rowOffset+1)·durMS` so the ticker stays armed
+  until the last row arrives. The five node-type dispatch audits that read
+  `renderNode` were retargeted to `renderByType`. Render, clock and scene tests
+  each carry counterfactuals run in both directions.
 - **G5** [G4] Freeze the remaining Scene 4 golden(s) and update the status
-  paragraph as each prop lands (scroll's, reveal's and transition's paragraphs are
-  already updated).
+  paragraph as each prop lands (scroll's, reveal's, transition's and enter's
+  paragraphs are all updated; the render/clock tests pin enter's staggered frames
+  at chosen phases, the golden discipline transition and reveal used).
 
 ### Block H — Phase 3: declarative plugin mounting (heart of the phase)
 
