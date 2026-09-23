@@ -194,13 +194,26 @@ action vocabulary is closed per surface and extended only through registered
 names; Q19 tab order follows scene order, and the input may opt out
 (`tab: false`) to protect the typing flow.
 
-## Scene 9 — SUBAGENTS BELOW THE INPUT
+## Scene 9 — SUBAGENTS (below the input)
 
 A `list` bound to `team.members`, per-row spinner-or-glyph by state,
 `ticking`/`waiting`/`idle` from the fold's team events, each row clickable
 into that agent (`cmd:/agent {m.id}`). What arxi-sim hand-coded
 (`internal/app/team.go`) becomes a document. Decided: Q20 action args
 interpolate relative binds, same machinery as Q10.
+
+Golden status (E4, 2026-09-22): `testdata/SUBAGENTS.json` freezes the
+`row_template`-per-element core — one row per member, `row.role` resolved
+against its own element — which is the Block E machinery this pins durably. The
+row template is a single content node (`text`) because a container reached
+through `row_template` has no own-style rendering to honour, so the styled-node
+audit (`internal/engine/nested_node_style_test.go`) would read a container
+template as a silent style drop; combining the spinner-or-glyph with the role
+label on one row waits on that decision. The per-row `when` gate, the empty
+state, and the falsy-out-of-template rule are pinned by
+`internal/engine/row_template_test.go`. Clicking a row into its agent
+(`on_press: "cmd:/agent {row.id}"`) is still refused (`on_press`,
+`internal/scene/validate.go`) and lands with the action-dispatch work (H8).
 
 ## Scene 10 — DASHBOARD (2×2 with click-to-maximize)
 
