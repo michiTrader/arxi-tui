@@ -283,10 +283,28 @@ counterfactual test).
 
 ### Block F — Phase 3: /ui add and move verbs [D2]
 
-- **F1** Implement `/ui add node <where> <fragment>`.
-- **F2** Implement `/ui move <id> <where>`.
+- **F1 — DONE (2026-09-23).** `/ui add node <where> <fragment>` in
+  `internal/patch` (`add.go`): the write-path `where` vocabulary D2 signed
+  (`above`/`below <id>`, `into <id> [top]`, the `below_input`/`above_input`
+  semantic anchors). Source-to-source over the generic map tree like `set`/
+  `style`, so a fragment's undeclared keys survive; the result is re-parsed and
+  re-validated (invariant 3). Refusals carry `file:line` for every
+  ADDRESSING.md §2 case (unknown id, ambiguous id, `into` a non-container,
+  zero/many input anchors, resolved-but-no-sibling-slot) and §3 (a fragment
+  reusing an id — the uniqueness clash, attributed to the fragment). `Verbs()`
+  and the slash-menu `ui` description now advertise `add`; the menu-agreement
+  and verb-round-trip sweeps both cover it. Counterfactuals run for the
+  above/below offset, the into-top prepend, and the dup-id refusal.
+  Note: the §3 id-uniqueness invariant is enforced *at the add boundary*, not
+  yet as a load-time check on every document — that broader guard remains
+  available to add when `move` (F2) needs an anchor guaranteed unique before it
+  resolves.
+- **F2** Implement `/ui move <id> <where>`. Reuses F1's `where` resolver; adds
+  the one refusal `add` gets to skip — the cycle refusal (a node cannot become
+  its own descendant, ADDRESSING.md §2.4).
 - **F3** [D3] Implement `/ui hide` / `show`.
 - **F4** [F1-F3] Update advertised verbs in the slash menu; goldens; tests.
+  (The menu advertisement for `add` landed with F1.)
 
 ### Block G — Phase 3: animation props [D4]
 
