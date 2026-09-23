@@ -122,6 +122,13 @@ type Command struct {
 	// re-tokenised so a text value with runs of spaces survives verbatim.
 	Where    string
 	Fragment string
+
+	// Subject is the id of the node `move` relocates. `move` reuses the same
+	// Where/Target the add resolver reads — Target is the anchor of the where
+	// clause, not the node being moved — so the moved node needs its own field.
+	// Keeping them distinct is what lets `move status above chat` name two nodes
+	// without either meaning shadowing the other.
+	Subject string
 }
 
 // Parse reads a /ui command line into a Command.
@@ -165,6 +172,10 @@ func Parse(line string) (Command, error) {
 		// /ui add node <where> <fragment>. Parsed against the raw body so the
 		// fragment keeps its exact bytes.
 		return parseAdd(body)
+	case "move":
+		// /ui move <id> <where>. Parsed against the raw body so it reads the
+		// same where grammar `add` does, through the one shared parser.
+		return parseMove(body)
 	case "style":
 		// /ui style <node-id> <token>
 		if len(args) != 2 {
@@ -211,19 +222,24 @@ func Parse(line string) (Command, error) {
 // Verbs is the closed list of /ui verbs, exported so the host's command
 // registry and the refusal messages read from one place.
 //
-// `add` addresses a *position* (docs/ADDRESSING.md's `where` vocabulary), which
-// is why it could only land once that vocabulary was signed (D2). `move` is its
-// sibling and is still absent: `add` cannot form a cycle because the fragment
-// is new, so it needs no cycle refusal, whereas `move` does — that is the one
-// piece of the write path `add` gets to skip, and the reason it ships first.
-// `set` and `style` need no addressing at all: they name a node by the id it
-// already has and write a property the engine already reads.
-func Verbs() []string { return []string{"add", "set", "style"} }
+// `add` and `move` both address a *position* (docs/ADDRESSING.md's `where`
+// vocabulary), which is why they could only land once that vocabulary was
+// signed (D2). They ship in that order for one structural reason: `add`'s
+// argument is a brand-new subtree, so it cannot already be an ancestor of its
+// insertion point and needs no cycle refusal, whereas `move` relocates an
+// existing node and must refuse a move into that node's own subtree — the one
+// piece of the write path `add` gets to skip. `set` and `style` need no
+// addressing at all: they name a node by the id it already has and write a
+// property the engine already reads.
+func Verbs() []string { return []string{"add", "move", "set", "style"} }
 
 // apply performs the source-to-source edit and re-validates the result.
 func (c Command) apply(name string, src []byte) (Result, error) {
-	if c.Verb == "add" {
+	switch c.Verb {
+	case "add":
 		return c.applyAdd(name, src)
+	case "move":
+		return c.applyMove(name, src)
 	}
 
 	var root map[string]json.RawMessage
@@ -364,6 +380,8 @@ func (c Command) summary() string {
 	switch c.Verb {
 	case "add":
 		return c.addSummary()
+	case "move":
+		return c.moveSummary()
 	case "style":
 		return fmt.Sprintf("styled %q as %q", c.Target, c.Value)
 	case "set":

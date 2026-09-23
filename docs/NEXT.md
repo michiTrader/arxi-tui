@@ -299,9 +299,25 @@ counterfactual test).
   yet as a load-time check on every document — that broader guard remains
   available to add when `move` (F2) needs an anchor guaranteed unique before it
   resolves.
-- **F2** Implement `/ui move <id> <where>`. Reuses F1's `where` resolver; adds
-  the one refusal `add` gets to skip — the cycle refusal (a node cannot become
-  its own descendant, ADDRESSING.md §2.4).
+- **F2 — DONE (2026-09-23).** `/ui move <id> <where>` in `internal/patch`
+  (`move.go`). Reuses F1's write-path `where` resolver — `parseWhere` was
+  factored out of `parseAdd` as the single reader of the grammar, so `add` and
+  `move` cannot drift on what `top`/`below_input` mean — and F1's
+  `insert`/`insertSibling` placement, keeping the edit source-to-source over the
+  generic map tree so a moved node's undeclared keys survive. Adds the one
+  refusal `add` skips: the **cycle refusal** (ADDRESSING.md §2.4, a node cannot
+  become its own descendant), checked before the subject is detached, over the
+  subject's whole subtree (prefix/suffix/row_template included), covering the id
+  anchors (set membership, incl. `move x into x`) and the semantic anchors (the
+  input node living inside the subject). Refusals carry `file:line` for every §2
+  case `move` reaches: unknown/ambiguous subject, unknown/ambiguous anchor,
+  `into` a non-container, resolved-but-no-sibling-slot, a subject in no children
+  list. `Verbs()` and the `ui` slash-menu now advertise `move`; the
+  menu-agreement and verb-round-trip sweeps cover it. Counterfactuals run for
+  the cycle refusal (disabling it fails exactly the three cycle tests) and the
+  detach (an off-by-one that fails to drop the moved node fails the offset
+  tests). The §3 id-uniqueness invariant is still enforced at the verb boundary,
+  not yet load-time — the broader guard remains F2's natural companion.
 - **F3** [D3] Implement `/ui hide` / `show`.
 - **F4** [F1-F3] Update advertised verbs in the slash menu; goldens; tests.
   (The menu advertisement for `add` landed with F1.)

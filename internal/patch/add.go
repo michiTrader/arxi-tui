@@ -70,6 +70,48 @@ func forEachNode(v any, fn func(map[string]any)) {
 	}
 }
 
+// parseWhere reads a where clause off the front of rest and returns the
+// resolved form ("above"/"below"/"into"/"into_top"/"below_input"/"above_input"),
+// the anchor id (empty for the two semantic anchors), and the untrimmed
+// remainder after the clause. It is the single reader of docs/ADDRESSING.md's
+// `where` grammar, shared by `add` (whose remainder is the fragment) and `move`
+// (whose remainder must be empty), so the two verbs cannot drift in how a
+// position is named — a divergence here would let `/ui add node into x top` and
+// `/ui move y into x top` disagree about what `top` means.
+//
+// The errors are returned bare (no verb prefix) so each caller can name itself;
+// they keep the substrings the grammar sweep pins ("needs a where clause",
+// "unknown where", "needs a node id").
+func parseWhere(rest string) (where, target, rem string, err error) {
+	where, r := cutField(rest)
+	switch where {
+	case "below_input", "above_input":
+		// The semantic anchors name the input node's role, not an id, so they
+		// consume no further token and leave the anchor empty.
+		return where, "", r, nil
+	case "above", "below", "into":
+		id, r2 := cutField(r)
+		if id == "" {
+			return "", "", "", fmt.Errorf("%s needs a node id: the where clause is `%s <id>`", where, where)
+		}
+		rem = r2
+		if where == "into" {
+			// `into <id> top` inserts as the first child; `into <id>` as the
+			// last. The trailing "top" is optional, so it is only consumed when
+			// it is actually present — a remainder that happens to start with a
+			// bare word (a fragment, for `add`) is left untouched.
+			if peek, r3 := cutField(rem); peek == "top" {
+				where, rem = "into_top", r3
+			}
+		}
+		return where, id, rem, nil
+	case "":
+		return "", "", "", fmt.Errorf("needs a where clause: one of above <id>, below <id>, into <id> [top], below_input, above_input")
+	default:
+		return "", "", "", fmt.Errorf("unknown where %q; expected one of above <id>, below <id>, into <id> [top], below_input, above_input", where)
+	}
+}
+
 // parseAdd reads "add node <where> <fragment>" out of the raw command body.
 //
 // The body is the raw string (with the /ui prefix already peeled) rather than a
@@ -84,40 +126,37 @@ func parseAdd(body string) (Command, error) {
 		return Command{}, fmt.Errorf("/ui add expects: /ui add node <where> <fragment>, where <where> is one of: above <id>, below <id>, into <id> [top], below_input, above_input")
 	}
 
-	where, rest := cutField(rest)
-	cmd := Command{Verb: "add"}
-	switch where {
-	case "below_input", "above_input":
-		// The semantic anchors name the input node's role, not an id, so they
-		// consume no further token and leave Target empty.
-		cmd.Where = where
-	case "above", "below", "into":
-		id, r := cutField(rest)
-		if id == "" {
-			return Command{}, fmt.Errorf("/ui add node %s needs a node id: /ui add node %s <id> <fragment>", where, where)
-		}
-		cmd.Target, cmd.Where, rest = id, where, r
-		if where == "into" {
-			// `into <id> top` inserts as the first child; `into <id>` as the
-			// last. The trailing "top" is optional, so it is only consumed when
-			// it is actually present — a fragment that happens to start with a
-			// bare word is left untouched.
-			if peek, r2 := cutField(rest); peek == "top" {
-				cmd.Where, rest = "into_top", r2
-			}
-		}
-	case "":
-		return Command{}, fmt.Errorf("/ui add node needs a where clause: one of above <id>, below <id>, into <id> [top], below_input, above_input")
-	default:
-		return Command{}, fmt.Errorf("/ui add node: unknown where %q; expected one of above <id>, below <id>, into <id> [top], below_input, above_input", where)
+	where, target, rest, err := parseWhere(rest)
+	if err != nil {
+		return Command{}, fmt.Errorf("/ui add node %w", err)
 	}
 
 	fragment := trimSpace(rest)
 	if fragment == "" {
 		return Command{}, fmt.Errorf("/ui add node needs a JSON fragment to insert, e.g. /ui add node %s {\"type\":\"text\",\"text\":\"hello\"}", where)
 	}
-	cmd.Fragment = fragment
-	return cmd, nil
+	return Command{Verb: "add", Where: where, Target: target, Fragment: fragment}, nil
+}
+
+// parseMove reads "move <id> <where>" out of the raw command body. `move` has
+// no trailing fragment, so its remainder after the where clause must be empty;
+// unexpected trailing input is refused rather than silently ignored, matching
+// the surface's rule that an unclaimed token is never treated as chat.
+func parseMove(body string) (Command, error) {
+	_, rest := cutField(body) // drop the "move" verb token
+	id, rest := cutField(rest)
+	if id == "" {
+		return Command{}, fmt.Errorf("/ui move expects: /ui move <id> <where>, where <where> is one of: above <id>, below <id>, into <id> [top], below_input, above_input")
+	}
+
+	where, target, rest, err := parseWhere(rest)
+	if err != nil {
+		return Command{}, fmt.Errorf("/ui move %s %w", id, err)
+	}
+	if extra := trimSpace(rest); extra != "" {
+		return Command{}, fmt.Errorf("/ui move takes only <id> <where>; unexpected trailing input %q (a JSON fragment goes with /ui add, not /ui move)", extra)
+	}
+	return Command{Verb: "move", Subject: id, Where: where, Target: target}, nil
 }
 
 // trimSpace trims ASCII spaces and tabs from both ends without pulling in a
