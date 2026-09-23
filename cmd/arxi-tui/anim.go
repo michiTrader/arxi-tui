@@ -65,6 +65,16 @@ type animClock struct {
 	curve   map[string]string
 	nodeFPS map[string]int
 
+	// rowOffset is enter's per-row stagger index (G4): row i of a staggered
+	// container begins its own entrance at offset i * durMS, so its phase is
+	// elapsed/durMS - i. It is 0 for every other one-shot — a lone reveal or
+	// transition is row 0, which starts at zero — so the offset arithmetic is a
+	// no-op for them and the shared clock stays one clock per reported id. A row
+	// whose offset has not yet elapsed is absent from phases() entirely, which the
+	// renderer reads as "not drawn yet": the row-count axis, spread over time here
+	// where the clock owns time.
+	rowOffset map[string]int
+
 	// resolveAnim maps a timing-token name to its definition, set by the loop to
 	// the active theme's lookup. It is nil in unit tests that exercise only the
 	// continuous scroll path, which never resolves a token; a one-shot node with
@@ -88,6 +98,8 @@ func newAnimClock(fps int) *animClock {
 		durMS:   map[string]int{},
 		curve:   map[string]string{},
 		nodeFPS: map[string]int{},
+
+		rowOffset: map[string]int{},
 	}
 }
 
@@ -129,6 +141,13 @@ func (c *animClock) ticks() map[string]int {
 // phase-wide prefix). A zero-duration one-shot (an unresolved or missing token)
 // is settled at 1 rather than dividing by zero: a one-shot with no run to
 // measure has nothing to animate through.
+//
+// A staggered enter row (rowOffset > 0) subtracts its offset in duration units
+// before easing: row i's fraction is elapsed/durMS - i, so it sits below zero
+// until i * durMS has elapsed. A row still below zero is left out of the map
+// entirely — the renderer reads an absent row in a non-nil map as "not yet
+// drawn", which is the growing row count. A lone reveal or transition has
+// rowOffset 0, so this subtracts nothing and their phase is unchanged.
 func (c *animClock) phases() map[string]float64 {
 	out := make(map[string]float64, len(c.oneShot))
 	for id := range c.oneShot {
@@ -137,7 +156,10 @@ func (c *animClock) phases() map[string]float64 {
 			out[id] = 1
 			continue
 		}
-		t := float64(c.elapsed[id].Milliseconds()) / float64(d)
+		t := float64(c.elapsed[id].Milliseconds())/float64(d) - float64(c.rowOffset[id])
+		if t < 0 {
+			continue // before this row's stagger offset: absent, drawn not-yet
+		}
 		out[id] = theme.EvalCurve(c.curve[id], t)
 	}
 	return out
@@ -168,6 +190,7 @@ func (c *animClock) reconcile(active []engine.AnimActivity) {
 			c.durMS[a.NodeID] = d
 			c.curve[a.NodeID] = curveName
 			c.nodeFPS[a.NodeID] = fps
+			c.rowOffset[a.NodeID] = a.Row
 		}
 	}
 	for id := range c.elapsed {
@@ -176,6 +199,7 @@ func (c *animClock) reconcile(active []engine.AnimActivity) {
 			delete(c.durMS, id)
 			delete(c.curve, id)
 			delete(c.nodeFPS, id)
+			delete(c.rowOffset, id)
 		}
 	}
 	c.active = next
@@ -211,14 +235,23 @@ func (c *animClock) resolveOneShot(token string) (durMS int, curve string, fps i
 // has settled (run past its duration), both ask for no ticks while still being
 // present — there is nothing left for a tick to move (ADR-0005: the ticker runs
 // only while a visible node animates).
+//
+// A staggered enter row settles at (rowOffset+1) * durMS rather than at durMS:
+// row i does not begin until i * durMS, so the ticker must keep running until
+// the last row has both started and finished, or a list would freeze halfway
+// down with its final rows never scheduled. A row with offset 0 settles at durMS,
+// unchanged for reveal and transition.
 func (c *animClock) running() bool {
 	for id := range c.active {
 		if c.paused[id] {
 			continue
 		}
 		if c.oneShot[id] {
-			if c.durMS[id] > 0 && c.elapsed[id].Milliseconds() < int64(c.durMS[id]) {
-				return true
+			if d := int64(c.durMS[id]); d > 0 {
+				settleAt := int64(c.rowOffset[id]+1) * d
+				if c.elapsed[id].Milliseconds() < settleAt {
+					return true
+				}
 			}
 			continue
 		}
