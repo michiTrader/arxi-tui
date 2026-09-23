@@ -1,0 +1,17 @@
+{ "root": { "id": "root", "type": "stack", "children": [
+  { "id": "banner", "type": "marquee",
+    "text": "arxi \u00b7 the interface is a document you can rewrite in place \u00b7 community scenes arrive by link",
+    "scroll": { "speed": 2 },
+    "style": { "style": "bright" } },
+  { "id": "streaming", "type": "text",
+    "text": "streaming the answer one grapheme at a time",
+    "reveal": { "anim": "default" },
+    "style": { "style": "bright" } },
+  { "id": "heading", "type": "text",
+    "text": "a heading that fades in on first paint",
+    "transition": { "anim": "default" },
+    "style": { "style": "bright" } },
+  { "id": "todos", "type": "list", "bind": "agent.todos",
+    "enter": { "row": true, "stagger": "default" },
+    "row_template": { "type": "text", "bind": "row.task", "style": { "style": "bright" } } }
+]}}
