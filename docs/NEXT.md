@@ -56,12 +56,12 @@ is cheap and belongs at the front of the relevant block; each is a task below.
    no query). Implementing an explicit OSC 11 query remains an *optional* future
    enhancement, not foreclosed, and is noted at each site.
 
-4. **No CI exists.** There is no `.github/` directory. The double-Ctrl-C
-   escape-hatch tests exist and are platform-agnostic
-   (`cmd/arxi-tui/loop_test.go`: `TestLoopExitsOnCtrlCImmediate:110`,
-   `TestLoopFirstCtrlCClearsInput:135`), so they *run* on Windows when invoked,
-   but AGENTS.md's "runs on Windows CI from Phase 0" is not backed by a
-   pipeline. Standing up CI is a real, currently-missing task.
+4. **No CI existed — RESOLVED (L5 done).** `.github/workflows/ci.yml` now runs
+   `go build`/`vet`/`gofmt`/`go test -count=1 ./...` on a `windows-latest` +
+   `ubuntu-latest` matrix (`fail-fast: false`). The double-Ctrl-C escape-hatch
+   tests (`cmd/arxi-tui/loop_test.go`: `TestLoopExitsOnCtrlCImmediate`,
+   `TestLoopFirstCtrlCClearsInput`) run inside `go test ./...`, so AGENTS.md's
+   "runs on Windows CI from Phase 0" obligation is now backed by a pipeline.
 
 5. **`row_template` is refused in `internal/scene`, not `internal/engine`.**
    The refusal lives at `internal/scene/validate.go:241` (message names
@@ -337,8 +337,10 @@ per-platform build tooling). All aspirational in `docs/PLAN.md:107`.
   `docs/SCENES.md`, `docs/PLAN.md`. `factory.go`/`theme.go` were already correct.
   Implementing an explicit OSC 11 query is left as an optional future
   enhancement (noted at each site), not a blocker.
-- **L5** Stand up CI (`.github/workflows`) that runs `go test ./...` including
-  the double-Ctrl-C escape-hatch tests on Windows (correction 4).
+- **L5 — DONE.** `.github/workflows/ci.yml` runs `go build`/`vet`/`gofmt`/
+  `go test -count=1 ./...` on a `windows-latest` + `ubuntu-latest` matrix,
+  `fail-fast: false`. The double-Ctrl-C escape-hatch tests run inside
+  `go test ./...` on Windows (correction 4). Go pinned to 1.25.0.
 
 ## Recommended critical path
 

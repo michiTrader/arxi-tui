@@ -1,0 +1,67 @@
+# CI — the escape hatch is proven on Windows, not asserted.
+#
+# AGENTS.md makes this pipeline a Phase 0 obligation, and names the reason:
+# the double-Ctrl-C panic gesture (invariant 6) was claimed to work and the
+# claim changed twice, because Windows delivers ctrl+key as a raw byte and an
+# "immovable" gesture proven only on Linux is a slogan. So `windows` is the
+# load-bearing job here, and it runs the same `go test ./...` that exercises
+# cmd/arxi-tui/loop_test.go's escape-hatch tests. `ubuntu` runs alongside it
+# to keep the platform-agnostic majority honest on the cheaper runner.
+name: CI
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+
+# A newer push to the same branch cancels the older run: CI on stale commits
+# wastes minutes and the only result that matters is the tip.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    strategy:
+      # Do not cancel Windows because Linux failed (or the reverse): the whole
+      # point of the matrix is to see the platform-specific result, and a
+      # fail-fast cancel hides exactly the Windows-only regression this exists
+      # to catch.
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Pinned to the toolchain AGENTS.md/go.mod require (1.25); a floating
+          # version would let a CI upgrade change behaviour without a commit.
+          go-version: "1.25.0"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # gofmt is checked on Linux only: it is a formatting fact, identical on
+      # every OS, and running it twice buys nothing. `gofmt -l` prints the
+      # files that need formatting; a non-empty list fails the job.
+      - name: Gofmt
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "these files are not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # -count=1 defeats the test cache so a green run means the tests actually
+      # ran on this commit, not that a prior identical result was replayed.
+      # This is the job that proves the escape hatch on Windows.
+      - name: Test
+        run: go test -count=1 ./...
