@@ -318,7 +318,29 @@ counterfactual test).
   detach (an off-by-one that fails to drop the moved node fails the offset
   tests). The §3 id-uniqueness invariant is still enforced at the verb boundary,
   not yet load-time — the broader guard remains F2's natural companion.
-- **F3** [D3] Implement `/ui hide` / `show`.
+- **F3 — DONE (2026-09-23).** `/ui hide <id>` / `/ui show <id>` / `/ui show *`,
+  gated on D3's signed `ui.hidden` set (BINDS.md §4.3). Unlike `add`/`move`/
+  `set`/`style`, hide/show are *not* source edits: they write host-owned view
+  state, so the document bytes are untouched. `fold.State.UIHidden`
+  (`map[string]bool`, json `ui.hidden`) is the set, held by the loop across
+  frames like the input buffer and re-attached each repaint (no core event
+  produces it). The engine walk consumes it in `hiddenByWhenRow` — a node draws
+  iff its `when` is truthy AND its id is not a member, composing by conjunction —
+  and the membership test lives in that shared predicate rather than at the
+  `renderNode` chokepoint, so a node reached through `prefix`/`suffix` (which
+  bypass `renderNode`) is covered too. The patch surface returns the set
+  mutation in `Result.ViewState` (`hide`/`show`/`show *`), and `uiCommandKey`
+  applies it to the loop's set. An unknown id is refused with `file:line` (D3
+  gives hide/show D2's id resolution); `show *` clears the set without naming an
+  id. `Verbs()` and the `ui` slash-menu advertise the two verbs; the
+  menu-agreement and verb-round-trip sweeps cover them. The bind audits move
+  `ui.hidden` off the "signed-not-projected" and pulse lists into a new
+  `walkConsumedBinds` category — handled by the walk, proven by a behavioural
+  drop test (`hiddenFilterVaries`, and `TestUIHidden*`) rather than a switch
+  label. Counterfactual: disabling the membership test fails exactly the three
+  `TestUIHidden*` tests and the composite audit's `ui.hidden` case, nothing
+  else. The §3 id-uniqueness invariant is still enforced at the verb boundary,
+  not yet load-time.
 - **F4** [F1-F3] Update advertised verbs in the slash menu; goldens; tests.
   (The menu advertisement for `add` landed with F1.)
 

@@ -63,11 +63,11 @@ import (
 var pulseBindsWithoutFoldFields = map[string]string{
 	"user.input.submitted":  "enter-key pulse consumed by the host submit path; name reserved (BINDS.md §4.3)",
 	"session.new_milestone": "pulse with no fold field and an undecided lifetime, pending Scene 11 (BINDS.md §4.1)",
-	// A set of node ids the user hides via cmd:/ui hide (D3, BINDS.md §4.3).
-	// It has no fold.State field because the walk filter that consumes it is
-	// Block F, not yet built; signed now to reserve the name and its set
-	// semantics. Not a scalar this guard can perturb through resolveBind.
-	"ui.hidden": "hidden-node id set consumed by the engine walk; the filter is Block F, not yet built (BINDS.md §4.3)",
+	// ui.hidden was here while it had no fold field. F3 added State.UIHidden and
+	// the walk filter that consumes it, so it now maps to a field and is owned by
+	// the composite guard (perturbScalar skips the map, walkConsumedBinds proves
+	// the drop). Leaving it here would be the stale exemption this map's own
+	// comment warns against.
 }
 
 // perturbScalar sets f to a value distinct from its zero value and reports

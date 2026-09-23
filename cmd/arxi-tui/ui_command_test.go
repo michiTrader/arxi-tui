@@ -95,7 +95,7 @@ func TestASubmittedUiCommandIsClaimedAndClearsTheBuffer(t *testing.T) {
 	doc := liveScene(t)
 	notice := ""
 
-	handled, next := uiCommandKey("/ui style status dim", enter(), &doc, &notice)
+	handled, next := uiCommandKey("/ui style status dim", enter(), &doc, &notice, map[string]bool{})
 	if !handled {
 		t.Fatal("a complete /ui command must be claimed by the command surface.\nConsequence: it falls through to the prompt path and a control command is sent to the model as chat.\nRemedy: claim the line in uiCommandKey.")
 	}
@@ -119,7 +119,7 @@ func TestAUiCommandActuallyChangesTheDocumentTheLoopDraws(t *testing.T) {
 	before := doc
 	notice := ""
 
-	if handled, _ := uiCommandKey("/ui style status dim", enter(), &doc, &notice); !handled {
+	if handled, _ := uiCommandKey("/ui style status dim", enter(), &doc, &notice, map[string]bool{}); !handled {
 		t.Fatalf("the command must be handled; notice was %q", notice)
 	}
 	if doc == before {
@@ -142,7 +142,7 @@ func TestAnInvalidUiCommandKeepsTheSceneAndSaysWhy(t *testing.T) {
 	before := doc
 	notice := ""
 
-	handled, _ := uiCommandKey("/ui set status bind not.a.signed.bind", enter(), &doc, &notice)
+	handled, _ := uiCommandKey("/ui set status bind not.a.signed.bind", enter(), &doc, &notice, map[string]bool{})
 	if !handled {
 		t.Fatal("a /ui line must be claimed even when the patch is refused.\nConsequence: an unclaimed line falls through to the prompt path and is sent to the model as chat, so a typo becomes a conversation turn.\nRemedy: handle the key and report the refusal.")
 	}
@@ -175,14 +175,14 @@ func TestOnlyUiLinesAreClaimed(t *testing.T) {
 	for _, line := range notClaimed {
 		doc := liveScene(t)
 		notice := ""
-		if handled, _ := uiCommandKey(line, enter(), &doc, &notice); handled {
+		if handled, _ := uiCommandKey(line, enter(), &doc, &notice, map[string]bool{}); handled {
 			t.Errorf("%q must not be claimed by the /ui surface.\nConsequence: an ordinary line is answered with a command refusal instead of reaching the model — and for a near-miss like \"/uize\" the refusal confidently lists /ui verbs, which is a wrong diagnosis rather than a missing one.\nRemedy: require \"/ui\" to be followed by a space or the end of the line.", line)
 		}
 	}
 
 	doc := liveScene(t)
 	notice := ""
-	if handled, _ := uiCommandKey("/ui", enter(), &doc, &notice); !handled {
+	if handled, _ := uiCommandKey("/ui", enter(), &doc, &notice, map[string]bool{}); !handled {
 		t.Error("a bare \"/ui\" must be claimed so the surface can say what verbs exist.\nConsequence: it is submitted to the model as the prompt \"ui\", which answers a control command with prose.\nRemedy: claim \"/ui\" with no arguments and refuse it with the verb list.")
 	}
 }
@@ -205,7 +205,7 @@ func TestOnlyEnterSubmits(t *testing.T) {
 	for name, k := range keys {
 		doc := liveScene(t)
 		notice := ""
-		if handled, _ := uiCommandKey("/ui style status dim", k, &doc, &notice); handled {
+		if handled, _ := uiCommandKey("/ui style status dim", k, &doc, &notice, map[string]bool{}); handled {
 			t.Errorf("the /ui dispatch claimed %s.\nConsequence: it runs ahead of the slash menu and the typing path, so claiming any key but Enter disables navigation and then typing — which presents as a dead keyboard, not as a command-surface bug.\nRemedy: return early unless the key is Enter.", name)
 		}
 	}
@@ -223,7 +223,7 @@ func TestAHandBuiltSceneIsRefusedRatherThanSilentlyRewritten(t *testing.T) {
 	doc := &scene.Document{Root: &scene.Node{ID: "root", Type: "stack"}}
 	notice := ""
 
-	handled, _ := uiCommandKey("/ui style root dim", enter(), &doc, &notice)
+	handled, _ := uiCommandKey("/ui style root dim", enter(), &doc, &notice, map[string]bool{})
 	if !handled {
 		t.Fatal("the line must still be claimed so the user gets an answer.\nConsequence: it falls through to the prompt path and the control command is sent to the model as chat.\nRemedy: claim the line and refuse it.")
 	}
