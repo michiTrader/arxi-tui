@@ -97,6 +97,34 @@ func FromMap(tokens map[string]ui.Style) *Theme {
 	return &Theme{tokens: tokens}
 }
 
+// withAnim attaches a timing-token section to a compiled-in theme and returns
+// it, so a factory theme built through FromMap can carry its `anim` section the
+// way a JSON theme carries the one Load lifts out. It is package-private and
+// returns the receiver so SOBRIA/Factory read as one expression; the anim map is
+// a separate namespace from tokens (theme.go's Load comment), so this never
+// touches the style table.
+func (t *Theme) withAnim(anim map[string]AnimDef) *Theme {
+	t.anim = anim
+	return t
+}
+
+// factoryAnim is the timing-token section the compiled-in themes ship, so an
+// animation prop under the factory look resolves a real duration and curve
+// instead of the load-time refusal an absent token earns (TOKENS.md: a prop
+// naming an anim token the active theme does not define fails the load). The
+// three tokens are the ones docs/TOKENS.md's example names: `default` is the
+// per-prop fallback (Q8 — every animated prop uses it unless it names another),
+// `marquee` is scroll's continuous cadence (duration 0, driven at fps), and
+// `reveal.fast` is a shorter one-shot a node can opt into. Durations and curves
+// are copied from that example verbatim so the shipped theme and the doc agree.
+func factoryAnim() map[string]AnimDef {
+	return map[string]AnimDef{
+		"default":     {DurationMS: 200, Curve: "ease_out", FPS: 30},
+		"marquee":     {DurationMS: 0, Curve: "linear", FPS: 20},
+		"reveal.fast": {DurationMS: 120, Curve: "ease_out", FPS: 30},
+	}
+}
+
 // Resolve looks up a token name and returns its style. If the token is not
 // defined, it returns the zero style (no color, no attributes). The resolver
 // never fails: an undefined token is not an error at resolution time, because
@@ -259,5 +287,5 @@ func SOBRIA() *Theme {
 		"diff.context": {Attrs: ui.AttrDim},
 		"diff.del":     {Attrs: ui.AttrStrike},
 		"diff.add":     {Attrs: ui.AttrBold},
-	})
+	}).withAnim(factoryAnim())
 }
