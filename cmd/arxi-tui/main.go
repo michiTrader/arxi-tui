@@ -413,6 +413,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// is. It is off entirely for a scene with no animation prop, so the common
 	// case repaints on input alone, exactly as before Block G.
 	clock := newAnimClock(marqueeFPS(theme))
+	// The loop has the theme; the renderer does not. A one-shot prop (G3 reveal)
+	// reports its token name, and this is what turns that name into a
+	// duration/curve/fps (ADR-0005). Set to the active theme's lookup, so a
+	// reveal resolves the same anim section ValidateTokens checked its token
+	// against at load.
+	clock.resolveAnim = theme.Anim
 	var animTicker *time.Ticker
 	var tickCh <-chan time.Time
 	armTicker := func() {
@@ -499,6 +505,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// cannot diverge in how they reach the terminal.
 		clock.advance(time.Now())
 		r.AnimTicks = clock.ticks()
+		r.AnimPhase = clock.phases()
 		frame, active := r.RenderFrameActive(doc, state)
 		clock.reconcile(active)
 		emitFrame(tty, frame, theme)

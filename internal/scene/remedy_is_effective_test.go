@@ -312,6 +312,13 @@ func remedyProbeDocuments(t *testing.T) []remedyProbe {
 		// remedy actually refuses.
 		"scroll": `{"root":{"type":"marquee","bind":"thinking.text","scroll":{"speed":2}}}`,
 
+		// reveal graduated (G3): it is rendered on a text node and refused
+		// elsewhere, so like scroll it is no longer in unrenderedFields. Its
+		// fixture is a text node with a reveal, which validates clean —
+		// doc.Validate() is theme-agnostic and only checks the axis (node type),
+		// and the anim token is checked separately by ValidateTokens.
+		"reveal": `{"root":{"type":"text","text":"x","reveal":{"anim":"reveal.fast"}}}`,
+
 		// Already in unrenderedFields, so the subtest returns early — their
 		// promise is checked by TestEveryUnrenderedFieldIsActuallyRefused with
 		// the real reason string. They are listed so a key cannot be missing

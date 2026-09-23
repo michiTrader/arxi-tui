@@ -158,14 +158,28 @@ bind is refused the same way. Every existing golden is unchanged: the phase is
 an input separate from the fold, so a document with no scroll renders exactly
 as before.
 
-The other three — `transition`, `reveal`, `enter` — are **signed**
+`reveal: { "anim": "<token>" }` is implemented too (G3), the first one-shot prop
+on the clock scroll built. A text node with `reveal` draws a growing prefix of
+its content: the host clock eases `elapsed / duration_ms` through the token's
+curve into a phase `∈ [0,1]`, and the renderer clips the content to
+`round(phase * width)` graphemes — the character-count axis, one the renderer
+already draws whenever it truncates text, so it invents no new rendering. The
+phase reaches the engine as `Renderer.AnimPhase`, an input separate from the
+fold (Q9), and a nil phase draws the whole text, so no existing golden moves. A
+`reveal` on any node type but `text` is refused with an address — the axis is
+the text node's — and the `anim` token is checked against the theme's `anim`
+section at load (an empty token resolves `anim.default`, Q8), the same net a
+style token gets. It is a one-shot on appearance: the clock starts when the node
+appears, runs `0 → 1` once, and the node draws settled thereafter (ADR-0005).
+
+The other two — `transition`, `enter` — are **signed**
 (`docs/DESIGN-BLOCK-G.md`, G-B) and now implementable against a frozen contract,
-with the clock they need already in the loop. Until each lands it is still
-parsed and **warned about with an address**, not silently dropped (PLAN.md's
-forward-compatibility rule); the warning is lifted by the implementation, not by
-this signature. The clock those props measure elapsed time against is
-ADR-0005 (`docs/PLAN.md`); the timing vocabulary they consume is D4's `anim`
-section (`docs/TOKENS.md`).
+with the clock they need already in the loop and the one-shot pattern reveal set
+as their template. Until each lands it is still parsed and **warned about with
+an address**, not silently dropped (PLAN.md's forward-compatibility rule); the
+warning is lifted by the implementation, not by this signature. The clock those
+props measure elapsed time against is ADR-0005 (`docs/PLAN.md`); the timing
+vocabulary they consume is D4's `anim` section (`docs/TOKENS.md`).
 
 The render semantics are signed on one principle: **an animation never draws
 anything the renderer cannot already draw at a fixed phase; the clock only

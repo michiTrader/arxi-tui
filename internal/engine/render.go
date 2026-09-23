@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -121,6 +122,25 @@ type Renderer struct {
 	// the settled/starting frame.
 	AnimTicks map[string]int
 
+	// AnimPhase is per-node one-shot animation phase, the eased fraction of a
+	// prop's run the node has reached (ADR-0005 / G-B), host-computed and fed in
+	// per repaint like AnimTicks. Where AnimTicks is a continuous scroll's tick
+	// count, this is a one-shot reveal/transition's phase in [0,1] after the
+	// token's curve is applied — the loop owns the clock and the curve, the
+	// renderer only turns the phase into a frame (renderText clips to a
+	// phase-wide prefix). It is a separate input from fold.State for the same
+	// reason AnimTicks is: the fold projects content, never motion (Q9).
+	//
+	// The nil-ness carries meaning the value cannot. A nil map is the pure/golden
+	// path with no clock driving time, and a reveal node draws settled (its whole
+	// text) — the no-op guarantee that keeps a non-motion golden unchanged. A
+	// non-nil map with no entry for a node is that node's first appearance in the
+	// live loop, phase 0, the start of the reveal; the clock seeds it after this
+	// frame. So absent-because-no-clock and absent-because-just-appeared are
+	// distinguished by whether the map itself is nil, which is why renderText
+	// checks the map before indexing it.
+	AnimPhase map[string]float64
+
 	// active, when non-nil, collects the visible nodes that are animating this
 	// frame, so the loop can maintain per-node elapsed time and size the ticker
 	// (ADR-0005: the ticker runs only while a visible node animates). It is a
@@ -136,9 +156,19 @@ type Renderer struct {
 // node's id (the key the loop holds elapsed time under); Paused is the current
 // truthiness of the node's pause_when bind, so a marquee frozen by pause_when
 // asks for no ticks while still being present.
+//
+// OneShot and Token were added for the one-shot props (G3 reveal, later G1/G4).
+// A continuous scroll ticks forever and reads AnimTicks; a one-shot runs its
+// phase 0→1 once over a token's duration and reads AnimPhase. OneShot selects
+// which the loop clock drives for this node, and Token names the timing token
+// whose duration/curve/fps the loop resolves against the theme (the renderer has
+// no theme, so it reports the name and the loop fills the timing in). Both are
+// zero for a scroll, which keeps its existing single-rate path unchanged.
 type AnimActivity struct {
-	NodeID string
-	Paused bool
+	NodeID  string
+	Paused  bool
+	OneShot bool
+	Token   string
 }
 
 // child builds a sub-renderer for a nested layout region, inheriting the
@@ -156,6 +186,7 @@ func (r *Renderer) child(width, height int) Renderer {
 		Height:    height,
 		curRow:    r.curRow,
 		AnimTicks: r.AnimTicks,
+		AnimPhase: r.AnimPhase,
 		active:    r.active,
 	}
 }
@@ -718,11 +749,74 @@ func (r *Renderer) renderText(n *scene.Node, state fold.State) ui.Frame {
 	if n.Bind != "" {
 		text = resolveBindRow(n.Bind, state, r.curRow)
 	}
+	if n.Reveal != nil {
+		text = r.revealPrefix(n, text)
+	}
 	return ui.Frame{
 		Live:   []ui.Line{{ui.Span{Text: text, Style: style}}},
 		Width:  r.Width,
 		Height: 1,
 	}
+}
+
+// revealPrefix returns the share of a text node's content its reveal shows this
+// frame (G3), and reports the node active so the host clock keeps ticking while
+// it is mid-reveal (ADR-0005). It is the character-count axis SCENES.md Scene 4
+// signs: the renderer already draws a width-clipped prefix of any text, and a
+// reveal only moves where that clip falls as the phase rises — it invents no new
+// rendering.
+//
+// The phase is host-computed and curve-eased (the loop owns the clock, G-B) and
+// arrives as AnimPhase[id]: a fraction in [0,1] of the content's display width
+// to show. It is cut at grapheme boundaries the way truncateText already cuts,
+// so a reveal never splits a wide character.
+//
+// The activity report is unconditional for a visible reveal with content, the
+// way scroll reports itself active whenever it overflows: a reveal node is an
+// animating node, present or settled. The clock decides settled-ness from
+// elapsed against the token's duration and stops forcing ticks once past it — a
+// settled reveal is present but quiet, the same shape as a paused marquee. The
+// renderer only says "this node reveals, on this token"; it does not own the
+// clock.
+//
+// nil AnimPhase draws the whole text: the pure/golden path has no clock, so a
+// reveal renders settled, the no-op guarantee that leaves a non-motion golden
+// unchanged. A non-nil map missing this id is the first appearance in the live
+// loop — phase 0, nothing shown — which is why the map is checked for nil before
+// it is indexed.
+func (r *Renderer) revealPrefix(n *scene.Node, text string) string {
+	if text == "" {
+		// Nothing to reveal, and nothing to animate: an empty string has no
+		// prefixes to grow through, so it reports no activity either — the loop
+		// must not arm a ticker for a node that will never change.
+		return text
+	}
+	if r.active != nil {
+		*r.active = append(*r.active, AnimActivity{
+			NodeID:  n.ID,
+			OneShot: true,
+			Token:   n.Reveal.Anim,
+		})
+	}
+	if r.AnimPhase == nil {
+		return text // no clock: settled
+	}
+	phase := r.AnimPhase[n.ID] // absent → 0.0 → the start of the reveal
+	if phase >= 1 {
+		return text
+	}
+	if phase <= 0 {
+		return ""
+	}
+	width := ansi.StringWidth(text)
+	shown := int(math.Round(phase * float64(width)))
+	if shown <= 0 {
+		return ""
+	}
+	if shown >= width {
+		return text
+	}
+	return ansi.Cut(text, 0, shown)
 }
 
 // renderRule draws a single full-width horizontal rule.

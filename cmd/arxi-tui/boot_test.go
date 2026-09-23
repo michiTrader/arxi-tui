@@ -274,7 +274,7 @@ func TestTheNonInteractivePathShowsTheNoticeToo(t *testing.T) {
 // carrying the reason arrives on the channel invariant 3 already built.
 func TestAnUnknownPropertyLoadsTheSceneAndSaysWhatItIgnored(t *testing.T) {
 	path := writeScene(t, "future.json", `{ "root": { "type": "stack", "children": [
-    { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1, "reveal": "typewriter" },
+    { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1, "transition": "fade" },
     { "id": "prompt", "type": "input", "bind": "user.input", "placeholder": "> " }
 ]}}`)
 
@@ -302,9 +302,9 @@ func TestAnUnknownPropertyLoadsTheSceneAndSaysWhatItIgnored(t *testing.T) {
 			"five times. The scene loads, reports success, and the property never happened, so\n"+
 			"the author's only evidence is a screen that looks wrong. Worse, the same silence\n"+
 			"covers a typo: a misspelled \"children\" deletes the whole subtree on this path.\n"+
-			"remedy: loadScene must surface scene.Warnings() on host.scene.error.", "reveal")
+			"remedy: loadScene must surface scene.Warnings() on host.scene.error.", "transition")
 	}
-	if !strings.Contains(notice, "reveal") {
+	if !strings.Contains(notice, "transition") {
 		t.Errorf("the notice does not name the ignored property, so the author cannot act on it: %q", notice)
 	}
 	if !strings.Contains(notice, "future.json") {

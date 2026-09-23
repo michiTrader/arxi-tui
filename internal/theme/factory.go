@@ -22,5 +22,5 @@ func Factory() *Theme {
 		"diff.context":      {Attrs: ui.AttrDim},
 		"diff.del":          {Attrs: ui.AttrStrike},
 		"diff.add":          {Attrs: ui.AttrBold},
-	})
+	}).withAnim(factoryAnim())
 }

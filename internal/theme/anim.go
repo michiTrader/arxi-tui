@@ -2,6 +2,58 @@ package theme
 
 import "fmt"
 
+// EvalCurve maps a fraction of a run t (in [0,1]) to the eased phase the render
+// layer draws at, for the named curve. It is the "easing function that is code
+// in the mother binary" the AnimDef comment names: the theme picks a curve name
+// from the closed set, and this is the behaviour behind each name. The host
+// clock (ADR-0005) owns wall time and calls this to turn elapsed/duration into
+// the phase the renderer consumes, so the curve is applied once, in one place,
+// rather than at each render site.
+//
+// t is clamped to [0,1]: a negative elapsed cannot happen and a run past its
+// duration is settled at 1, so a caller need not clamp before calling. An
+// unknown curve falls back to linear rather than panicking — validateAnimDef
+// already refuses an unknown curve at theme load with the legal set listed, so
+// reaching here with one is a caller that skipped that gate, and a linear ramp
+// is the least surprising thing to draw while the real fix is the load-time
+// refusal. This is deliberately not a second refusal: a curve name is validated
+// where a theme is read, not on the hot path a clock ticks.
+func EvalCurve(name string, t float64) float64 {
+	if t <= 0 {
+		return 0
+	}
+	if t >= 1 {
+		return 1
+	}
+	switch name {
+	case "ease_in":
+		// Quadratic ease-in: slow to start, accelerating. Standard t².
+		return t * t
+	case "ease_out":
+		// Quadratic ease-out: fast to start, decelerating. The reflection of
+		// ease_in, 1-(1-t)².
+		return t * (2 - t)
+	case "ease_in_out":
+		// Quadratic in the first half, its reflection in the second, meeting
+		// at (0.5, 0.5) so the two halves are continuous.
+		if t < 0.5 {
+			return 2 * t * t
+		}
+		u := 1 - t
+		return 1 - 2*u*u
+	case "step":
+		// No intermediate frames: the run holds at its start until it
+		// completes, then snaps to the end. The endpoints are already handled
+		// above (t<=0 → 0, t>=1 → 1), so a t strictly inside the run is still
+		// at the start — the snap happens at completion, not partway.
+		return 0
+	case "linear":
+		return t
+	default:
+		return t
+	}
+}
+
 // AnimDef is one timing token: a named duration-and-curve the render/emit layer
 // consumes to drive an animation prop (transition/scroll/reveal/enter). It is
 // the `[anim]` vocabulary docs/TOKENS.md signs (D4). It lives in the theme, in a

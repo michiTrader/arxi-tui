@@ -182,6 +182,13 @@ func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bo
 		return err
 	}
 
+	// A reveal is honoured on a text node and refused with an address elsewhere
+	// (G3 / SCENES.md Scene 4). Same walk, same reason as scroll above: a reveal
+	// on a nested node is refused at its own position.
+	if err := d.validateReveal(n, path); err != nil {
+		return err
+	}
+
 	// Recurse into children, carrying the same scope: a node nested under a
 	// template row is still inside that template and may still read row.*.
 	for i, child := range n.Children {
@@ -295,6 +302,36 @@ func (d *Document) validateScroll(n *Node, path string, scope map[string]bool) e
 	if n.Scroll.PauseWhen != "" {
 		if err := d.validateOneBind(n.Scroll.PauseWhen, "scroll pause_when", n, path, scope); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// validateReveal refuses a reveal that cannot be honoured, with an address.
+//
+// reveal rides the character-count axis — a growing prefix of the node's own
+// text — and only a text node draws that axis (SCENES.md Scene 4, G-B). The
+// other content-bearing nodes are excluded on purpose rather than by oversight:
+// a marquee already owns the horizontal-offset axis (scroll), and composing two
+// motions on one node is a fifth-axis question G-B does not sign; markdown lays
+// out multiple lines, so "a growing prefix of the content" has no single
+// meaning there. A reveal on any of them is a scene defect the same way a
+// row.* bind outside a template is: the author wrote a prop the format cannot
+// honour there, and is better told than left with a node that silently ignores
+// it.
+//
+// The anim token is not checked here. A token's existence is a theme question —
+// ValidateTokens answers it against the active theme, the same place a style
+// token is checked — and this walk has no theme. An empty Anim is legal: it
+// means anim.default (Q8).
+func (d *Document) validateReveal(n *Node, path string) error {
+	if n.Reveal == nil {
+		return nil
+	}
+	if n.Type != "text" {
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("node type %q declares reveal, which rides the character-count axis only a text node draws (SCENES.md Scene 4); a reveal on a %q node is a scene defect — move it onto a text node or remove it", n.Type, n.Type),
 		}
 	}
 	return nil
@@ -493,6 +530,27 @@ func (d *Document) collectTokenErrors(n *Node, path string, thm *theme.Theme, er
 			*errs = append(*errs, TokenError{
 				Token:    borderStyle,
 				NodeType: n.Type + " border",
+				Loc:      d.locOf(path),
+			})
+		}
+	}
+
+	// Check the reveal's timing token against the theme's anim section (G3).
+	// A reveal resolves anim.default when it names none (Q8), so the token to
+	// check is its Anim or "default"; either way an animation prop naming a
+	// timing token the active theme does not define fails the load with an
+	// address, the same net a style token gets (TOKENS.md). HasAnim, not Has:
+	// the anim section is a separate namespace, so a style token spelled like
+	// the timing token must not satisfy this.
+	if n.Reveal != nil {
+		token := n.Reveal.Anim
+		if token == "" {
+			token = "default"
+		}
+		if !thm.HasAnim(token) {
+			*errs = append(*errs, TokenError{
+				Token:    token,
+				NodeType: n.Type + " reveal",
 				Loc:      d.locOf(path),
 			})
 		}
