@@ -159,27 +159,73 @@ func TestAPatchThatBreaksTheSceneIsRefusedRatherThanDrawn(t *testing.T) {
 	}
 }
 
-// TestHideAndShowAreRefusedRatherThanInventingABind pins the decision the
-// validator forced, so the next author does not re-derive it and re-ship it.
+// TestHideAndShowWriteTheViewStateSetWithoutTouchingTheSource pins F3's
+// behaviour and, in the same cases, the decision the earlier refusal protected.
 //
-// The draft implemented hide as a `when` naming `ui.hidden`. It is the natural
-// spelling and it was wrong: the bind is signed nowhere, and the validator
-// refused it against the shipped scene with an address. This guard keeps the
-// refusal a refusal. Without it, the cheapest way to make a future hide test
-// pass is to sign the bind, which would put a per-node flag into a namespace
-// whose every signed row is a single id — so `/ui hide a` would unhide `b`.
-func TestHideAndShowAreRefusedRatherThanInventingABind(t *testing.T) {
+// The draft implemented `hide` as a `when` naming `ui.hidden` — a scalar bool —
+// and the validator refused it because the bind was signed nowhere. D3 then
+// signed `ui.hidden` as a *set of node ids* consumed by the engine walk, and
+// F3 built it. Two properties are pinned here so the rejected design cannot
+// creep back:
+//
+//   - hide/show do not edit the document. They return a ViewStateOp naming the
+//     id and leave Source byte-for-byte unchanged. A `when`-based hide would
+//     have rewritten the node; a source that is untouched is the proof the set
+//     path is the one taken.
+//   - the set distinguishes ids. `/ui hide chat` names `chat` and nothing else,
+//     which is the whole reason D3 signed a set and not the scalar that made
+//     `/ui hide a` unhide `b`.
+func TestHideAndShowWriteTheViewStateSetWithoutTouchingTheSource(t *testing.T) {
+	name, src := sobria(t)
+
+	hid, err := Apply(name, src, "/ui hide chat")
+	if err != nil {
+		t.Fatalf("`/ui hide chat` was refused, but `chat` is an id the scene declares: %v\nConsequence: F3's hide verb cannot address a node the user can see.\nRemedy: resolve the id against the document and, if present, return the set op.", err)
+	}
+	if hid.ViewState == nil {
+		t.Fatalf("`/ui hide chat` produced no ViewState op.\nConsequence: the loop has nothing to apply to ui.hidden, so the command reports success and hides nothing.\nRemedy: return a ViewStateOp from applyViewState.")
+	}
+	if len(hid.ViewState.Hide) != 1 || hid.ViewState.Hide[0] != "chat" {
+		t.Errorf("`/ui hide chat` did not name `chat` as the id to hide.\n  op: %+v\nConsequence: this is the scalar-flag defect D3 forbids — the set must distinguish `chat` from every other id, or `/ui hide chat` hides the wrong node.\nRemedy: put c.Target in ViewStateOp.Hide.", hid.ViewState)
+	}
+	if string(hid.Source) != string(src) {
+		t.Errorf("`/ui hide chat` rewrote the document source.\n  before: %s\n  after:  %s\nConsequence: hide is being implemented as a `when` edit — the rejected scalar design — rather than as the view-state set D3 signed; a document edit means the hide cannot be undone by `/ui show` and survives a reload.\nRemedy: hide/show mutate ui.hidden only; leave Source unchanged.", src, hid.Source)
+	}
+
+	shown, err := Apply(name, src, "/ui show chat")
+	if err != nil {
+		t.Fatalf("`/ui show chat` was refused: %v", err)
+	}
+	if shown.ViewState == nil || len(shown.ViewState.Show) != 1 || shown.ViewState.Show[0] != "chat" {
+		t.Errorf("`/ui show chat` did not name `chat` as the id to reveal.\n  op: %+v\nConsequence: show cannot undo a specific hide.\nRemedy: put c.Target in ViewStateOp.Show.", shown.ViewState)
+	}
+
+	all, err := Apply(name, src, "/ui show *")
+	if err != nil {
+		t.Fatalf("`/ui show *` was refused: %v", err)
+	}
+	if all.ViewState == nil || !all.ViewState.ShowAll {
+		t.Errorf("`/ui show *` did not set ShowAll.\n  op: %+v\nConsequence: the reveal-everything escape valve BINDS.md §4.3 signs does not work, so a user who hid a node whose id later changed can never get it back.\nRemedy: set ViewStateOp.ShowAll for the `*` form.", all.ViewState)
+	}
+}
+
+// TestHideOfAnUnknownIdIsRefusedWithTheIdAndTheAddress holds hide/show to D2's
+// id resolution (D3 gives them the same "id not found" rule as every other
+// verb): a hide that names a node the scene does not declare is refused with an
+// address, not silently added to the set.
+func TestHideOfAnUnknownIdIsRefusedWithTheIdAndTheAddress(t *testing.T) {
+	name, src := sobria(t)
 	for _, verb := range []string{"hide", "show"} {
-		_, err := Parse("/ui " + verb + " status")
+		_, err := Apply(name, src, "/ui "+verb+" nosuchnode")
 		if err == nil {
-			t.Errorf("/ui %s must be refused while the bind it needs is unsigned; it was accepted.\nConsequence: implementing it requires a per-node view-state bind, and every `ui.*` row BINDS.md signs is a single id (`ui.focus`, `ui.max`) — so a scalar flag makes `/ui hide a` silently unhide `b`, and the vocabulary for it gets designed inside a command implementation ahead of the phase meant to choose it.\nRemedy: keep the refusal until BINDS.md signs a per-node gate.", verb)
+			t.Errorf("`/ui %s nosuchnode` must be refused — `nosuchnode` is not an id in the scene — and it was accepted.\nConsequence: the set fills with ids that address nothing, and `/ui show *` is the only way to clear the typo.\nRemedy: resolve the id against the document before returning the op.", verb)
 			continue
 		}
-		if !strings.Contains(err.Error(), "not yet") {
-			t.Errorf("/ui %s must be refused as \"not yet available\" rather than as invalid.\n  got: %v\nConsequence: the author spelled a reasonable command, and a wrong diagnosis costs the repair loop a turn it charges to the user.\nRemedy: say the feature is unavailable and name what it is waiting on.", verb, err)
+		if !strings.Contains(err.Error(), "nosuchnode") {
+			t.Errorf("`/ui %s`'s refusal must name the id the user typed.\n  got: %v\nRemedy: reuse unknownTargetError.", verb, err)
 		}
-		if !strings.Contains(err.Error(), "BINDS.md") {
-			t.Errorf("/ui %s's refusal must name the document that would unblock it.\n  got: %v\nConsequence: the reader cannot tell whether this is a bug or a sequencing decision.\nRemedy: cite BINDS.md in the message.", verb, err)
+		if !strings.Contains(err.Error(), name) {
+			t.Errorf("`/ui %s`'s refusal must carry the file address.\n  got: %v\nConsequence: a refusal without a location is the bug AGENTS.md names first.\nRemedy: build the message from the document name.", verb, err)
 		}
 	}
 }
@@ -256,6 +302,8 @@ func TestEveryVerbRoundTripsThroughTheValidator(t *testing.T) {
 		"move":  `/ui move status above chat`,
 		"style": "/ui style status dim",
 		"set":   "/ui set status text hello",
+		"hide":  "/ui hide status",
+		"show":  "/ui show status",
 	}
 
 	for _, verb := range Verbs() {
