@@ -352,9 +352,10 @@ func packagePathFor(dir string) string {
 //	CaptionGlyph()                                     -> falsely accused
 //	  the false-alarm direction, and the one that gets an audit deleted: a
 //	  correctly wired field whose accessor is named after the concept rather
-//	  than after the field. `Scroll` is already a raw field with no `Raw`
-//	  suffix, so neither spelling holds today; it escapes notice only because
-//	  unrenderedFields refuses it.
+//	  than after the field. `Scroll` was the standing example of a raw field
+//	  with no `Raw` suffix that escaped notice only because unrenderedFields
+//	  refused it; it graduated (G2) to a read struct the engine draws on a
+//	  marquee, so it now clears this audit by being read, not by being refused.
 //
 // So the accessors are read out of the method bodies: a field is read when
 // something outside selects it, or when it selects a method of Node whose body

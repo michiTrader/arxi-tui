@@ -305,6 +305,12 @@ func remedyProbeDocuments(t *testing.T) []remedyProbe {
 		"title":       `{"root":{"type":"box","border":"single","title":"T","children":[{"type":"text","text":"x"}]}}`,
 		"min_width":   `{"root":{"type":"overlay","anchor":"bottom","min_width":12,"children":[{"type":"text","text":"x"}]}}`,
 		"focus_glow":  `{"root":{"type":"text","text":"x","focus_glow":{"style":"banner"}}}`,
+		// scroll graduated (G2): it is rendered on a marquee and refused
+		// elsewhere, so it is no longer in unrenderedFields. Its fixture is a
+		// marquee with a valid scroll, which validates clean — the premise this
+		// audit needs before it adds the runtime entry and checks the printed
+		// remedy actually refuses.
+		"scroll": `{"root":{"type":"marquee","bind":"thinking.text","scroll":{"speed":2}}}`,
 
 		// Already in unrenderedFields, so the subtest returns early — their
 		// promise is checked by TestEveryUnrenderedFieldIsActuallyRefused with
@@ -312,7 +318,6 @@ func remedyProbeDocuments(t *testing.T) []remedyProbe {
 		// here by omission.
 		"row_template": `{"root":{"type":"list","bind":"agent.todos","row_template":{"type":"text","bind":"model.name"}}}`,
 		"on_press":     `{"root":{"type":"text","text":"x","on_press":"cmd:/help"}}`,
-		"scroll":       `{"root":{"type":"markdown","bind":"chat.history","scroll":{"speed":2}}}`,
 	}
 
 	vocab := Vocabulary()
