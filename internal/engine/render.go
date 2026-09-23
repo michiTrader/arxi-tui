@@ -109,15 +109,79 @@ type Renderer struct {
 	// and restores it around each row, so a template nested inside a template
 	// row still resolves its own row rather than its parent's.
 	curRow map[string]string
+
+	// AnimTicks is per-node animation phase, host-computed view state fed in
+	// per repaint (ADR-0005). For a scroll marquee it is the tick count the
+	// node's clock has reached; renderMarquee turns `ticks * speed` into a
+	// horizontal offset. It is an *input* separate from fold.State — the fold
+	// projects content, never motion (Q9) — so RenderFrame stays a pure
+	// function of (document, fold state, phase) and every golden pins a phase
+	// exactly as it pins a fold state. nil (the common case, and every golden
+	// that is not about motion) means every node's tick count is zero, which is
+	// the settled/starting frame.
+	AnimTicks map[string]int
+
+	// active, when non-nil, collects the visible nodes that are animating this
+	// frame, so the loop can maintain per-node elapsed time and size the ticker
+	// (ADR-0005: the ticker runs only while a visible node animates). It is a
+	// pointer because the walk is recursive and every sub-renderer shares one
+	// accumulator; it is nil in the pure/golden path, where nobody is driving a
+	// clock and the activity report has no consumer. RenderFrameActive sets it;
+	// RenderFrame leaves it nil.
+	active *[]AnimActivity
+}
+
+// AnimActivity is one visible animating node, reported back to the loop so it
+// can decide whether to keep the ticker running and at what rate. NodeID is the
+// node's id (the key the loop holds elapsed time under); Paused is the current
+// truthiness of the node's pause_when bind, so a marquee frozen by pause_when
+// asks for no ticks while still being present.
+type AnimActivity struct {
+	NodeID string
+	Paused bool
+}
+
+// child builds a sub-renderer for a nested layout region, inheriting the
+// resolution context every node in that region shares: the current template
+// row, the animation phase input, and the activity accumulator. It exists so
+// "some sub-renderers carry the animation phase and others do not" is
+// unrepresentable — the defect class LESSONS.md records for `when` and style
+// tokens, where a fix scoped to one construction site left the others silently
+// uncovered. A marquee nested in a box, a column or an overlay must scroll and
+// report exactly as one at the root does, and threading these by hand at each
+// construction site is a fresh chance to forget one.
+func (r *Renderer) child(width, height int) Renderer {
+	return Renderer{
+		Width:     width,
+		Height:    height,
+		curRow:    r.curRow,
+		AnimTicks: r.AnimTicks,
+		active:    r.active,
+	}
 }
 
 // RenderFrame renders a scene document into a frame, binding fold.State into
-// the nodes' bind fields.
+// the nodes' bind fields. It is the pure entry point: no clock, no activity
+// report, the same frame for the same (document, state, phase) every time.
 func (r *Renderer) RenderFrame(doc *scene.Document, state fold.State) ui.Frame {
+	frame, _ := r.RenderFrameActive(doc, state)
+	return frame
+}
+
+// RenderFrameActive renders the frame and also reports which visible nodes are
+// animating, so the host loop can drive the clock (ADR-0005). The frame it
+// returns is byte-identical to RenderFrame's for the same inputs — the activity
+// slice is a side channel the loop reads, never a thing that changes a pixel —
+// so a golden may call either. The activity report is empty unless a visible
+// node carries an animation prop the engine draws.
+func (r *Renderer) RenderFrameActive(doc *scene.Document, state fold.State) (ui.Frame, []AnimActivity) {
 	if doc == nil || doc.Root == nil {
-		return ui.Frame{}
+		return ui.Frame{}, nil
 	}
-	return r.renderNode(doc.Root, state, r.Height)
+	var collected []AnimActivity
+	r.active = &collected
+	frame := r.renderNode(doc.Root, state, r.Height)
+	return frame, collected
 }
 
 // renderNode lays one node out within a budget of rows. Every container passes
@@ -451,7 +515,7 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 	for i, child := range children {
 		// Render with full budget to get natural height; use a large width
 		// to avoid truncation during measurement.
-		mr := Renderer{Width: totalWidth, Height: r.Height, curRow: r.curRow}
+		mr := r.child(totalWidth, r.Height)
 		f := mr.renderNode(child, state, budget)
 		frames[i] = f
 		w := 0
@@ -508,7 +572,7 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 	for i, child := range children {
 		if weighted && child.Weight != nil {
 			if colWidths[i] != totalWidth {
-				subR := Renderer{Width: colWidths[i], Height: r.Height, curRow: r.curRow}
+				subR := r.child(colWidths[i], r.Height)
 				frames[i] = subR.renderNode(child, state, budget)
 			}
 		}
@@ -768,7 +832,7 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 	// content block renders top border + content + bottom border, and the
 	// surrounding stack provides any vertical spacing (Q6: fixed children
 	// take only what they need).
-	innerRenderer := Renderer{Width: innerWidth, Height: innerHeight, curRow: r.curRow}
+	innerRenderer := r.child(innerWidth, innerHeight)
 	var content ui.Frame
 	if len(n.Children) > 0 {
 		content = innerRenderer.renderStack(&scene.Node{
@@ -880,10 +944,11 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 		return ui.Frame{Width: r.Width, Height: 0}
 	}
 
-	var cells []ui.Span
-
-	// Prefix: a child node with text+style (or bind+style) rendered before the
-	// main scrolling text.
+	// Prefix and suffix are composed around the main text on one line, so
+	// their widths come out of the budget the main text scrolls within. Both
+	// are built first — the suffix too, even though it is drawn last — because
+	// the marquee window has to know how much room the main text actually has
+	// before it can slice it.
 	//
 	// hiddenByWhen is asked here, and at the suffix below, because a nested
 	// node never passes through renderNode — the owning renderer reads
@@ -896,29 +961,71 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 	// Measured before this line existed: a prefix declaring `when` rendered
 	// byte-identically under `agent.working` and `!agent.working`, and the
 	// validator accepted both.
+	var prefixSpan, suffixSpan *ui.Span
 	prefix := n.PrefixNode()
 	if prefix != nil && !hiddenByWhenRow(prefix, state, r.curRow) {
 		// A prefix is a text-bearing node: either Type=="text" or an
 		// untyped node with Text set (the sobria prefix omits the type).
 		if prefix.Bind != "" {
-			cells = append(cells, ui.Span{Text: resolveBindRow(prefix.Bind, state, r.curRow), Style: styleName(prefix.Style)})
+			prefixSpan = &ui.Span{Text: resolveBindRow(prefix.Bind, state, r.curRow), Style: styleName(prefix.Style)}
 		} else {
-			cells = append(cells, ui.Span{Text: prefix.Text, Style: styleName(prefix.Style)})
+			prefixSpan = &ui.Span{Text: prefix.Text, Style: styleName(prefix.Style)}
+		}
+	}
+	if n.Suffix != nil && !hiddenByWhenRow(n.Suffix, state, r.curRow) {
+		if n.Suffix.Bind != "" {
+			suffixSpan = &ui.Span{Text: resolveBindRow(n.Suffix.Bind, state, r.curRow), Style: styleName(n.Suffix.Style)}
+		} else if n.Suffix.Text != "" {
+			suffixSpan = &ui.Span{Text: n.Suffix.Text, Style: styleName(n.Suffix.Style)}
 		}
 	}
 
-	// If the text is shorter than the width, show it whole; otherwise scroll.
-	// Phase 0: static display (no animation) — the host clock animation comes later.
-	cells = append(cells, ui.Span{Text: text, Style: styleName(n.Style)})
-
-	// Suffix: a child node (bind or text) rendered after the main text.
-	// The sobria marquee's suffix binds usage.delta with style "dim".
-	if n.Suffix != nil && !hiddenByWhenRow(n.Suffix, state, r.curRow) {
-		if n.Suffix.Bind != "" {
-			cells = append(cells, ui.Span{Text: resolveBindRow(n.Suffix.Bind, state, r.curRow), Style: styleName(n.Suffix.Style)})
-		} else if n.Suffix.Text != "" {
-			cells = append(cells, ui.Span{Text: n.Suffix.Text, Style: styleName(n.Suffix.Style)})
+	// The scroll prop (G2) turns the static main text into a marquee: instead
+	// of clipping to the head, it advances a window over the content. The clock
+	// is host-owned (ADR-0005) — the phase arrives as AnimTicks[id], the tick
+	// count the node has reached — and the axis is horizontal offset, one the
+	// renderer already draws whenever it clips text. So this only chooses which
+	// window to slice at time t; it invents no new rendering (SCENES.md Scene 4).
+	//
+	// It scrolls only when the content is wider than the room the prefix and
+	// suffix leave it — a marquee that fits has nothing to move — and it reports
+	// its activity to the loop only then, so the ticker is armed only while a
+	// node genuinely moves (ADR-0005: the ticker runs only while a visible node
+	// animates). pause_when's truthiness rides along in the report; the loop
+	// freezes the tick count while it holds, so the offset stops here without
+	// the renderer owning a pause policy.
+	mainStyle := styleName(n.Style)
+	marqueeText := text
+	if n.Scroll != nil {
+		budget := r.Width
+		if prefixSpan != nil {
+			budget -= ansi.StringWidth(prefixSpan.Text)
 		}
+		if suffixSpan != nil {
+			budget -= ansi.StringWidth(suffixSpan.Text)
+		}
+		if ansi.StringWidth(text) > budget && budget > 0 {
+			offset := 0
+			if cycle := ansi.StringWidth(text) + marqueeGap; cycle > 0 {
+				offset = (r.AnimTicks[n.ID] * n.Scroll.Speed) % cycle
+			}
+			marqueeText = marqueeWindow(text, offset, budget)
+			if r.active != nil {
+				*r.active = append(*r.active, AnimActivity{
+					NodeID: n.ID,
+					Paused: n.Scroll.PauseWhen != "" && evalWhen(n.Scroll.PauseWhen, state),
+				})
+			}
+		}
+	}
+
+	var cells []ui.Span
+	if prefixSpan != nil {
+		cells = append(cells, *prefixSpan)
+	}
+	cells = append(cells, ui.Span{Text: marqueeText, Style: mainStyle})
+	if suffixSpan != nil {
+		cells = append(cells, *suffixSpan)
 	}
 
 	return ui.Frame{
@@ -926,6 +1033,22 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 		Width:  r.Width,
 		Height: 1,
 	}
+}
+
+// marqueeGap is the run of blank cells between the tail of a scrolling marquee
+// and its head reappearing, so the wrap reads as a gap rather than the last
+// word running straight into the first.
+const marqueeGap = 4
+
+// marqueeWindow returns the `budget`-wide window of `content` starting at
+// display column `offset`, wrapping so the head follows the tail after
+// marqueeGap blank cells. It is the width-aware slice truncateText already does
+// for the static case, only with a moving start: the content is laid end to end
+// with its gap and itself, and ansi.Cut takes the columns the offset points at,
+// so a wide character is never split.
+func marqueeWindow(content string, offset, budget int) string {
+	doubled := content + strings.Repeat(" ", marqueeGap) + content
+	return ansi.Cut(doubled, offset, offset+budget)
 }
 
 // renderOverlay renders a floating panel anchored to a corner/edge. The
@@ -959,7 +1082,7 @@ func (r *Renderer) renderOverlay(n *scene.Node, state fold.State) ui.Frame {
 	}
 
 	// Layout the overlay's children as a vertical column within the content width.
-	innerRenderer := Renderer{Width: contentWidth, Height: r.Height, curRow: r.curRow}
+	innerRenderer := r.child(contentWidth, r.Height)
 	var lines []ui.Line
 	for _, child := range n.Children {
 		f := innerRenderer.renderNode(child, state, r.Height)
