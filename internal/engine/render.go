@@ -1450,7 +1450,26 @@ func hiddenByWhen(n *scene.Node, state fold.State) bool {
 // hiddenByWhenRow is hiddenByWhen with a template row in scope, so a per-row
 // `when: "row.busy"` gates that row's node against its own element (Scene 9).
 func hiddenByWhenRow(n *scene.Node, state fold.State, row map[string]string) bool {
-	if n == nil || n.When == "" {
+	if n == nil {
+		return false
+	}
+	// ui.hidden (BINDS.md §4.3, D3) is the user's manual override, and it
+	// composes with the scene's own `when` by conjunction: a node draws only
+	// when its gate is truthy AND its id is not in the hidden set — either one
+	// removes it, order does not matter. The membership test lives in this
+	// shared predicate rather than at the renderNode chokepoint on purpose. A
+	// node reached through `prefix` or `suffix` never passes through renderNode
+	// (renderMarquee reads those fields straight out of the struct), so a filter
+	// placed only at the chokepoint would silently exempt exactly the node
+	// positions LESSONS.md records the `when` gate itself falling into three
+	// times. hiddenByWhenRow is the one predicate both the draw register
+	// (renderNode) and the reserve register (renderStack's measuring pass) ask,
+	// so gating here keeps "hidden" a single answer no position can disagree
+	// with.
+	if n.ID != "" && state.UIHidden[n.ID] {
+		return true
+	}
+	if n.When == "" {
 		return false
 	}
 	return !evalWhenRow(n.When, state, row)
