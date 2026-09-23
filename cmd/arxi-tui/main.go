@@ -26,6 +26,7 @@ import (
 	"github.com/michiTrader/arxi_tui/internal/scene"
 	"github.com/michiTrader/arxi_tui/internal/term"
 	"github.com/michiTrader/arxi_tui/internal/theme"
+	"github.com/michiTrader/arxi_tui/internal/ui"
 )
 
 // The notice row every shipped document carries, and the reason it is not
@@ -406,6 +407,31 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// keystroke that hides a node must survive the next repaint.
 	uiHidden := map[string]bool{}
 
+	// The host animation clock (ADR-0005). It holds per-node elapsed time
+	// across frames like uiHidden above, feeds the renderer a phase, and reads
+	// back which nodes are animating so the ticker below runs only while one
+	// is. It is off entirely for a scene with no animation prop, so the common
+	// case repaints on input alone, exactly as before Block G.
+	clock := newAnimClock(marqueeFPS(theme))
+	var animTicker *time.Ticker
+	var tickCh <-chan time.Time
+	armTicker := func() {
+		switch {
+		case clock.running() && animTicker == nil:
+			animTicker = time.NewTicker(clock.interval())
+			tickCh = animTicker.C
+		case !clock.running() && animTicker != nil:
+			animTicker.Stop()
+			animTicker = nil
+			tickCh = nil
+		}
+	}
+	defer func() {
+		if animTicker != nil {
+			animTicker.Stop()
+		}
+	}()
+
 	repaint := func() {
 		state := fold.Fold(collected)
 		state.UserInput = input // view state: the host owns the input buffer
@@ -465,7 +491,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		var r engine.Renderer
 		w, h := tty.Size()
 		r.Width, r.Height = w, h
-		render(tty, doc, r, theme, state)
+
+		// The animation clock advances by wall time, hands the renderer the
+		// phase, and reads back which nodes are still animating; then the
+		// ticker is armed or stopped to match. The frame goes through the same
+		// emit path render() uses, so the animated repaint and a plain one
+		// cannot diverge in how they reach the terminal.
+		clock.advance(time.Now())
+		r.AnimTicks = clock.ticks()
+		frame, active := r.RenderFrameActive(doc, state)
+		clock.reconcile(active)
+		emitFrame(tty, frame, theme)
+		armTicker()
 	}
 
 	repaint()
@@ -475,6 +512,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		select {
 		case <-ctx.Done():
 			return nil
+
+		case <-tickCh:
+			// The animation clock's fourth reason to repaint (ADR-0005). A tick
+			// only repaints; it reads no input and dispatches no gesture, so the
+			// escape hatch stays uncapturable (invariant 6) — Ctrl-C is handled
+			// on the terminal channel, and a runaway animation cannot wedge the
+			// door. tickCh is nil while nothing animates, and a receive on a nil
+			// channel blocks forever, so this case simply never fires then.
+			repaint()
 
 		case ev, ok := <-termEvents:
 			if !ok {
@@ -854,7 +900,14 @@ func warningNotice(warnings []scene.Warning) string {
 // the cell-diff repaint (the emitter's own machinery) is Phase 0.5 work on
 // top of the same Frame.
 func render(w io.Writer, doc *scene.Document, r engine.Renderer, theme *theme.Theme, state fold.State) {
-	f := r.RenderFrame(doc, state)
+	emitFrame(w, r.RenderFrame(doc, state), theme)
+}
+
+// emitFrame writes one already-rendered frame to the terminal. It is the single
+// emit path: the loop's animation-aware repaint and the plain render() above
+// both go through it, so "the frame that knows about the clock" and "the frame
+// that does not" cannot emit differently.
+func emitFrame(w io.Writer, f ui.Frame, theme *theme.Theme) {
 	fmt.Fprint(w, "\033[H\033[2J")
 	// Raw mode turned the terminal's output processing off (OPOST/ONLCR), so
 	// the terminal no longer translates \n into \r\n: a bare newline drops
