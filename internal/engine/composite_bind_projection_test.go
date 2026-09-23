@@ -195,12 +195,17 @@ func fillStringFields(v reflect.Value) bool {
 	return filled
 }
 
-// nodeTypesInRenderNode reads the node-type vocabulary out of renderNode's own
-// switch. This is the correction the first draft of this file needed: a
+// nodeTypesInRenderNode reads the node-type vocabulary out of the engine's own
+// type switch. This is the correction the first draft of this file needed: a
 // hand-written bind→node-type map is a second inventory, and it chose which
 // half of chat.history's surface got measured — the half the injected defect
 // was not in. Parsing the dispatch keeps the sweep as wide as the engine is,
-// and a node type added to renderNode is swept from the moment it exists.
+// and a node type added to the dispatch is swept from the moment it exists.
+//
+// The switch lives in renderByType, which renderNode calls after its universal
+// wrappers and its enter check (G4 split the dispatch out so enter could render
+// a node's content and then stagger it). This reads the cases from renderByType
+// for that reason — the dispatch, not the function name renderNode.
 func nodeTypesInRenderNode(t *testing.T) []string {
 	t.Helper()
 
@@ -217,7 +222,7 @@ func nodeTypesInRenderNode(t *testing.T) []string {
 		for _, file := range pkg.Files {
 			ast.Inspect(file, func(n ast.Node) bool {
 				fd, ok := n.(*ast.FuncDecl)
-				if !ok || fd.Name.Name != "renderNode" {
+				if !ok || fd.Name.Name != "renderByType" {
 					return true
 				}
 				ast.Inspect(fd, func(m ast.Node) bool {

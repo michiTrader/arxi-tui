@@ -166,7 +166,7 @@ func TestProgressAxesAreMeasuredNotAsserted(t *testing.T) {
 				len(documented), documented)
 		}
 		if len(implemented) == 0 {
-			t.Fatal("found no node type case labels in renderNode; the audit cannot tell an\n" +
+			t.Fatal("found no node type case labels in renderByType; the audit cannot tell an\n" +
 				"unimplemented type from a parse failure, and would report the whole vocabulary\n" +
 				"as missing — a wall of false alarms.")
 		}
@@ -188,7 +188,7 @@ func TestProgressAxesAreMeasuredNotAsserted(t *testing.T) {
 		// on_press refusals declined to do.
 		for typ := range implemented {
 			if !containsFold(documented, typ) {
-				t.Errorf("renderNode has a case for node type %q, and docs/SCENES.md's primitive\n"+
+				t.Errorf("renderByType has a case for node type %q, and docs/SCENES.md's primitive\n"+
 					"vocabulary does not list it.\n"+
 					"consequence: the engine renders a construction the format does not define, so a\n"+
 					"scene relying on it is valid against the code and invalid against the contract —\n"+
@@ -485,10 +485,18 @@ func documentedNodeTypes(t *testing.T) []string {
 	return out
 }
 
-// renderedNodeTypes returns the node types renderNode dispatches on, read from
-// the switch on the node's Type field specifically.
+// renderedNodeTypes returns the node types the renderer dispatches on, read
+// from the switch on the node's Type field specifically.
 //
-// Scoping it to renderNode matters: the engine's other switches are on bind
+// The switch lives in renderByType, which renderNode calls after its universal
+// wrappers (when, focus_glow, transition) and its enter check (G4). The split
+// happened when enter arrived: enter has to render a node's ordinary content and
+// then stagger or dim it, so the type dispatch moved into a helper enter can
+// call. This helper follows the dispatch to renderByType rather than the name
+// renderNode, exactly as its own remedy line instructs — the axis measures the
+// dispatch, not the function name.
+//
+// Scoping it to that function matters: the engine's other switches are on bind
 // names, border shapes and overlay anchors, and a package-wide sweep for
 // string case labels would report "double", "ascii" and "top-right" as node
 // types. The signed-bind audit's package-wide sweep filters on a dot in the
@@ -496,8 +504,8 @@ func documentedNodeTypes(t *testing.T) []string {
 //
 // Scoping to the *function* is not enough, and that is this helper's own
 // version of the defect fixed in renderedAnimationProperties. The first
-// version took every string case label anywhere inside renderNode, which is
-// only correct while renderNode contains exactly one switch. Measured by
+// version took every string case label anywhere inside the dispatch function,
+// which is only correct while it contains exactly one switch. Measured by
 // adding a second one to it — `switch n.Style["border"] { case "button": }`,
 // an ordinary thing to write:
 //
@@ -528,7 +536,7 @@ func renderedNodeTypes(t *testing.T) map[string]bool {
 	for _, file := range files {
 		ast.Inspect(file, func(n ast.Node) bool {
 			fn, ok := n.(*ast.FuncDecl)
-			if !ok || fn.Name.Name != "renderNode" {
+			if !ok || fn.Name.Name != "renderByType" {
 				return true
 			}
 			ast.Inspect(fn, func(inner ast.Node) bool {
@@ -565,7 +573,7 @@ func renderedNodeTypes(t *testing.T) map[string]bool {
 		})
 	}
 	if !found {
-		t.Fatal("found no switch on the node's Type field inside renderNode.\n" +
+		t.Fatal("found no switch on the node's Type field inside renderByType.\n" +
 			"consequence: the node-type axis reports every documented primitive as unrendered,\n" +
 			"which reads as a project that draws nothing — and the caller's floor cannot tell\n" +
 			"that from a real regression.\n" +

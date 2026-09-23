@@ -164,11 +164,20 @@ type Renderer struct {
 // whose duration/curve/fps the loop resolves against the theme (the renderer has
 // no theme, so it reports the name and the loop fills the timing in). Both are
 // zero for a scroll, which keeps its existing single-rate path unchanged.
+//
+// Row is enter's per-row stagger index (G4). enter reports one activity per row
+// with its position i, and the loop starts row i's own entrance at offset
+// i * duration — so a single token, one clock per row id, spreads the rows out
+// in time. It is zero for every other one-shot (reveal, transition) and for a
+// scroll, so those keep their offset-free single-clock path: a row 0 is a
+// one-shot that starts at zero, which is exactly what a lone reveal or
+// transition is.
 type AnimActivity struct {
 	NodeID  string
 	Paused  bool
 	OneShot bool
 	Token   string
+	Row     int
 }
 
 // child builds a sub-renderer for a nested layout region, inheriting the
@@ -231,6 +240,23 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 	}
 	n = withFocusGlow(n, state)
 	n = r.withTransition(n)
+	// enter (G4) is the last wrapper, and it wraps the type switch rather than a
+	// single node the way withTransition does, because its axis is the container's
+	// rows, not one node's style: row:true staggers the children (or the rows of a
+	// row_template) into the frame, row:false dims the whole rendered subtree as
+	// one unit. Both need the node's ordinary rendering first, so enter delegates
+	// to renderByType and post-processes the frame.
+	if n.Enter != nil {
+		return r.renderEnter(n, state, budget)
+	}
+	return r.renderByType(n, state, budget)
+}
+
+// renderByType is renderNode's dispatch on the node's type, split out so enter
+// (G4) can render a node's ordinary content and then stagger or dim it. Every
+// path that is not an enter reaches it straight from renderNode, so the split is
+// invisible to them.
+func (r *Renderer) renderByType(n *scene.Node, state fold.State, budget int) ui.Frame {
 	switch n.Type {
 	case "stack":
 		return r.renderStack(n, state, budget)
@@ -1830,6 +1856,176 @@ func (r *Renderer) withTransition(n *scene.Node) *scene.Node {
 		dimmed.Style[key] = transitionDimToken
 	}
 	return &dimmed
+}
+
+// renderEnter draws Scene 4's enter (G4): the staggered list entrance. It is the
+// scheduler G-B signs — a composition of the intensity axis transition rides and
+// the row-count axis a container already draws — not a fifth axis. The node's
+// ordinary content is rendered first (renderByType), and enter then decides,
+// per row, which already-expressible frame to emit: a row not yet reached is not
+// drawn, a row mid-entrance is dimmed, a row past its entrance is settled. The
+// clock chooses which of those by time; the renderer only maps a phase to a
+// frame, exactly as reveal and transition do.
+//
+// row:false is the degenerate whole-container entrance and is handled first: it
+// is transition applied to the whole rendered subtree rather than to one node's
+// own style. transition (G1) deliberately left subtree dimming to enter, because
+// a container has no own content to dim; this is where that dimming lives.
+func (r *Renderer) renderEnter(n *scene.Node, state fold.State, budget int) ui.Frame {
+	if !n.Enter.Row {
+		f := r.renderByType(n, state, budget)
+		return r.enterWhole(n, f)
+	}
+	return r.renderEnterRows(n, state, budget)
+}
+
+// enterWhole applies the whole-container entrance (row:false) to an
+// already-rendered frame: the subtree draws dim while the entrance runs and in
+// its settled styles once the phase reaches 1. It is transition's dim→settled
+// rule (withTransition) lifted from a node's style token to every span of a
+// rendered frame, and it reads the phase the same way — a nil map is the
+// pure/golden path (settled, so no golden moves), and a non-nil map with no
+// entry is the first live frame (phase 0, dim), the seam withTransition
+// documents. The container reports itself active on the default token (Row 0),
+// so the loop drives one clock for the whole unit exactly as it does for a
+// transition.
+func (r *Renderer) enterWhole(n *scene.Node, f ui.Frame) ui.Frame {
+	if r.active != nil {
+		*r.active = append(*r.active, AnimActivity{NodeID: n.ID, OneShot: true, Token: "", Row: 0})
+	}
+	if r.AnimPhase == nil {
+		return f
+	}
+	if r.AnimPhase[n.ID] >= 1 {
+		return f
+	}
+	return dimFrame(f)
+}
+
+// enterRowKey is the clock key for row i of the enter on container id. The rows
+// of one enter each run their own one-shot clock, so each needs a distinct id,
+// and it is derived from the container's id the way the clock keys everything
+// else — which inherits the container from reveal/transition: a node the author
+// gave no id shares the empty key with every other id-less node, an accepted
+// limitation the shipped scenes avoid by giving animated nodes ids. The
+// separator is a NUL, which no author-written id contains, so the row keys
+// cannot collide with an ordinary node id.
+func enterRowKey(id string, i int) string {
+	return id + "\x00enter\x00" + strconv.Itoa(i)
+}
+
+// renderEnterRows staggers a container's rows into the frame (row:true). The
+// rows are the children of a container or the instantiations of a row_template,
+// each rendered to its own frame and then placed in whatever state its personal
+// clock has reached. Every row is reported active regardless of whether it is
+// drawn yet, because the clock starts a row's offset countdown from the frame it
+// first appears in the report: withholding an undrawn row would stop its own
+// arrival from ever being scheduled.
+//
+// The rows are composed as a plain vertical sequence, which is the row-count
+// axis the design names ("the list fills top-to-bottom"). A container's own
+// chrome — a box border, an overlay anchor — is not part of that sequence and is
+// not redrawn here; a node that needs its frame to enter as a unit uses
+// row:false, which does redraw it. This keeps the row:true path a scheduler over
+// rows rather than a second layout engine.
+func (r *Renderer) renderEnterRows(n *scene.Node, state fold.State, budget int) ui.Frame {
+	rows := r.enterRowFrames(n, state, budget)
+
+	var lines []ui.Line
+	for i, rf := range rows {
+		if r.active != nil {
+			*r.active = append(*r.active, AnimActivity{
+				NodeID:  enterRowKey(n.ID, i),
+				OneShot: true,
+				Token:   n.Enter.Stagger,
+				Row:     i,
+			})
+		}
+		drawn, dim := r.enterRowState(n.ID, i)
+		if !drawn {
+			continue
+		}
+		f := rf
+		if dim {
+			f = dimFrame(rf)
+		}
+		lines = append(lines, f.Live...)
+		if len(lines) >= budget {
+			lines = lines[:budget]
+			break
+		}
+	}
+	return ui.Frame{Live: lines, Width: r.Width, Height: len(lines)}
+}
+
+// enterRowFrames renders each of an enter container's rows to its own frame, in
+// order. A row_template list stands each element of its bound array up as a row
+// (the same scopes renderRowTemplate uses); any other container stands each
+// visible child up as a row. renderNode is used per row so a row keeps its own
+// props — its when gate, its own transition or reveal — under the enter that
+// schedules its arrival.
+func (r *Renderer) enterRowFrames(n *scene.Node, state fold.State, budget int) []ui.Frame {
+	var out []ui.Frame
+	if n.RowTemplate != nil {
+		saved := r.curRow
+		defer func() { r.curRow = saved }()
+		for _, row := range rowScopesFor(n.Bind, state) {
+			r.curRow = row
+			out = append(out, r.renderNode(n.RowTemplate, state, budget))
+		}
+		return out
+	}
+	for _, c := range n.Children {
+		if hiddenByWhenRow(c, state, r.curRow) {
+			continue
+		}
+		out = append(out, r.renderNode(c, state, budget))
+	}
+	return out
+}
+
+// enterRowState maps row i's clock phase to what the renderer draws: not drawn
+// (the row has not reached its offset), dim (mid-entrance), or settled. It reads
+// the phase the way reveal and transition read theirs, with one inversion the
+// row-count axis forces: a non-nil map with no entry for the row is a row the
+// clock has not started, which for a staggered list is a row that has not
+// appeared — so it is *not drawn*, where the same absent entry means "dim start"
+// for a transition that is already present. A nil map is still the pure/golden
+// path, where every row draws settled so no golden moves.
+func (r *Renderer) enterRowState(id string, i int) (drawn, dim bool) {
+	if r.AnimPhase == nil {
+		return true, false
+	}
+	phase, ok := r.AnimPhase[enterRowKey(id, i)]
+	if !ok {
+		return false, false
+	}
+	if phase >= 1 {
+		return true, false
+	}
+	return true, true
+}
+
+// dimFrame returns a copy of a frame with every span drawn at the theme's dim
+// intensity — the frame-level analogue of withTransition rewriting a node's
+// style token. It is how enter dims a whole subtree (row:false) or a whole row
+// (row:true) as one unit: the intensity axis is discrete (dim / settled), so a
+// running entrance is the dim frame and a settled one is the frame untouched,
+// with no intermediate. Fill is left alone — a wash is not intensity — and the
+// copy is deep enough that the original spans (drawn again next repaint with the
+// phase advanced) are never mutated.
+func dimFrame(f ui.Frame) ui.Frame {
+	out := f
+	out.Live = make([]ui.Line, len(f.Live))
+	for i, line := range f.Live {
+		nl := make(ui.Line, len(line))
+		for j, sp := range line {
+			sp.Style = transitionDimToken
+			nl[j] = sp
+		}
+		out.Live[i] = nl
+	}
+	return out
 }
 
 func evalWhen(bind string, state fold.State) bool {
