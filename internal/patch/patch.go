@@ -73,6 +73,33 @@ type Result struct {
 	// says what changed in the user's vocabulary, the Diff shows it in the
 	// document's.
 	Diff Diff
+
+	// ViewState is set only by the `hide`/`show` verbs, and it is what makes
+	// them different in kind from every other verb here. add/move/set/style are
+	// source-to-source edits of the scene document; hide/show write host-owned
+	// view state (`ui.hidden`, BINDS.md §4.3), which has no representation in the
+	// document source at all — the engine walk consumes it as a visibility
+	// filter. So these verbs leave Source and Diff untouched (the document the
+	// user has does not change) and hand the caller the set mutation to apply to
+	// its own `ui.hidden`. A nil pointer means the command was an ordinary
+	// source edit; a non-nil one means "do not diff, apply this to view state".
+	ViewState *ViewStateOp
+}
+
+// ViewStateOp is a mutation of host-owned view state produced by `hide`/`show`.
+//
+// It carries the set operation rather than the resulting set because the set
+// lives in the loop, not here: the patch surface is stateless across commands
+// (Apply takes the document bytes fresh each call), so it cannot hold the
+// accumulated `ui.hidden` and must not try — a second copy of that set would be
+// a second answer to "what is hidden". The loop owns the set and applies the op.
+type ViewStateOp struct {
+	// Hide is the ids to add to `ui.hidden`; Show is the ids to remove. Exactly
+	// one is populated per op. `/ui show *` sets ShowAll, which clears the set
+	// regardless of its contents — the one operation that names no id.
+	Hide    []string
+	Show    []string
+	ShowAll bool
 }
 
 // Apply runs one /ui command against a scene document's source bytes.
@@ -183,31 +210,26 @@ func Parse(line string) (Command, error) {
 		}
 		return Command{Verb: "style", Target: args[0], Value: args[1]}, nil
 	case "hide", "show":
-		// Refused rather than implemented, and the refusal was reached by
-		// measurement rather than by review. The draft shipped `hide` as a
-		// `when` naming `ui.hidden`, which is the natural spelling: `ui.*` is
-		// the view-state namespace, BINDS.md §82 calls it "the only writable
-		// half (through `cmd:` actions)", and a /ui command is exactly such
-		// an action. The validator refused it on the shipped scene:
+		// hide/show write the `ui.hidden` view-state set BINDS.md §4.3 signs
+		// (D3), which is a different kind of change from every other verb: not a
+		// source edit but a set of node ids the engine walk consumes as a
+		// visibility filter, so a node draws iff its `when` is truthy and its id
+		// is not a member. The set-and-walk shape is not a detail — it was the
+		// decision the earlier refusal here protected. A scalar `ui.hidden`
+		// would make `/ui hide a` unhide `b` because every other `ui.*` row is a
+		// single id; a `when`-based hide cannot be spelled because this engine
+		// has no negation and an unresolved bind is falsy by signed contract.
+		// The set consumed by the walk sidesteps both, and D3 signed exactly it.
 		//
-		//	SOBRIA.json:82:7: unsigned bind "ui.hidden" in when condition of
-		//	node type "row"; every bind must appear in BINDS.md §4.5
-		//
-		// That refusal is right and the guard that surfaced it is the one
-		// this project built for exactly this. Signing the bind to satisfy it
-		// would be the wrong repair twice over: the fold would have to
-		// publish it, and — the part that kills the design — `ui.max` and
-		// `ui.focus` are both *single ids*, so a scalar `ui.hidden` hides one
-		// node at a time and `/ui hide a` silently unhides `b`. A per-node
-		// hidden flag is a different shape from every `ui.*` row signed so
-		// far, so choosing it here would be designing the view-state
-		// vocabulary from inside a command implementation.
-		//
-		// So it is refused the way `row_template` is refused: the author
-		// spelled something reasonable, and the message says "not yet"
-		// rather than "invalid", because a wrong diagnosis costs the repair
-		// loop a turn.
-		return Command{}, fmt.Errorf("/ui %s is not yet available: hiding a node needs a per-node view-state bind, and the `ui.*` namespace BINDS.md signs holds single ids (`ui.focus`, `ui.max`) rather than a per-node flag — so the bind it would need is signed nowhere yet (BINDS.md §4.5). Use `/ui set <node-id> when <signed-bind>` to gate a node on a condition that does exist", verb)
+		// `/ui show *` clears the whole set — the one form that names no id, so
+		// it is parsed before the id-arity check below.
+		if verb == "show" && len(args) == 1 && args[0] == "*" {
+			return Command{Verb: "show", Target: "*"}, nil
+		}
+		if len(args) != 1 {
+			return Command{}, fmt.Errorf("/ui %s needs a node id: /ui %s <id> (or `/ui show *` to reveal all)", verb, verb)
+		}
+		return Command{Verb: verb, Target: args[0]}, nil
 	case "set":
 		// /ui set <node-id> <key> <value…>
 		if len(args) < 3 {
@@ -230,8 +252,11 @@ func Parse(line string) (Command, error) {
 // existing node and must refuse a move into that node's own subtree — the one
 // piece of the write path `add` gets to skip. `set` and `style` need no
 // addressing at all: they name a node by the id it already has and write a
-// property the engine already reads.
-func Verbs() []string { return []string{"add", "move", "set", "style"} }
+// property the engine already reads. `hide` and `show` also name a node by its
+// existing id, but they write no property: they mutate the `ui.hidden`
+// view-state set (BINDS.md §4.3, D3), which the engine walk reads as a
+// visibility filter, so the document source is untouched.
+func Verbs() []string { return []string{"add", "move", "set", "style", "hide", "show"} }
 
 // apply performs the source-to-source edit and re-validates the result.
 func (c Command) apply(name string, src []byte) (Result, error) {
@@ -240,6 +265,8 @@ func (c Command) apply(name string, src []byte) (Result, error) {
 		return c.applyAdd(name, src)
 	case "move":
 		return c.applyMove(name, src)
+	case "hide", "show":
+		return c.applyViewState(name, src)
 	}
 
 	var root map[string]json.RawMessage
@@ -310,6 +337,77 @@ func (c Command) apply(name string, src []byte) (Result, error) {
 	}
 
 	return Result{Doc: doc, Source: out, Summary: c.summary(), Diff: diff}, nil
+}
+
+// applyViewState handles `hide`/`show`, the two verbs that write the
+// `ui.hidden` view-state set rather than the document source.
+//
+// It parses and validates the document for one reason only — to resolve the
+// target id against the ids the scene actually declares, so `/ui hide typo` is
+// refused with the same addressed "no node with that id" message every other
+// verb produces (D3 gives hide/show D2's id resolution). The document is not
+// edited: hide/show change what the walk *draws*, not what the document *says*,
+// so Source is returned unchanged, Diff stays empty, and the mutation the
+// caller must apply to its own `ui.hidden` set travels in Result.ViewState.
+//
+// `show *` names no id and so skips the resolution: clearing the set is defined
+// even when the scene has changed since something was hidden, which is the
+// escape valve for exactly that case.
+func (c Command) applyViewState(name string, src []byte) (Result, error) {
+	doc, err := scene.ParseNamed(name, src)
+	if err != nil {
+		return Result{}, err
+	}
+	if err := doc.RefuseEmpty(); err != nil {
+		return Result{}, err
+	}
+	// Invariant 3 holds here too: a command never draws a document the boot
+	// path would refuse. hide/show do not edit the source, but validating it is
+	// how a scene that was hand-built or arrived broken is caught before the
+	// command reports success against it.
+	if err := doc.Validate(); err != nil {
+		return Result{}, err
+	}
+
+	if c.Verb == "show" && c.Target == "*" {
+		return Result{
+			Doc:       doc,
+			Source:    src,
+			Summary:   c.summary(),
+			ViewState: &ViewStateOp{ShowAll: true},
+		}, nil
+	}
+
+	var tree any
+	if err := json.Unmarshal(src, &tree); err != nil {
+		return Result{}, fmt.Errorf("%s: scene is not valid JSON: %w", name, err)
+	}
+	found := false
+	var ids []string
+	unaddressable := 0
+	walk(tree, func(node map[string]any) {
+		if _, isNode := node["type"]; isNode {
+			if id, _ := node["id"].(string); id != "" {
+				ids = append(ids, id)
+			} else {
+				unaddressable++
+			}
+		}
+		if id, _ := node["id"].(string); id == c.Target {
+			found = true
+		}
+	})
+	if !found {
+		return Result{}, unknownTargetError(name, c.Target, ids, unaddressable)
+	}
+
+	op := &ViewStateOp{}
+	if c.Verb == "hide" {
+		op.Hide = []string{c.Target}
+	} else {
+		op.Show = []string{c.Target}
+	}
+	return Result{Doc: doc, Source: src, Summary: c.summary(), ViewState: op}, nil
 }
 
 // unknownTargetError explains a /ui command that named a node the scene does
@@ -386,6 +484,13 @@ func (c Command) summary() string {
 		return fmt.Sprintf("styled %q as %q", c.Target, c.Value)
 	case "set":
 		return fmt.Sprintf("set %s of %q to %q", c.Key, c.Target, c.Value)
+	case "hide":
+		return fmt.Sprintf("hid %q", c.Target)
+	case "show":
+		if c.Target == "*" {
+			return "revealed every hidden node"
+		}
+		return fmt.Sprintf("revealed %q", c.Target)
 	default:
 		return c.Verb
 	}
