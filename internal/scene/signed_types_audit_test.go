@@ -187,8 +187,13 @@ func TestEveryRenderedTypeIsSigned(t *testing.T) {
 	}
 }
 
-// renderedTypesFromDispatch returns every type label in renderNode's `switch
+// renderedTypesFromDispatch returns every type label in the engine's `switch
 // n.Type` — read from the AST, not from the text.
+//
+// The switch lives in renderByType, which renderNode calls after its universal
+// wrappers and its enter check; G4 split the dispatch out so enter (G4) could
+// render a node's content and then stagger it. This reads the labels from
+// renderByType for that reason — the dispatch, not the name renderNode.
 //
 // The first version of this function matched `case "([a-z_]+)":` against the
 // source, and an injection is why it does not any more. Teaching the renderer
@@ -224,16 +229,17 @@ func renderedTypesFromDispatch(t *testing.T) []string {
 	var found bool
 	ast.Inspect(file, func(n ast.Node) bool {
 		fn, ok := n.(*ast.FuncDecl)
-		if !ok || fn.Name.Name != "renderNode" {
+		if !ok || fn.Name.Name != "renderByType" {
 			return true
 		}
 		ast.Inspect(fn, func(inner ast.Node) bool {
-			// Bounding the scan to renderNode matters: render.go holds a
+			// Bounding the scan to renderByType matters: render.go holds a
 			// dozen other switches (border shapes, anchors, bind paths),
 			// and scooping their labels in would report `double`, `ascii`
 			// and `chat.history` as unsigned node types — a wall of false
 			// alarms, and a guard that cries wolf is a guard that gets
-			// deleted.
+			// deleted. renderByType is the function that holds exactly the
+			// type dispatch and nothing else.
 			cc, ok := inner.(*ast.CaseClause)
 			if !ok {
 				return true
@@ -250,11 +256,11 @@ func renderedTypesFromDispatch(t *testing.T) []string {
 	})
 
 	if !found {
-		t.Fatal("found no case clauses in renderNode; this audit would pass vacuously while\n" +
+		t.Fatal("found no case clauses in renderByType; this audit would pass vacuously while\n" +
 			"the renderer could be drawing anything at all")
 	}
 	if len(out) < 8 {
-		t.Fatalf("read only %d type labels from renderNode's dispatch (%v); the audit is\n"+
+		t.Fatalf("read only %d type labels from renderByType's dispatch (%v); the audit is\n"+
 			"reading the wrong function", len(out), out)
 	}
 	sort.Strings(out)
