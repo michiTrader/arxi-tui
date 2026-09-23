@@ -398,10 +398,12 @@ counterfactual test).
   node type is a scene defect") and its empty spelling (proposal: absent/`null`
   = no scroll, an accepted no-op, not a refusal), then rewriting those guard
   tests to the new behaviour with a counterfactual each — a review event, not a
-  silent edit. The clock (G-A) is the cleaner first landing: it adds the ticker
-  and the phase input with no field graduation, and `renderMarquee`
-  (`render.go:910-912`, the explicit "Phase 0: static display … clock comes
-  later" placeholder) is where the phase first bites.
+  silent edit. The clock (G-A) is simpler code — the ticker and the phase input
+  add no field graduation — but it earns its place only once a prop consumes it,
+  so G-A and G2 land together: `renderMarquee` (`render.go:910-912`, the
+  explicit "Phase 0: static display … clock comes later" placeholder) is where
+  the phase first bites, and it bites on a `scroll` prop the validator must
+  first graduate.
 - **G5** [G1-G4] Freeze the Scene 4 golden and update its status paragraph.
 - **G5** [G1-G4] Freeze the Scene 4 golden and update its status paragraph.
 
