@@ -368,30 +368,41 @@ counterfactual test).
   D4's instruction, moving the blocker from "the token does not exist" to "the
   token exists; the props wait on a clock and their render semantics." **This is
   the foundation G1–G4 share; it is not any one prop.**
-- **G1–G4 — BLOCKED on a design beat, not on D4.** With the timing vocabulary in
-  place, two things still stand between a token and a moving prop, and neither is
-  something the renderer may invent: (a) the renderer is **clockless** by
-  construction (`RenderFrame` is a pure snapshot; the loop repaints only on
-  events/keystrokes), so a **host animation clock** — a time-driven repaint and
-  per-node elapsed-time state living on the far side of the fold — has to be
-  built first; and (b) the **render semantics** of `transition`/`reveal`/`enter`
-  (what each does to the frame over its run) and `scroll`'s `{speed, pause_when}`
-  shape are **signed nowhere**. D4 signed the *timing*, not the *behaviour*.
-  Building either without signing it is the invent-in-the-renderer failure
-  `row_template`/`on_press` are refused for. That design beat is now **drafted
-  and awaiting signature** in `docs/DESIGN-BLOCK-G.md` (PR #54): G-A signs the
-  host clock (a `time.Ticker` fourth `select` case in the loop, per-node
-  elapsed time held across frames like `ui.hidden`, the phase reaching the
-  renderer as an input separate from `fold.State` so `RenderFrame` stays pure),
-  and G-B signs each prop's semantics on the four frame axes the renderer
-  already produces (intensity / horizontal offset / character count / row
-  count), with the invention-free principle that the clock only chooses which
-  already-expressible frame to draw. Once the owner accepts it (into PLAN.md
-  ADR-0005, TOKENS.md, SCENES.md Scene 4), G1–G4 implement one prop each against
-  the signed contract.
+- **G-design — SIGNED (2026-09-23).** The design beat that stood between the
+  timing token and a moving prop is drafted in `docs/DESIGN-BLOCK-G.md` (PR #54)
+  and signed into the frozen docs. **G-A** — the host animation clock — is
+  ADR-0005 in `docs/PLAN.md`: a `time.Ticker` fourth `select` case in the loop,
+  per-node elapsed time held across frames like `ui.hidden`, the phase reaching
+  the renderer as an input separate from `fold.State` so `RenderFrame` stays
+  pure and every golden is phase-pinned, the ticker on-demand at the max active
+  `fps`. **G-B** — the per-prop render semantics — is signed into SCENES.md
+  Scene 4 as a table (`transition`→intensity, `scroll`→horizontal offset,
+  `reveal`→character count, `enter`→row-count scheduler), on the principle that
+  an animation only chooses which already-expressible frame to draw and never
+  adds a fifth axis. The three open forks were resolved to their recommended
+  defaults (on-demand ticker; `transition` triggers on appearance; re-entry
+  re-animates), recorded in ADR-0005. Signing lifts no code guard — G1–G4 do,
+  each with its own counterfactual.
 - **G1** Implement `transition`. **G2** `scroll {speed, pause_when}` (field
-  exists refused at `node.go:69`). **G3** `reveal`. **G4** `enter {row,
-  stagger}`. (Each atomic, each gated on the G-design beat above.)
+  exists refused at `node.go:72`). **G3** `reveal`. **G4** `enter {row,
+  stagger}`. Each atomic, each now implementable against the signed contract.
+  **Implementation note, measured before starting G2:** graduating `scroll` from
+  refused to rendered is not a local change. The `scroll` field is the *subject*
+  of two foundational guard tests that encode the current "refused raw field"
+  design — `unrendered_test.go` (asserts `"scroll": null` is refused where a
+  string zero-value is not) and `zero_value_key_test.go` (uses `scroll` as its
+  worked example that a `json.RawMessage` keeps its `null` bytes so it can be
+  refused) — plus the `nested_branch_audit_test.go` inventory. Lifting the
+  refusal means deciding scroll's scope (proposal: honoured on the `marquee`
+  node type, refused elsewhere with an address, per G-B's "a prop on the wrong
+  node type is a scene defect") and its empty spelling (proposal: absent/`null`
+  = no scroll, an accepted no-op, not a refusal), then rewriting those guard
+  tests to the new behaviour with a counterfactual each — a review event, not a
+  silent edit. The clock (G-A) is the cleaner first landing: it adds the ticker
+  and the phase input with no field graduation, and `renderMarquee`
+  (`render.go:910-912`, the explicit "Phase 0: static display … clock comes
+  later" placeholder) is where the phase first bites.
+- **G5** [G1-G4] Freeze the Scene 4 golden and update its status paragraph.
 - **G5** [G1-G4] Freeze the Scene 4 golden and update its status paragraph.
 
 ### Block H — Phase 3: declarative plugin mounting (heart of the phase)
