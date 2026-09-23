@@ -205,3 +205,79 @@ func TestAnimClockOneShotReplaysOnReentry(t *testing.T) {
 		t.Errorf("a re-entering reveal resumed at phase %v instead of restarting at 0", got)
 	}
 }
+
+// enter's rows are staggered by their offset: row i begins at i * durMS, so at
+// any wall time a prefix of the rows have started and the rest are absent from
+// phases() — the growing row count, spread over time by the clock rather than
+// by the renderer (G4). A row still before its offset must be absent, not phase
+// 0: the renderer tells "not drawn yet" from "dim start" by whether the row has
+// an entry, so delivering 0 would draw a row that should not be on screen.
+func TestAnimClockStaggersEnterRowsByOffset(t *testing.T) {
+	c := oneShotClock(30, 200) // each row ramps over 200ms; rows start 200ms apart
+	base := time.Unix(0, 0)
+	c.advance(base)
+
+	rows := []engine.AnimActivity{
+		{NodeID: "row0", OneShot: true, Token: "default", Row: 0},
+		{NodeID: "row1", OneShot: true, Token: "default", Row: 1},
+		{NodeID: "row2", OneShot: true, Token: "default", Row: 2},
+	}
+	c.reconcile(rows)
+
+	// 100ms in: only row 0 has started (halfway); rows 1 and 2 are before their
+	// offsets and must be absent.
+	c.advance(base.Add(100 * time.Millisecond))
+	p := c.phases()
+	if got := p["row0"]; got < 0.49 || got > 0.51 {
+		t.Errorf("at 100ms row 0's phase is %v, want ~0.5; row 0 has no offset and should ramp\n"+
+			"straight away", got)
+	}
+	if _, ok := p["row1"]; ok {
+		t.Errorf("at 100ms row 1 is present (phase %v); it does not start until its offset of 200ms,\n"+
+			"so it must be absent — the renderer draws an absent row as not-yet-arrived, which is the\n"+
+			"growing row count", p["row1"])
+	}
+	if _, ok := p["row2"]; ok {
+		t.Errorf("at 100ms row 2 is present; it does not start until 400ms")
+	}
+	c.reconcile(rows)
+	if !c.running() {
+		t.Errorf("at 100ms the ticker reports stopped, but rows 1 and 2 have not even begun; a\n" +
+			"staggered list would freeze with only its first row shown")
+	}
+
+	// 250ms in: row 0 settled, row 1 just started (50ms into its own 200ms ramp),
+	// row 2 still absent.
+	c.advance(base.Add(250 * time.Millisecond))
+	p = c.phases()
+	if got := p["row0"]; got != 1 {
+		t.Errorf("at 250ms row 0's phase is %v, want 1 (settled)", got)
+	}
+	if got := p["row1"]; got < 0.24 || got > 0.26 {
+		t.Errorf("at 250ms row 1's phase is %v, want ~0.25 (50ms into its 200ms ramp, offset 200ms)", got)
+	}
+	if _, ok := p["row2"]; ok {
+		t.Errorf("at 250ms row 2 is present; its offset is 400ms")
+	}
+	c.reconcile(rows)
+	if !c.running() {
+		t.Errorf("at 250ms row 0 has settled but row 1 is mid-ramp and row 2 has not started, yet the\n" +
+			"ticker reports stopped; running() must count a row's offset toward its settle time, or a\n" +
+			"list stops filling the moment its first row finishes")
+	}
+
+	// 650ms in: every row has run past its own end (last settles at 3*200=600ms),
+	// so nothing is left to tick.
+	c.advance(base.Add(650 * time.Millisecond))
+	p = c.phases()
+	for _, id := range []string{"row0", "row1", "row2"} {
+		if got := p[id]; got != 1 {
+			t.Errorf("at 650ms %s's phase is %v, want 1 (all rows settled)", id, got)
+		}
+	}
+	c.reconcile(rows)
+	if c.running() {
+		t.Errorf("at 650ms every staggered row has settled (the last at 600ms), yet the ticker\n" +
+			"reports running; it would spin repainting a frame that no longer changes")
+	}
+}
