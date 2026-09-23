@@ -403,17 +403,36 @@ counterfactual test).
   `ui.hidden`, advanced by wall time, armed only while a visible marquee is
   unpaused-active, and `pause_when` freezes the offset. The tick case only
   repaints, so the escape hatch stays uncapturable (invariant 6).
-- **G1** Implement `transition`. **G3** `reveal`. **G4** `enter {row, stagger}`.
-  Each atomic, each now implementable against the signed contract *and* the host
-  clock G-A built — `transition` and `reveal` ride the same `AnimTicks` phase
-  (curve-eased `elapsed / duration_ms` for a one-shot rather than scroll's
-  continuous tick count), and `enter` schedules per-row `transition`/`reveal`.
-  The pattern G2 set is the template: graduate the field on `scene.Node` if it
-  is not already there, sign its refusals in `validateScroll`'s shape, read the
-  phase in the renderer, and land a golden pinned at chosen phases with a
-  counterfactual that reverts the phase mapping.
-- **G5** [G1,G3,G4] Freeze the remaining Scene 4 golden(s) and update the status
-  paragraph as each prop lands (scroll's paragraph is already updated).
+- **G3 — DONE (2026-09-23).** `reveal` is the first one-shot prop, landed on the
+  clock G-A/G2 built (PR #57). It graduated from parsed-and-warned to a read
+  `*Reveal{Anim}` struct on `scene.Node` (the `anim:"1"` tag puts it on the
+  progress audit's animation axis): `validateReveal` honours it on a `text` node
+  and refuses it elsewhere with an address (the character-count axis is the text
+  node's), and `ValidateTokens` refuses a reveal naming an `anim` token the
+  active theme does not define (empty resolves `anim.default`, Q8). The one-shot
+  clock machinery this shares with G1/G4 landed here: `theme.EvalCurve` maps a
+  curve name to its easing, the host clock grew a per-node `phases()` alongside
+  scroll's `ticks()` (curve-eased `elapsed / duration_ms`, settling at 1 and
+  arming no ticker once settled), and the renderer gained `AnimPhase` — a `[0,1]`
+  one-shot input separate from `fold.State`. `renderText` clips the content to
+  `round(phase * width)` graphemes via `ansi.Cut`; a nil `AnimPhase` draws the
+  whole text, so no golden moves. The factory themes gained an `anim` section
+  (`default`/`marquee`/`reveal.fast`) so a reveal resolves under the shipped
+  look. Counterfactuals run in three places: reverting the phase mapping fails
+  the render's start/mid/absent cases, disabling the axis check fails the
+  off-text refusals, disabling the token check fails the undefined-token case.
+- **G1** Implement `transition`. **G4** `enter {row, stagger}`. Each atomic, each
+  now implementable against the signed contract, the host clock G-A built, *and*
+  the one-shot pattern G3 set as the template — `transition` rides the same
+  `AnimPhase` phase (curve-eased `elapsed / duration_ms`) onto the SGR-intensity
+  axis, and `enter` schedules per-row `transition`/`reveal`. The pattern: graduate
+  the field on `scene.Node` if it is not already there, sign its refusals in
+  `validateScroll`/`validateReveal`'s shape, read the phase in the renderer, and
+  land a golden pinned at chosen phases with a counterfactual that reverts the
+  phase mapping.
+- **G5** [G1,G4] Freeze the remaining Scene 4 golden(s) and update the status
+  paragraph as each prop lands (scroll's and reveal's paragraphs are already
+  updated).
 
 ### Block H — Phase 3: declarative plugin mounting (heart of the phase)
 

@@ -120,10 +120,11 @@ type Node struct {
 	// oversight. focus_glow's input is the focused node's id: `ui.focus` is
 	// signed in BINDS.md, maintained by the fold and already projected, so
 	// the property is expressible with no new vocabulary and no clock.
-	// transition, reveal and enter still need the host clock and their own
-	// render semantics; scroll was the same until G2 signed those (SCENES.md
-	// Scene 4, G-B) and built the clock (ADR-0005), so scroll now reads its
-	// struct above and this list is down to the three that remain warnings.
+	// transition and enter still need their own render semantics read in the
+	// engine; scroll was the same until G2 signed those (SCENES.md Scene 4,
+	// G-B) and built the clock (ADR-0005), and reveal followed in G3 on that
+	// clock, so both scroll and reveal now read their structs above and this
+	// list is down to the two that remain warnings.
 	//
 	// A struct rather than json.RawMessage: the shape is being read now, so
 	// leaving it raw would mean parsing it at the render site, and a shape
