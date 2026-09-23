@@ -335,6 +335,44 @@ second concurrency bug class; the coalescer is the only timer this engine
 carries. Chose **pull by frame**; revisit only if the property test proves the
 budget is missed by a real scene, not a synthetic one.
 
+#### ADR-0005 — the host animation clock
+
+Signed from `docs/DESIGN-BLOCK-G.md` (G-A). Animation props (`transition`,
+`scroll`, `reveal`, `enter`) need elapsed time, and the renderer is clockless by
+construction — `RenderFrame` is "no I/O, no clock" and the loop repaints only on
+input. The clock is added **in the loop, never in the renderer**: a fourth
+`select` case driven by a `time.Ticker` calls the same `repaint()` the terminal
+and driver cases call, so the clock adds a *reason to repaint*, not a new render
+path.
+
+The renderer stays pure: the loop reads wall time once per tick and hands the
+renderer a computed **animation phase**, so render is still a pure function of
+`(document, fold state, phase)`. This keeps every golden deterministic — a
+golden pins a phase exactly as it pins a fold state — and keeps the pipeline
+testable without a real clock. Per-node elapsed time is **host view state held
+across frames like `ui.hidden`** (a monotonic reference plus a
+`map[nodeID]startTime`), because the fold is rebuilt from the log each frame
+(ADR-0004) and would forget a timer kept only in `State`. The phase reaches the
+renderer through an input **separate from `fold.State`**, so "the fold never
+waits on an animation" (Q9) holds by construction, not by discipline.
+
+The ticker runs **only while a visible node animates**, at the maximum `fps`
+among the active timing tokens (one timer serves the whole frame; a token's
+`fps` caps its own smoothness, not the loop's). When nothing animates there is
+no ticker and the loop is as quiet as today — the "repaints only on events"
+property is preserved for the common case. One-shot clocks (`reveal`/`enter`/
+finite `transition`) start when their node first appears and settle past their
+duration; a continuous one (`scroll`, `duration_ms == 0`) runs while visible.
+The escape hatch is untouched: the tick case only repaints, reads no input, and
+Ctrl-C is handled on the terminal channel before any tick matters (invariant 6).
+
+Three forks the proposal flagged were resolved to its recommended defaults when
+this ADR was adopted: the ticker is **on-demand** (not an always-on heartbeat);
+`transition`'s trigger is **appearance only** (a value-change cross-fade is a
+separately-signed future prop); and a node that leaves and re-enters the frame
+**animates again** (animate-on-each-appearance, since no other host state
+remembers a node forever).
+
 ## When data, when code
 
 | I want… | Tool |

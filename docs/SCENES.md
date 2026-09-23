@@ -147,22 +147,34 @@ named token. It needs no clock — its only input is the focused node's id, whic
 `ui.focus` already supplies — so it is the one property of this scene that
 could land before Phase 4.
 
-The other four are parsed and **warned about with an address**, not silently
-dropped: a document declaring them loads, renders, and says on screen what the
-engine could not do (PLAN.md's forward-compatibility rule). The `[anim]` timing
-token they were blocked on is now **signed and implemented**: D4 defined the
-`anim` theme section (`docs/TOKENS.md`), and `internal/theme` parses and
-validates it (closed curve set, non-negative `duration_ms`/`fps`), so a timing
-token can be defined and named. Two things still stand between the token and a
-moving prop, and they are why these stay warnings for now: the renderer is
-**clockless** by construction (`RenderFrame` is a pure snapshot — "no I/O, no
-clock"), so a host animation clock has to exist before any elapsed-time prop can
-tick; and the *render semantics* of `transition`/`reveal`/`enter` — what each
-one actually does to the frame over that time — are signed nowhere yet, so
-building them would mean inventing behaviour in the renderer, the same objection
-that keeps `row_template` and `on_press` refused. The next beat is to sign those
-semantics and add the clock; the timing vocabulary they consume is already in
-place.
+The other four are **signed** (`docs/DESIGN-BLOCK-G.md`, G-B) and now
+implementable against a frozen contract. Until each lands it is still parsed and
+**warned about with an address**, not silently dropped (PLAN.md's
+forward-compatibility rule); the warning is lifted by the implementation, not by
+this signature. The clock those props measure elapsed time against is
+ADR-0005 (`docs/PLAN.md`); the timing vocabulary they consume is D4's `anim`
+section (`docs/TOKENS.md`).
+
+The render semantics are signed on one principle: **an animation never draws
+anything the renderer cannot already draw at a fixed phase; the clock only
+chooses which already-expressible frame to emit at time t.** The frame already
+varies along four axes a static document produces, and each prop is a rule
+mapping the curve-eased phase `∈ [0,1]` onto one of them:
+
+| Prop | Shape | Frame axis | Trigger |
+|---|---|---|---|
+| `transition` | `{ "anim": "<token>" }` | SGR dim→bright intensity | node appearance |
+| `scroll` | `{ "speed": <cells/tick>, "pause_when": "<bind>" }` | horizontal offset (marquee) | continuous while visible |
+| `reveal` | `{ "anim": "<token>" }` | character count (typewriter) | node appearance |
+| `enter` | `{ "row": true, "stagger": "<token>" }` | row count, scheduling per-row `transition`/`reveal` | list appearance |
+
+`enter` is a **scheduler** over the other two props (row *i* starts at
+`i * stagger.duration_ms`), not a fifth axis. Any behaviour needing a fifth axis
+— true opacity, sub-cell motion, colour interpolation beyond dim/bright — is
+**out of scope and refused by omission**: adding it is a mother-binary freeze,
+the same bar as adding a node type or a curve. That boundary is what keeps
+G1–G4 from growing into "an animation engine".
+
 
 ## Scene 5 — CONFIG (the /config screen as a scene, not as Go)
 

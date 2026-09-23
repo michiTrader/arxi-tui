@@ -236,6 +236,12 @@ When this is implemented, SCENES.md's Scene 4 status paragraph (which says it
 "is what should be updated first") and the `Scroll`/`FocusGlow` comments in
 `node.go` that cite the missing token move from "warned" to "implemented".
 
+**The clock that consumes these tokens is ADR-0005** (`docs/PLAN.md`, signed
+from `docs/DESIGN-BLOCK-G.md` G-A): a timing token is the *duration*, the clock
+is the *elapsed time* measured against it. A token defines how long and how
+smooth; it does not tick. The per-prop render semantics that turn a phase into
+motion are SCENES.md Scene 4 (G-B).
+
 ## Signed contract (Phase 1 freeze)
 
 The token format described here is frozen for Phase 1. The three elements —
