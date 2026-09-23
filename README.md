@@ -280,14 +280,22 @@ feature, as `PLAN.md` requires:
   undeclared keys and editing through it would silently delete every unknown
   property on the way past — including every field a later phase adds and
   every field a plugin fragment carries.
-- ✅ Two verbs, and the omissions are the substance rather than the unfinished
-  edge. `add`/`move` must answer *where*, and that addressing vocabulary is
-  Scene 5 / Phase 3; `hide`/`show` need a per-node view-state bind, and the
-  draft that invented one (`ui.hidden`) was refused by the validator against
-  the shipped scene — correctly, since every `ui.*` row BINDS.md signs is a
-  single id, so a scalar flag makes `/ui hide a` silently unhide `b`. All four
-  are refused the way `row_template` is: *"not yet"* rather than *"invalid"*,
-  because a wrong diagnosis costs the repair loop a turn.
+- ✅ Six verbs — `add`, `move`, `set`, `style`, `hide`, `show` — and the two
+  that took longest to land are the ones whose *argument* had to be designed
+  first. `add`/`move` answer *where*, which needed the write-path addressing
+  vocabulary (`docs/ADDRESSING.md`, D2): `above`/`below <id>`, `into <id>
+  [top]`, and the `below_input`/`above_input` semantic anchors. `move` adds the
+  one refusal `add` gets to skip — the **cycle** refusal, a node cannot become
+  its own descendant — checked over the whole moved subtree before it is
+  detached. `hide`/`show` are different in kind from the other four: they do
+  **not** edit the document, they write the `ui.hidden` view-state set (BINDS.md
+  §4.3, D3) that the engine walk reads as a visibility filter, so a node draws
+  iff its `when` is truthy **and** its id is not in the set. `ui.hidden` is a
+  *set of node ids*, not a scalar, for a reason paid for once: every other
+  `ui.*` row is a single id, so a scalar flag would make `/ui hide a` silently
+  unhide `b`. `/ui show *` clears the set. All six are source-to-source (or, for
+  hide/show, set mutations) that re-validate before anything reaches the screen,
+  and every refusal carries `file:line`.
 - ✅ Measured while wiring it: **about half of every shipped scene is
   unaddressable** — SOBRIA declares an id on 7 of 15 nodes, MAXIMUM 7 of 13,
   RAW 3 of 4. So "no node with that id" is the expected answer to much of what
@@ -307,12 +315,14 @@ feature, as `PLAN.md` requires:
   because the defect is in the order of the branches and that order does not
   exist inside the function under test. It now types the command into `loop()`
   through the scripted TTY.
-- ✅ The slash menu advertised `add, move, style, plugin` while the surface
-  implemented two verbs — the accepted-but-not-drawn class one layer out, and
-  worse there than in a document, since the menu is read at the moment of use
-  and so invites the user into a refusal. Held in both directions by a test in
-  `patch_test`, which is where it can import both packages without `fold`
-  importing the mutation layer (ADR-0002).
+- ✅ The slash menu once advertised `add, move, style, plugin` while the
+  surface implemented fewer verbs — the accepted-but-not-drawn class one layer
+  out, and worse there than in a document, since the menu is read at the moment
+  of use and so invites the user into a refusal. It now names exactly the
+  implemented set (`add, move, set, style, hide, show`), held in both directions
+  by a test in `patch_test` — every `patch.Verbs()` entry appears in the menu
+  and every word the menu lists is a real verb — which is where it can import
+  both packages without `fold` importing the mutation layer (ADR-0002).
 - ⬜ Agent-driven patches, with the full change-diff view. The summary line is
   in place (`/ui: styled "status" as "dim"`); the side-by-side view belongs
   with the agent half, where a proposal arrives *before* it is applied.
