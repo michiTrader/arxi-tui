@@ -63,9 +63,12 @@ type Node struct {
 	// was declared here.
 	//
 	// json.RawMessage rather than a struct because the shape belongs to the
-	// animation clock Phase 4 designs; parsing it into fields now would
-	// pin a format ahead of the phase meant to choose it, while refusing it
-	// only needs to know the key was written.
+	// animation clock that does not exist yet; parsing it into fields now would
+	// pin a format ahead of the render semantics meant to choose it, while
+	// refusing it only needs to know the key was written. The `[anim]` timing
+	// token it takes its clock from is signed and implemented (D4; internal/
+	// theme), but scroll's own `{speed, pause_when}` shape and the host clock
+	// that would drive it are not, so it stays raw and refused.
 	Scroll json.RawMessage `json:"scroll,omitempty"`
 	// MinWidth is the minimum content width an overlay will accept before
 	// its content wraps. The overlay never shrinks below this (Q7).
@@ -80,10 +83,13 @@ type Node struct {
 	// oversight. focus_glow's input is the focused node's id: `ui.focus` is
 	// signed in BINDS.md, maintained by the fold and already projected, so
 	// the property is expressible today with no new vocabulary. transition,
-	// reveal, enter and scroll all need elapsed time, and the timing format
-	// Q8 assigns to a global `[anim]` token does not exist — docs/TOKENS.md
-	// does not mention `anim`. Implementing them now would invent that
-	// format in the renderer, which is precisely what row_template,
+	// reveal, enter and scroll all need elapsed time. The `[anim]` timing token
+	// Q8 assigns that job to is now signed and implemented (D4; the `anim`
+	// theme section, parsed and validated in internal/theme) — so the blocker
+	// is no longer the missing token but the two things still absent: a host
+	// clock (the renderer is a pure snapshot) and the props' own render
+	// semantics, which are signed nowhere. Implementing them now would invent
+	// that behaviour in the renderer, which is precisely what row_template,
 	// on_press and scroll are refused for.
 	//
 	// A struct rather than json.RawMessage, unlike Scroll: the shape is
@@ -339,10 +345,12 @@ type borderObject struct {
 // warned about a document the renderer honoured, with the suite green.
 //
 // One field, deliberately. The natural second field is a duration, and a
-// duration needs the `[anim]` timing token Q8 specifies and TOKENS.md does not
-// yet define; adding it here would pin that format from the node side, ahead
-// of the phase that designs it. A glow that is on or off needs no clock, which
-// is why this is the one Scene 4 property that can land now.
+// duration needs the `[anim]` timing token Q8 specifies. That token is now
+// signed and implemented (D4; TOKENS.md's `anim` section, parsed and validated
+// in internal/theme) — but a glow that is on or off still needs no clock, so
+// this stays one field. The other Scene 4 props are the ones that consume a
+// timing token, and they wait on a host clock and on their own render semantics
+// being signed, not on the token, which exists.
 type FocusGlow struct {
 	Style string `json:"style"`
 }
