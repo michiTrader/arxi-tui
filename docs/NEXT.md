@@ -378,9 +378,17 @@ counterfactual test).
   (what each does to the frame over its run) and `scroll`'s `{speed, pause_when}`
   shape are **signed nowhere**. D4 signed the *timing*, not the *behaviour*.
   Building either without signing it is the invent-in-the-renderer failure
-  `row_template`/`on_press` are refused for. The next step is a design proposal
-  (the SCENES/TOKENS method) that signs the clock model and each prop's
-  semantics; then G1–G4 implement against it.
+  `row_template`/`on_press` are refused for. That design beat is now **drafted
+  and awaiting signature** in `docs/DESIGN-BLOCK-G.md` (PR #54): G-A signs the
+  host clock (a `time.Ticker` fourth `select` case in the loop, per-node
+  elapsed time held across frames like `ui.hidden`, the phase reaching the
+  renderer as an input separate from `fold.State` so `RenderFrame` stays pure),
+  and G-B signs each prop's semantics on the four frame axes the renderer
+  already produces (intensity / horizontal offset / character count / row
+  count), with the invention-free principle that the clock only chooses which
+  already-expressible frame to draw. Once the owner accepts it (into PLAN.md
+  ADR-0005, TOKENS.md, SCENES.md Scene 4), G1–G4 implement one prop each against
+  the signed contract.
 - **G1** Implement `transition`. **G2** `scroll {speed, pause_when}` (field
   exists refused at `node.go:69`). **G3** `reveal`. **G4** `enter {row,
   stagger}`. (Each atomic, each gated on the G-design beat above.)
