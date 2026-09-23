@@ -174,6 +174,14 @@ func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bo
 		}
 	}
 
+	// A scroll is honoured on a marquee and refused with an address anywhere
+	// else (G2 / SCENES.md Scene 4). Checked here, in the walk that reaches
+	// prefix and suffix too, so a scroll on a nested node is refused at its own
+	// position rather than only at the root.
+	if err := d.validateScroll(n, path, scope); err != nil {
+		return err
+	}
+
 	// Recurse into children, carrying the same scope: a node nested under a
 	// template row is still inside that template and may still read row.*.
 	for i, child := range n.Children {
@@ -253,7 +261,46 @@ func (d *Document) validateOneBind(bind, where string, n *Node, path string, sco
 	return nil
 }
 
-// unrenderedFields are constructions this package validates but internal/engine
+// validateScroll refuses a scroll that cannot be honoured, with an address.
+//
+// scroll rides the horizontal-offset axis, and only a marquee draws that axis
+// (SCENES.md Scene 4, G-B). A scroll on any other node type is a scene defect
+// the same way a row.* bind outside a template is: the author wrote a prop the
+// format cannot honour there, and is better told than left with a node that
+// silently ignores it. The refusal names `scroll` so the universal-property
+// audit — which asks that every universal be honoured or refused-by-name — can
+// attribute it, and carries a Loc so the repair loop can find it.
+//
+// speed is refused when non-positive rather than clamped: a zero or negative
+// speed either never advances or runs the marquee backward, and clamping would
+// hide the author's mistake behind a marquee that looks stuck. pause_when, when
+// present, is a bind and is checked as one — the same net a `when` gets — so a
+// misspelled pause bind is refused here rather than silently never pausing.
+func (d *Document) validateScroll(n *Node, path string, scope map[string]bool) error {
+	if n.Scroll == nil {
+		return nil
+	}
+	if n.Type != "marquee" {
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("node type %q declares scroll, which rides the horizontal-offset axis only a marquee draws (SCENES.md Scene 4); a scroll on a %q node is a scene defect — move it onto a marquee or remove it", n.Type, n.Type),
+		}
+	}
+	if n.Scroll.Speed <= 0 {
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("marquee declares scroll with speed %d; speed is cells-per-tick and must be positive (SCENES.md Scene 4) — a non-positive speed ticks forever without moving, which is a defect, not a pause (use pause_when to hold the marquee)", n.Scroll.Speed),
+		}
+	}
+	if n.Scroll.PauseWhen != "" {
+		if err := d.validateOneBind(n.Scroll.PauseWhen, "scroll pause_when", n, path, scope); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+
 // does not draw. Accepting one is the failure mode this project has now paid
 // for three times: a style key the validator learned and styleName() did not,
 // a border token checked by the validator and dropped by both drawing paths,
@@ -272,7 +319,7 @@ func (d *Document) validateOneBind(bind, where string, n *Node, path string, sco
 // a field leaves the moment the renderer draws it, and unrendered_test.go is
 // what notices if the map and the renderer ever disagree again.
 //
-// `on_press` and `scroll` are the same class one step earlier, and they are
+// `on_press` and `scroll` were the same class one step earlier, and they are
 // the reason this map's generality had to be real before they could be added.
 // SCENES.md calls both universal; neither was a field on Node, so
 // encoding/json discarded the key without a word — a scene declaring either
@@ -289,17 +336,18 @@ func (d *Document) validateOneBind(bind, where string, n *Node, path string, sco
 // screen says what it could not do. Properties had the opposite behaviour, and
 // the silent class was the one the documentation called universal.
 //
-// They are refused rather than implemented for row_template's reason: both are
-// behaviour, which PLAN.md schedules for Phase 3 (`on_press`, the action
-// vocabulary of SCENES.md Q18) and Phase 4 (`scroll`, the animation clock of
-// Q8/Q9). Inventing either now would build format ahead of the phase meant to
-// design it. A refusal costs the author one addressed message and costs the
-// project nothing it has to keep.
+// `scroll` has since graduated (G2): its render semantics are signed (SCENES.md
+// Scene 4, G-B) and the host clock is signed (ADR-0005), so the engine draws it
+// on a marquee and validateScroll refuses it elsewhere with an address — a
+// rendering plus a typed refusal, no longer a blanket unrendered-field refusal.
+// `on_press` stays here for row_template's reason: it is behaviour PLAN.md
+// schedules for Phase 3 (the action vocabulary of SCENES.md Q18), and inventing
+// dispatch now would build format ahead of the phase meant to design it. A
+// refusal costs the author one addressed message and costs the project nothing
+// it has to keep.
 var unrenderedFields = map[string]string{
 	"on_press": "the action vocabulary is closed per surface (SCENES.md Q18) and " +
 		"dispatch is Phase 3 interaction work; no node type presses anything yet",
-	"scroll": "scroll: {speed, pause_when} runs on the host animation clock " +
-		"(SCENES.md Q8/Q9, Scene 4), which PLAN.md schedules after the golden set",
 }
 
 // refuseUnrendered reports a field the validator understands and the renderer

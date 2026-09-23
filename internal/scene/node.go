@@ -57,19 +57,28 @@ type Node struct {
 	// the property was missing. Declaring it puts the key back inside the
 	// vocabulary, where unrenderedFields can refuse it with an address.
 	OnPress string `json:"on_press,omitempty"`
-	// Scroll is Scene 4's animation property, `{ "speed": n, "pause_when":
-	// <bind> }`. Same story and same remedy as OnPress: universal in
-	// SCENES.md, implemented nowhere, and silently discarded until the key
-	// was declared here.
+	// Scroll is Scene 4's marquee animation, `{ "speed": <cells/tick>,
+	// "pause_when": "<bind>" }`. It graduated from refused-raw to read-struct
+	// in G2: the render semantics are signed (SCENES.md Scene 4, G-B) and the
+	// host clock that drives it is signed (ADR-0005), so the shape is now read
+	// rather than merely refused.
 	//
-	// json.RawMessage rather than a struct because the shape belongs to the
-	// animation clock that does not exist yet; parsing it into fields now would
-	// pin a format ahead of the render semantics meant to choose it, while
-	// refusing it only needs to know the key was written. The `[anim]` timing
-	// token it takes its clock from is signed and implemented (D4; internal/
-	// theme), but scroll's own `{speed, pause_when}` shape and the host clock
-	// that would drive it are not, so it stays raw and refused.
-	Scroll json.RawMessage `json:"scroll,omitempty"`
+	// A struct rather than json.RawMessage, unlike the raw fields above, and for
+	// FocusGlow's stated reason: the engine reads `{speed, pause_when}` now, so
+	// leaving it raw would mean parsing it at the render site, and a shape parsed
+	// where it is used is a shape with no single definition. It was raw only
+	// while nothing read it.
+	//
+	// The axis it rides is horizontal offset, and only a marquee draws that axis
+	// (SCENES.md Scene 4). validate.go refuses a scroll on any other node type
+	// with an address, the same way a row.* bind outside a template is refused:
+	// a prop on the wrong node type is a scene defect, not a silent no-op. An
+	// absent scroll (nil) is the ordinary no-op — most nodes do not scroll.
+	//
+	// The `anim:"1"` tag puts it on the progress audit's animation axis, beside
+	// FocusGlow. It is a marker rather than a name convention because a name-based
+	// rule silently captures an unrelated field added later.
+	Scroll *Scroll `json:"scroll,omitempty" anim:"1"`
 	// MinWidth is the minimum content width an overlay will accept before
 	// its content wraps. The overlay never shrinks below this (Q7).
 	MinWidth *int `json:"min_width,omitempty"`
@@ -78,24 +87,21 @@ type Node struct {
 	// this node's id equals `ui.focus`, the engine renders its content under
 	// the named token instead of the node's ordinary style.
 	//
-	// It is the one Scene 4 property that lands before the host clock, and
-	// the asymmetry with the other four is a scope decision, not an
+	// It was the first Scene 4 property that could land before the host clock,
+	// and the asymmetry with the other four was a scope decision, not an
 	// oversight. focus_glow's input is the focused node's id: `ui.focus` is
 	// signed in BINDS.md, maintained by the fold and already projected, so
-	// the property is expressible today with no new vocabulary. transition,
-	// reveal, enter and scroll all need elapsed time. The `[anim]` timing token
-	// Q8 assigns that job to is now signed and implemented (D4; the `anim`
-	// theme section, parsed and validated in internal/theme) — so the blocker
-	// is no longer the missing token but the two things still absent: a host
-	// clock (the renderer is a pure snapshot) and the props' own render
-	// semantics, which are signed nowhere. Implementing them now would invent
-	// that behaviour in the renderer, which is precisely what row_template,
-	// on_press and scroll are refused for.
+	// the property is expressible with no new vocabulary and no clock.
+	// transition, reveal and enter still need the host clock and their own
+	// render semantics; scroll was the same until G2 signed those (SCENES.md
+	// Scene 4, G-B) and built the clock (ADR-0005), so scroll now reads its
+	// struct above and this list is down to the three that remain warnings.
 	//
-	// A struct rather than json.RawMessage, unlike Scroll: the shape is
-	// being read now, so leaving it raw would mean parsing it at the render
-	// site, and a shape parsed where it is used is a shape with no single
-	// definition. Scroll stays raw because nothing reads it yet.
+	// A struct rather than json.RawMessage: the shape is being read now, so
+	// leaving it raw would mean parsing it at the render site, and a shape
+	// parsed where it is used is a shape with no single definition. Scroll
+	// followed it out of the raw fields for the same reason once the engine
+	// began reading it.
 	//
 	// The `anim:"1"` tag is what puts it on the progress audit's animation
 	// axis. It is a marker rather than a name convention because a
@@ -120,14 +126,15 @@ type Node struct {
 // drops a key written with its type's zero value, so `"on_press": ""` is
 // absent from the output and this function cannot report it: what it answers
 // is "which fields does this node *hold a value for*", not "which keys did
-// the author write". The gap is invisible for the two raw fields —
-// `"scroll": null` keeps its bytes and is refused — and open for every
-// ordinary one, which is the worst shape for it to have, because the two sit
-// side by side in unrenderedFields and behave differently. refuseUnrendered
-// therefore unions this list with the parser's declaredKeys, which is the
-// exact record; see the reasoning there. This function is deliberately left
-// answering the value question, because that is the one a hand-built
-// Document — with no source text, and so no declaredKeys — can still answer.
+// the author write". The gap was invisible for a raw field —
+// `"scroll": null` kept its bytes and was refused, back when scroll was raw —
+// and it is open for every ordinary one, which is the worst shape for it to
+// have, because a raw and an ordinary key sat side by side in unrenderedFields
+// and behaved differently. refuseUnrendered therefore unions this list with the
+// parser's declaredKeys, which is the exact record; see the reasoning there.
+// This function is deliberately left answering the value question, because that
+// is the one a hand-built Document — with no source text, and so no
+// declaredKeys — can still answer.
 //
 // The subtrees are cleared before marshalling. The walk visits every node
 // itself, so serialising whole subtrees at each step would make the pass
@@ -353,6 +360,29 @@ type borderObject struct {
 // being signed, not on the token, which exists.
 type FocusGlow struct {
 	Style string `json:"style"`
+}
+
+// Scroll is the object form of Scene 4's scroll (G2): the marquee's horizontal
+// motion, `{ "speed": <cells/tick>, "pause_when": "<bind>" }`.
+//
+// One named type, read by the engine and inventoried by the validator, for the
+// reason borderObject and FocusGlow are named types: the shape the renderer
+// reads and the shape the validator checks are the same declaration, so they
+// cannot drift. Parsing `{speed, pause_when}` at the render site instead would
+// reintroduce exactly the divergence a single type makes unrepresentable.
+//
+// Speed is cells advanced per tick; the tick *rate* is the anim.marquee token's
+// fps (D4), so cadence lives in one place and speed only says how far each tick
+// moves. A non-positive speed is refused at validation, not clamped: a zero
+// speed marquee ticks forever without moving, which is a defect worth naming.
+//
+// PauseWhen names a bind (BINDS.md §4.6 truthiness); while it is truthy the
+// offset holds, so a scene can freeze the marquee when a pane is unfocused or
+// the agent is idle without the renderer inventing a pause policy. Empty means
+// never pause. It is validated as a signed bind, the same net a `when` gets.
+type Scroll struct {
+	Speed     int    `json:"speed"`
+	PauseWhen string `json:"pause_when,omitempty"`
 }
 
 // border decodes the object form. It reports false for the string form and
