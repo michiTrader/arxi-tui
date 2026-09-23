@@ -191,14 +191,34 @@ discrete (dim / normal / bold), so a transition draws two states — dim while
 running, settled when done — with no intermediate frame; a finer ramp would need
 the opacity or colour axis this section refuses as the fifth axis.
 
-The last one — `enter` — is **signed**
-(`docs/DESIGN-BLOCK-G.md`, G-B) and now implementable against a frozen contract,
-with the clock it needs already in the loop and the one-shot pattern reveal and
-transition set as its template. Until it lands it is still parsed and **warned
-about with an address**, not silently dropped (PLAN.md's forward-compatibility
-rule); the warning is lifted by the implementation, not by this signature. The
-clock those props measure elapsed time against is ADR-0005 (`docs/PLAN.md`); the
-timing vocabulary they consume is D4's `anim` section (`docs/TOKENS.md`).
+`enter: { "row": true, "stagger": "<token>" }` is implemented too (G4), the
+scheduler that closes Scene 4's animation vocabulary. With `row:true` a container
+staggers its rows — the children of a stack/row/box or the instantiations of a
+list's `row_template` — so row *i* begins its own entrance at offset
+`i * stagger.duration_ms`: a row past its offset+duration is settled, a row
+mid-entrance draws dim, and a row before its offset is not drawn at all. The
+visible **row count grows** top-to-bottom as the stagger advances, which is the
+axis that distinguishes `enter` from putting `transition` on every row (which
+draws all rows dim at once, count fixed). One token drives both the inter-row
+delay and each row's own dim→settled ramp, so the shape names exactly one
+timing token. `row:false` (or an omitted `row`) is the degenerate whole-container
+entrance: the subtree dims as one unit until settled — the subtree dimming
+`transition` (G1) deliberately left to `enter`, because a container has no own
+content to dim. `enter` composes the two earlier one-shot props rather than
+adding an axis (G-B): each row's own entrance is a `transition`, and a row that
+also carries `reveal` composes it on top. Its load-time refusals are the two a
+schedule needs — a `row:true` with no `stagger` token, or a `row:true` on a node
+with no rows (neither children nor a `row_template`) — plus the stagger token
+checked against the theme's `anim` section, exactly as reveal's and transition's
+are. The per-row phases reach the engine as the same host-computed
+`Renderer.AnimPhase` (an input separate from the fold, Q9), each row keyed by the
+container's id and its index, and a nil phase draws every row settled, so no
+existing golden moves. The clock those props measure elapsed time against is
+ADR-0005 (`docs/PLAN.md`); the timing vocabulary they consume is D4's `anim`
+section (`docs/TOKENS.md`).
+
+With `enter` implemented, all five of Scene 4's animation properties are drawn
+by the engine and none remains parsed-and-warned.
 
 The render semantics are signed on one principle: **an animation never draws
 anything the renderer cannot already draw at a fixed phase; the clock only
