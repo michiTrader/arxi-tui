@@ -110,6 +110,18 @@ type Command struct {
 	Target string
 	Key    string
 	Value  string
+
+	// Where and Fragment carry the `add` verb's extra arguments, which the
+	// other verbs do not have. `add` is the first verb whose argument is a
+	// *position* rather than a node's own id, so it needs the write-path
+	// addressing vocabulary docs/ADDRESSING.md signs: Where holds the resolved
+	// form ("above"/"below"/"into"/"into_top"/"below_input"/"above_input") and
+	// Target the anchor id it acts on (empty for the two semantic anchors, whose
+	// whole point is to address the input node's role without naming its id).
+	// Fragment is the raw JSON of the node to insert, kept as bytes rather than
+	// re-tokenised so a text value with runs of spaces survives verbatim.
+	Where    string
+	Fragment string
 }
 
 // Parse reads a /ui command line into a Command.
@@ -125,10 +137,23 @@ type Command struct {
 // reinterpreted reports success and does the wrong thing, and the user gets no
 // signal that the command they typed is not a command.
 func Parse(line string) (Command, error) {
-	fields := strings.Fields(strings.TrimSpace(line))
-	if len(fields) > 0 && (fields[0] == "/ui" || fields[0] == "ui") {
-		fields = fields[1:]
+	body := strings.TrimSpace(line)
+	// Strip a leading "/ui" or "ui" from the raw string as well as from the
+	// token list. `add` reads its fragment out of the raw remainder, not out of
+	// re-joined fields, because a text value with runs of spaces must survive
+	// verbatim — Fields would collapse them.
+	for _, p := range []string{"/ui", "ui"} {
+		if body == p {
+			body = ""
+			break
+		}
+		if strings.HasPrefix(body, p+" ") {
+			body = strings.TrimSpace(body[len(p):])
+			break
+		}
 	}
+
+	fields := strings.Fields(body)
 	if len(fields) == 0 {
 		return Command{}, fmt.Errorf("/ui needs a verb: one of %s", strings.Join(Verbs(), ", "))
 	}
@@ -136,6 +161,10 @@ func Parse(line string) (Command, error) {
 	verb := fields[0]
 	args := fields[1:]
 	switch verb {
+	case "add":
+		// /ui add node <where> <fragment>. Parsed against the raw body so the
+		// fragment keeps its exact bytes.
+		return parseAdd(body)
 	case "style":
 		// /ui style <node-id> <token>
 		if len(args) != 2 {
@@ -182,20 +211,21 @@ func Parse(line string) (Command, error) {
 // Verbs is the closed list of /ui verbs, exported so the host's command
 // registry and the refusal messages read from one place.
 //
-// Three verbs, and the omissions are deliberate rather than unfinished. `add`
-// and `move` are in PLAN.md's sketch of this surface and are not here, because
-// both have to answer "where" — a position in a tree — and the addressing
-// vocabulary for that (`below_input`, anchors, relative placement) is Scene 5
-// and Phase 3 work that BINDS.md does not yet sign. Shipping a guessed spelling
-// now is exactly what `row_template` was refused for: inventing format ahead of
-// the phase meant to design it. The three here need no new vocabulary at all —
-// they address a node by the id it already has and write a property the engine
-// already reads — so they are the part of the surface that can be correct
-// today.
-func Verbs() []string { return []string{"set", "style"} }
+// `add` addresses a *position* (docs/ADDRESSING.md's `where` vocabulary), which
+// is why it could only land once that vocabulary was signed (D2). `move` is its
+// sibling and is still absent: `add` cannot form a cycle because the fragment
+// is new, so it needs no cycle refusal, whereas `move` does — that is the one
+// piece of the write path `add` gets to skip, and the reason it ships first.
+// `set` and `style` need no addressing at all: they name a node by the id it
+// already has and write a property the engine already reads.
+func Verbs() []string { return []string{"add", "set", "style"} }
 
 // apply performs the source-to-source edit and re-validates the result.
 func (c Command) apply(name string, src []byte) (Result, error) {
+	if c.Verb == "add" {
+		return c.applyAdd(name, src)
+	}
+
 	var root map[string]json.RawMessage
 	if err := json.Unmarshal(src, &root); err != nil {
 		return Result{}, fmt.Errorf("%s: scene is not a JSON object: %w", name, err)
@@ -332,6 +362,8 @@ func (c Command) mutate(node map[string]any) {
 // diff of re-indented JSON is not a description of a change.
 func (c Command) summary() string {
 	switch c.Verb {
+	case "add":
+		return c.addSummary()
 	case "style":
 		return fmt.Sprintf("styled %q as %q", c.Target, c.Value)
 	case "set":
