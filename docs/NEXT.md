@@ -356,9 +356,34 @@ counterfactual test).
 
 ### Block G — Phase 3: animation props [D4]
 
+- **G0 — DONE (2026-09-23).** The `[anim]` timing-token vocabulary D4 signed is
+  parsed and validated in `internal/theme` (`anim.go`, `theme.go` `Load`): a
+  theme's `anim` section is lifted out before style tokens, each definition is
+  validated (closed curve set `linear`/`ease_in`/`ease_out`/`ease_in_out`/`step`,
+  non-negative `duration_ms`/`fps`, curve required), and `Theme.Anim`/`HasAnim`/
+  `AnimNames` expose the tokens to the render/emit layer (never the fold — the
+  D4/Q9 boundary). Theme-load refusals name the offending token and list the
+  legal curves; counterfactual (validation disabled) fails exactly the three
+  refusal tests. SCENES.md Scene 4 and the `node.go` comments were updated per
+  D4's instruction, moving the blocker from "the token does not exist" to "the
+  token exists; the props wait on a clock and their render semantics." **This is
+  the foundation G1–G4 share; it is not any one prop.**
+- **G1–G4 — BLOCKED on a design beat, not on D4.** With the timing vocabulary in
+  place, two things still stand between a token and a moving prop, and neither is
+  something the renderer may invent: (a) the renderer is **clockless** by
+  construction (`RenderFrame` is a pure snapshot; the loop repaints only on
+  events/keystrokes), so a **host animation clock** — a time-driven repaint and
+  per-node elapsed-time state living on the far side of the fold — has to be
+  built first; and (b) the **render semantics** of `transition`/`reveal`/`enter`
+  (what each does to the frame over its run) and `scroll`'s `{speed, pause_when}`
+  shape are **signed nowhere**. D4 signed the *timing*, not the *behaviour*.
+  Building either without signing it is the invent-in-the-renderer failure
+  `row_template`/`on_press` are refused for. The next step is a design proposal
+  (the SCENES/TOKENS method) that signs the clock model and each prop's
+  semantics; then G1–G4 implement against it.
 - **G1** Implement `transition`. **G2** `scroll {speed, pause_when}` (field
   exists refused at `node.go:69`). **G3** `reveal`. **G4** `enter {row,
-  stagger}`. (Each atomic.)
+  stagger}`. (Each atomic, each gated on the G-design beat above.)
 - **G5** [G1-G4] Freeze the Scene 4 golden and update its status paragraph.
 
 ### Block H — Phase 3: declarative plugin mounting (heart of the phase)
