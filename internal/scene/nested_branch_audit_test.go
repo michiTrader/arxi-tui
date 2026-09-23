@@ -291,10 +291,6 @@ var rawBranchAccessors = map[string]string{
 	// A border is { shape, style } — strings, no node. borderObject names
 	// the whole of what it may contain.
 	"BorderRaw": "",
-	// scroll is { speed, pause_when }: a number and a bind path. It is left
-	// raw because nothing reads it yet (unrenderedFields refuses it with an
-	// address), and the shape belongs to the animation clock Phase 4 designs.
-	"Scroll": "",
 }
 
 // fieldTypeCarriesNode reports whether a field of Node can hold another Node,

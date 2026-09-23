@@ -54,9 +54,12 @@ func TestAKeyWrittenEmptyIsStillAKeyTheAuthorWrote(t *testing.T) {
 	// case is how this hole stayed open in the first place.
 	empties := map[string]string{
 		"on_press": `""`,
-		"scroll":   `null`,
-		// row_template graduated (D1): it is rendered now, so it is no longer in
-		// unrenderedFields and there is nothing here to measure about it.
+		// row_template graduated (D1) and scroll graduated (G2): both are
+		// rendered now, so neither is in unrenderedFields and there is nothing
+		// here to measure about them. scroll's departure also took the last
+		// json.RawMessage key out of unrenderedFields — the raw exemption below
+		// now guards the mechanism against the next raw field that enters,
+		// rather than a live entry.
 	}
 
 	assertEveryEmptyHasAKeyToMeasure(t, empties)
@@ -258,11 +261,14 @@ func TestAStaleEmptiesEntryIsReported(t *testing.T) {
 // than not measuring it: the passing subtest is what tells a reader the
 // zero-value direction is covered.
 //
-// This is not hypothetical for `scroll`. Its spelling is `null`, and for a
-// json.RawMessage that is four retained bytes, not a zero value — the entry
-// passes through the value half today, exactly as the drifted `on_press`
-// would. That is correct and must stay: `null` *is* how an author writes an
-// empty scroll. So the check cannot demand every entry take the union path;
+// This was not hypothetical for `scroll` while it was raw: its spelling was
+// `null`, and for a json.RawMessage that is four retained bytes, not a zero
+// value — the entry passed through the value half, exactly as a drifted
+// `on_press` would. scroll has since graduated to a struct (G2), so the last
+// raw key left unrenderedFields; but the property is the same for `prefix` and
+// `border`, the raw fields Node still declares, and would hold for any future
+// raw field added to the refused set. `null` *is* how an author writes an
+// empty raw field. So the check cannot demand every entry take the union path;
 // it asserts what is actually true of each — whether the spelling survives
 // re-serialisation — and fails only when a spelling that is supposed to
 // vanish does not.
@@ -357,13 +363,20 @@ func spellingIsAcceptableZero(key string, n *Node) (bool, error) {
 // would re-derive the same classification the function under test makes and
 // agree with it by construction, which is the shape this package has paid for
 // seven times.
+//
+// The raw positive example is `prefix` rather than `scroll`: scroll graduated
+// to a struct in G2, so it is no longer json.RawMessage, and the remaining raw
+// fields Node declares are `prefix` and `border`. The exemption is a property
+// of the field's Go type, not of unrenderedFields membership, so pinning it on
+// a live raw field keeps the mechanism guarded for the next raw key that enters
+// the refused set.
 func TestTheRawExemptionDoesNotCoverOrdinaryFields(t *testing.T) {
-	if !isRawJSONField("scroll") {
+	if !isRawJSONField("prefix") {
 		t.Errorf("isRawJSONField says %q is not raw, but Node declares it json.RawMessage.\n"+
 			"consequence: the zero-value audit will demand a spelling omitempty drops for a field\n"+
 			"that has none, and `null` — the way an author actually empties it — starts failing.\n"+
 			"remedy: the lookup must match on the json tag name, which is what the empties map is\n"+
-			"keyed by.", "scroll")
+			"keyed by.", "prefix")
 	}
 	if isRawJSONField("on_press") {
 		t.Errorf("isRawJSONField says %q is raw, but Node declares it a string.\n\n"+
@@ -399,18 +412,20 @@ func TestTheRawExemptionDoesNotCoverOrdinaryFields(t *testing.T) {
 			"remedy: a surviving spelling is acceptable only when Node's field is json.RawMessage.", "on_press")
 	}
 
-	// And the direction that must keep working: `null` on a raw field.
-	rawNull, err := ParseDocument([]byte(`{"root":{"type":"text","text":"x","scroll":null}}`))
+	// And the direction that must keep working: `null` on a raw field. prefix
+	// is a json.RawMessage, so `null` is four retained bytes an author writes
+	// to empty it, not a spelling omitempty drops.
+	rawNull, err := ParseDocument([]byte(`{"root":{"type":"marquee","bind":"thinking.text","prefix":null}}`))
 	if err != nil {
 		t.Fatalf("premise broken: %v", err)
 	}
-	if ok, err := spellingIsAcceptableZero("scroll", rawNull.Root); err != nil {
+	if ok, err := spellingIsAcceptableZero("prefix", rawNull.Root); err != nil {
 		t.Fatalf("premise broken: %v", err)
 	} else if !ok {
 		t.Errorf("spellingIsAcceptableZero rejects `null` for %q, which is a json.RawMessage.\n"+
 			"consequence: the audit would demand a spelling that does not exist for the field, and\n"+
 			"the honest entry has nowhere to go.\n"+
-			"remedy: keep the raw exemption — for a RawMessage, `null` is how an author empties it.", "scroll")
+			"remedy: keep the raw exemption — for a RawMessage, `null` is how an author empties it.", "prefix")
 	}
 }
 

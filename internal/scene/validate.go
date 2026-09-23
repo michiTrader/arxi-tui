@@ -300,7 +300,6 @@ func (d *Document) validateScroll(n *Node, path string, scope map[string]bool) e
 	return nil
 }
 
-
 // does not draw. Accepting one is the failure mode this project has now paid
 // for three times: a style key the validator learned and styleName() did not,
 // a border token checked by the validator and dropped by both drawing paths,

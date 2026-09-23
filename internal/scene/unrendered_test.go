@@ -223,17 +223,20 @@ func TestEveryUnrenderedFieldIsActuallyRefused(t *testing.T) {
 		"row_template": `{ "root": { "type": "list", "bind": "agent.todos",
 		  "row_template": { "type": "text", "bind": "model.name" } } }`,
 
-		// on_press and scroll are universal properties SCENES.md promises
-		// and no layer implemented. Before they were declared on Node they
-		// could not be refused at all: encoding/json dropped the key, so
-		// these two documents rendered byte-identically to the same scene
-		// without them. Their fixtures are ordinary nodes, because that is
-		// the point — the format says any node may carry these, so the
-		// refusal must not depend on picking an exotic node type.
+		// on_press is a universal property SCENES.md promises and no layer
+		// implemented. Before it was declared on Node it could not be refused
+		// at all: encoding/json dropped the key, so a document declaring it
+		// rendered byte-identically to the same scene without it. Its fixture
+		// is an ordinary node, because that is the point — the format says any
+		// node may carry it, so the refusal must not depend on picking an
+		// exotic node type.
+		//
+		// scroll used to sit beside it here; it graduated (G2) and is now
+		// rendered on a marquee and refused elsewhere by validateScroll, so it
+		// is no longer an unrenderedFields entry and has nothing to measure in
+		// this map.
 		"on_press": `{ "root": { "type": "text", "bind": "model.name",
 		  "on_press": "cmd:/help" } }`,
-		"scroll": `{ "root": { "type": "markdown", "bind": "chat.history",
-		  "scroll": { "speed": 2, "pause_when": "agent.working" } } }`,
 	}
 
 	if len(unrenderedFields) == 0 {
@@ -362,10 +365,11 @@ func TestUnrenderedFieldsIsReadAsAMapNotAConstant(t *testing.T) {
 // type's zero value, which the comment above refuseUnrendered records as a
 // real authoring shape: `"on_press": ""` while clearing a property.
 //
-// Measured, on a node declaring `"on_press": ""` and `"scroll": null`:
+// Measured, on a node declaring `"on_press": ""` and a second unrendered field
+// also written with its zero value:
 //
-//	with sort:     on_press  (300/300, and 100/100 with the source keys swapped)
-//	without sort:  scroll    (200/200, both source orderings)
+//	with sort:     the alphabetically-first candidate (300/300, both orderings)
+//	without sort:  the source-order-first candidate   (200/200, both orderings)
 //
 // So the failure is not the instability the weld's description predicted --
 // it is stable and WRONG, which is worse. It silently changes which of two
@@ -373,13 +377,26 @@ func TestUnrenderedFieldsIsReadAsAMapNotAConstant(t *testing.T) {
 // model a turn per attempt against whichever answer it gets. The assertion is
 // therefore on the identity of the chosen field, not on run-to-run
 // repeatability: the version with no rule repeats perfectly well.
+//
+// The second field is injected into unrenderedFields at runtime rather than
+// taken from the map. It used to be `scroll`, the other zero-valued raw entry;
+// scroll graduated (G2) and `on_press` is the only standing entry now, so a
+// two-candidate probe has to add its own. `count` is chosen because its json
+// name sorts before `on_press` and its zero value (`false`) is dropped by
+// omitempty, so it reaches the union only through the source-ordered
+// declaredKeys half -- exactly the half the final sort has to reorder.
 func TestTheRefusedFieldIsChosenByRuleAndNotByArrivalOrder(t *testing.T) {
+	unrenderedFields["count"] = "test probe: added at runtime to give the sort two candidates to order"
+	defer delete(unrenderedFields, "count")
+
 	// Both fields written with their ZERO values, so omitempty drops them
 	// from the marshal and they can only arrive via declaredKeys -- the
-	// unsorted, source-ordered half of the union. A node declaring them with
-	// real values cannot distinguish the two implementations at all.
+	// unsorted, source-ordered half of the union. on_press is written first in
+	// source, so arrival order would choose it and the rule chooses count. A
+	// node declaring them with real values cannot distinguish the two
+	// implementations at all.
 	const src = `{"root":{"type":"list","bind":"team.members",
-		"on_press":"", "scroll":null}}`
+		"on_press":"", "count":false}}`
 
 	doc, err := ParseDocument([]byte(src))
 	if err != nil {
@@ -393,17 +410,17 @@ func TestTheRefusedFieldIsChosenByRuleAndNotByArrivalOrder(t *testing.T) {
 			"measures nothing")
 	}
 
-	// on_press is the alphabetically first of the two, so it is the answer a
-	// rule produces. scroll is the answer arrival order produces. Naming
+	// count is the alphabetically first of the two, so it is the answer a
+	// rule produces. on_press is the answer arrival order produces. Naming
 	// both in the assertion is what makes the failure legible.
 	msg := verr.Error()
-	if !strings.Contains(msg, "on_press") {
+	if !strings.Contains(msg, "count") {
 		t.Errorf("refusal names %q.\n"+
-			"want it to name on_press, the alphabetically first candidate.\n\n"+
+			"want it to name count, the alphabetically first candidate.\n\n"+
 			"consequence: the field is being chosen by the order the parser recorded the\n"+
 			"source keys rather than by a rule. That is stable -- so it will not look\n"+
 			"flaky -- and it is stable on the WRONG field: the author is told about\n"+
-			"scroll while on_press sits equally unrendered beside it, and re-ordering two\n"+
+			"on_press while count sits equally unrendered beside it, and re-ordering two\n"+
 			"keys in the source file silently changes the diagnosis. Phase 2's repair loop\n"+
 			"charges the model a turn per attempt against whichever answer it is handed.\n"+
 			"remedy: refuseUnrendered must sort the union of declaredUnrenderedFields and\n"+
@@ -411,17 +428,17 @@ func TestTheRefusedFieldIsChosenByRuleAndNotByArrivalOrder(t *testing.T) {
 			msg)
 	}
 
-	// The other field must still be refusable: if scroll were unreachable
-	// the test above would pass for the wrong reason -- a single-candidate
+	// Each field must still be refusable alone: if count were unreachable the
+	// assertion above could pass for the wrong reason -- a single-candidate
 	// list cannot demonstrate a choice.
-	const onlyScroll = `{"root":{"type":"list","bind":"team.members","scroll":null}}`
-	d2, err := ParseDocument([]byte(onlyScroll))
+	const onlyCount = `{"root":{"type":"list","bind":"team.members","count":false}}`
+	d2, err := ParseDocument([]byte(onlyCount))
 	if err != nil {
 		t.Fatalf("ParseDocument: %v", err)
 	}
 	e2 := d2.Validate()
-	if e2 == nil || !strings.Contains(e2.Error(), "scroll") {
-		t.Fatalf("control failed: scroll alone is not refused (%v), so the assertion\n"+
+	if e2 == nil || !strings.Contains(e2.Error(), "count") {
+		t.Fatalf("control failed: count alone is not refused (%v), so the assertion\n"+
 			"above could be satisfied by a list that never contained it", e2)
 	}
 }
