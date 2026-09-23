@@ -122,6 +122,14 @@ func nestedStyleState() fold.State {
 		{Name: "/quit", Category: "General", Description: "Leave the session"},
 	}
 	s.History = []fold.ChatLine{{Role: "user", Text: "hola"}}
+	// SUBAGENTS' team list reaches team.members through a row_template, so the
+	// list must have rows for the owning node to draw — an empty team.members
+	// renders zero rows and the row_template candidate would be reported undrawn
+	// (the false-alarm this state exists to prevent), not swept.
+	s.TeamMembers = []fold.TeamMember{
+		{ID: "backend", State: "thinking", Role: "backend", Busy: true, Turns: 2},
+		{ID: "frontend", State: "idle", Role: "frontend", Busy: false, Turns: 1},
+	}
 	return s
 }
 

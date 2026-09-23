@@ -264,8 +264,16 @@ counterfactual test).
   (`rowScopesFor`); the fold already projected `State.TeamMembers`. Removed from
   `acceptedUnprojectedBinds`; the composite audit now witnesses it through a
   template (`templateProjectedBinds`).
-- **E4 — TODO.** Freeze the Scene 9 golden (subagents). Rendering is covered by
-  `row_template_test.go`; the golden is the remaining durable pin.
+- **E4 — DONE (2026-09-22).** `testdata/SUBAGENTS.json` freezes Scene 9: a
+  `list` over `team.members` whose `row_template` renders one row per member
+  (`row.role` per element). Pinned as `SUBAGENTS.frame`/`.styled` with a render
+  test folding a busy+idle two-member team. The template is a single `text`
+  node — a container reached through `row_template` has no own-style rendering,
+  so `TestEveryNestedNodeHonoursItsOwnToken` would read a container template as
+  a silent style drop; the spinner-or-glyph + label composition and row-click
+  (`on_press`, still refused) wait on that decision / H8. The Scene 9 heading
+  was reformatted to `SUBAGENTS (below the input)` so the progress audit's
+  fixture↔scene name match resolves.
 - **E5 — TODO.** Freeze the Scene 5 golden (CONFIG). Blocked on `switch`/`input`
   rendering inside a template — `switch` is not yet in `renderNode`'s dispatch,
   so the `/config` dogfood needs those primitives first.

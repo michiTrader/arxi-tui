@@ -1,0 +1,15 @@
+{ "root": { "type": "stack", "children": [
+  { "type": "text", "style": {"style": "header"},
+    "text": "Δr×i v0.1.0 · subagents" },
+
+  { "id": "notice", "type": "text", "bind": "host.scene.error",
+    "when": "host.scene.error", "style": {"style": "banner"} },
+
+  { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+
+  { "id": "prompt", "type": "input", "bind": "user.input",
+    "prefix": "┃ ", "placeholder": "ask anything, or / for commands" },
+
+  { "id": "team", "type": "list", "bind": "team.members",
+    "row_template": { "type": "text", "bind": "row.role", "style": {"style": "header"} } }
+]}}
