@@ -149,12 +149,20 @@ could land before Phase 4.
 
 The other four are parsed and **warned about with an address**, not silently
 dropped: a document declaring them loads, renders, and says on screen what the
-engine could not do (PLAN.md's forward-compatibility rule). They stay warnings
-rather than implementations because each needs elapsed time, and the `[anim]`
-timing token Q8 assigns that job to is **not yet specified in `TOKENS.md`**.
-Building them now would mean inventing the timing format inside the renderer —
-the same objection that keeps `row_template` and `on_press` refused. When the
-`[anim]` token is signed, this paragraph is what should be updated first.
+engine could not do (PLAN.md's forward-compatibility rule). The `[anim]` timing
+token they were blocked on is now **signed and implemented**: D4 defined the
+`anim` theme section (`docs/TOKENS.md`), and `internal/theme` parses and
+validates it (closed curve set, non-negative `duration_ms`/`fps`), so a timing
+token can be defined and named. Two things still stand between the token and a
+moving prop, and they are why these stay warnings for now: the renderer is
+**clockless** by construction (`RenderFrame` is a pure snapshot — "no I/O, no
+clock"), so a host animation clock has to exist before any elapsed-time prop can
+tick; and the *render semantics* of `transition`/`reveal`/`enter` — what each
+one actually does to the frame over that time — are signed nowhere yet, so
+building them would mean inventing behaviour in the renderer, the same objection
+that keeps `row_template` and `on_press` refused. The next beat is to sign those
+semantics and add the clock; the timing vocabulary they consume is already in
+place.
 
 ## Scene 5 — CONFIG (the /config screen as a scene, not as Go)
 
