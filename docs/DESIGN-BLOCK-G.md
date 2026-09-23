@@ -7,14 +7,16 @@ touches no code, it freezes vocabulary and behaviour *before* a renderer
 depends on it, and it is written to be signed into the frozen docs by the owner
 — not merged as fact.
 
-**Status: awaiting signature.** Nothing here is signed until the owner accepts
-it; on acceptance, G-A is signed into `docs/PLAN.md` (a new ADR for the host
-clock) and `docs/TOKENS.md` (the animation-phase render contract), and G-B is
-signed into `docs/SCENES.md` Scene 4 (the per-prop behaviour table). As with
-Block D, signing the *design* lifts no code guard: the `scroll` refusal
-(`internal/scene/node.go:72`, `validate.go`) and the warned-but-unimplemented
-state of `transition`/`reveal`/`enter` are lifted by the *implementation* that
-replaces them, each with its own counterfactual test (G1–G4).
+**Status: signed 2026-09-23.** The proposal below was accepted and signed into
+the frozen docs — G-A into `docs/PLAN.md` (ADR-0005), the timing/clock pointer
+into `docs/TOKENS.md`, and G-B into `docs/SCENES.md` Scene 4 (the per-prop
+behaviour table). The three open decisions at the end were resolved to their
+recommended defaults (recorded in ADR-0005). This file is kept as the argued
+record behind those signatures. As with Block D, signing the *design* lifts no
+code guard: the `scroll` refusal (`internal/scene/node.go:72`, `validate.go`)
+and the warned-but-unimplemented state of `transition`/`reveal`/`enter` are
+lifted by the *implementation* that replaces them, each with its own
+counterfactual test (G1–G4).
 
 ## What D4/G0 already settled, and what it did not
 
