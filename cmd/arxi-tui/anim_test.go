@@ -112,3 +112,96 @@ func TestAnimClockClearsDepartedNodesAndReplaysOnReentry(t *testing.T) {
 		t.Errorf("a re-entering node resumed at tick %d instead of restarting at 0", got)
 	}
 }
+
+// oneShotClock is a clock whose one-shot props resolve through a fixed timing
+// token, so the phase tests below read a known duration and curve rather than
+// depending on a theme. linear is chosen so phase == elapsed/duration and the
+// expected values can be written by hand; the eased curves are theme.EvalCurve's
+// contract, pinned in internal/theme.
+func oneShotClock(fps, durationMS int) *animClock {
+	c := newAnimClock(fps)
+	c.resolveAnim = func(name string) (theme.AnimDef, bool) {
+		return theme.AnimDef{DurationMS: durationMS, Curve: "linear", FPS: fps}, true
+	}
+	return c
+}
+
+// A one-shot reveal's phase runs 0→1 over its token's duration, measured by wall
+// time. This is the reveal half of the clock: where a scroll reports a tick
+// count, a one-shot reports the curve-eased fraction of its run, and the
+// renderer turns that into a character prefix. Without it a reveal would either
+// never move or jump straight to full.
+func TestAnimClockOneShotPhaseRunsOverTheDuration(t *testing.T) {
+	c := oneShotClock(30, 200) // a 200ms reveal
+	base := time.Unix(0, 0)
+
+	c.advance(base)
+	c.reconcile([]engine.AnimActivity{{NodeID: "rv", OneShot: true, Token: "reveal.fast"}})
+
+	// Halfway through the duration is half the (linear) phase.
+	c.advance(base.Add(100 * time.Millisecond))
+	if got := c.phases()["rv"]; got < 0.49 || got > 0.51 {
+		t.Errorf("after 100ms of a 200ms reveal the phase is %v, want ~0.5\n"+
+			"consequence: the typewriter does not track wall time against the token's duration, so\n"+
+			"it reveals at the wrong rate or not at all", got)
+	}
+	// A continuous scroll would be in ticks; a one-shot must not be, or the
+	// renderer would read a tick count where it expects a phase.
+	if _, inTicks := c.phases()["rv"]; !inTicks {
+		t.Errorf("a one-shot reveal is absent from phases(); the renderer reads AnimPhase for it")
+	}
+
+	// Past the duration it is settled at 1 and forces no more ticks.
+	c.advance(base.Add(300 * time.Millisecond))
+	if got := c.phases()["rv"]; got != 1 {
+		t.Errorf("after 300ms of a 200ms reveal the phase is %v, want 1 (settled)", got)
+	}
+	if c.running() {
+		t.Errorf("a settled one-shot reports running; the ticker would spin to repaint a frame that\n" +
+			"no longer changes (ADR-0005: a settled one-shot is present but quiet, like a paused marquee)")
+	}
+}
+
+// A one-shot reveal reports running only while it is mid-reveal, so the ticker
+// is armed for the reveal and stopped the moment it settles — the on-demand
+// property the whole clock exists to preserve.
+func TestAnimClockOneShotRunsOnlyUntilSettled(t *testing.T) {
+	c := oneShotClock(30, 200)
+	base := time.Unix(0, 0)
+	c.advance(base)
+	c.reconcile([]engine.AnimActivity{{NodeID: "rv", OneShot: true, Token: "reveal.fast"}})
+
+	c.advance(base.Add(50 * time.Millisecond))
+	if !c.running() {
+		t.Errorf("a reveal 50ms into a 200ms run reports not running; it is still revealing, so the\n" +
+			"ticker must stay armed")
+	}
+}
+
+// A one-shot that leaves the frame loses its clock and re-animates on re-entry,
+// the animate-on-each-appearance fork (ADR-0005) — the same replay contract the
+// continuous case has, checked on the one-shot path because it tracks extra
+// per-node timing that must be cleared alongside the elapsed time.
+func TestAnimClockOneShotReplaysOnReentry(t *testing.T) {
+	c := oneShotClock(30, 200)
+	base := time.Unix(0, 0)
+	c.advance(base)
+	c.reconcile([]engine.AnimActivity{{NodeID: "rv", OneShot: true, Token: "reveal.fast"}})
+	c.advance(base.Add(100 * time.Millisecond))
+	if c.phases()["rv"] == 0 {
+		t.Fatalf("premise broken: the reveal should have advanced before it leaves")
+	}
+
+	c.reconcile(nil) // it leaves the frame
+	if _, ok := c.phases()["rv"]; ok {
+		t.Errorf("a departed one-shot kept its phase; it must be cleared so re-entry re-animates")
+	}
+	if c.running() {
+		t.Errorf("no active nodes, yet the clock reports running")
+	}
+
+	c.reconcile([]engine.AnimActivity{{NodeID: "rv", OneShot: true, Token: "reveal.fast"}})
+	if got := c.phases()["rv"]; got != 0 {
+		t.Errorf("a re-entering reveal resumed at phase %v instead of restarting at 0", got)
+	}
+}
