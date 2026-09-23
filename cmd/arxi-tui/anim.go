@@ -52,6 +52,27 @@ type animClock struct {
 	// move only the nodes that are still on screen and not frozen.
 	active map[string]bool
 	paused map[string]bool
+
+	// oneShot, durMS, curve and nodeFPS are the per-node timing of the one-shot
+	// props (G3 reveal, later transition/enter), populated from the activity
+	// report at reconcile. A continuous scroll ticks forever at the clock's fps
+	// and reads none of these; a one-shot runs a phase 0→1 once over durMS,
+	// eased by curve, and stops forcing ticks once settled. The renderer reports
+	// only the node's token name (it has no theme); resolveAnim turns that name
+	// into a duration/curve/fps here.
+	oneShot map[string]bool
+	durMS   map[string]int
+	curve   map[string]string
+	nodeFPS map[string]int
+
+	// resolveAnim maps a timing-token name to its definition, set by the loop to
+	// the active theme's lookup. It is nil in unit tests that exercise only the
+	// continuous scroll path, which never resolves a token; a one-shot node with
+	// no resolver (or an absent token) is treated as zero-duration, i.e. settled
+	// at once, the graceful fallback that matches marqueeFPS declining to the
+	// host default rather than refusing.
+	resolveAnim func(string) (theme.AnimDef, bool)
+
 	// last is the wall time of the previous advance, for the between-frame
 	// delta. Zero until the first advance, which seeds it without advancing.
 	last time.Time
@@ -63,6 +84,10 @@ func newAnimClock(fps int) *animClock {
 		elapsed: map[string]time.Duration{},
 		active:  map[string]bool{},
 		paused:  map[string]bool{},
+		oneShot: map[string]bool{},
+		durMS:   map[string]int{},
+		curve:   map[string]string{},
+		nodeFPS: map[string]int{},
 	}
 }
 
@@ -96,46 +121,126 @@ func (c *animClock) ticks() map[string]int {
 	return out
 }
 
+// phases is the one-shot phase fed to the renderer this frame: the curve-eased
+// fraction each one-shot node has run through its token's duration (ADR-0005 /
+// G-B). A continuous scroll is absent from this map — it reads ticks, not phase.
+// The curve is applied here, in the loop, so the renderer receives a phase in
+// [0,1] already eased and turns it straight into a frame (renderText clips to a
+// phase-wide prefix). A zero-duration one-shot (an unresolved or missing token)
+// is settled at 1 rather than dividing by zero: a one-shot with no run to
+// measure has nothing to animate through.
+func (c *animClock) phases() map[string]float64 {
+	out := make(map[string]float64, len(c.oneShot))
+	for id := range c.oneShot {
+		d := c.durMS[id]
+		if d <= 0 {
+			out[id] = 1
+			continue
+		}
+		t := float64(c.elapsed[id].Milliseconds()) / float64(d)
+		out[id] = theme.EvalCurve(c.curve[id], t)
+	}
+	return out
+}
+
 // reconcile takes the frame's activity report and updates the tracked sets: a
 // node that just appeared gets a clock started at zero, a node that left the
 // frame has its clock cleared (re-entry re-animates), and the paused set is
 // refreshed so the next advance freezes exactly the nodes pause_when holds.
+//
+// A one-shot node also has its timing resolved here, once, from the token name
+// the report carries: the loop has the theme, the renderer does not, so this is
+// the seam where a token becomes a duration/curve/fps. Resolving at reconcile
+// rather than at phases() keeps the per-frame phase read a pure arithmetic step.
 func (c *animClock) reconcile(active []engine.AnimActivity) {
 	next := make(map[string]bool, len(active))
 	nextPaused := make(map[string]bool, len(active))
+	nextOneShot := make(map[string]bool)
 	for _, a := range active {
 		next[a.NodeID] = true
 		nextPaused[a.NodeID] = a.Paused
 		if _, ok := c.elapsed[a.NodeID]; !ok {
 			c.elapsed[a.NodeID] = 0
 		}
+		if a.OneShot {
+			nextOneShot[a.NodeID] = true
+			d, curveName, fps := c.resolveOneShot(a.Token)
+			c.durMS[a.NodeID] = d
+			c.curve[a.NodeID] = curveName
+			c.nodeFPS[a.NodeID] = fps
+		}
 	}
 	for id := range c.elapsed {
 		if !next[id] {
 			delete(c.elapsed, id)
+			delete(c.durMS, id)
+			delete(c.curve, id)
+			delete(c.nodeFPS, id)
 		}
 	}
 	c.active = next
 	c.paused = nextPaused
+	c.oneShot = nextOneShot
 }
 
-// running reports whether any active node is unpaused, i.e. whether the ticker
-// should be armed. A frame whose only animations are paused arms nothing — the
-// offset is frozen, so there is nothing for a tick to move (ADR-0005: the
-// ticker runs only while a visible node animates).
+// resolveOneShot turns a one-shot node's token name into a duration, curve and
+// tick rate. An empty token means anim.default (Q8). A missing resolver or a
+// token the theme does not define falls back to a zero duration — settled at
+// once — and the host default rate, the same graceful decline marqueeFPS makes;
+// the load-time refusal (ValidateTokens against the theme) is where an undefined
+// token is actually rejected, not here on the clock's hot path.
+func (c *animClock) resolveOneShot(token string) (durMS int, curve string, fps int) {
+	fps = hostDefaultFPS
+	if token == "" {
+		token = "default"
+	}
+	if c.resolveAnim != nil {
+		if def, ok := c.resolveAnim(token); ok {
+			durMS = def.DurationMS
+			curve = def.Curve
+			if def.FPS > 0 {
+				fps = def.FPS
+			}
+		}
+	}
+	return durMS, curve, fps
+}
+
+// running reports whether any active node is unpaused and still moving, i.e.
+// whether the ticker should be armed. A paused node, and a one-shot node that
+// has settled (run past its duration), both ask for no ticks while still being
+// present — there is nothing left for a tick to move (ADR-0005: the ticker runs
+// only while a visible node animates).
 func (c *animClock) running() bool {
 	for id := range c.active {
-		if !c.paused[id] {
-			return true
+		if c.paused[id] {
+			continue
 		}
+		if c.oneShot[id] {
+			if c.durMS[id] > 0 && c.elapsed[id].Milliseconds() < int64(c.durMS[id]) {
+				return true
+			}
+			continue
+		}
+		return true
 	}
 	return false
 }
 
-// interval is the ticker period at the clock's fps.
+// interval is the ticker period at the fastest active rate: the clock's base
+// fps (the marquee's) raised to any faster one-shot token's fps, so a 30fps
+// reveal and a 20fps marquee share one 30fps ticker and each still advances by
+// its own elapsed time (ADR-0005). One timer serves the whole frame; a token's
+// fps caps its own smoothness, not the loop's.
 func (c *animClock) interval() time.Duration {
-	if c.fps <= 0 {
+	fps := c.fps
+	for id := range c.active {
+		if c.oneShot[id] && c.nodeFPS[id] > fps {
+			fps = c.nodeFPS[id]
+		}
+	}
+	if fps <= 0 {
 		return time.Second / hostDefaultFPS
 	}
-	return time.Second / time.Duration(c.fps)
+	return time.Second / time.Duration(fps)
 }

@@ -91,9 +91,9 @@ func TestTheFallbackSceneItselfShowsTheNotice(t *testing.T) {
 // where most users meet it: a scene that *loads* with a warning is the common
 // case, and it was equally silent.
 //
-// Measured on the built binary before the fix, with `reveal` — a property
+// Measured on the built binary before the fix, with `transition` — a property
 // SCENES.md names and this engine does not implement — added to shipped SOBRIA:
-// the scene drew normally and the word `reveal` appeared nowhere on screen.
+// the scene drew normally and the word `transition` appeared nowhere on screen.
 //
 // This is a separate test from the fallback one rather than a case in it,
 // because the two can regress independently: the notice node could be restored
@@ -112,7 +112,7 @@ func TestTheFallbackSceneItselfShowsTheNotice(t *testing.T) {
 // It now reads the fixture the binary reads.
 func TestASceneThatLoadsWithAWarningAlsoShowsIt(t *testing.T) {
 	path := writeScene(t, "future.json", `{ "root": { "type": "stack", "children": [
-    { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1, "reveal": "typewriter" },
+    { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1, "transition": "fade" },
     { "id": "prompt", "type": "input", "bind": "user.input", "placeholder": "> " }
 ]}}`)
 
@@ -147,7 +147,7 @@ func TestASceneThatLoadsWithAWarningAlsoShowsIt(t *testing.T) {
 	r := engine.Renderer{Width: 100, Height: 24}
 	out := r.RenderFrame(shipped, state).Plain()
 
-	if !strings.Contains(out, "reveal") {
+	if !strings.Contains(out, "transition") {
 		t.Errorf("the shipped sobria scene renders no notice.\nnotice:\n  %s\nframe:\n%s\n"+
 			"consequence: the common case is worse than the fallback one. The scene loads and draws,\n"+
 			"reports success, and the property the engine silently ignored is never named anywhere\n"+
