@@ -172,14 +172,33 @@ section at load (an empty token resolves `anim.default`, Q8), the same net a
 style token gets. It is a one-shot on appearance: the clock starts when the node
 appears, runs `0 → 1` once, and the node draws settled thereafter (ADR-0005).
 
-The other two — `transition`, `enter` — are **signed**
+`transition: { "anim": "<token>" }` is implemented too (G1), the second one-shot
+prop on that clock. A node with `transition` wears the theme's dim intensity
+while its entrance runs and its own settled style once the phase reaches `1` —
+the SGR dim→bright intensity axis, one the renderer already draws whenever it
+resolves a style token, so it invents no new rendering. The phase reaches the
+engine as the same `Renderer.AnimPhase` (an input separate from the fold, Q9),
+and a nil phase draws the settled style, so no existing golden moves. Unlike
+`scroll` (marquee) and `reveal` (text), transition carries **no node-type
+refusal**: the intensity axis is universal, so it is honoured at the `renderNode`
+chokepoint on every node type — the same reach `focus_glow` has, and the reason
+`enter`'s `row:false` container entrance is "identical to putting transition on
+the container itself". A container has no own content to dim, so it is
+unaffected the way it is for a glow; dimming a subtree is `enter`'s (G4)
+scheduler question. Its only load-time refusal is the timing token, checked
+against the theme's `anim` section exactly as reveal's is. The intensity axis is
+discrete (dim / normal / bold), so a transition draws two states — dim while
+running, settled when done — with no intermediate frame; a finer ramp would need
+the opacity or colour axis this section refuses as the fifth axis.
+
+The last one — `enter` — is **signed**
 (`docs/DESIGN-BLOCK-G.md`, G-B) and now implementable against a frozen contract,
-with the clock they need already in the loop and the one-shot pattern reveal set
-as their template. Until each lands it is still parsed and **warned about with
-an address**, not silently dropped (PLAN.md's forward-compatibility rule); the
-warning is lifted by the implementation, not by this signature. The clock those
-props measure elapsed time against is ADR-0005 (`docs/PLAN.md`); the timing
-vocabulary they consume is D4's `anim` section (`docs/TOKENS.md`).
+with the clock it needs already in the loop and the one-shot pattern reveal and
+transition set as its template. Until it lands it is still parsed and **warned
+about with an address**, not silently dropped (PLAN.md's forward-compatibility
+rule); the warning is lifted by the implementation, not by this signature. The
+clock those props measure elapsed time against is ADR-0005 (`docs/PLAN.md`); the
+timing vocabulary they consume is D4's `anim` section (`docs/TOKENS.md`).
 
 The render semantics are signed on one principle: **an animation never draws
 anything the renderer cannot already draw at a fixed phase; the clock only
