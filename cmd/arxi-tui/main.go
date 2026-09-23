@@ -398,10 +398,21 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// the way it owns the input buffer: the fold is rebuilt per frame and
 	// carries it, but the state of the menu is not the scene's business.
 	slashSel := 0
+	// uiHidden is the `ui.hidden` set (BINDS.md §4.3): the ids the user has
+	// hidden with `/ui hide`. It is host-owned view state held across frames
+	// like the input buffer and slashSel, because no core event produces it —
+	// the fold is rebuilt from the log each frame and would forget a set kept
+	// only in State. The engine walk reads it as a visibility filter, so a
+	// keystroke that hides a node must survive the next repaint.
+	uiHidden := map[string]bool{}
 
 	repaint := func() {
 		state := fold.Fold(collected)
 		state.UserInput = input // view state: the host owns the input buffer
+		// ui.hidden is host-owned view state the loop keeps across frames, so it
+		// is re-attached on every repaint for the same reason the input buffer
+		// and the scene error are (Fold rebuilds State from the log each frame).
+		state.UIHidden = uiHidden
 		// Invariant 3's other half: the fallback scene is on screen, and this
 		// is the notice that says why. It is re-applied on every repaint
 		// because Fold rebuilds State from the event list each frame
@@ -500,7 +511,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					// nothing, with the menu showing an empty list. Asking
 					// the command surface first means a line it recognises is
 					// never the menu's to swallow.
-					if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice); handled {
+					if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden); handled {
 						input = next
 					} else if strings.HasPrefix(input, "/") {
 						// The menu is open: navigation steers the highlight
@@ -593,7 +604,7 @@ func typeKey(input string, k term.Key, ctx context.Context, drv Driver) string {
 // its output, so the error names `file:line` — and it reaches the screen
 // through `host.scene.error`, the bind BINDS.md §2 signs for exactly this.
 // The user sees why, on the scene they still have.
-func uiCommandKey(input string, k term.Key, doc **scene.Document, notice *string) (bool, string) {
+func uiCommandKey(input string, k term.Key, doc **scene.Document, notice *string, hidden map[string]bool) (bool, string) {
 	if k.Type != term.KeyEnter {
 		return false, input
 	}
@@ -625,6 +636,15 @@ func uiCommandKey(input string, k term.Key, doc **scene.Document, notice *string
 		*notice = err.Error()
 		return true, ""
 	}
+	// A view-state command (hide/show) does not change the document — it
+	// mutates the loop's ui.hidden set, which the next repaint reads through
+	// the engine walk. Its Result carries the set op rather than a new source,
+	// so the document is left as it was and only the set and the notice move.
+	if res.ViewState != nil {
+		applyViewState(hidden, res.ViewState)
+		*notice = "/ui: " + res.Summary
+		return true, ""
+	}
 	*doc = res.Doc
 	// The change-diff view PLAN.md requires is, at this stage, the summary
 	// line: the patch states what it altered in the user's vocabulary before
@@ -633,6 +653,28 @@ func uiCommandKey(input string, k term.Key, doc **scene.Document, notice *string
 	// agent-driven half, where the proposal arrives before it is applied.
 	*notice = "/ui: " + res.Summary
 	return true, ""
+}
+
+// applyViewState folds one hide/show set op into the loop's ui.hidden set.
+//
+// The map is mutated in place rather than replaced so the loop's reference
+// stays live across frames — the same map the repaint reads. ShowAll clears
+// every id (the `/ui show *` form); otherwise the named ids are added or
+// removed. It is a free function taking the map because the set is a loop local,
+// not a field on any type the loop owns.
+func applyViewState(hidden map[string]bool, op *patch.ViewStateOp) {
+	if op.ShowAll {
+		for id := range hidden {
+			delete(hidden, id)
+		}
+		return
+	}
+	for _, id := range op.Hide {
+		hidden[id] = true
+	}
+	for _, id := range op.Show {
+		delete(hidden, id)
+	}
 }
 
 // isCtrlC reports whether a key event is Ctrl-C. The decoder reports control
