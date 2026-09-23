@@ -1246,7 +1246,7 @@ var Commands = []SlashMatch{
 	// It is held to patch.Verbs() by a test rather than by a comment; the
 	// import would be a cycle, and a fold that imported the patch surface
 	// would stop being the pure host-owned fold ADR-0002 requires.
-	{"ui", "General", "Mutate the scene (add, move, set, style)"},
+	{"ui", "General", "Mutate the scene and its view state (add, move, set, style, hide, show)"},
 }
 
 // FilterSlashMatches returns the commands matching the typed substring after
