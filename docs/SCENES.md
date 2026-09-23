@@ -220,6 +220,16 @@ section (`docs/TOKENS.md`).
 With `enter` implemented, all five of Scene 4's animation properties are drawn
 by the engine and none remains parsed-and-warned.
 
+Golden status (G5, 2026-09-23): `testdata/ANIMATION.json` freezes this scene as
+`ANIMATION.frame`/`.styled`, pinned at a **chosen non-nil phase** — a windowed
+`scroll` marquee, a phase-clipped `reveal`, a dim mid-entrance `transition`, and
+a staggered `enter` list over `agent.todos` mid-flight (one settled row, one dim,
+one not yet drawn). Motion is the subject here, so the golden pins a running
+frame rather than the nil phase, which would draw every prop settled and cover
+none of it. Each prop also carries its own render/clock test pinned at chosen
+phases (the discipline DESIGN-BLOCK-G.md signs); this fixture is the composed pin
+those isolated tests do not carry, and Block G is closed.
+
 The render semantics are signed on one principle: **an animation never draws
 anything the renderer cannot already draw at a fixed phase; the clock only
 chooses which already-expressible frame to emit at time t.** The frame already
