@@ -1,4 +1,6 @@
 { "root": { "id": "root", "type": "stack", "children": [
+  { "id": "notice", "type": "text", "bind": "host.scene.error",
+    "when": "host.scene.error", "style": {"style": "banner"} },
   { "id": "banner", "type": "marquee",
     "text": "arxi \u00b7 the interface is a document you can rewrite in place \u00b7 community scenes arrive by link",
     "scroll": { "speed": 2 },
