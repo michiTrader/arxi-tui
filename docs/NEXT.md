@@ -480,8 +480,24 @@ counterfactual test).
 
 ### Block H — Phase 3: declarative plugin mounting (heart of the phase)
 
-- **H1** Design and sign the plugin manifest schema (executable, capabilities,
-  consent_required, mounts, tokens, streamed binds) — Scene 6.
+- **H1 — DRAFTED (proposal, awaiting signature; PR #61).** The plugin manifest
+  schema (`id`, `name`, `version`, `protocol`, `tokens`, `mounts`, `executable`,
+  `args`, `capabilities`, `consent_required`, `binds`) is drafted as a reviewable
+  proposal in `docs/DESIGN-BLOCK-H.md`, the same SCENES/BINDS/TOKENS-on-paper
+  method Blocks D and G used. It settles four things H2–H7 depend on: the JSON
+  format and field list; the load-bearing **declarative (Block H) vs behavioral
+  (Block I)** split with `executable` as the single discriminator (a manifest
+  with no `executable` runs zero code and streams nothing); mount addressing
+  (H-B, reusing D2's `where` grammar plus overlay anchors, with `<plugin-id>/`
+  id prefixing so N strangers' trees compose without id collisions); and the
+  `<plugin-id>.*` declared-vs-used validation (H-C, mirroring the `row.*`
+  `rowSchemas` scope mechanism against the manifest's `binds` map). It *consumes*
+  three already-signed decisions unchanged — ADR-0003's open plugin namespace,
+  TOKENS.md's `user > plugin > factory` precedence, and the Q15 consent identity
+  contract (named here, built in Block I). Signing lifts no code guard; H2–H6 do,
+  each with its own counterfactual. Four open forks are flagged for the owner
+  (the discriminator, id prefixing, the `binds` `kind` set, and whether
+  `/ui plugin remove` ships with H3).
 - **H2** [H1] Load a declarative plugin (scene fragment + tokens, zero code).
 - **H3** [H2] Mount fragments by id into the scene tree.
 - **H4** [H2] Merge plugin tokens with precedence (user > plugin > factory).
