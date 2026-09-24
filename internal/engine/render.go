@@ -495,7 +495,9 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 	inputEndLine := len(live)
 	for i := range slots {
 		if slots[i].node != nil && slots[i].node.Type == "input" {
-			// Input is always 1 line tall; overlay goes after it.
+			// The input is as tall as its wrapped rows (one line when it fits),
+			// and the overlay goes after whatever that came to; using the frame's
+			// own height keeps this correct now that a long line grows the input.
 			inputEndLine = slots[i].line + len(slots[i].frame.Live)
 			break
 		}
@@ -714,6 +716,15 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 // "you" at the point of typing and in the history above.
 const userTurnMarker = "❯ "
 
+// userTurnToken paints the user's own turns in the transcript. It is a distinct
+// token from the pane's default so the theme can lift the human's words above
+// the agent's — sobria maps it to white — which is the second half of telling
+// the voices apart, the marker being the first. It is minted by the engine like
+// "text" and "dim" are: a theme that does not define it resolves to the zero
+// style, so a user turn simply falls back to the pane's ordinary colour rather
+// than failing to render.
+const userTurnToken = "chat.user"
+
 // renderMarkdown renders a bound markdown pane, wrapped to the frame width.
 // Wrapping goes through the ported Line/Span machinery, so a row can never end
 // in bare air or overflow the frame no matter what the fold hands it.
@@ -732,16 +743,20 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 	case "chat.history":
 		for _, h := range state.History {
 			text := h.Text
+			turnToken := token
 			if h.Role == "user" {
 				// Mark the user's own turns so the transcript does not read as a
 				// single voice. Without a marker a reader cannot tell what they
 				// asked from what the agent answered — the differentiation the
 				// chat was missing. The marker is prepended to the text before
 				// wrapping so it rides the first row of the turn; agent turns stay
-				// unmarked, which is the default voice of the pane.
+				// unmarked, which is the default voice of the pane. The turn is
+				// wrapped under userTurnToken so it also carries the user's colour,
+				// while an agent turn keeps the pane's own token.
 				text = userTurnMarker + text
+				turnToken = userTurnToken
 			}
-			lines = append(lines, ui.WrapText(text, token, r.Width, nil)...)
+			lines = append(lines, ui.WrapText(text, turnToken, r.Width, nil)...)
 			lines = append(lines, ui.Line{}) // one blank row between turns
 		}
 		if len(lines) > 0 {
@@ -777,70 +792,191 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 	return ui.Frame{Live: lines, Width: r.Width}
 }
 
-// renderInput renders the input row: one line, always, and the column the
-// terminal caret belongs in.
+// renderInput renders the input row and the column the terminal caret belongs
+// in. The typed line wraps: when it is wider than the pane it flows onto further
+// rows, and the caret is reported as a (row, col) inside them.
 //
-// The placeholder is drawn only while the line is empty, and under its own
-// token so a theme can dim it. It used to be concatenated in front of the
-// typed buffer under the same token as the text, which is how "ask anything,
-// or / for commands" came out welded to the first word the human typed: a hint
-// is not part of the line, and the moment there is a line it is gone.
+// A single-line input was the source of a reported bug — the moment the text
+// filled the width, the caret column ran off the right edge and the terminal
+// clamped it into the bottom-right corner, where the arrow keys could move it
+// nowhere in any direction. Wrapping the line and mapping the rune caret onto the
+// visual rows is what lets the caret sit on the glyph the user is about to edit
+// no matter how long the line grows, which is the whole point of arrow-key motion.
 //
-// The caret is reported and never drawn. A reversed cell standing in for a
-// cursor is the single most obvious tell that a TUI is not a native prompt,
-// and the position is the one thing the terminal cannot work out for itself.
+// The placeholder is drawn only while the line is empty, and under its own token
+// so a theme can dim it. It used to be concatenated in front of the typed buffer
+// under the same token as the text, which is how "ask anything, or / for
+// commands" came out welded to the first word the human typed: a hint is not part
+// of the line, and the moment there is a line it is gone.
+//
+// The caret is reported and never drawn. A reversed cell standing in for a cursor
+// is the single most obvious tell that a TUI is not a native prompt, and the
+// position is the one thing the terminal cannot work out for itself.
 func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
-	var cells []ui.Span
-
-	// sobria: the input may carry a string prefix (e.g. "┃ ") rendered as
-	// styled leading cells before the text. The caret starts after it, because
-	// the prefix is chrome and the human types to the right of chrome.
+	// sobria: the input may carry a string prefix (e.g. "┃ ") rendered as styled
+	// leading cells before the text. The caret starts after it, because the prefix
+	// is chrome and the human types to the right of chrome.
 	prefix := n.PrefixText()
-	if prefix != "" {
-		cells = append(cells, ui.Span{Text: prefix, Style: "input"})
-	}
-	col := ansiStringWidth(prefix)
+	prefixW := ansiStringWidth(prefix)
 
-	// The typed line is the content this node draws, so a declared token
-	// applies to it and "input" is the default it replaces. The placeholder
-	// keeps its own token either way: it is a hint the node substitutes while
-	// the line is empty, not the line itself, and the paragraph above records
-	// what welding the two together already cost once.
-	if n.Bind == "user.input" && state.UserInput != "" {
-		cells = append(cells, ui.Span{Text: state.UserInput, Style: styleNameOr(n.Style, "input")})
-		// The caret sits after the runes the user has typed *before* it, not at
-		// the end of the line: an editor that can only place the cursor at the
-		// tail cannot edit the middle, which is the whole point of arrow-key
-		// motion. The column is a display width, so a wide glyph before the caret
-		// advances it two cells — a rune count would drift on CJK/emoji input.
-		col += caretColumn(state.UserInput, state.UserInputCaret)
-	} else {
+	// Empty line: draw the placeholder on one row, caret just past the prefix. The
+	// placeholder keeps its own token; the typed line takes the declared token (or
+	// "input"), and the paragraph above records what welding the two cost once.
+	if !(n.Bind == "user.input" && state.UserInput != "") {
+		var cells ui.Line
+		if prefix != "" {
+			cells = append(cells, ui.Span{Text: prefix, Style: "input"})
+		}
 		cells = append(cells, ui.Span{Text: n.Placeholder, Style: "input.placeholder"})
+		return ui.Frame{
+			Live:   []ui.Line{cells},
+			Width:  r.Width,
+			Height: 1,
+			Cursor: ui.Cursor{Line: 0, Col: prefixW},
+		}
 	}
 
+	// The text wraps into a column `room` wide — the pane minus the prefix — so
+	// every visual row, first and continuation, has the same room and the caret
+	// column arithmetic is uniform. A continuation row hangs under the first row's
+	// text (indented by the prefix width) so a wrapped line reads as one input.
+	inputStyle := styleNameOr(n.Style, "input")
+	room := r.Width - prefixW
+	if room < 1 {
+		room = 1
+	}
+	rowsText := inputVisualRows(state.UserInput, room)
+
+	live := make([]ui.Line, 0, len(rowsText))
+	for i, rt := range rowsText {
+		var cells ui.Line
+		switch {
+		case i == 0 && prefix != "":
+			cells = append(cells, ui.Span{Text: prefix, Style: "input"})
+		case i > 0 && prefixW > 0:
+			cells = append(cells, ui.Span{Text: strings.Repeat(" ", prefixW), Style: "input"})
+		}
+		cells = append(cells, ui.Span{Text: rt, Style: inputStyle})
+		live = append(live, cells)
+	}
+
+	row, col := inputCaretRowCol(state.UserInput, state.UserInputCaret, room)
 	return ui.Frame{
-		Live:   []ui.Line{cells},
+		Live:   live,
 		Width:  r.Width,
-		Height: 1,
-		Cursor: ui.Cursor{Line: 0, Col: col},
+		Height: len(live),
+		Cursor: ui.Cursor{Line: row, Col: prefixW + col},
 	}
 }
 
-// caretColumn returns the display width of the first caret runes of s, clamped
-// into [0, len([]rune(s))]. It is the column offset of the edit point from the
-// start of the typed text: a wide glyph counts two cells (via ansiStringWidth),
-// so the native cursor lands on the glyph the user is about to change rather
-// than one column off it. Clamping means a stale caret from a longer previous
-// line can never index past the current text.
-func caretColumn(s string, caret int) int {
-	r := []rune(s)
+// inputVisualRows splits the typed text into visual rows of at most `room`
+// display columns each, cutting at grapheme boundaries (ansi.Truncate) so a wide
+// glyph is never split across the wrap. When the text ends exactly on a row
+// boundary a trailing empty row is added: an editor puts the caret where the next
+// character will land, and after a full row that is a fresh row below — not welded
+// to the last cell, where the terminal would clamp it.
+func inputVisualRows(text string, room int) []string {
+	if room <= 0 {
+		return []string{text}
+	}
+	var rows []string
+	remaining := text
+	for remaining != "" {
+		head := ansi.Truncate(remaining, room, "")
+		if head == "" {
+			break
+		}
+		rows = append(rows, head)
+		remaining = remaining[len(head):]
+		if remaining == "" && ansiStringWidth(head) >= room {
+			rows = append(rows, "")
+		}
+	}
+	if len(rows) == 0 {
+		rows = []string{""}
+	}
+	return rows
+}
+
+// inputCaretRowCol maps a rune caret index into the (row, col) it occupies once
+// the text is wrapped at `room` display columns, walking the runes the same way
+// inputVisualRows lays them out. col is a display width, so a wide glyph before
+// the caret advances it two cells — a rune count would drift on CJK/emoji input.
+// A caret that exactly fills a row sits at the start of the next one, matching the
+// trailing empty row inputVisualRows appends, so the cursor is already where the
+// next glyph will wrap to.
+func inputCaretRowCol(text string, caret, room int) (row, col int) {
+	if room <= 0 {
+		return 0, 0
+	}
+	rs := []rune(text)
 	if caret < 0 {
 		caret = 0
 	}
-	if caret > len(r) {
-		caret = len(r)
+	if caret > len(rs) {
+		caret = len(rs)
 	}
-	return ansiStringWidth(string(r[:caret]))
+	for i := 0; i < caret; i++ {
+		w := ansiStringWidth(string(rs[i]))
+		if col+w > room {
+			row++
+			col = 0
+		}
+		col += w
+	}
+	if col >= room {
+		row++
+		col = 0
+	}
+	return row, col
+}
+
+// InputCaretVerticalMove returns the caret index one wrapped row up (dir < 0) or
+// down (dir > 0) from the current caret, keeping the display column as near the
+// original as the target row allows. It wraps the text at `room` exactly as
+// renderInput draws it — through inputCaretRowCol — so the caret the user watches
+// move is the caret this computes. With no row in that direction (Up on the first
+// row, Down on the last) the caret is returned unchanged: a vertical key at the
+// edge is a no-op, not a jump to the start or end, which is what an editor does
+// and what arxi_cli_sim's line editor does.
+func InputCaretVerticalMove(text string, caret, room, dir int) int {
+	if room <= 0 || dir == 0 {
+		return caret
+	}
+	rs := []rune(text)
+	if caret < 0 {
+		caret = 0
+	}
+	if caret > len(rs) {
+		caret = len(rs)
+	}
+	// Every caret index's (row, col), computed the one way the renderer does, so a
+	// vertical move can never disagree with where the row breaks are drawn.
+	rows := make([]int, len(rs)+1)
+	cols := make([]int, len(rs)+1)
+	for i := range rows {
+		rows[i], cols[i] = inputCaretRowCol(text, i, room)
+	}
+	targetRow := rows[caret] + dir
+	if targetRow < 0 {
+		return caret
+	}
+	wantCol := cols[caret]
+	best := -1
+	for i := range rows {
+		if rows[i] != targetRow {
+			continue
+		}
+		if cols[i] >= wantCol {
+			best = i // first index at or past the wanted column
+			break
+		}
+		best = i // otherwise the furthest column this shorter row reaches
+	}
+	if best < 0 {
+		return caret // no row in that direction
+	}
+	return best
 }
 
 // renderText renders a static text line or a bound text value. The sobria

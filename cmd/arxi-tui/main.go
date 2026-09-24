@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/michiTrader/arxi_tui/internal/driver"
 	"github.com/michiTrader/arxi_tui/internal/engine"
 	"github.com/michiTrader/arxi_tui/internal/fold"
@@ -559,7 +560,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			chatScroll = r.ChatScrollMax
 		}
 		clock.reconcile(active)
-		emitFrame(tty, frame, theme)
+		emitFrame(tty, frame, theme, h)
 		armTicker()
 	}
 
@@ -642,6 +643,22 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// here, so the escape hatch stays uncapturable
 						// (invariant 6) no matter what the menu does.
 						input, caret, slashSel = slashMenuKey(input, caret, ev.Key, slashSel, ctx, drv)
+					} else if ev.Key.Type == term.KeyUp || ev.Key.Type == term.KeyDown {
+						// Vertical caret motion on a wrapped (multi-line) input.
+						// It is intercepted here rather than in applyEdit because
+						// up/down mean "walk the wrapped rows", which needs the wrap
+						// width — the terminal width less the input's prefix — that
+						// only the host and the document together know. On a
+						// single-row line there is no row above or below, so the
+						// move is a no-op and the key is harmlessly swallowed. It
+						// sits after the slash branch, so while the menu is open
+						// up/down still steer the highlight and never the caret.
+						w, _ := tty.Size()
+						dir := -1
+						if ev.Key.Type == term.KeyDown {
+							dir = 1
+						}
+						caret = engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w), dir)
 					} else {
 						input, caret = typeKey(input, caret, ev.Key, ctx, drv)
 					}
@@ -664,6 +681,47 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 		}
 	}
+}
+
+// inputWrapRoom is the column width the user.input line wraps within: the
+// terminal width less the display width of the input node's prefix, matching the
+// `r.Width - prefixW` renderInput lays the rows out at. It walks the document for
+// the node bound to user.input so the room follows the scene's own prefix rather
+// than a hard-coded guess — a downloaded scene may prompt with "> " or nothing at
+// all. A width of at least one is always returned, so a pathologically narrow
+// terminal cannot make the caller divide by zero.
+func inputWrapRoom(doc *scene.Document, width int) int {
+	prefixW := 0
+	if doc != nil {
+		if in := findUserInput(doc.Root); in != nil {
+			// Display width, not rune count, so a wide prefix glyph reserves the
+			// cells it actually occupies.
+			prefixW = ansi.StringWidth(in.PrefixText())
+		}
+	}
+	room := width - prefixW
+	if room < 1 {
+		room = 1
+	}
+	return room
+}
+
+// findUserInput returns the first node bound to user.input, or nil. It is the
+// one place the host resolves "the line the human types into" from the tree, so
+// the wrap room and any later input-scoped lookup agree on which node that is.
+func findUserInput(n *scene.Node) *scene.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Type == "input" && n.Bind == "user.input" {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := findUserInput(c); got != nil {
+			return got
+		}
+	}
+	return nil
 }
 
 // typeKey applies one keypress to the input buffer at the caret, or submits the
@@ -1064,38 +1122,74 @@ func warningNotice(warnings []scene.Warning) string {
 // the cell-diff repaint (the emitter's own machinery) is Phase 0.5 work on
 // top of the same Frame.
 func render(w io.Writer, doc *scene.Document, r engine.Renderer, theme *theme.Theme, state fold.State) {
-	emitFrame(w, r.RenderFrame(doc, state), theme)
+	emitFrame(w, r.RenderFrame(doc, state), theme, r.Height)
 }
+
+// frameBegin opens every repaint: it enters synchronized-output mode (DECSET
+// 2026), so the terminal buffers the whole update and presents it in one atomic
+// swap. This is the single largest flicker source removed — the old path cleared
+// the entire screen (CSI 2J) and repainted, so every frame blanked to nothing
+// before it drew again, and a wide terminal or a growing input made the blank
+// visible. It doubles as the per-frame separator the loop tests split on, the
+// role the clear-home sequence used to play.
+const frameBegin = "\033[?2026h"
 
 // emitFrame writes one already-rendered frame to the terminal. It is the single
 // emit path: the loop's animation-aware repaint and the plain render() above
 // both go through it, so "the frame that knows about the clock" and "the frame
 // that does not" cannot emit differently.
-func emitFrame(w io.Writer, f ui.Frame, theme *theme.Theme) {
-	fmt.Fprint(w, "\033[H\033[2J")
-	// Raw mode turned the terminal's output processing off (OPOST/ONLCR), so
-	// the terminal no longer translates \n into \r\n: a bare newline drops
-	// one row and keeps the column, and every line after the first climbs
-	// further right — the staircase. The Frame carries plain \n because it is
-	// mode-blind; the emit path is where they become \r\n, because the emit
-	// path is the only code that knows the terminal is in raw mode.
-	//
-	// ANSI() resolves token names ("input", "text", "input.placeholder") to
-	// styles and emits SGR escape codes. When no theme is wired, it falls back
-	// to Plain() — the same unstyled text the goldens compare.
-	fmt.Fprint(w, strings.ReplaceAll(f.ANSI(theme), "\n", "\r\n"))
-	// The caret is the frame's, not the last byte's. Writing the frame leaves
-	// the terminal cursor at the end of the final row — the bottom-right corner
-	// of a full repaint — and a text field whose caret sits in the corner is a
-	// text field that does not look like one. A frame that hosts no caret has
-	// the terminal's hidden instead, so nothing blinks on a row that means
-	// nothing.
-	if f.Cursor.Hidden {
-		fmt.Fprint(w, "\033[?25l")
-		return
+//
+// The repaint is in place, never a full clear. Each row is positioned absolutely
+// (CUP) and erased to the end of the line (EL) just before it is painted, and the
+// region below the last painted row is erased once (ED) so a frame shorter than
+// the previous one cannot leave that frame's tail on screen. Nothing sends CSI 2J:
+// erasing only the rows we are about to own — and only the tail below them —
+// touches every cell that changed and not one that did not, which is what keeps a
+// repaint from flashing. screenH is the terminal's row count, needed for the tail
+// erase because the frame's own height is only its content.
+//
+// Absolute positioning is also why no newline is written between rows: a bare \n
+// on a raw terminal (output processing off) drops one row and keeps the column —
+// the staircase — and CUP sidesteps it entirely by naming the row and column of
+// every line. The whole paint is wrapped in synchronized output so it is seen
+// once, done.
+func emitFrame(w io.Writer, f ui.Frame, theme *theme.Theme, screenH int) {
+	var b strings.Builder
+	b.WriteString(frameBegin)
+	// Hide the cursor for the duration of the paint so it does not strobe across
+	// the rows as they are written, then restore it (positioned) at the end.
+	b.WriteString("\033[?25l")
+	// Auto-wrap off: a row exactly as wide as the terminal would otherwise wrap
+	// onto the next line, push every row below it down by one, and land the caret
+	// — and the tail erase — on rows that no longer mean what they say.
+	b.WriteString("\033[?7l")
+
+	rows := f.Live
+	for i := 0; i < len(rows); i++ {
+		b.WriteString(fmt.Sprintf("\033[%d;1H", i+1)) // CUP: row i+1, column 1
+		b.WriteString("\033[K")                       // EL: erase this row before painting it
+		b.WriteString(rows[i].ANSI(theme))
 	}
-	fmt.Fprint(w, "\033[?25h")
-	fmt.Fprintf(w, "\033[%d;%dH", f.Cursor.Line+1, f.Cursor.Col+1)
+	// Erase from just below the content to the end of the display, so a shorter
+	// frame does not leave the tail of a longer one behind. This is the only
+	// erase that reaches rows the frame does not own, and it costs no flicker
+	// because those rows are the ones going blank anyway.
+	if len(rows) < screenH {
+		b.WriteString(fmt.Sprintf("\033[%d;1H", len(rows)+1))
+		b.WriteString("\033[0J")
+	}
+	b.WriteString("\033[?7h") // restore auto-wrap
+
+	// The caret is the frame's, not the last byte's. A text field whose caret sits
+	// in the bottom-right corner (where the last row's paint left it) does not look
+	// like a text field; a frame that hosts no caret keeps it hidden so nothing
+	// blinks on a row that means nothing.
+	if !f.Cursor.Hidden {
+		b.WriteString(fmt.Sprintf("\033[%d;%dH", f.Cursor.Line+1, f.Cursor.Col+1))
+		b.WriteString("\033[?25h")
+	}
+	b.WriteString("\033[?2026l") // end synchronized output: present the frame
+	fmt.Fprint(w, b.String())
 }
 
 // runNonInteractive renders a single frame to stdout when stdin is not a

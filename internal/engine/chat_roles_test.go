@@ -40,3 +40,39 @@ func TestChatMarksUserTurnsNotAgentTurns(t *testing.T) {
 		t.Fatalf("agent turn %q wears the user marker; the marker no longer distinguishes the voices", agentLine)
 	}
 }
+
+// The marker is only half the differentiation; the user asked for their turns to
+// read in white. A user turn's spans must carry the userTurnToken (which sobria
+// maps to white) and an agent turn's must not, or the two voices are the same
+// colour again. Counterfactual: wrapping the user turn under the pane's default
+// token instead of userTurnToken leaves no chat.user span and fails the first
+// check.
+func TestChatColoursUserTurnsNotAgentTurns(t *testing.T) {
+	state := fold.State{History: []fold.ChatLine{
+		{Role: "user", Text: "what is the plan"},
+		{Role: "assistant", Text: "here is the plan"},
+	}}
+	node := &scene.Node{Bind: "chat.history"}
+	r := Renderer{Width: 80}
+
+	styled := strings.Split(r.renderMarkdown(node, state, -1).Styled(), "\n")
+
+	// Styled() interleaves «token:word» spans, so match on a distinctive word
+	// rather than the whole phrase, which the span markers break up.
+	var userLine, agentLine string
+	for _, l := range styled {
+		if strings.Contains(l, ":what»") {
+			userLine = l
+		}
+		if strings.Contains(l, ":here»") {
+			agentLine = l
+		}
+	}
+
+	if !strings.Contains(userLine, "«"+userTurnToken+":") {
+		t.Fatalf("user turn %q is not styled with the %q token; it will not read in the user's colour", userLine, userTurnToken)
+	}
+	if strings.Contains(agentLine, "«"+userTurnToken+":") {
+		t.Fatalf("agent turn %q wears the user's token; the colour no longer separates the voices", agentLine)
+	}
+}
