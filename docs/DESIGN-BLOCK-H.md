@@ -209,3 +209,95 @@ I).**
   the concrete form of "an unsatisfied plugin bind renders as a placeholder"
   (BINDS.md §4.4). This map is the single source H5 validates the fragment's
   `tick.*` binds against; see H-C.
+
+---
+
+## H-B — where a mount lands, and how fragment ids stay unique
+
+**Unblocks:** H3 (mount fragments by id). **Reuses:** ADDRESSING.md (D2, signed
+2026-09-22).
+
+A mount must say *where* in the host scene its fragment goes, and the project
+already signed a `where` vocabulary for exactly this — D2's addressing for
+`/ui add`/`move` (`docs/ADDRESSING.md`). H-B's decision is to **reuse it
+unchanged**, so a plugin author and a `/ui add` user name a location the same
+way and the two paths cannot drift on what `below_input` means. A mount's
+`where` accepts the D2 forms: `above <id>` / `below <id>`, `into <id> [top]`,
+and the semantic anchors `below_input` / `above_input`. It adds the overlay
+anchors Scene 6 needs (`top-right`, `bottom`, …) as a `where` that means "a new
+`overlay` child of root at that anchor" — the mount does not need to name an
+existing id to float, which is why the ticker example mounts `top-right`
+without referencing any host node.
+
+This has three consequences, each already paid for by D2/F1–F3 and reused rather
+than reinvented:
+
+1. **Mounting is `/ui add node`, from the host side instead of the user side.**
+   H3 does not need a new placement engine: `internal/patch/add.go` already
+   inserts a fragment at a D2 `where`, source-to-source over the generic map
+   tree so a fragment's undeclared keys survive (F1). Mounting a plugin fragment
+   is the same insert, attributed to the plugin instead of to a `/ui` command.
+2. **The id-uniqueness invariant is the collision defense.** ADDRESSING.md
+   `:49-63` makes two nodes with the same non-empty id a load-time failure, per
+   document. A mounted fragment whose id already exists in the host tree is that
+   failure, refused with `file:line` — so a plugin cannot silently shadow a host
+   node or another plugin's node.
+3. **Fragment ids are namespaced under the plugin id, and this is the rule that
+   makes (2) livable.** Requiring every plugin author to pick globally-unique
+   raw ids is a collision waiting to happen (two tickers both using `overlay`).
+   Instead, the loader **prefixes every id in a mounted fragment with
+   `<plugin-id>/`** — `tick-overlay` mounted by plugin `tick` becomes
+   `tick/tick-overlay` in the composed tree. A plugin's fragment refers to its
+   own nodes by their unprefixed ids (the prefixing is mechanical, applied by
+   the loader after validation), and the `<plugin-id>/` prefix cannot collide
+   across plugins because the id namespace is closed on the same pattern the
+   bind namespace is. This is the one addressing rule Block H adds that D2 did
+   not need, because D2 never composed two authors' trees.
+
+Unmounting (a plugin removed, or `/ui plugin remove <id>`) is the inverse: drop
+every node whose id begins `<plugin-id>/` and every token the plugin defined.
+Because both are namespaced, removal names no host node and cannot orphan one —
+the same property that lets `show *` clear `ui.hidden` without naming an id
+(F3).
+
+---
+
+## H-C — validating the `<plugin-id>.*` namespace (declared vs used)
+
+**Unblocks:** H5. **Reuses:** the `rowSchemas` scope mechanism
+(`internal/scene/validate.go:140-154`).
+
+Today a `tick.price` bind is refused: `validateOneBind`
+(`validate.go:250-276`) checks `signedBinds[bind]` and there is no plugin entry,
+so every `<plugin-id>.*` bind is "unsigned bind … every bind must appear in
+BINDS.md §4.5". H5 lifts that refusal *only for binds a manifest declares*, and
+the mechanism to reuse is the one already in the file for `row.*`: a **scope**
+threaded through validation that is non-nil only inside a declared context.
+
+The rule, mirroring `row.*` exactly:
+
+- A bind matching `<plugin-id>.<field>` is legal **iff** it appears inside a
+  fragment mounted by a plugin whose `id` is `<plugin-id>` **and** `<field>` is
+  a key the manifest's `binds` map declares. This is the direct analogue of
+  "`row.<field>` is legal iff inside a `row_template` and `<field>` is in the
+  source list's `RowSchema`" (E2). The manifest's `binds` map *is* the plugin's
+  schema, the same shape `rowSchemas` is.
+- A `<plugin-id>.*` bind **outside** any mount of that plugin is refused — the
+  namespace does not leak into the host scene, exactly as a `row.*` bind outside
+  a template is refused.
+- A declared bind used under the **wrong node type** for its `kind` is refused:
+  `binds["tick.price"].kind == "text"` used as `sparkline bind:"tick.price"` is
+  a `file:line` refusal naming the field, its declared kind, and the node. The
+  `kind` is the plugin-bind analogue of the axis a `reveal`/`scroll` prop rides
+  — declaring it is what lets the validator reject the wrong pairing instead of
+  rendering a silent mismatch.
+- A **declarative** manifest (no `executable`, so no `binds`) that mounts a
+  fragment using any `<plugin-id>.*` bind is refused: it streams nothing, so the
+  namespace is empty, so the use is undeclared. This is the load-time face of
+  the H-A split — a zero-code plugin binds only host fields.
+
+`SignedBinds()` (`validate.go:102-130`) is exported so Phase 2's repair loop can
+tell a model which binds exist; the comment there warns against a fourth
+hand-copied inventory. A plugin's declared binds must feed the **same** single
+source — the manifest's `binds` map is consulted directly, never copied into a
+second table — so H5 adds a code path, not a parallel inventory.
