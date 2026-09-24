@@ -42,6 +42,21 @@ func (f Frame) ANSI(theme ThemeResolver) string {
 	return b.String()
 }
 
+// ANSI renders a single line as styled text, with no trailing newline. The
+// in-place emit path positions each row absolutely (CUP) and erases it before
+// painting, so it needs one row at a time and must never receive a newline that
+// would drop the cursor to a row it did not count. Frame.ANSI joins these with
+// newlines for the pipe/golden path, which has no cursor to position and wants
+// the rows separated.
+func (l Line) ANSI(theme ThemeResolver) string {
+	if theme == nil {
+		return l.Text()
+	}
+	var b strings.Builder
+	emitLine(&b, l, theme)
+	return b.String()
+}
+
 // emitLine writes one line as ANSI-styled text. Each span's Style token is
 // resolved, layered over its Fill token (if present), and emitted as SGR codes.
 func emitLine(b *strings.Builder, l Line, theme ThemeResolver) {

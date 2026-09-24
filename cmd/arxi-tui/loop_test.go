@@ -220,6 +220,11 @@ func TestLoopParksTheTerminalCursorInTheInputBar(t *testing.T) {
 // row arrives as styled spans — "┃ " and the typed text are separated by SGR
 // resets — so a byte-level Contains("┃ x") can never match a frame the user
 // would read as "┃ x".
+// stripANSI removes escape sequences, turning the emit stream back into visual
+// rows. The in-place emit path positions each row with a cursor-position escape
+// (CSI …H) rather than a newline, so a raw strip would weld every row into one
+// line and defeat the whole-row matching below. A CSI …H is therefore rendered
+// as a newline: it is exactly the row break the emitter replaced it with.
 func stripANSI(s string) string {
 	var b strings.Builder
 	for {
@@ -234,8 +239,15 @@ func stripANSI(s string) string {
 		for j < len(s) && !unicode.IsLetter(rune(s[j])) {
 			j++
 		}
+		var term byte
 		if j < len(s) {
+			term = s[j]
 			j++ // the final letter terminates the sequence
+		}
+		// A cursor-position escape is where the emitter starts a new row; make it
+		// a newline so the rows split apart again.
+		if term == 'H' {
+			b.WriteByte('\n')
 		}
 		s = s[j:]
 	}
@@ -286,8 +298,8 @@ func TestLoopSlashMenuNavigateAndRun(t *testing.T) {
 		t.Fatalf("loop returned error: %v", err)
 	}
 
-	// One frame per repaint, each introduced by the clear-home sequence.
-	frames := strings.Split(tty.output(), "\x1b[H\x1b[2J")
+	// One frame per repaint, each introduced by the synchronized-output opener.
+	frames := strings.Split(tty.output(), frameBegin)
 
 	// The menu must have been open with all five commands.
 	if !strings.Contains(tty.output(), "Commands 5 · type to filter") {
@@ -345,7 +357,7 @@ func TestLoopSlashMenuEscapeCloses(t *testing.T) {
 
 	// After escape the buffer is cleared (the placeholder returns) and the
 	// menu is gone; typing 'x' lands in the plain input with no menu above it.
-	frames := strings.Split(out, "\x1b[H\x1b[2J")
+	frames := strings.Split(out, frameBegin)
 	cleared, typingAgain := false, false
 	for _, f := range frames {
 		// The input row carries the sobria prefix, so the placeholder line is
@@ -395,7 +407,7 @@ func TestLoopSlashMenuTabWalksCategories(t *testing.T) {
 		t.Fatalf("loop returned error: %v", err)
 	}
 
-	frames := strings.Split(tty.output(), "\x1b[H\x1b[2J")
+	frames := strings.Split(tty.output(), frameBegin)
 	ranHelp := false
 	for _, f := range frames {
 		if frameHasTranscriptLine(f, "❯ help") && !strings.Contains(f, "Commands 5") {
@@ -514,7 +526,7 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 		t.Fatalf("loop returned error: %v", err)
 	}
 
-	frames := strings.Split(tty.output(), "\x1b[H\x1b[2J")
+	frames := strings.Split(tty.output(), frameBegin)
 
 	// Up from "help" (row 0) must have wrapped to "ui" (row 4): Enter runs "ui",
 	// and "ui" appears as a whole transcript line in a frame where the menu
@@ -584,7 +596,7 @@ func TestLoopSlashMenuSwapsStatusForHint(t *testing.T) {
 
 	// A frame with the menu open must show the navigation hint and must NOT show
 	// the status bar text on the same screen — the single bottom line swapped.
-	frames := strings.Split(out, "\x1b[H\x1b[2J")
+	frames := strings.Split(out, frameBegin)
 	hintRendered := false
 	for i, f := range frames {
 		stripped := stripANSI(f)

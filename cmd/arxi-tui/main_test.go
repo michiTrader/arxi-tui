@@ -12,12 +12,18 @@ import (
 )
 
 // TestRenderCarriesCarriageReturns fixes the emit contract for a raw terminal.
-// Raw mode turns output processing off, so the terminal no longer translates
-// \n into \r\n; a frame emitted with bare newlines draws as a staircase — one
-// row down, one column further right per line. Every newline the emit path
-// writes must carry its own carriage return, and the repaint must open with
-// the clear-home sequence so a shorter frame cannot leave the tail of a
-// longer one behind.
+// Two failures this guards against, both invisible in a golden and both a
+// staircase or a flash on a real terminal:
+//
+//   - A bare \n. Raw mode turns output processing off, so the terminal no longer
+//     translates \n into \r\n; a frame emitted with bare newlines draws as a
+//     staircase — one row down, one column further right per line. The in-place
+//     emit path positions every row absolutely (CUP) and writes no newline at
+//     all, so a stray \n reaching the terminal is a bug.
+//   - A full-screen clear. The old path opened each frame with CSI 2J, blanking
+//     the whole screen before repainting it, which flashes on every keystroke and
+//     every animation tick. The repaint must instead be atomic (wrapped in
+//     synchronized output) and erase in place, never sending CSI 2J.
 func TestRenderCarriesCarriageReturns(t *testing.T) {
 	doc, err := scene.ParseDocument([]byte(factoryRAW))
 	if err != nil {
@@ -32,23 +38,14 @@ func TestRenderCarriesCarriageReturns(t *testing.T) {
 	render(&buf, doc, engine.Renderer{Width: 80, Height: 24}, theme.SOBRIA(), state)
 	out := buf.String()
 
-	if !strings.HasPrefix(out, "\033[H\033[2J") {
-		t.Errorf("render does not open with clear-home; a shorter frame would leave the tail of a longer one on screen. got prefix %q", out[:min(len(out), 12)])
+	if !strings.HasPrefix(out, frameBegin) {
+		t.Errorf("render does not open in synchronized output; a repaint seen half-drawn flickers. got prefix %q", out[:min(len(out), 12)])
 	}
-	for i := 0; i < len(out); i++ {
-		if out[i] == '\n' && (i == 0 || out[i-1] != '\r') {
-			// Show the neighborhood so the failing line is in the message.
-			lo := i - 20
-			if lo < 0 {
-				lo = 0
-			}
-			hi := i + 20
-			if hi > len(out) {
-				hi = len(out)
-			}
-			t.Errorf("bare \\n at byte %d (…%q…): on a raw terminal that is a staircase, not a line break. Every newline must be \\r\\n", i, out[lo:hi])
-			break
-		}
+	if strings.Contains(out, "\033[2J") {
+		t.Errorf("render clears the whole screen with CSI 2J; that blanks the screen before every repaint and flickers. Erase in place instead")
+	}
+	if strings.Contains(out, "\n") {
+		t.Errorf("emit wrote a newline; the in-place path positions every row with CUP and a raw terminal turns a bare \\n into a staircase")
 	}
 }
 
