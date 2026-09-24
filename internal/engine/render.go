@@ -716,6 +716,15 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 // "you" at the point of typing and in the history above.
 const userTurnMarker = "❯ "
 
+// userTurnToken paints the user's own turns in the transcript. It is a distinct
+// token from the pane's default so the theme can lift the human's words above
+// the agent's — sobria maps it to white — which is the second half of telling
+// the voices apart, the marker being the first. It is minted by the engine like
+// "text" and "dim" are: a theme that does not define it resolves to the zero
+// style, so a user turn simply falls back to the pane's ordinary colour rather
+// than failing to render.
+const userTurnToken = "chat.user"
+
 // renderMarkdown renders a bound markdown pane, wrapped to the frame width.
 // Wrapping goes through the ported Line/Span machinery, so a row can never end
 // in bare air or overflow the frame no matter what the fold hands it.
@@ -734,16 +743,20 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 	case "chat.history":
 		for _, h := range state.History {
 			text := h.Text
+			turnToken := token
 			if h.Role == "user" {
 				// Mark the user's own turns so the transcript does not read as a
 				// single voice. Without a marker a reader cannot tell what they
 				// asked from what the agent answered — the differentiation the
 				// chat was missing. The marker is prepended to the text before
 				// wrapping so it rides the first row of the turn; agent turns stay
-				// unmarked, which is the default voice of the pane.
+				// unmarked, which is the default voice of the pane. The turn is
+				// wrapped under userTurnToken so it also carries the user's colour,
+				// while an agent turn keeps the pane's own token.
 				text = userTurnMarker + text
+				turnToken = userTurnToken
 			}
-			lines = append(lines, ui.WrapText(text, token, r.Width, nil)...)
+			lines = append(lines, ui.WrapText(text, turnToken, r.Width, nil)...)
 			lines = append(lines, ui.Line{}) // one blank row between turns
 		}
 		if len(lines) > 0 {

@@ -267,12 +267,22 @@ func SOBRIA() *Theme {
 		// removed from the scene: the signed theme is the contract, and
 		// dropping the reference would have silently restyled the header
 		// row of the shipped look.
-		"header":             {Attrs: ui.AttrBold},
-		"bright":             {Attrs: ui.AttrBold},
-		"input":              {Attrs: ui.AttrBold},
-		"input.placeholder":  {Attrs: ui.AttrDim},
-		"banner":             {Attrs: ui.AttrBold},
-		"spinner":            {Attrs: ui.AttrDim},
+		"header":            {Attrs: ui.AttrBold},
+		"bright":            {Attrs: ui.AttrBold},
+		"input":             {Attrs: ui.AttrBold},
+		"input.placeholder": {Attrs: ui.AttrDim},
+		"banner":            {Attrs: ui.AttrBold},
+		"spinner":           {Attrs: ui.AttrDim},
+		// The user's own turns in the transcript are painted white so a reader can
+		// tell their questions from the agent's answers at a glance — the "make my
+		// text white" the user asked for, on top of the "❯ " marker the turn
+		// already carries. It is the one place sobria reaches for an explicit
+		// colour: dim/bright alone could not separate two full-brightness voices,
+		// and the marker plus a dim agent would have dimmed the answers instead of
+		// lifting the questions. bright-white (index 15) rather than plain white so
+		// it reads as emphasis on the terminals whose default text is already a
+		// light grey.
+		"chat.user":          {FG: ui.Idx(ui.White + ui.Bright)},
 		"markdown.heading":   {Attrs: ui.AttrBold},
 		"markdown.emphasis":  {Attrs: ui.AttrItalic},
 		"markdown.strong":    {Attrs: ui.AttrBold},
