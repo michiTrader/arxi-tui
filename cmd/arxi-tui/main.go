@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/michiTrader/arxi_tui/internal/driver"
 	"github.com/michiTrader/arxi_tui/internal/engine"
 	"github.com/michiTrader/arxi_tui/internal/fold"
@@ -642,6 +643,22 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// here, so the escape hatch stays uncapturable
 						// (invariant 6) no matter what the menu does.
 						input, caret, slashSel = slashMenuKey(input, caret, ev.Key, slashSel, ctx, drv)
+					} else if ev.Key.Type == term.KeyUp || ev.Key.Type == term.KeyDown {
+						// Vertical caret motion on a wrapped (multi-line) input.
+						// It is intercepted here rather than in applyEdit because
+						// up/down mean "walk the wrapped rows", which needs the wrap
+						// width — the terminal width less the input's prefix — that
+						// only the host and the document together know. On a
+						// single-row line there is no row above or below, so the
+						// move is a no-op and the key is harmlessly swallowed. It
+						// sits after the slash branch, so while the menu is open
+						// up/down still steer the highlight and never the caret.
+						w, _ := tty.Size()
+						dir := -1
+						if ev.Key.Type == term.KeyDown {
+							dir = 1
+						}
+						caret = engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w), dir)
 					} else {
 						input, caret = typeKey(input, caret, ev.Key, ctx, drv)
 					}
@@ -664,6 +681,47 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 		}
 	}
+}
+
+// inputWrapRoom is the column width the user.input line wraps within: the
+// terminal width less the display width of the input node's prefix, matching the
+// `r.Width - prefixW` renderInput lays the rows out at. It walks the document for
+// the node bound to user.input so the room follows the scene's own prefix rather
+// than a hard-coded guess — a downloaded scene may prompt with "> " or nothing at
+// all. A width of at least one is always returned, so a pathologically narrow
+// terminal cannot make the caller divide by zero.
+func inputWrapRoom(doc *scene.Document, width int) int {
+	prefixW := 0
+	if doc != nil {
+		if in := findUserInput(doc.Root); in != nil {
+			// Display width, not rune count, so a wide prefix glyph reserves the
+			// cells it actually occupies.
+			prefixW = ansi.StringWidth(in.PrefixText())
+		}
+	}
+	room := width - prefixW
+	if room < 1 {
+		room = 1
+	}
+	return room
+}
+
+// findUserInput returns the first node bound to user.input, or nil. It is the
+// one place the host resolves "the line the human types into" from the tree, so
+// the wrap room and any later input-scoped lookup agree on which node that is.
+func findUserInput(n *scene.Node) *scene.Node {
+	if n == nil {
+		return nil
+	}
+	if n.Type == "input" && n.Bind == "user.input" {
+		return n
+	}
+	for _, c := range n.Children {
+		if got := findUserInput(c); got != nil {
+			return got
+		}
+	}
+	return nil
 }
 
 // typeKey applies one keypress to the input buffer at the caret, or submits the
