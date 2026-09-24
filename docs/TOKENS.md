@@ -166,6 +166,12 @@ without declaring it is rejected at plugin-install time.
 
 This is Phase 3 work. Phase 1 implements the resolver and factory theme only.
 
+The manifest field that carries these tokens, and the declarative/behavioral
+split that decides when a plugin runs at all, are signed in ADR-0006
+(`docs/PLAN.md`, argued in `docs/DESIGN-BLOCK-H.md`); this section is consumed by
+H4 unchanged — a `tokens` block is exactly a theme's token block, so the
+existing validator checks it and H4 only adds the merge, not a new validator.
+
 ## Timing tokens — the `[anim]` vocabulary
 
 Signed 2026-09-22 (D4, `docs/DESIGN-BLOCK-D.md`, owner-accepted). A **timing
