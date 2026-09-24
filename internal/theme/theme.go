@@ -122,6 +122,13 @@ func factoryAnim() map[string]AnimDef {
 		"default":     {DurationMS: 200, Curve: "ease_out", FPS: 30},
 		"marquee":     {DurationMS: 0, Curve: "linear", FPS: 20},
 		"reveal.fast": {DurationMS: 120, Curve: "ease_out", FPS: 30},
+		// slow is a deliberately long one-shot (six seconds, linear) for the
+		// animated demo. The default 200ms reveal is over before the eye catches
+		// it — the reported "0 animations" — so a demo meant to be watched needs a
+		// token that plays at reading speed. Linear, not eased: a steady crawl is
+		// what reads as digestible; an ease-out spends most of its run already
+		// finished. It is an ordinary token any scene may name.
+		"slow": {DurationMS: 6000, Curve: "linear", FPS: 30},
 	}
 }
 

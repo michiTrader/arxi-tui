@@ -3,22 +3,26 @@
     "when": "host.scene.error", "style": {"style": "banner"} },
 
   { "id": "banner", "type": "marquee",
-    "text": "This banner is deliberately far wider than any terminal window, so its text always overflows the pane and the marquee always scrolls left no matter how wide you make the terminal \u00b7 arxi \u00b7 the interface is a document you can rewrite in place \u00b7 community scenes arrive by link \u00b7 keep watching and the same text wraps around again",
+    "text": "This banner is far wider than any terminal window, so it always overflows the pane and scrolls left no matter how wide you make the terminal \u00b7 arxi \u00b7 the interface is a document you can rewrite in place \u00b7 keep watching and the same text wraps around again",
     "scroll": { "speed": 1 },
     "style": { "style": "banner" } },
 
-  { "id": "streaming", "type": "text",
-    "text": "This line reveals one grapheme at a time when the scene first paints (a one-shot; relaunch to see it again).",
-    "reveal": { "anim": "default" },
+  { "id": "thinking", "type": "text",
+    "text": "Thinking\u2026 reading the plan, then the scenes, then the lessons. This whole line reveals one grapheme at a time over six seconds, slow enough to actually watch it type \u2014 relaunch the demo to see it again from the start.",
+    "reveal": { "anim": "slow" },
     "style": { "style": "header" } },
 
   { "id": "heading", "type": "text",
-    "text": "This heading fades in from dim to bright on first paint (also a one-shot).",
-    "transition": { "anim": "default" },
+    "text": "This heading fades in from dim to bright over six seconds on first paint (a one-shot transition).",
+    "transition": { "anim": "slow" },
     "style": { "style": "header" } },
+
+  { "id": "todos", "type": "list", "bind": "agent.todos",
+    "enter": { "row": true, "stagger": "slow" },
+    "row_template": { "type": "text", "bind": "row.task", "style": { "style": "header" } } },
 
   { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
 
   { "id": "prompt", "type": "input", "bind": "user.input",
-    "prefix": "\u276f ", "placeholder": "type here to test the input caret; Ctrl-C twice to exit" }
+    "prefix": "\u276f ", "placeholder": "type a long line to watch it wrap and edit it with the arrows; Ctrl-C twice to exit" }
 ]}}
