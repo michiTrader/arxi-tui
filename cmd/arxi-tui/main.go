@@ -232,15 +232,15 @@ func openMockDriver(ctx context.Context, doc *scene.Document) (Driver, <-chan fo
 		{Type: "agent.activated", Seq: 2, Payload: map[string]any{"agent": "backend"}},
 		{Type: "llm.response", Seq: 3, Payload: map[string]any{
 			"agent": "backend", "model": "openai/gpt-4o",
-			"text":      "Hola! ¿En qué puedo ayudarte?",
+			"text":      "Hi! How can I help you?",
 			"tokens_in": 12, "tokens_out": 18, "cost_usd": 0.0004,
 		}},
 		{Type: "agent.turn_done", Seq: 4, Payload: map[string]any{"agent": "backend"}},
-		{Type: "run.prompt", Seq: 5, Payload: map[string]any{"text": "gracias"}},
+		{Type: "run.prompt", Seq: 5, Payload: map[string]any{"text": "thanks"}},
 		{Type: "agent.activated", Seq: 6, Payload: map[string]any{"agent": "backend"}},
 		{Type: "llm.response", Seq: 7, Payload: map[string]any{
 			"agent": "backend", "model": "openai/gpt-4o",
-			"text":      "De nada.",
+			"text":      "You're welcome.",
 			"tokens_in": 5, "tokens_out": 3, "cost_usd": 0.0001,
 		}},
 		{Type: "agent.turn_done", Seq: 8, Payload: map[string]any{"agent": "backend"}},
