@@ -754,7 +754,12 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 	// what welding the two together already cost once.
 	if n.Bind == "user.input" && state.UserInput != "" {
 		cells = append(cells, ui.Span{Text: state.UserInput, Style: styleNameOr(n.Style, "input")})
-		col += ansiStringWidth(state.UserInput)
+		// The caret sits after the runes the user has typed *before* it, not at
+		// the end of the line: an editor that can only place the cursor at the
+		// tail cannot edit the middle, which is the whole point of arrow-key
+		// motion. The column is a display width, so a wide glyph before the caret
+		// advances it two cells — a rune count would drift on CJK/emoji input.
+		col += caretColumn(state.UserInput, state.UserInputCaret)
 	} else {
 		cells = append(cells, ui.Span{Text: n.Placeholder, Style: "input.placeholder"})
 	}
@@ -765,6 +770,23 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 		Height: 1,
 		Cursor: ui.Cursor{Line: 0, Col: col},
 	}
+}
+
+// caretColumn returns the display width of the first caret runes of s, clamped
+// into [0, len([]rune(s))]. It is the column offset of the edit point from the
+// start of the typed text: a wide glyph counts two cells (via ansiStringWidth),
+// so the native cursor lands on the glyph the user is about to change rather
+// than one column off it. Clamping means a stale caret from a longer previous
+// line can never index past the current text.
+func caretColumn(s string, caret int) int {
+	r := []rune(s)
+	if caret < 0 {
+		caret = 0
+	}
+	if caret > len(r) {
+		caret = len(r)
+	}
+	return ansiStringWidth(string(r[:caret]))
 }
 
 // renderText renders a static text line or a bound text value. The sobria
