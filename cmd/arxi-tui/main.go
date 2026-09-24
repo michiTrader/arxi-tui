@@ -119,15 +119,24 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
 
 func main() {
 	// -scene names the document to boot. Its default is the shipped SOBRIA
-	// scene; -scene "" is the start-time escape hatch invariant 6 names beside
-	// double Ctrl-C, restoring the factory raw scene. A path lets a user (or a
-	// tester) boot any document — testdata/ANIMATION.json to see the motion
-	// props, testdata/SUBAGENTS.json the row template, and so on — without
-	// editing the binary.
+	// scene; a path lets a user (or a tester) boot any document —
+	// testdata/ANIMATION.json to see the motion props, testdata/SUBAGENTS.json
+	// the row template, and so on — without editing the binary.
 	scenePath := flag.String("scene", "testdata/SOBRIA.json",
-		`scene document to boot; -scene "" loads the factory raw scene (start-time escape hatch)`)
+		`scene document to boot (a file path); use -raw for the factory raw scene`)
+	// -raw is the start-time escape hatch invariant 6 names beside double Ctrl-C:
+	// it boots the factory raw scene regardless of -scene. It exists as its own
+	// flag because the documented spelling -scene "" is unreachable from
+	// PowerShell, which strips the empty quotes and leaves -scene with no
+	// argument (a flag-parse error); a boolean has no argument to strip, so the
+	// escape hatch works from every shell.
+	raw := flag.Bool("raw", false, `boot the factory raw scene (the start-time escape hatch)`)
 	flag.Parse()
-	if err := run(*scenePath); err != nil {
+	scenePath0 := *scenePath
+	if *raw {
+		scenePath0 = ""
+	}
+	if err := run(scenePath0); err != nil {
 		fmt.Fprintf(os.Stderr, "arxi-tui: %v\n", err)
 		os.Exit(1)
 	}
