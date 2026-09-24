@@ -272,6 +272,30 @@ non-expressible render wants the Phase-4 wasm ADR; Q15 download ≠ trust ≠
 grant — the consent gate checks identity (name, version, executable, args,
 capability set, digest) exactly as arxi-sim's contract, with remember.
 
+**Manifest schema (H1, signed 2026-09-23; argued in `docs/DESIGN-BLOCK-H.md`).**
+The plugin manifest is a JSON document — the same format as the scene, for the
+same reason (a model writes it without hallucinating, every language parses it,
+and it embeds scene fragments and a token block that are already JSON here). Its
+fields are `id`, `name`, `version`, `protocol` (identity, always required);
+`tokens` and `mounts` (the declarative, zero-code contribution); and
+`executable`, `args`, `capabilities`, `consent_required`, `binds` (the
+behavioral block). **`executable` is the declarative-vs-behavioral
+discriminator:** a manifest with no `executable` runs no foreign code and
+streams nothing — it contributes only `mounts` (scene fragments the scene
+validator checks) and `tokens` (merged at `user > plugin > factory`), so its
+`<plugin-id>.*` namespace is empty and any use of it is refused. A manifest with
+an `executable` is behavioral: it declares the `binds` it will stream and is
+gated by the Q15 consent contract before its process is spawned. Each mounted
+fragment's ids are prefixed `<plugin-id>/` so N strangers' trees compose under
+the id-uniqueness invariant without collision, and a mount's `where` reuses the
+D2 addressing grammar plus overlay anchors (`docs/ADDRESSING.md`). **Block H
+implements only the declarative path** (a plugin with no `executable`: load,
+mount, merge tokens, validate the namespace, `/ui plugin add`, and this scene's
+golden pinned at the *mounted-but-unsatisfied* state where `tick.price` renders
+as its declared `mock`); the behavioral fields are *specified* here so the
+schema freezes once, but the process supervisor, the consent gate, and the
+NDJSON stream are Block I.
+
 ## Scene 7 — COMMUNITY (browse, preview, install, from inside the TUI)
 
 The installer *is* a scene: a `list` of registry entries, a `markdown`

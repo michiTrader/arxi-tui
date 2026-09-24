@@ -373,6 +373,54 @@ separately-signed future prop); and a node that leaves and re-enters the frame
 **animates again** (animate-on-each-appearance, since no other host state
 remembers a node forever).
 
+#### ADR-0006 — the plugin manifest schema and the declarative/behavioral split
+
+Signed from `docs/DESIGN-BLOCK-H.md` (H1). Block H's whole safety claim is that
+mounting a declarative plugin runs no foreign code, so the schema must make the
+declarative/behavioral difference **structural, not a footnote** — a schema that
+blurs the two lets a manifest smuggle an `executable` into a path the user
+believed was pure data.
+
+The manifest is **JSON**, for the reason the scene is (SCENES.md: a model writes
+it without hallucinating, every language parses it), and because it embeds scene
+fragments (`mounts`) and a token block whose shapes are already JSON here — a
+TOML wrapper would force two parsers and two error models for one file, and the
+JSON `offset → file:line` map already gives a manifest refusal an address for
+free. Its fields: `id`, `name`, `version`, `protocol` (identity, always
+required); `tokens`, `mounts` (the declarative contribution); `executable`,
+`args`, `capabilities`, `consent_required`, `binds` (behavioral).
+
+**`executable` is the discriminator.** A manifest with no `executable` is
+declarative — it contributes only `mounts` and `tokens`, both data the host
+already validates and renders, and streams *nothing*, so its `<plugin-id>.*`
+namespace is empty and any use of it is refused. A manifest with an `executable`
+is behavioral: it declares `capabilities`, `consent_required`, and the `binds`
+it streams, and mounting it crosses the Q15 consent gate before the process
+spawns. The discriminator is a single field rather than an explicit
+`kind:"declarative"|"behavioral"` precisely so the two can never disagree; the
+contradictory-field refusals (an `executable` with `consent_required:false`; a
+declarative manifest carrying `capabilities`/`args`/`binds`) catch the mistakes
+an explicit kind would have to encode. This keeps H2's promise honest: "zero
+code" is the absence of one field, checkable at load with no gate involved.
+
+**Block H builds only the declarative path.** H2 loads a plugin with no
+`executable`; H3 mounts its fragments; H4 merges its tokens; H5 validates its
+namespace; H6 is `/ui plugin add` for that path; H7 pins the Scene 6 golden at
+the mounted-but-unsatisfied state. The behavioral fields are *specified* here so
+the schema freezes once, but the process supervisor, the gate, and the NDJSON
+stream are **Block I**.
+
+Two mechanisms are reused, not reinvented. Mounts reuse **D2 addressing**
+(`docs/ADDRESSING.md`) — the same `where` grammar `/ui add` uses, plus overlay
+anchors — so a plugin author and a `/ui add` user cannot drift on what a
+location means, and mounting is F1's `insert` attributed to the plugin. Every
+mounted fragment id is prefixed **`<plugin-id>/`** by the loader after
+validation, so N strangers' trees compose under the id-uniqueness invariant
+without coordination (the one addressing rule Block H adds, because D2 never
+composed two authors' trees). And the namespace validator reads the manifest's
+`binds` map as its **single source** — the `row.*` `rowSchemas` scope mechanism
+pointed at a plugin's declared binds — never a fourth hand-copied inventory.
+
 ## When data, when code
 
 | I want… | Tool |

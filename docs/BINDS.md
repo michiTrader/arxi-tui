@@ -198,6 +198,32 @@ streams. The engine validates that every bind in a plugin's fragment resolves
 either to a host-owned field (Section 4.1–4.3) or to a field the plugin declares
 it will stream. An undeclared plugin bind is a validation error with `file:line`.
 
+**Declared-vs-used rule (H1, signed 2026-09-23; argued in
+`docs/DESIGN-BLOCK-H.md`).** This is the concrete scope rule H5 implements, and
+it is the plugin-namespace analogue of §4.7's `row.*` rule — the manifest's
+`binds` map is a plugin's schema the same way a source list's `RowSchema` is a
+template's schema:
+
+- A `<plugin-id>.<field>` bind resolves **iff** it appears inside a fragment
+  mounted by a plugin whose `id` is `<plugin-id>` **and** `<field>` is a key of
+  that manifest's `binds` map. The map is consulted directly as the single
+  source — never copied into a second inventory (the warning on
+  `SignedBinds()`, `internal/scene/validate.go`).
+- A `<plugin-id>.*` bind **outside** any mount of that plugin is refused with
+  `file:line` — the namespace does not leak into the host scene, exactly as a
+  `row.*` bind outside a `row_template` is refused.
+- A declared bind used under the **wrong node type** for its `binds[...].kind`
+  is refused with `file:line` naming the field, its declared kind, and the node:
+  a `kind:"text"` bind used as `sparkline bind:"<plugin-id>.field"` is rejected,
+  the `kind` being the plugin-bind analogue of the axis a `scroll`/`reveal` prop
+  rides. The initial `kind` set is closed at `text` and `series` (Scene 6's two
+  uses), widened per node as a signed change.
+- A **declarative** manifest (no `executable`, hence no `binds`) that mounts a
+  fragment using any `<plugin-id>.*` bind is refused: it streams nothing, so its
+  namespace is empty and the use is undeclared. This is the load-time face of
+  the declarative/behavioral split (ADR-0006) — a zero-code plugin binds only
+  host fields.
+
 ### 4.5 Exit criterion
 
 Every `bind`/`when` string in the eleven scenes resolves to a signed row above.

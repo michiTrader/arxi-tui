@@ -61,3 +61,24 @@ embed several scene documents in one file (a `base` plus attempt variants), so a
 per-*file* uniqueness check would wrongly flag them; the invariant is checked on
 each parsed `Document`, not on file text. The empty id is exempt — an unnamed
 node is not addressable and many nodes legitimately have none.
+
+## 4. Plugin mounts reuse this grammar (H1, signed 2026-09-23)
+
+A plugin manifest's `mounts[].where` reuses the `where` expression of §1
+**unchanged** — the same `above`/`below <id>`, `into <id> [top]`, and
+`below_input`/`above_input` forms — so a plugin author and a `/ui add` user name
+a location the same way and the two paths cannot drift on what `below_input`
+means. It adds one form the overlays Scene 6 needs: an **overlay anchor**
+(`top-right`, `bottom`, …) means "a new `overlay` child of root at that anchor",
+so a mount can float without naming an existing host id. The argued record is
+ADR-0006 (`docs/PLAN.md`) and `docs/DESIGN-BLOCK-H.md` (H-B).
+
+The id-uniqueness invariant of §3 is the cross-plugin collision defense, and it
+is made livable by prefixing: the loader rewrites every id in a mounted fragment
+to `<plugin-id>/<id>` **after** validation and **before** the invariant runs, so
+two independent plugins each using `overlay` as a raw id compose without
+conflict. A surviving collision after prefixing is therefore a plugin colliding
+with *itself* (two of its own fragment nodes sharing a raw id), refused with
+`file:line` and named as the author's bug. Unmounting is the inverse and names
+no host node: drop every node whose id begins `<plugin-id>/`, the same property
+that lets `show *` clear `ui.hidden` without naming an id (F3).
