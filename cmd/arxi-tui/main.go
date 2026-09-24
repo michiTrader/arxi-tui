@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -117,17 +118,26 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
 ]}}`
 
 func main() {
-	if err := run(); err != nil {
+	// -scene names the document to boot. Its default is the shipped SOBRIA
+	// scene; -scene "" is the start-time escape hatch invariant 6 names beside
+	// double Ctrl-C, restoring the factory raw scene. A path lets a user (or a
+	// tester) boot any document — testdata/ANIMATION.json to see the motion
+	// props, testdata/SUBAGENTS.json the row template, and so on — without
+	// editing the binary.
+	scenePath := flag.String("scene", "testdata/SOBRIA.json",
+		`scene document to boot; -scene "" loads the factory raw scene (start-time escape hatch)`)
+	flag.Parse()
+	if err := run(*scenePath); err != nil {
 		fmt.Fprintf(os.Stderr, "arxi-tui: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-func run() error {
+func run(scenePath string) error {
 	// Load scene document. The default is the sobria scene (Scene 2, the
 	// fx-inspired default per PLAN.md); if it fails to parse or validate, fall
 	// back to the factory RAW scene (Scene 1) so the interface always boots.
-	doc, sceneNotice, err := loadScene("testdata/SOBRIA.json", factoryRAW)
+	doc, sceneNotice, err := resolveStartScene(scenePath)
 	if err != nil {
 		return fmt.Errorf("scene load: %w", err)
 	}
@@ -812,6 +822,22 @@ type Terminal interface {
 	io.Writer
 	Size() (width, height int)
 	Events() <-chan term.Event
+}
+
+// resolveStartScene picks the boot document named by the -scene flag. An empty
+// path is the start-time escape hatch invariant 6 names beside double Ctrl-C:
+// -scene "" restores the factory raw scene, bypassing any on-disk document, so a
+// scene that captured the interface cannot also deny the user the flag that
+// recovers from it. It loads factoryRAW directly rather than through loadScene's
+// missing-file fallback, so the raw scene is the *intended* document with no
+// notice, never the residue of a load that failed. A non-empty path goes through
+// loadScene, keeping invariant 3's addressed fallback for a corrupt file.
+func resolveStartScene(path string) (*scene.Document, string, error) {
+	if path == "" {
+		doc, err := scene.ParseDocument([]byte(factoryRAW))
+		return doc, "", err
+	}
+	return loadScene(path, factoryRAW)
 }
 
 // loadScene reads a scene document from path, validates it, and falls back to
