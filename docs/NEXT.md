@@ -457,10 +457,26 @@ counterfactual test).
   until the last row arrives. The five node-type dispatch audits that read
   `renderNode` were retargeted to `renderByType`. Render, clock and scene tests
   each carry counterfactuals run in both directions.
-- **G5** [G4] Freeze the remaining Scene 4 golden(s) and update the status
-  paragraph as each prop lands (scroll's, reveal's, transition's and enter's
-  paragraphs are all updated; the render/clock tests pin enter's staggered frames
-  at chosen phases, the golden discipline transition and reveal used).
+- **G5 — DONE (2026-09-23).** The remaining Scene 4 golden is frozen and Block G
+  is closed. Two golden families cover Scene 4's motion. First, each prop landed
+  with its own render/clock test pinned at chosen phases (t=0, mid, settled), the
+  discipline DESIGN-BLOCK-G.md signs — scroll's, reveal's, transition's and
+  enter's status paragraphs are all updated in SCENES.md, and all five animation
+  properties are drawn by the engine with none left parsed-and-warned. Second,
+  the durable composed pin no per-prop test carried: `testdata/ANIMATION.json` is
+  a shippable Scene 4 document (a `scroll` marquee, a `reveal` text, a
+  `transition` heading, and a staggered `enter` list over `agent.todos`), frozen
+  as `ANIMATION.frame`/`.styled` at a **chosen non-nil phase** so the fixture
+  witnesses motion — a windowed marquee, a phase-clipped reveal, a dim
+  mid-entrance transition, and the enter row-count axis mid-flight (one settled
+  row, one dim, one not yet drawn). It is pinned at a chosen phase, not the nil
+  phase that would draw it settled and cover none of it — the SOBRIA.styled
+  zero-row-marquee trap AGENTS.md records. A witness test asserts each prop is
+  moving before the byte-for-byte golden, the document validates against the
+  factory theme's `anim` section (so it is genuinely shippable, not merely
+  parseable), and the counterfactual was run: forcing `enterRowState`
+  always-settled draws every enter row settled and fails the styled golden and
+  the witness on the dim and absent rows.
 
 ### Block H — Phase 3: declarative plugin mounting (heart of the phase)
 

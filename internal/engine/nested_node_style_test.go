@@ -130,6 +130,14 @@ func nestedStyleState() fold.State {
 		{ID: "backend", State: "thinking", Role: "backend", Busy: true, Turns: 2},
 		{ID: "frontend", State: "idle", Role: "frontend", Busy: false, Turns: 1},
 	}
+	// ANIMATION's enter list reaches its row_template through agent.todos, the
+	// same shape team.members has: an empty todos list renders zero rows and the
+	// template candidate would be reported undrawn — the false alarm this state
+	// exists to prevent — instead of swept.
+	s.Todos = []fold.TodoItem{
+		{Task: "read the plan"},
+		{Task: "freeze the golden"},
+	}
 	return s
 }
 
