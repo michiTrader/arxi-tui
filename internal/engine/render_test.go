@@ -25,10 +25,10 @@ func TestRawSceneRendersCorrectly(t *testing.T) {
 	r := Renderer{Width: 80, Height: 24}
 
 	events := []fold.Event{
-		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hola"}},
-		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hola!"}},
-		{Type: "run.prompt", Seq: 3, Payload: map[string]any{"text": "gracias"}},
-		{Type: "llm.response", Seq: 4, Payload: map[string]any{"text": "De nada."}},
+		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hi"}},
+		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hi!"}},
+		{Type: "run.prompt", Seq: 3, Payload: map[string]any{"text": "thanks"}},
+		{Type: "llm.response", Seq: 4, Payload: map[string]any{"text": "You're welcome."}},
 	}
 	state := fold.Fold(events)
 
@@ -38,10 +38,10 @@ func TestRawSceneRendersCorrectly(t *testing.T) {
 	if strings.Contains(got, "UNKNOWN NODE TYPE") {
 		t.Errorf("render produced unknown node type; output:\n%s", got)
 	}
-	if !strings.Contains(got, "hola") {
-		t.Errorf("expected 'hola' in chat history; got:\n%s", got)
+	if !strings.Contains(got, "hi") {
+		t.Errorf("expected user turn 'hi' in chat history; got:\n%s", got)
 	}
-	if !strings.Contains(got, "Hola!") {
+	if !strings.Contains(got, "Hi!") {
 		t.Errorf("expected assistant response; got:\n%s", got)
 	}
 	if !strings.HasSuffix(got, "> ") {
@@ -227,10 +227,10 @@ func TestRawSceneStyledGolden(t *testing.T) {
 	}
 
 	events := []fold.Event{
-		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hola"}},
-		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hola!"}},
-		{Type: "run.prompt", Seq: 3, Payload: map[string]any{"text": "gracias"}},
-		{Type: "llm.response", Seq: 4, Payload: map[string]any{"text": "De nada."}},
+		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hi"}},
+		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hi!"}},
+		{Type: "run.prompt", Seq: 3, Payload: map[string]any{"text": "thanks"}},
+		{Type: "llm.response", Seq: 4, Payload: map[string]any{"text": "You're welcome."}},
 	}
 	state := fold.Fold(events)
 

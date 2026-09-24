@@ -708,6 +708,12 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 	return ui.Frame{Live: out, Width: totalWidth, Height: len(out)}
 }
 
+// userTurnMarker is prepended to a user's chat turn so the transcript visibly
+// separates the human's words from the agent's. It matches the "❯ " prompt glyph
+// the factory scenes already use for the input line, so the same symbol means
+// "you" at the point of typing and in the history above.
+const userTurnMarker = "❯ "
+
 // renderMarkdown renders a bound markdown pane, wrapped to the frame width.
 // Wrapping goes through the ported Line/Span machinery, so a row can never end
 // in bare air or overflow the frame no matter what the fold hands it.
@@ -725,7 +731,17 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 	switch n.Bind {
 	case "chat.history":
 		for _, h := range state.History {
-			lines = append(lines, ui.WrapText(h.Text, token, r.Width, nil)...)
+			text := h.Text
+			if h.Role == "user" {
+				// Mark the user's own turns so the transcript does not read as a
+				// single voice. Without a marker a reader cannot tell what they
+				// asked from what the agent answered — the differentiation the
+				// chat was missing. The marker is prepended to the text before
+				// wrapping so it rides the first row of the turn; agent turns stay
+				// unmarked, which is the default voice of the pane.
+				text = userTurnMarker + text
+			}
+			lines = append(lines, ui.WrapText(text, token, r.Width, nil)...)
 			lines = append(lines, ui.Line{}) // one blank row between turns
 		}
 		if len(lines) > 0 {

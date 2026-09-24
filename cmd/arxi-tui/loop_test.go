@@ -300,7 +300,7 @@ func TestLoopSlashMenuNavigateAndRun(t *testing.T) {
 	// node by id", which contains the same word.
 	ranCommand := false
 	for _, f := range frames {
-		if frameHasTranscriptLine(f, "focus") && !strings.Contains(f, "Commands 5") {
+		if frameHasTranscriptLine(f, "❯ focus") && !strings.Contains(f, "Commands 5") {
 			ranCommand = true
 			break
 		}
@@ -398,7 +398,7 @@ func TestLoopSlashMenuTabWalksCategories(t *testing.T) {
 	frames := strings.Split(tty.output(), "\x1b[H\x1b[2J")
 	ranHelp := false
 	for _, f := range frames {
-		if frameHasTranscriptLine(f, "help") && !strings.Contains(f, "Commands 5") {
+		if frameHasTranscriptLine(f, "❯ help") && !strings.Contains(f, "Commands 5") {
 			ranHelp = true
 			break
 		}
@@ -521,7 +521,7 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	// is already closed (no "Commands 5" header above it).
 	ranUI := false
 	for _, f := range frames {
-		if frameHasTranscriptLine(f, "ui") && !strings.Contains(f, "Commands 5") {
+		if frameHasTranscriptLine(f, "❯ ui") && !strings.Contains(f, "Commands 5") {
 			ranUI = true
 			break
 		}
