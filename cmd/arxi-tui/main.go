@@ -172,6 +172,18 @@ func run(scenePath string) error {
 	// no cursor at all. Show it unconditionally on the way out.
 	defer fmt.Fprint(tty, "\033[?25h\033[?1049l")
 
+	// Ask the terminal to report mouse events so the wheel can scroll the chat
+	// pane. ?1000h reports button presses (the wheel is a button), and ?1006h is
+	// the SGR extension that carries coordinates past column 223. Button-press
+	// tracking (1000) rather than motion tracking (1002/1003) is deliberate: we
+	// only need wheel notches, and reporting every drag would fight the
+	// terminal's own text selection more than necessary. The decoder already
+	// turns a wheel report into KeyWheelUp/KeyWheelDown. Torn down before the
+	// alternate buffer is left, in reverse order, so the user's shell is handed
+	// back with mouse reporting off exactly as it was found.
+	fmt.Fprint(tty, "\033[?1000h\033[?1006h")
+	defer fmt.Fprint(tty, "\033[?1006l\033[?1000l")
+
 	// Phase 0.5: spawn the arxi core as a serve subprocess and speak the
 	// NDJSON request/response protocol. Log-follow reads the run's event
 	// log file. When no arxi binary is available (Phase 0 dev, or non-interactive
@@ -410,6 +422,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// move the cursor and edit the middle of the line; the renderer places the
 	// native terminal cursor at its column.
 	caret := 0
+	// chatScroll is how many lines the chat pane is scrolled up from the tail,
+	// host-owned view state held across frames like the input buffer. Zero
+	// follows the tail (the default); the mouse wheel raises it to reveal older
+	// turns. The renderer clamps it to the frame's line count and reports the
+	// ceiling back through r.ChatScrollMax, which the repaint below pins it to.
+	chatScroll := 0
 	// slashSel is the menu's highlighted row. The host owns it across frames
 	// the way it owns the input buffer: the fold is rebuilt per frame and
 	// carries it, but the state of the menu is not the scene's business.
@@ -522,7 +540,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		clock.advance(time.Now())
 		r.AnimTicks = clock.ticks()
 		r.AnimPhase = clock.phases()
+		r.ChatScroll = chatScroll
 		frame, active := r.RenderFrameActive(doc, state)
+		// Pin the scroll offset to what the renderer could actually honour: it
+		// alone knows the wrapped line count and the pane budget, so a wheel spun
+		// past the top settles here instead of banking dead scroll that a later
+		// wheel-down would have to unwind first.
+		if chatScroll > r.ChatScrollMax {
+			chatScroll = r.ChatScrollMax
+		}
 		clock.reconcile(active)
 		emitFrame(tty, frame, theme)
 		armTicker()
@@ -562,6 +588,22 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					} else {
 						input = "" // first press clears the line
 						caret = 0
+					}
+				} else if ev.Key.Type == term.KeyWheelUp || ev.Key.Type == term.KeyWheelDown {
+					// The mouse wheel scrolls the chat pane and nothing else: it
+					// does not type, and it does not disarm the panic gesture (a
+					// wheel notch is not the "any other key" that means the user
+					// changed their mind about quitting). The renderer clamps the
+					// offset to the frame, so scrolling up past the top or down
+					// past the tail simply stops.
+					const wheelStep = 3
+					if ev.Key.Type == term.KeyWheelUp {
+						chatScroll += wheelStep
+					} else {
+						chatScroll -= wheelStep
+						if chatScroll < 0 {
+							chatScroll = 0
+						}
 					}
 				} else {
 					panicGesture.Reset() // any other key disarms the gesture

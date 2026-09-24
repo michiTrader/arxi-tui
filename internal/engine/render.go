@@ -149,6 +149,25 @@ type Renderer struct {
 	// clock and the activity report has no consumer. RenderFrameActive sets it;
 	// RenderFrame leaves it nil.
 	active *[]AnimActivity
+
+	// ChatScroll is how many lines the chat pane is scrolled up from the tail,
+	// host-owned view state fed in per repaint like the input buffer. Zero (the
+	// default, and every golden) follows the tail and windows exactly as the old
+	// tail-clip did, so no golden moves. A positive value shifts the visible
+	// window that many wrapped lines toward the top, which is what the mouse wheel
+	// and scroll keys drive. It is an input separate from fold.State for the same
+	// reason the anim phase is: the fold projects content, the host owns where the
+	// reader is looking.
+	ChatScroll int
+
+	// ChatScrollMax is the render's report back to the host: the largest legal
+	// ChatScroll for the frame just drawn (total wrapped chat lines minus the
+	// pane's budget, floored at zero). The loop clamps its offset to this after
+	// each repaint so a wheel spun past the top does not accumulate dead scroll
+	// that a later wheel-down has to unwind before anything moves — the clamp is
+	// single-sourced in the renderer, which is the only place that knows the line
+	// count and the budget. Zero when the chat fits and there is nothing to scroll.
+	ChatScrollMax int
 }
 
 // AnimActivity is one visible animating node, reported back to the loop so it
@@ -718,7 +737,26 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 		lines = append(lines, ui.WrapText(n.Text, token, r.Width, nil)...)
 	}
 	if budget >= 0 && len(lines) > budget {
-		lines = lines[len(lines)-budget:]
+		if n.Bind == "chat.history" {
+			// The chat pane is scrollable: window it bottom-anchored, then shift
+			// up by the host's ChatScroll (clamped), and report the clamp back so
+			// the loop can pin its offset. ChatScroll==0 lands the window on the
+			// last `budget` lines — byte-for-byte the old tail-clip, so no golden
+			// moves — while a positive offset reveals older turns above.
+			max := len(lines) - budget
+			s := r.ChatScroll
+			if s < 0 {
+				s = 0
+			}
+			if s > max {
+				s = max
+			}
+			r.ChatScrollMax = max
+			start := max - s
+			lines = lines[start : start+budget]
+		} else {
+			lines = lines[len(lines)-budget:]
+		}
 	}
 	return ui.Frame{Live: lines, Width: r.Width}
 }
