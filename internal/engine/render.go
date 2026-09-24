@@ -149,6 +149,25 @@ type Renderer struct {
 	// clock and the activity report has no consumer. RenderFrameActive sets it;
 	// RenderFrame leaves it nil.
 	active *[]AnimActivity
+
+	// ChatScroll is how many lines the chat pane is scrolled up from the tail,
+	// host-owned view state fed in per repaint like the input buffer. Zero (the
+	// default, and every golden) follows the tail and windows exactly as the old
+	// tail-clip did, so no golden moves. A positive value shifts the visible
+	// window that many wrapped lines toward the top, which is what the mouse wheel
+	// and scroll keys drive. It is an input separate from fold.State for the same
+	// reason the anim phase is: the fold projects content, the host owns where the
+	// reader is looking.
+	ChatScroll int
+
+	// ChatScrollMax is the render's report back to the host: the largest legal
+	// ChatScroll for the frame just drawn (total wrapped chat lines minus the
+	// pane's budget, floored at zero). The loop clamps its offset to this after
+	// each repaint so a wheel spun past the top does not accumulate dead scroll
+	// that a later wheel-down has to unwind before anything moves — the clamp is
+	// single-sourced in the renderer, which is the only place that knows the line
+	// count and the budget. Zero when the chat fits and there is nothing to scroll.
+	ChatScrollMax int
 }
 
 // AnimActivity is one visible animating node, reported back to the loop so it
@@ -689,6 +708,12 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 	return ui.Frame{Live: out, Width: totalWidth, Height: len(out)}
 }
 
+// userTurnMarker is prepended to a user's chat turn so the transcript visibly
+// separates the human's words from the agent's. It matches the "❯ " prompt glyph
+// the factory scenes already use for the input line, so the same symbol means
+// "you" at the point of typing and in the history above.
+const userTurnMarker = "❯ "
+
 // renderMarkdown renders a bound markdown pane, wrapped to the frame width.
 // Wrapping goes through the ported Line/Span machinery, so a row can never end
 // in bare air or overflow the frame no matter what the fold hands it.
@@ -706,7 +731,17 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 	switch n.Bind {
 	case "chat.history":
 		for _, h := range state.History {
-			lines = append(lines, ui.WrapText(h.Text, token, r.Width, nil)...)
+			text := h.Text
+			if h.Role == "user" {
+				// Mark the user's own turns so the transcript does not read as a
+				// single voice. Without a marker a reader cannot tell what they
+				// asked from what the agent answered — the differentiation the
+				// chat was missing. The marker is prepended to the text before
+				// wrapping so it rides the first row of the turn; agent turns stay
+				// unmarked, which is the default voice of the pane.
+				text = userTurnMarker + text
+			}
+			lines = append(lines, ui.WrapText(text, token, r.Width, nil)...)
 			lines = append(lines, ui.Line{}) // one blank row between turns
 		}
 		if len(lines) > 0 {
@@ -718,7 +753,26 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 		lines = append(lines, ui.WrapText(n.Text, token, r.Width, nil)...)
 	}
 	if budget >= 0 && len(lines) > budget {
-		lines = lines[len(lines)-budget:]
+		if n.Bind == "chat.history" {
+			// The chat pane is scrollable: window it bottom-anchored, then shift
+			// up by the host's ChatScroll (clamped), and report the clamp back so
+			// the loop can pin its offset. ChatScroll==0 lands the window on the
+			// last `budget` lines — byte-for-byte the old tail-clip, so no golden
+			// moves — while a positive offset reveals older turns above.
+			max := len(lines) - budget
+			s := r.ChatScroll
+			if s < 0 {
+				s = 0
+			}
+			if s > max {
+				s = max
+			}
+			r.ChatScrollMax = max
+			start := max - s
+			lines = lines[start : start+budget]
+		} else {
+			lines = lines[len(lines)-budget:]
+		}
 	}
 	return ui.Frame{Live: lines, Width: r.Width}
 }
@@ -754,7 +808,12 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 	// what welding the two together already cost once.
 	if n.Bind == "user.input" && state.UserInput != "" {
 		cells = append(cells, ui.Span{Text: state.UserInput, Style: styleNameOr(n.Style, "input")})
-		col += ansiStringWidth(state.UserInput)
+		// The caret sits after the runes the user has typed *before* it, not at
+		// the end of the line: an editor that can only place the cursor at the
+		// tail cannot edit the middle, which is the whole point of arrow-key
+		// motion. The column is a display width, so a wide glyph before the caret
+		// advances it two cells — a rune count would drift on CJK/emoji input.
+		col += caretColumn(state.UserInput, state.UserInputCaret)
 	} else {
 		cells = append(cells, ui.Span{Text: n.Placeholder, Style: "input.placeholder"})
 	}
@@ -765,6 +824,23 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 		Height: 1,
 		Cursor: ui.Cursor{Line: 0, Col: col},
 	}
+}
+
+// caretColumn returns the display width of the first caret runes of s, clamped
+// into [0, len([]rune(s))]. It is the column offset of the edit point from the
+// start of the typed text: a wide glyph counts two cells (via ansiStringWidth),
+// so the native cursor lands on the glyph the user is about to change rather
+// than one column off it. Clamping means a stale caret from a longer previous
+// line can never index past the current text.
+func caretColumn(s string, caret int) int {
+	r := []rune(s)
+	if caret < 0 {
+		caret = 0
+	}
+	if caret > len(r) {
+		caret = len(r)
+	}
+	return ansiStringWidth(string(r[:caret]))
 }
 
 // renderText renders a static text line or a bound text value. The sobria

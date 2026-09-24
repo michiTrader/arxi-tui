@@ -15,7 +15,7 @@
       "border": "single",
       "children": [ { "type": "list", "bind": "agent.todos" } ] } ] },
 
-  { "id": "prompt", "type": "input", "prefix": "❯ ", "placeholder": "ask anything, or / for commands" },
+  { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "❯ ", "placeholder": "ask anything, or / for commands" },
 
   { "id": "tokens", "type": "overlay", "anchor": "top-right", "min_width": 12,
     "border": "single",

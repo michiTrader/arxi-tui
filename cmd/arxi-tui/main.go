@@ -119,15 +119,24 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
 
 func main() {
 	// -scene names the document to boot. Its default is the shipped SOBRIA
-	// scene; -scene "" is the start-time escape hatch invariant 6 names beside
-	// double Ctrl-C, restoring the factory raw scene. A path lets a user (or a
-	// tester) boot any document — testdata/ANIMATION.json to see the motion
-	// props, testdata/SUBAGENTS.json the row template, and so on — without
-	// editing the binary.
+	// scene; a path lets a user (or a tester) boot any document —
+	// testdata/ANIMATION.json to see the motion props, testdata/SUBAGENTS.json
+	// the row template, and so on — without editing the binary.
 	scenePath := flag.String("scene", "testdata/SOBRIA.json",
-		`scene document to boot; -scene "" loads the factory raw scene (start-time escape hatch)`)
+		`scene document to boot (a file path); use -raw for the factory raw scene`)
+	// -raw is the start-time escape hatch invariant 6 names beside double Ctrl-C:
+	// it boots the factory raw scene regardless of -scene. It exists as its own
+	// flag because the documented spelling -scene "" is unreachable from
+	// PowerShell, which strips the empty quotes and leaves -scene with no
+	// argument (a flag-parse error); a boolean has no argument to strip, so the
+	// escape hatch works from every shell.
+	raw := flag.Bool("raw", false, `boot the factory raw scene (the start-time escape hatch)`)
 	flag.Parse()
-	if err := run(*scenePath); err != nil {
+	scenePath0 := *scenePath
+	if *raw {
+		scenePath0 = ""
+	}
+	if err := run(scenePath0); err != nil {
 		fmt.Fprintf(os.Stderr, "arxi-tui: %v\n", err)
 		os.Exit(1)
 	}
@@ -171,6 +180,18 @@ func run(scenePath string) error {
 	// its visibility, so a frame that hid the caret would leave the shell with
 	// no cursor at all. Show it unconditionally on the way out.
 	defer fmt.Fprint(tty, "\033[?25h\033[?1049l")
+
+	// Ask the terminal to report mouse events so the wheel can scroll the chat
+	// pane. ?1000h reports button presses (the wheel is a button), and ?1006h is
+	// the SGR extension that carries coordinates past column 223. Button-press
+	// tracking (1000) rather than motion tracking (1002/1003) is deliberate: we
+	// only need wheel notches, and reporting every drag would fight the
+	// terminal's own text selection more than necessary. The decoder already
+	// turns a wheel report into KeyWheelUp/KeyWheelDown. Torn down before the
+	// alternate buffer is left, in reverse order, so the user's shell is handed
+	// back with mouse reporting off exactly as it was found.
+	fmt.Fprint(tty, "\033[?1000h\033[?1006h")
+	defer fmt.Fprint(tty, "\033[?1006l\033[?1000l")
 
 	// Phase 0.5: spawn the arxi core as a serve subprocess and speak the
 	// NDJSON request/response protocol. Log-follow reads the run's event
@@ -232,15 +253,15 @@ func openMockDriver(ctx context.Context, doc *scene.Document) (Driver, <-chan fo
 		{Type: "agent.activated", Seq: 2, Payload: map[string]any{"agent": "backend"}},
 		{Type: "llm.response", Seq: 3, Payload: map[string]any{
 			"agent": "backend", "model": "openai/gpt-4o",
-			"text":      "Hola! ¿En qué puedo ayudarte?",
+			"text":      "Hi! How can I help you?",
 			"tokens_in": 12, "tokens_out": 18, "cost_usd": 0.0004,
 		}},
 		{Type: "agent.turn_done", Seq: 4, Payload: map[string]any{"agent": "backend"}},
-		{Type: "run.prompt", Seq: 5, Payload: map[string]any{"text": "gracias"}},
+		{Type: "run.prompt", Seq: 5, Payload: map[string]any{"text": "thanks"}},
 		{Type: "agent.activated", Seq: 6, Payload: map[string]any{"agent": "backend"}},
 		{Type: "llm.response", Seq: 7, Payload: map[string]any{
 			"agent": "backend", "model": "openai/gpt-4o",
-			"text":      "De nada.",
+			"text":      "You're welcome.",
 			"tokens_in": 5, "tokens_out": 3, "cost_usd": 0.0001,
 		}},
 		{Type: "agent.turn_done", Seq: 8, Payload: map[string]any{"agent": "backend"}},
@@ -405,6 +426,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	panicGesture := &driver.PanicGesture{}
 	var collected []fold.Event
 	var input string
+	// caret is the rune index of the edit point within input, host-owned view
+	// state held across frames exactly like input itself. It lets the arrow keys
+	// move the cursor and edit the middle of the line; the renderer places the
+	// native terminal cursor at its column.
+	caret := 0
+	// chatScroll is how many lines the chat pane is scrolled up from the tail,
+	// host-owned view state held across frames like the input buffer. Zero
+	// follows the tail (the default); the mouse wheel raises it to reveal older
+	// turns. The renderer clamps it to the frame's line count and reports the
+	// ceiling back through r.ChatScrollMax, which the repaint below pins it to.
+	chatScroll := 0
 	// slashSel is the menu's highlighted row. The host owns it across frames
 	// the way it owns the input buffer: the fold is rebuilt per frame and
 	// carries it, but the state of the menu is not the scene's business.
@@ -451,6 +483,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	repaint := func() {
 		state := fold.Fold(collected)
 		state.UserInput = input // view state: the host owns the input buffer
+		state.UserInputCaret = caret
 		// ui.hidden is host-owned view state the loop keeps across frames, so it
 		// is re-attached on every repaint for the same reason the input buffer
 		// and the scene error are (Fold rebuilds State from the log each frame).
@@ -516,7 +549,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		clock.advance(time.Now())
 		r.AnimTicks = clock.ticks()
 		r.AnimPhase = clock.phases()
+		r.ChatScroll = chatScroll
 		frame, active := r.RenderFrameActive(doc, state)
+		// Pin the scroll offset to what the renderer could actually honour: it
+		// alone knows the wrapped line count and the pane budget, so a wheel spun
+		// past the top settles here instead of banking dead scroll that a later
+		// wheel-down would have to unwind first.
+		if chatScroll > r.ChatScrollMax {
+			chatScroll = r.ChatScrollMax
+		}
 		clock.reconcile(active)
 		emitFrame(tty, frame, theme)
 		armTicker()
@@ -552,8 +593,26 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						}
 						collected = nil
 						input = ""
+						caret = 0
 					} else {
 						input = "" // first press clears the line
+						caret = 0
+					}
+				} else if ev.Key.Type == term.KeyWheelUp || ev.Key.Type == term.KeyWheelDown {
+					// The mouse wheel scrolls the chat pane and nothing else: it
+					// does not type, and it does not disarm the panic gesture (a
+					// wheel notch is not the "any other key" that means the user
+					// changed their mind about quitting). The renderer clamps the
+					// offset to the frame, so scrolling up past the top or down
+					// past the tail simply stops.
+					const wheelStep = 3
+					if ev.Key.Type == term.KeyWheelUp {
+						chatScroll += wheelStep
+					} else {
+						chatScroll -= wheelStep
+						if chatScroll < 0 {
+							chatScroll = 0
+						}
 					}
 				} else {
 					panicGesture.Reset() // any other key disarms the gesture
@@ -576,14 +635,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					// never the menu's to swallow.
 					if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden); handled {
 						input = next
+						caret = clampCaret(input, caret)
 					} else if strings.HasPrefix(input, "/") {
 						// The menu is open: navigation steers the highlight
 						// and never reaches the buffer. Ctrl-C never gets
 						// here, so the escape hatch stays uncapturable
 						// (invariant 6) no matter what the menu does.
-						input, slashSel = slashMenuKey(input, ev.Key, slashSel, ctx, drv)
+						input, caret, slashSel = slashMenuKey(input, caret, ev.Key, slashSel, ctx, drv)
 					} else {
-						input = typeKey(input, ev.Key, ctx, drv)
+						input, caret = typeKey(input, caret, ev.Key, ctx, drv)
 					}
 				}
 				repaint()
@@ -606,17 +666,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	}
 }
 
-// typeKey applies one keypress to the input buffer, or submits the line.
+// typeKey applies one keypress to the input buffer at the caret, or submits the
+// line. It returns the new buffer and the new caret (a rune index into it).
 // Enter submits as run.prompt: in Phase 0 the event lands in the local fold
 // directly (the mock driver feeds it); Phase 0.5 the same event goes to the
 // core over the NDJSON wire and comes back through the log, so the fold never
 // learns a second path.
-func typeKey(input string, k term.Key, ctx context.Context, drv Driver) string {
-	switch {
-	case k.Type == term.KeyEnter:
+func typeKey(input string, caret int, k term.Key, ctx context.Context, drv Driver) (string, int) {
+	if k.Type == term.KeyEnter {
 		text := strings.TrimSpace(input)
 		if text == "" {
-			return input
+			return input, caret
 		}
 		// Slash command: the buffer starts with "/". /ui routes to the
 		// mutation surface; every other slash line is still submitted as a
@@ -625,22 +685,86 @@ func typeKey(input string, k term.Key, ctx context.Context, drv Driver) string {
 		if strings.HasPrefix(text, "/") {
 			text = strings.TrimSpace(text[1:])
 			if text == "" {
-				return input
+				return input, caret
 			}
 		}
 		_ = drv.SubmitPrompt(ctx, text)
-		return ""
-	case k.Type == term.KeyBackspace:
-		r := []rune(input)
-		if len(r) > 0 {
-			return string(r[:len(r)-1])
-		}
-		return input
-	case k.Type == term.KeyRunes && k.Mod&(term.ModCtrl|term.ModAlt) == 0:
-		return input + string(k.Runes)
-	default:
-		return input
+		return "", 0
 	}
+	if next, nextCaret, ok := applyEdit(input, caret, k); ok {
+		return next, nextCaret
+	}
+	return input, caret
+}
+
+// applyEdit is the caret-aware line editor shared by the ordinary input path and
+// the slash line: it is the one place the buffer and the caret move together, so
+// the two paths cannot disagree about what Left or Backspace mean. It handles
+// caret motion (Left/Right/Home/End), deletion on both sides of the caret
+// (Backspace before, Delete under), and insertion of a printable run at the
+// caret. It returns ok=false for any key it does not act on (Enter, the menu's
+// Up/Down/Tab, and so on) so the caller keeps its own handling for those.
+//
+// The buffer is treated as a []rune and the caret is a rune index, never a byte
+// offset: a byte-indexed caret splits multi-byte glyphs and a run of them
+// desynchronises the cursor from the text — the exact class of bug the sibling
+// project fixed by storing runes, and there is no reason to relearn it here.
+func applyEdit(input string, caret int, k term.Key) (string, int, bool) {
+	r := []rune(input)
+	if caret < 0 {
+		caret = 0
+	}
+	if caret > len(r) {
+		caret = len(r)
+	}
+	switch {
+	case k.Type == term.KeyLeft:
+		if caret > 0 {
+			caret--
+		}
+		return input, caret, true
+	case k.Type == term.KeyRight:
+		if caret < len(r) {
+			caret++
+		}
+		return input, caret, true
+	case k.Type == term.KeyHome:
+		return input, 0, true
+	case k.Type == term.KeyEnd:
+		return input, len(r), true
+	case k.Type == term.KeyBackspace:
+		if caret == 0 {
+			return input, caret, true
+		}
+		r = append(r[:caret-1], r[caret:]...)
+		return string(r), caret - 1, true
+	case k.Type == term.KeyDelete:
+		if caret >= len(r) {
+			return input, caret, true
+		}
+		r = append(r[:caret], r[caret+1:]...)
+		return string(r), caret, true
+	case k.Type == term.KeyRunes && k.Mod&(term.ModCtrl|term.ModAlt) == 0:
+		ins := k.Runes
+		r = append(r[:caret], append(append([]rune{}, ins...), r[caret:]...)...)
+		return string(r), caret + len(ins), true
+	default:
+		return input, caret, false
+	}
+}
+
+// clampCaret pins a caret into a buffer's rune range, used when a caller replaces
+// the buffer wholesale (a /ui command clearing the line) and the old caret may
+// now point past the end.
+func clampCaret(input string, caret int) int {
+	n := len([]rune(input))
+	if caret < 0 {
+		return 0
+	}
+	if caret > n {
+		return n
+	}
+	return caret
 }
 
 // uiCommandKey handles Enter on a `/ui …` line: it applies the patch to the
@@ -756,30 +880,30 @@ func isCtrlC(k term.Key) bool {
 // what the menu's footer promises. The selection comes back because it lives
 // across frames in the loop, the way the input buffer does; any key that
 // changes the filter puts it back on the first row.
-func slashMenuKey(input string, k term.Key, sel int, ctx context.Context, drv Driver) (string, int) {
+func slashMenuKey(input string, caret int, k term.Key, sel int, ctx context.Context, drv Driver) (string, int, int) {
 	matches := fold.FilterSlashMatches(strings.TrimPrefix(input, "/"))
 	switch k.Type {
 	case term.KeyUp:
 		if len(matches) == 0 {
-			return input, sel
+			return input, caret, sel
 		}
 		// Wrap at both ends: the highlight is the only thing the keyboard moves,
 		// so the user must always feel a row under it no matter how far up they
 		// spin the wheel (rotary, as requested).
 		sel = (sel - 1 + len(matches)) % len(matches)
-		return input, sel
+		return input, caret, sel
 	case term.KeyDown:
 		if len(matches) == 0 {
-			return input, sel
+			return input, caret, sel
 		}
 		sel = (sel + 1) % len(matches)
-		return input, sel
+		return input, caret, sel
 	case term.KeyTab:
 		// Walk to the first match of the next distinct category, wrapping to
 		// the top. With a single category this lands on row 0, which is also
 		// the sane thing for tab to do there.
 		if len(matches) == 0 {
-			return input, sel
+			return input, caret, sel
 		}
 		if sel >= len(matches) {
 			sel = 0
@@ -792,12 +916,12 @@ func slashMenuKey(input string, k term.Key, sel int, ctx context.Context, drv Dr
 				break
 			}
 		}
-		return input, next
+		return input, caret, next
 	case term.KeyEscape:
-		return "", 0
+		return "", 0, 0
 	case term.KeyEnter:
 		if len(matches) == 0 {
-			return input, sel
+			return input, caret, sel
 		}
 		if sel >= len(matches) {
 			sel = len(matches) - 1
@@ -805,13 +929,20 @@ func slashMenuKey(input string, k term.Key, sel int, ctx context.Context, drv Dr
 		// Phase 0: a command submits as a prompt (typeKey's contract); Phase 2
 		// routes /ui to the mutation surface.
 		_ = drv.SubmitPrompt(ctx, matches[sel].Name)
-		return "", 0
+		return "", 0, 0
 	default:
-		next := typeKey(input, k, ctx, drv)
-		if next != input {
-			return next, 0 // the filter changed: the first row is selected again
+		// The same caret-aware editor the ordinary path uses, so editing the
+		// slash line (Left/Right/Home/End/Delete/Backspace/insert) behaves
+		// identically. A change to the filtered text reselects the first row,
+		// because the previously highlighted row may no longer exist.
+		next, nextCaret, ok := applyEdit(input, caret, k)
+		if !ok {
+			return input, caret, sel
 		}
-		return input, sel
+		if next != input {
+			return next, nextCaret, 0
+		}
+		return next, nextCaret, sel
 	}
 }
 

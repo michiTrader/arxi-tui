@@ -25,10 +25,10 @@ func TestRawSceneRendersCorrectly(t *testing.T) {
 	r := Renderer{Width: 80, Height: 24}
 
 	events := []fold.Event{
-		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hola"}},
-		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hola!"}},
-		{Type: "run.prompt", Seq: 3, Payload: map[string]any{"text": "gracias"}},
-		{Type: "llm.response", Seq: 4, Payload: map[string]any{"text": "De nada."}},
+		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hi"}},
+		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hi!"}},
+		{Type: "run.prompt", Seq: 3, Payload: map[string]any{"text": "thanks"}},
+		{Type: "llm.response", Seq: 4, Payload: map[string]any{"text": "You're welcome."}},
 	}
 	state := fold.Fold(events)
 
@@ -38,10 +38,10 @@ func TestRawSceneRendersCorrectly(t *testing.T) {
 	if strings.Contains(got, "UNKNOWN NODE TYPE") {
 		t.Errorf("render produced unknown node type; output:\n%s", got)
 	}
-	if !strings.Contains(got, "hola") {
-		t.Errorf("expected 'hola' in chat history; got:\n%s", got)
+	if !strings.Contains(got, "hi") {
+		t.Errorf("expected user turn 'hi' in chat history; got:\n%s", got)
 	}
-	if !strings.Contains(got, "Hola!") {
+	if !strings.Contains(got, "Hi!") {
 		t.Errorf("expected assistant response; got:\n%s", got)
 	}
 	if !strings.HasSuffix(got, "> ") {
@@ -183,9 +183,19 @@ func TestInputFrameReportsWhereTheCaretGoes(t *testing.T) {
 		t.Errorf("empty caret at column %d, want 2 (past the two-column \"┃ \" prefix)", f.Cursor.Col)
 	}
 
-	f = r.RenderFrame(doc, fold.State{UserInput: "hi"})
+	// After typing "hi" the caret sits at the end (rune index 2), so it walks
+	// with the text to column 4 (the two-column prefix plus "hi").
+	f = r.RenderFrame(doc, fold.State{UserInput: "hi", UserInputCaret: 2})
 	if want := 4; f.Cursor.Col != want {
 		t.Errorf("caret at column %d after typing \"hi\", want %d; the caret must walk with the text", f.Cursor.Col, want)
+	}
+
+	// A caret moved back into the middle reports the interior column, which is
+	// exactly what lets the user edit mid-line rather than only at the tail. A
+	// renderer that always drew the caret at the end of the text would fail this.
+	f = r.RenderFrame(doc, fold.State{UserInput: "hi", UserInputCaret: 1})
+	if want := 3; f.Cursor.Col != want {
+		t.Errorf("caret at column %d with caret index 1, want %d (prefix + one rune); the caret does not follow the edit point into the middle of the line", f.Cursor.Col, want)
 	}
 }
 
@@ -217,10 +227,10 @@ func TestRawSceneStyledGolden(t *testing.T) {
 	}
 
 	events := []fold.Event{
-		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hola"}},
-		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hola!"}},
-		{Type: "run.prompt", Seq: 3, Payload: map[string]any{"text": "gracias"}},
-		{Type: "llm.response", Seq: 4, Payload: map[string]any{"text": "De nada."}},
+		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hi"}},
+		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "Hi!"}},
+		{Type: "run.prompt", Seq: 3, Payload: map[string]any{"text": "thanks"}},
+		{Type: "llm.response", Seq: 4, Payload: map[string]any{"text": "You're welcome."}},
 	}
 	state := fold.Fold(events)
 
@@ -272,6 +282,12 @@ func TestOverlayBottomAppearsAfterInput(t *testing.T) {
 		{Type: "ui.state", Seq: 2, Payload: map[string]any{"user.input": "/"}},
 	}
 	state := fold.Fold(events)
+	// The caret is host-owned view state, not a folded value: after typing "/"
+	// it sits at the end of the line (rune index 1). The loop sets it every
+	// frame; a test that folds the input must set it too, or the caret defaults
+	// to the start and the assertion below (column 1) tests a state the running
+	// program never produces.
+	state.UserInputCaret = len([]rune(state.UserInput))
 
 	f := r.RenderFrame(doc, state)
 	got := f.Plain()

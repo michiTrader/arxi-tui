@@ -171,10 +171,17 @@ type State struct {
 	BlockedActor string         `json:"agent.blocked.actor"`
 
 	// View-state binds (arxi-tui's own contract, docs/BINDS.md §4.3)
-	UserInput    string       `json:"user.input"`
-	SlashActive  bool         `json:"slash.active"`
-	SlashTyped   string       `json:"slash.typed"`
-	SlashMatches []SlashMatch `json:"slash.matches"`
+	UserInput string `json:"user.input"`
+	// UserInputCaret is the rune index of the caret within UserInput, host-owned
+	// view state like UserInput itself (the fold is rebuilt each frame and carries
+	// it, but no core event produces it). It is not a bind — no scene reads it —
+	// so it is excluded from JSON and bind resolution; the renderer uses it only
+	// to place the native terminal cursor at the edit point, which is the one
+	// thing the terminal cannot work out for itself.
+	UserInputCaret int          `json:"-"`
+	SlashActive    bool         `json:"slash.active"`
+	SlashTyped     string       `json:"slash.typed"`
+	SlashMatches   []SlashMatch `json:"slash.matches"`
 	// SlashHint is the footer line shown while the slash menu is open (BINDS.md
 	// §4.3). The host owns it: it carries the navigation hint when the menu is
 	// active and is empty otherwise, so the scene gates the row with `when:
