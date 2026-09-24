@@ -301,3 +301,146 @@ tell a model which binds exist; the comment there warns against a fourth
 hand-copied inventory. A plugin's declared binds must feed the **same** single
 source — the manifest's `binds` map is consulted directly, never copied into a
 second table — so H5 adds a code path, not a parallel inventory.
+
+---
+
+## Refusals / empty state (each addressed)
+
+Every refusal below carries `file:line` (the JSON offset → `file:line` map
+SCENES.md `:23` already provides), because a manifest is a document and a
+refusal without a location is a bug (AGENTS.md).
+
+- **Empty manifest** — no `mounts` and no `tokens` → refused: a plugin that
+  contributes no UI and no tokens does nothing, and an accepted no-op plugin is
+  a grant that bought nothing. (An `executable` with no `mounts` is legal only
+  once behavioral plugins that mount *nothing* but stream binds a host fragment
+  reads become a use case; H names the field, Block I decides that sub-case.)
+- **`executable` present, `consent_required: false`** → refused at load, before
+  Block I is consulted: a manifest carrying code must cross the gate, and a
+  manifest asserting otherwise is refused rather than trusted.
+- **`executable` absent, but `capabilities`/`args`/`binds` present** → refused:
+  a declarative manifest declaring behavioral fields is contradictory, and the
+  contradiction is the H-A discriminator failing. The fix the refusal names is
+  "add an `executable` (behavioral) or drop the behavioral fields
+  (declarative)".
+- **`executable` that is absolute, escapes the package (`..`), or is a symlink**
+  → refused: the package is the trust boundary (arxi-sim `spec/extensions.md:26`),
+  and an executable outside it is code the digest never covered.
+- **Unknown `protocol` or a capability outside the closed set** → refused naming
+  the offending value and listing the legal set — the same net a bad `anim`
+  curve gets (G0), because both are closed-because-code vocabularies.
+- **A mounted fragment that fails the scene validator** → refused with the
+  scene validator's own address: a fragment is a scene subtree and gets no
+  weaker check than a hand-written document. This is why `mounts` embeds a
+  fragment rather than a bespoke shape — the existing validator is the net.
+- **A fragment referencing a `tokens` entry the manifest neither defines nor the
+  host theme provides** → refused at install (TOKENS.md `:162-165`, already
+  signed). H4 adds the merge; this refusal is the one the merge already implies.
+- **A mounted fragment id colliding with a host or another plugin's node** →
+  refused by the id-uniqueness invariant after `<plugin-id>/` prefixing (H-B):
+  the prefix removes cross-plugin collisions by construction, so a surviving
+  collision is a plugin colliding with *itself* (two fragment nodes sharing a
+  raw id), which is the author's bug and named as such.
+- **The escape hatch is untouched.** A declarative plugin adds nodes and tokens;
+  it runs no code, arms no ticker, and reads no input. Ctrl-C twice / `-scene ""`
+  restores the raw scene regardless of any mounted fragment (invariant 6) — a
+  mounted overlay joins the focus stack (Q13) but cannot capture the exit, the
+  same guarantee an `anchor:"full"` overlay lives under (Q12).
+- **Empty is a no-op and moves no golden.** A host with no plugins loaded
+  composes exactly the document it composes today; the plugin loader is off the
+  render path until a manifest is mounted. Signing H1 freezes vocabulary and
+  moves no existing fixture, the same no-op guarantee D3's empty `ui.hidden` and
+  G-A's absent ticker gave.
+
+---
+
+## What each Block H task implements against this signature
+
+H1 signs the schema; it lifts no guard. The tasks that do, each with its own
+counterfactual:
+
+- **H2** loads a **declarative** manifest (no `executable`): parse, validate the
+  identity block, validate each `mounts` fragment through the scene validator,
+  validate the `tokens` block through the token validator. Refuses a behavioral
+  manifest with "behavioral plugins are Block I" until I lands. Counterfactual:
+  a manifest with an `executable` must be refused by H2, not silently loaded.
+- **H3** composes the loaded fragments into the host tree via the F1 `insert`
+  at each mount's `where`, applying the `<plugin-id>/` id prefix (H-B).
+  Counterfactual: disabling the prefix reintroduces the cross-plugin id
+  collision two-ticker test.
+- **H4** merges `tokens` at `user > plugin > factory` (TOKENS.md, already
+  signed). Counterfactual: a plugin token must lose to a user token and win over
+  factory.
+- **H5** adds the `<plugin-id>.*` branch to `validateOneBind` (H-C).
+  Counterfactual: a `tick.*` bind outside the plugin's mount, and a declared
+  bind under the wrong node kind, must each be refused; disabling the branch
+  refuses even the declared-and-correct use.
+- **H6** implements `/ui plugin add <url>` for the **declarative** path (fetch,
+  validate, mount) — behavioral fetch waits on the Block I gate.
+- **H7** freezes the Scene 6 golden: the ticker manifest's declarative half (the
+  overlay fragment + `profit`/`loss` tokens) composed into a host scene, pinned
+  as a golden. Because the behavioral stream is Block I, the Scene 6 golden pins
+  the **mounted, unsatisfied** state — `tick.price` rendering as its `mock`
+  placeholder — which is exactly the preview state Q16/Block J needs and the
+  honest frame a declarative-only load produces.
+
+## Text to sign
+
+- **`docs/SCENES.md` Scene 6** gains a status paragraph (as Scene 4 has one)
+  recording the manifest schema: the JSON format, the field list, the
+  declarative-vs-behavioral discriminator (`executable`), the `<plugin-id>/` id
+  prefix, and the note that Block H implements the declarative path while the
+  behavioral fields are specified-for-Block-I. It cites this document as the
+  argued record.
+- **`docs/BINDS.md` §4.4** gains the concrete declared-vs-used rule: a
+  `<plugin-id>.<field>` bind resolves iff inside a mount of that plugin and
+  `<field>` is a key of the manifest's `binds` map (the `kind` guarding node
+  type), refused with `file:line` otherwise — the plugin-namespace analogue of
+  §4.7's `row.*` scope rule.
+- **`docs/PLAN.md`** gains **ADR-0006 — the plugin manifest schema and the
+  declarative/behavioral split**: `executable` is the discriminator; Block H
+  builds only the declarative path; the manifest is JSON embedding scene
+  fragments and a token block; mounts reuse D2 addressing with `<plugin-id>/` id
+  prefixing; the `binds` map is the single source the namespace validator reads.
+- **`docs/ADDRESSING.md`** gains a short note that a plugin `mounts[].where`
+  reuses the same `where` grammar, plus the overlay-anchor form, and that mounted
+  ids are `<plugin-id>/`-prefixed before the uniqueness invariant runs.
+- **`docs/TOKENS.md`**'s "Extension by plugins" section, already signed, needs
+  no change — H1 consumes it. A one-line forward pointer to ADR-0006 is enough.
+
+Signing lifts no code guard; H2–H6 do, each with its own counterfactual.
+
+## Open decisions for the owner
+
+Four genuine forks are flagged rather than silently resolved, because each
+changes behaviour the ecosystem will depend on:
+
+1. **The declarative/behavioral discriminator (H-A).** Proposed: presence of
+   `executable`. The alternative — an explicit `"kind": "declarative"|"behavioral"`
+   field — is more self-documenting but lets the two disagree (an `executable`
+   with `kind:"declarative"`), which is a refusal to specify rather than a
+   distinction to trust. Recommend `executable` as the single source, with the
+   contradictory-fields refusals above catching the mistakes an explicit kind
+   would encode.
+2. **Fragment id prefixing (H-B.3).** Proposed: the loader prefixes every
+   mounted id with `<plugin-id>/`, mechanically, after validation. The
+   alternative — require globally-unique raw ids and refuse collisions — pushes
+   the collision onto authors and makes two independent plugins using `overlay`
+   as an id a user-facing conflict. Recommend automatic prefixing; it is the
+   only option that composes N strangers' trees without coordination.
+3. **The `binds` `kind` vocabulary.** Proposed: a small closed set matching the
+   node axes that consume a value (`text`, `series` for sparkline, and whatever
+   `markdown`/`list` need). This is closed-because-it-maps-to-node-types, like
+   the animation curves. The open question is only the *initial* set; recommend
+   starting with `text` and `series` (the two Scene 6 uses) and widening per
+   node as a signed change, never open.
+4. **Whether `/ui plugin remove <id>` ships in Block H or waits.** Proposed:
+   ship it with H3, because unmount is the mechanical inverse of mount (drop
+   `<plugin-id>/`-prefixed nodes and the plugin's tokens) and a mount with no
+   unmount is a one-way door. Recommend shipping both; the symmetry is what
+   makes the id/token namespacing testable (mount then unmount returns the
+   original document byte-for-byte).
+
+Once these are settled and the text above is signed, H2–H7 implement one beat
+each against this contract, each landing with the counterfactual named above —
+the same discipline every Block E/F/G task closed with.
