@@ -585,90 +585,115 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			if !ok {
 				return nil // TTY channel closed: session ended
 			}
-			switch ev.Kind {
-			case term.EventKey:
-				if isCtrlC(ev.Key) {
-					if panicGesture.HandleCtrlC(time.Now()) {
-						if len(collected) == 0 && input == "" {
-							return nil // nothing to restore: the door
+			// Coalesce a burst of terminal events into a single repaint. A fast
+			// wheel spin, a held arrow, or paste-by-typing lands many events on
+			// this channel at once; dispatching them all and painting once after
+			// the batch is what stops the scroll from trailing the wheel a frame
+			// at a time — the "leve retraso" reported after the flicker fix —
+			// while dropping no event, since each still runs the same dispatch.
+			// The in-place synchronized repaint that removed the flicker is
+			// unchanged; only how often it runs under a burst is. The panic
+			// gesture is unaffected: HandleCtrlC still sees every press in order,
+			// so the double-Ctrl-C timing is decided on the events, not on frames.
+			pending := true
+			for pending {
+				switch ev.Kind {
+				case term.EventKey:
+					if isCtrlC(ev.Key) {
+						if panicGesture.HandleCtrlC(time.Now()) {
+							if len(collected) == 0 && input == "" {
+								return nil // nothing to restore: the door
+							}
+							collected = nil
+							input = ""
+							caret = 0
+						} else {
+							input = "" // first press clears the line
+							caret = 0
 						}
-						collected = nil
-						input = ""
-						caret = 0
+					} else if ev.Key.Type == term.KeyWheelUp || ev.Key.Type == term.KeyWheelDown {
+						// The mouse wheel scrolls the chat pane and nothing else: it
+						// does not type, and it does not disarm the panic gesture (a
+						// wheel notch is not the "any other key" that means the user
+						// changed their mind about quitting). The renderer clamps the
+						// offset to the frame, so scrolling up past the top or down
+						// past the tail simply stops.
+						const wheelStep = 3
+						if ev.Key.Type == term.KeyWheelUp {
+							chatScroll += wheelStep
+						} else {
+							chatScroll -= wheelStep
+							if chatScroll < 0 {
+								chatScroll = 0
+							}
+						}
 					} else {
-						input = "" // first press clears the line
-						caret = 0
-					}
-				} else if ev.Key.Type == term.KeyWheelUp || ev.Key.Type == term.KeyWheelDown {
-					// The mouse wheel scrolls the chat pane and nothing else: it
-					// does not type, and it does not disarm the panic gesture (a
-					// wheel notch is not the "any other key" that means the user
-					// changed their mind about quitting). The renderer clamps the
-					// offset to the frame, so scrolling up past the top or down
-					// past the tail simply stops.
-					const wheelStep = 3
-					if ev.Key.Type == term.KeyWheelUp {
-						chatScroll += wheelStep
-					} else {
-						chatScroll -= wheelStep
-						if chatScroll < 0 {
-							chatScroll = 0
+						panicGesture.Reset() // any other key disarms the gesture
+						// The /ui dispatch is asked before the menu, and the order
+						// is the fix for a measured dead end rather than a
+						// preference. While the buffer starts with "/", every key
+						// goes to slashMenuKey, whose Enter branch returns the
+						// buffer untouched when the filter matches nothing — and
+						// the filter matches on the whole typed string, so it
+						// drops to zero the moment an argument is typed:
+						//
+						//	typed "ui"                  -> 1 match
+						//	typed "ui style"            -> 0 matches
+						//	typed "ui style status dim" -> 0 matches
+						//
+						// So a complete, correct command could be typed and Enter
+						// did nothing at all. Not a refusal, not a prompt —
+						// nothing, with the menu showing an empty list. Asking
+						// the command surface first means a line it recognises is
+						// never the menu's to swallow.
+						if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden); handled {
+							input = next
+							caret = clampCaret(input, caret)
+						} else if strings.HasPrefix(input, "/") {
+							// The menu is open: navigation steers the highlight
+							// and never reaches the buffer. Ctrl-C never gets
+							// here, so the escape hatch stays uncapturable
+							// (invariant 6) no matter what the menu does.
+							input, caret, slashSel = slashMenuKey(input, caret, ev.Key, slashSel, ctx, drv)
+						} else if ev.Key.Type == term.KeyUp || ev.Key.Type == term.KeyDown {
+							// Vertical caret motion on a wrapped (multi-line) input.
+							// It is intercepted here rather than in applyEdit because
+							// up/down mean "walk the wrapped rows", which needs the wrap
+							// width — the terminal width less the input's prefix — that
+							// only the host and the document together know. On a
+							// single-row line there is no row above or below, so the
+							// move is a no-op and the key is harmlessly swallowed. It
+							// sits after the slash branch, so while the menu is open
+							// up/down still steer the highlight and never the caret.
+							w, _ := tty.Size()
+							dir := -1
+							if ev.Key.Type == term.KeyDown {
+								dir = 1
+							}
+							caret = engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w), dir)
+						} else {
+							input, caret = typeKey(input, caret, ev.Key, ctx, drv)
 						}
 					}
-				} else {
-					panicGesture.Reset() // any other key disarms the gesture
-					// The /ui dispatch is asked before the menu, and the order
-					// is the fix for a measured dead end rather than a
-					// preference. While the buffer starts with "/", every key
-					// goes to slashMenuKey, whose Enter branch returns the
-					// buffer untouched when the filter matches nothing — and
-					// the filter matches on the whole typed string, so it
-					// drops to zero the moment an argument is typed:
-					//
-					//	typed "ui"                  -> 1 match
-					//	typed "ui style"            -> 0 matches
-					//	typed "ui style status dim" -> 0 matches
-					//
-					// So a complete, correct command could be typed and Enter
-					// did nothing at all. Not a refusal, not a prompt —
-					// nothing, with the menu showing an empty list. Asking
-					// the command surface first means a line it recognises is
-					// never the menu's to swallow.
-					if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden); handled {
-						input = next
-						caret = clampCaret(input, caret)
-					} else if strings.HasPrefix(input, "/") {
-						// The menu is open: navigation steers the highlight
-						// and never reaches the buffer. Ctrl-C never gets
-						// here, so the escape hatch stays uncapturable
-						// (invariant 6) no matter what the menu does.
-						input, caret, slashSel = slashMenuKey(input, caret, ev.Key, slashSel, ctx, drv)
-					} else if ev.Key.Type == term.KeyUp || ev.Key.Type == term.KeyDown {
-						// Vertical caret motion on a wrapped (multi-line) input.
-						// It is intercepted here rather than in applyEdit because
-						// up/down mean "walk the wrapped rows", which needs the wrap
-						// width — the terminal width less the input's prefix — that
-						// only the host and the document together know. On a
-						// single-row line there is no row above or below, so the
-						// move is a no-op and the key is harmlessly swallowed. It
-						// sits after the slash branch, so while the menu is open
-						// up/down still steer the highlight and never the caret.
-						w, _ := tty.Size()
-						dir := -1
-						if ev.Key.Type == term.KeyDown {
-							dir = 1
-						}
-						caret = engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w), dir)
-					} else {
-						input, caret = typeKey(input, caret, ev.Key, ctx, drv)
-					}
+				case term.EventResize:
+					// A resize only needs a fresh frame at the new size, delivered
+					// by the batch repaint below like every other event in the run.
+				case term.EventClosed:
+					return nil
 				}
-				repaint()
-			case term.EventResize:
-				repaint()
-			case term.EventClosed:
-				return nil
+				// Pull the next queued terminal event without blocking. When the
+				// channel is momentarily empty the batch ends and the frame is
+				// painted once below for the whole run of events just dispatched.
+				select {
+				case ev, ok = <-termEvents:
+					if !ok {
+						return nil
+					}
+				default:
+					pending = false
+				}
 			}
+			repaint()
 
 		case e, ok := <-eventCh:
 			if !ok {
