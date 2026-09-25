@@ -19,9 +19,16 @@ import (
 type testDriver struct {
 	evCh chan fold.Event
 	seq  int64
+	// submitted records every prompt SubmitPrompt was asked to send, in order.
+	// It is read only after loop() returns (same goroutine), so no lock is
+	// needed. It lets a test assert not just what reached the transcript but
+	// how many submissions happened — the paste path must submit a multi-line
+	// block once, not once per line.
+	submitted []string
 }
 
 func (d *testDriver) SubmitPrompt(ctx context.Context, text string) error {
+	d.submitted = append(d.submitted, text)
 	d.seq += 1000
 	ev := fold.Event{
 		Type:    "run.prompt",
@@ -715,5 +722,74 @@ func TestLoopReceivesDriverEvents(t *testing.T) {
 	}
 	if !strings.Contains(out, "Hola!") {
 		t.Errorf("transcript does not contain driver event 'Hola!'; output:\n%s", out)
+	}
+}
+
+// TestLoopPasteSubmitsMultiLineBlockAsOnePrompt is the direct guard for the
+// reported paste bug: a multi-line paste followed by Enter must submit the whole
+// block as a single prompt, not one prompt per line. The terminal delivers the
+// paste as one EventPaste (bracketed paste, enabled at startup); the loop keeps
+// its newlines in the buffer and Enter sends the lot. Without the EventPaste
+// handler the paste is dropped and Enter submits nothing — so the count and the
+// text both pin the fix.
+func TestLoopPasteSubmitsMultiLineBlockAsOnePrompt(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factoryRAW))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	script := []scheduledEvent{
+		{0, pasteEvent("uno\ndos\ntres")},
+		{20 * time.Millisecond, enterEvent()},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+	}
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: make(chan fold.Event, 64)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	if len(drv.submitted) != 1 {
+		t.Fatalf("a three-line paste + Enter submitted %d prompts, want 1; a multi-line paste must be one submission, not one per line: %q", len(drv.submitted), drv.submitted)
+	}
+	if drv.submitted[0] != "uno\ndos\ntres" {
+		t.Errorf("submitted prompt was %q, want %q; the paste lost its earlier lines", drv.submitted[0], "uno\ndos\ntres")
+	}
+}
+
+// TestLoopPasteAloneDoesNotSubmit checks a paste with no following Enter never
+// submits: pasted text is content to edit, and only Enter sends it. It pastes a
+// two-line block and then exits with the escape gesture without an Enter; nothing
+// must have been submitted.
+func TestLoopPasteAloneDoesNotSubmit(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factoryRAW))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	script := []scheduledEvent{
+		{0, pasteEvent("abc\ndef")},
+		{50 * time.Millisecond, ctrlCharEvent('c')}, // first: clears the pasted line
+		{50 * time.Millisecond, ctrlCharEvent('c')}, // second: exits (nothing to submit)
+	}
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: make(chan fold.Event, 64)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	if len(drv.submitted) != 0 {
+		t.Errorf("a paste with no Enter submitted %d prompts, want 0; pasting is editing, not sending: %q", len(drv.submitted), drv.submitted)
 	}
 }

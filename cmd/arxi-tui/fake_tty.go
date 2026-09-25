@@ -94,3 +94,11 @@ func arrowEvent(t term.KeyType) term.Event {
 func enterEvent() term.Event {
 	return term.Event{Kind: term.EventKey, Key: term.Key{Type: term.KeyEnter}}
 }
+
+// pasteEvent builds a term.EventPaste carrying a whole block, the way the
+// decoder reports a bracketed paste (\033[200~ … \033[201~) after normalising
+// its line endings to LF. A multi-line paste is one event, never one key per
+// line — the distinction the bracketed-paste fix rests on.
+func pasteEvent(text string) term.Event {
+	return term.Event{Kind: term.EventPaste, Text: text}
+}

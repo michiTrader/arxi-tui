@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/michiTrader/arxi_tui/internal/driver"
@@ -193,6 +194,28 @@ func run(scenePath string) error {
 	// back with mouse reporting off exactly as it was found.
 	fmt.Fprint(tty, "\033[?1000h\033[?1006h")
 	defer fmt.Fprint(tty, "\033[?1006l\033[?1000l")
+
+	// Bracketed paste: the terminal wraps a pasted block in \033[200~ … \033[201~
+	// so it arrives as one EventPaste with its newlines intact, instead of a burst
+	// of keys in which every newline is a plain Enter. Without it a multi-line
+	// paste submits every line but the last (the reported bug); with it the whole
+	// block lands at the caret. Torn down before the alternate buffer is left, so
+	// the shell is handed back with paste bracketing off exactly as it was found.
+	fmt.Fprint(tty, "\033[?2004h")
+	defer fmt.Fprint(tty, "\033[?2004l")
+
+	// Kitty keyboard, disambiguate-escape-codes only (CSI > 1 u). This is what
+	// lets Shift+Enter arrive as its own key (CSI 13;2u) instead of a bare CR
+	// indistinguishable from Enter, so the newline gesture is reachable with the
+	// chord most users reach for. The flag is the mildest level: ordinary text
+	// still arrives as text and legacy keys keep their bytes, so nothing else in
+	// the decoder changes — only the previously-unreachable modified chords gain
+	// a spelling. A terminal that does not implement Kitty silently ignores both
+	// the push and the pop (an unknown CSI is dropped, never printed), so Ctrl+J
+	// remains the newline that works everywhere. Popped (CSI < u) before the
+	// alternate buffer is left so the shell's keyboard mode is restored.
+	fmt.Fprint(tty, "\033[>1u")
+	defer fmt.Fprint(tty, "\033[<u")
 
 	// Phase 0.5: spawn the arxi core as a serve subprocess and speak the
 	// NDJSON request/response protocol. Log-follow reads the run's event
@@ -585,90 +608,127 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			if !ok {
 				return nil // TTY channel closed: session ended
 			}
-			switch ev.Kind {
-			case term.EventKey:
-				if isCtrlC(ev.Key) {
-					if panicGesture.HandleCtrlC(time.Now()) {
-						if len(collected) == 0 && input == "" {
-							return nil // nothing to restore: the door
+			// Coalesce a burst of terminal events into a single repaint. A fast
+			// wheel spin, a held arrow, or paste-by-typing lands many events on
+			// this channel at once; dispatching them all and painting once after
+			// the batch is what stops the scroll from trailing the wheel a frame
+			// at a time — the "leve retraso" reported after the flicker fix —
+			// while dropping no event, since each still runs the same dispatch.
+			// The in-place synchronized repaint that removed the flicker is
+			// unchanged; only how often it runs under a burst is. The panic
+			// gesture is unaffected: HandleCtrlC still sees every press in order,
+			// so the double-Ctrl-C timing is decided on the events, not on frames.
+			pending := true
+			for pending {
+				switch ev.Kind {
+				case term.EventKey:
+					if isCtrlC(ev.Key) {
+						if panicGesture.HandleCtrlC(time.Now()) {
+							if len(collected) == 0 && input == "" {
+								return nil // nothing to restore: the door
+							}
+							collected = nil
+							input = ""
+							caret = 0
+						} else {
+							input = "" // first press clears the line
+							caret = 0
 						}
-						collected = nil
-						input = ""
-						caret = 0
+					} else if ev.Key.Type == term.KeyWheelUp || ev.Key.Type == term.KeyWheelDown {
+						// The mouse wheel scrolls the chat pane and nothing else: it
+						// does not type, and it does not disarm the panic gesture (a
+						// wheel notch is not the "any other key" that means the user
+						// changed their mind about quitting). The renderer clamps the
+						// offset to the frame, so scrolling up past the top or down
+						// past the tail simply stops.
+						const wheelStep = 3
+						if ev.Key.Type == term.KeyWheelUp {
+							chatScroll += wheelStep
+						} else {
+							chatScroll -= wheelStep
+							if chatScroll < 0 {
+								chatScroll = 0
+							}
+						}
 					} else {
-						input = "" // first press clears the line
-						caret = 0
-					}
-				} else if ev.Key.Type == term.KeyWheelUp || ev.Key.Type == term.KeyWheelDown {
-					// The mouse wheel scrolls the chat pane and nothing else: it
-					// does not type, and it does not disarm the panic gesture (a
-					// wheel notch is not the "any other key" that means the user
-					// changed their mind about quitting). The renderer clamps the
-					// offset to the frame, so scrolling up past the top or down
-					// past the tail simply stops.
-					const wheelStep = 3
-					if ev.Key.Type == term.KeyWheelUp {
-						chatScroll += wheelStep
-					} else {
-						chatScroll -= wheelStep
-						if chatScroll < 0 {
-							chatScroll = 0
+						panicGesture.Reset() // any other key disarms the gesture
+						// The /ui dispatch is asked before the menu, and the order
+						// is the fix for a measured dead end rather than a
+						// preference. While the buffer starts with "/", every key
+						// goes to slashMenuKey, whose Enter branch returns the
+						// buffer untouched when the filter matches nothing — and
+						// the filter matches on the whole typed string, so it
+						// drops to zero the moment an argument is typed:
+						//
+						//	typed "ui"                  -> 1 match
+						//	typed "ui style"            -> 0 matches
+						//	typed "ui style status dim" -> 0 matches
+						//
+						// So a complete, correct command could be typed and Enter
+						// did nothing at all. Not a refusal, not a prompt —
+						// nothing, with the menu showing an empty list. Asking
+						// the command surface first means a line it recognises is
+						// never the menu's to swallow.
+						if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden); handled {
+							input = next
+							caret = clampCaret(input, caret)
+						} else if strings.HasPrefix(input, "/") {
+							// The menu is open: navigation steers the highlight
+							// and never reaches the buffer. Ctrl-C never gets
+							// here, so the escape hatch stays uncapturable
+							// (invariant 6) no matter what the menu does.
+							input, caret, slashSel = slashMenuKey(input, caret, ev.Key, slashSel, ctx, drv)
+						} else if ev.Key.Type == term.KeyUp || ev.Key.Type == term.KeyDown {
+							// Vertical caret motion on a wrapped (multi-line) input.
+							// It is intercepted here rather than in applyEdit because
+							// up/down mean "walk the wrapped rows", which needs the wrap
+							// width — the terminal width less the input's prefix — that
+							// only the host and the document together know. On a
+							// single-row line there is no row above or below, so the
+							// move is a no-op and the key is harmlessly swallowed. It
+							// sits after the slash branch, so while the menu is open
+							// up/down still steer the highlight and never the caret.
+							w, _ := tty.Size()
+							dir := -1
+							if ev.Key.Type == term.KeyDown {
+								dir = 1
+							}
+							caret = engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w), dir)
+						} else {
+							input, caret = typeKey(input, caret, ev.Key, ctx, drv)
 						}
 					}
-				} else {
-					panicGesture.Reset() // any other key disarms the gesture
-					// The /ui dispatch is asked before the menu, and the order
-					// is the fix for a measured dead end rather than a
-					// preference. While the buffer starts with "/", every key
-					// goes to slashMenuKey, whose Enter branch returns the
-					// buffer untouched when the filter matches nothing — and
-					// the filter matches on the whole typed string, so it
-					// drops to zero the moment an argument is typed:
-					//
-					//	typed "ui"                  -> 1 match
-					//	typed "ui style"            -> 0 matches
-					//	typed "ui style status dim" -> 0 matches
-					//
-					// So a complete, correct command could be typed and Enter
-					// did nothing at all. Not a refusal, not a prompt —
-					// nothing, with the menu showing an empty list. Asking
-					// the command surface first means a line it recognises is
-					// never the menu's to swallow.
-					if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden); handled {
-						input = next
-						caret = clampCaret(input, caret)
-					} else if strings.HasPrefix(input, "/") {
-						// The menu is open: navigation steers the highlight
-						// and never reaches the buffer. Ctrl-C never gets
-						// here, so the escape hatch stays uncapturable
-						// (invariant 6) no matter what the menu does.
-						input, caret, slashSel = slashMenuKey(input, caret, ev.Key, slashSel, ctx, drv)
-					} else if ev.Key.Type == term.KeyUp || ev.Key.Type == term.KeyDown {
-						// Vertical caret motion on a wrapped (multi-line) input.
-						// It is intercepted here rather than in applyEdit because
-						// up/down mean "walk the wrapped rows", which needs the wrap
-						// width — the terminal width less the input's prefix — that
-						// only the host and the document together know. On a
-						// single-row line there is no row above or below, so the
-						// move is a no-op and the key is harmlessly swallowed. It
-						// sits after the slash branch, so while the menu is open
-						// up/down still steer the highlight and never the caret.
-						w, _ := tty.Size()
-						dir := -1
-						if ev.Key.Type == term.KeyDown {
-							dir = 1
-						}
-						caret = engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w), dir)
-					} else {
-						input, caret = typeKey(input, caret, ev.Key, ctx, drv)
-					}
+				case term.EventPaste:
+					// A paste is text, never keys: nothing in it dispatches an
+					// action or the escape hatch, so it disarms the panic gesture
+					// like any other input and lands whole at the caret. Its
+					// newlines are kept — a pasted command block is the block it
+					// was, and the buffer holds '\n' so the input renders the
+					// extra rows — where the alternative, one Enter per line,
+					// submits every line but the last. cleanPaste drops any other
+					// control byte so a stray ESC in the clipboard cannot inject
+					// an escape sequence into the line the host re-emits.
+					panicGesture.Reset()
+					input, caret = insertText(input, caret, cleanPaste(ev.Text))
+				case term.EventResize:
+					// A resize only needs a fresh frame at the new size, delivered
+					// by the batch repaint below like every other event in the run.
+				case term.EventClosed:
+					return nil
 				}
-				repaint()
-			case term.EventResize:
-				repaint()
-			case term.EventClosed:
-				return nil
+				// Pull the next queued terminal event without blocking. When the
+				// channel is momentarily empty the batch ends and the frame is
+				// painted once below for the whole run of events just dispatched.
+				select {
+				case ev, ok = <-termEvents:
+					if !ok {
+						return nil
+					}
+				default:
+					pending = false
+				}
 			}
+			repaint()
 
 		case e, ok := <-eventCh:
 			if !ok {
@@ -724,6 +784,24 @@ func findUserInput(n *scene.Node) *scene.Node {
 	return nil
 }
 
+// isNewlineGesture reports whether a key should insert a literal newline into the
+// input rather than submit the line. Two spellings, so a newline is reachable on
+// as many terminals as possible: Shift/Ctrl+Enter (the chord the user reaches
+// for, delivered as a modified KeyEnter — Shift needs the Kitty disambiguation
+// enabled at startup, Ctrl does not), and Ctrl+J, the 0x0a the decoder reports as
+// 'j'+ModCtrl and the newline that needs no negotiation at all (it is also what
+// Windows delivers for Ctrl+Enter). Alt+Enter is deliberately not used: Windows
+// Terminal binds it to fullscreen, so the sibling project avoids it and so do we.
+func isNewlineGesture(k term.Key) bool {
+	if k.Type == term.KeyEnter && k.Mod&(term.ModShift|term.ModCtrl) != 0 {
+		return true
+	}
+	if k.Type == term.KeyRunes && len(k.Runes) == 1 && k.Runes[0] == 'j' && k.Mod&term.ModCtrl != 0 {
+		return true
+	}
+	return false
+}
+
 // typeKey applies one keypress to the input buffer at the caret, or submits the
 // line. It returns the new buffer and the new caret (a rune index into it).
 // Enter submits as run.prompt: in Phase 0 the event lands in the local fold
@@ -731,6 +809,15 @@ func findUserInput(n *scene.Node) *scene.Node {
 // core over the NDJSON wire and comes back through the log, so the fold never
 // learns a second path.
 func typeKey(input string, caret int, k term.Key, ctx context.Context, drv Driver) (string, int) {
+	// A newline gesture inserts a literal '\n' at the caret instead of
+	// submitting, so a prompt can span several lines. Plain Enter still submits;
+	// the two are told apart by the modifier (Shift/Ctrl+Enter) or by Ctrl+J,
+	// which is the newline Windows Terminal and conhost deliver for Ctrl+Enter
+	// with no Kitty negotiation. This is checked before the Enter-submits branch
+	// so the modified chord never reaches it.
+	if isNewlineGesture(k) {
+		return insertText(input, caret, "\n")
+	}
 	if k.Type == term.KeyEnter {
 		text := strings.TrimSpace(input)
 		if text == "" {
@@ -776,11 +863,15 @@ func applyEdit(input string, caret int, k term.Key) (string, int, bool) {
 		caret = len(r)
 	}
 	switch {
+	case k.Type == term.KeyLeft && k.Mod&(term.ModCtrl|term.ModAlt) != 0:
+		return input, wordLeft(r, caret), true
 	case k.Type == term.KeyLeft:
 		if caret > 0 {
 			caret--
 		}
 		return input, caret, true
+	case k.Type == term.KeyRight && k.Mod&(term.ModCtrl|term.ModAlt) != 0:
+		return input, wordRight(r, caret), true
 	case k.Type == term.KeyRight:
 		if caret < len(r) {
 			caret++
@@ -811,6 +902,39 @@ func applyEdit(input string, caret int, k term.Key) (string, int, bool) {
 	}
 }
 
+// wordLeft moves the caret to the start of the previous word: skip any spaces to
+// the left, then the run of non-spaces. Boundaries are whitespace runs, not
+// punctuation — the same rule the sibling line editor and a shell's Ctrl+Left
+// use — and a newline counts as space (unicode.IsSpace), so the jump crosses a
+// line break in a multi-line prompt the way the terminal's own word-left does.
+func wordLeft(r []rune, caret int) int {
+	if caret > len(r) {
+		caret = len(r)
+	}
+	for caret > 0 && unicode.IsSpace(r[caret-1]) {
+		caret--
+	}
+	for caret > 0 && !unicode.IsSpace(r[caret-1]) {
+		caret--
+	}
+	return caret
+}
+
+// wordRight is wordLeft's mirror: skip spaces to the right, then the run of
+// non-spaces, landing the caret just past the current word.
+func wordRight(r []rune, caret int) int {
+	if caret < 0 {
+		caret = 0
+	}
+	for caret < len(r) && unicode.IsSpace(r[caret]) {
+		caret++
+	}
+	for caret < len(r) && !unicode.IsSpace(r[caret]) {
+		caret++
+	}
+	return caret
+}
+
 // clampCaret pins a caret into a buffer's rune range, used when a caller replaces
 // the buffer wholesale (a /ui command clearing the line) and the old caret may
 // now point past the end.
@@ -823,6 +947,51 @@ func clampCaret(input string, caret int) int {
 		return n
 	}
 	return caret
+}
+
+// insertText inserts a run of text into the buffer at the caret (a rune index),
+// returning the new buffer and the caret past the inserted run. It is the paste
+// path: a whole block lands as one edit, where applyEdit inserts a single
+// keypress. Rune-indexed for the same reason applyEdit is — a byte offset would
+// split a multi-byte glyph and desynchronise the caret from the text.
+func insertText(input string, caret int, ins string) (string, int) {
+	r := []rune(input)
+	if caret < 0 {
+		caret = 0
+	}
+	if caret > len(r) {
+		caret = len(r)
+	}
+	insR := []rune(ins)
+	out := make([]rune, 0, len(r)+len(insR))
+	out = append(out, r[:caret]...)
+	out = append(out, insR...)
+	out = append(out, r[caret:]...)
+	return string(out), caret + len(insR)
+}
+
+// cleanPaste keeps a pasted block insertable. Newlines survive so a pasted code
+// block is the block it was (the buffer holds '\n' and the input renders the
+// rows); a tab becomes a single space so the caret's column arithmetic stays
+// honest; and every other control byte is dropped so a stray ESC or CSI in the
+// clipboard cannot inject an escape sequence into the line the host re-emits.
+// The terminal already normalised CR to LF before this saw the text.
+func cleanPaste(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n':
+			b.WriteRune(r)
+		case r == '\t':
+			b.WriteByte(' ')
+		case r < 0x20 || r == 0x7f:
+			// drop: a control byte in the clipboard is not text to edit
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // uiCommandKey handles Enter on a `/ui …` line: it applies the patch to the

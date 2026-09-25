@@ -869,42 +869,57 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 	}
 }
 
-// inputVisualRows splits the typed text into visual rows of at most `room`
-// display columns each, cutting at grapheme boundaries (ansi.Truncate) so a wide
-// glyph is never split across the wrap. When the text ends exactly on a row
-// boundary a trailing empty row is added: an editor puts the caret where the next
-// character will land, and after a full row that is a fresh row below — not welded
-// to the last cell, where the terminal would clamp it.
+// inputVisualRows splits the typed text into visual rows: it breaks on an
+// explicit newline (a multi-line prompt the user pasted or entered with
+// Shift/Ctrl+Enter) and, within each line, wraps at `room` display columns so a
+// line wider than the pane flows onto continuation rows. It walks runes and
+// measures display width so a wide glyph is never split across the wrap, and it
+// walks them the same way inputCaretRowCol does so the drawn rows and the caret
+// can never disagree about where a break falls. When the last content row fills
+// the width exactly a trailing empty row is added: an editor puts the caret
+// where the next character will land, and after a full row that is a fresh row
+// below — not welded to the last cell, where the terminal would clamp it. A text
+// ending in a newline already ends on an empty row, so no extra one is added.
 func inputVisualRows(text string, room int) []string {
 	if room <= 0 {
 		return []string{text}
 	}
+	rs := []rune(text)
 	var rows []string
-	remaining := text
-	for remaining != "" {
-		head := ansi.Truncate(remaining, room, "")
-		if head == "" {
-			break
-		}
-		rows = append(rows, head)
-		remaining = remaining[len(head):]
-		if remaining == "" && ansiStringWidth(head) >= room {
-			rows = append(rows, "")
-		}
+	line := make([]rune, 0, room)
+	col := 0
+	flush := func() {
+		rows = append(rows, string(line))
+		line = line[:0]
+		col = 0
 	}
-	if len(rows) == 0 {
-		rows = []string{""}
+	for _, r := range rs {
+		if r == '\n' {
+			flush()
+			continue
+		}
+		w := ansiStringWidth(string(r))
+		if col+w > room {
+			flush()
+		}
+		line = append(line, r)
+		col += w
+	}
+	rows = append(rows, string(line))
+	if col >= room && col > 0 {
+		rows = append(rows, "")
 	}
 	return rows
 }
 
 // inputCaretRowCol maps a rune caret index into the (row, col) it occupies once
-// the text is wrapped at `room` display columns, walking the runes the same way
-// inputVisualRows lays them out. col is a display width, so a wide glyph before
-// the caret advances it two cells — a rune count would drift on CJK/emoji input.
-// A caret that exactly fills a row sits at the start of the next one, matching the
-// trailing empty row inputVisualRows appends, so the cursor is already where the
-// next glyph will wrap to.
+// the text is laid out, walking the runes exactly as inputVisualRows does: an
+// explicit newline advances to the start of the next row and occupies no column,
+// and a run wider than `room` wraps. col is a display width, so a wide glyph
+// before the caret advances it two cells — a rune count would drift on CJK/emoji
+// input. A caret that exactly fills a row sits at the start of the next one,
+// matching the trailing empty row inputVisualRows appends, so the cursor is
+// already where the next glyph will wrap to.
 func inputCaretRowCol(text string, caret, room int) (row, col int) {
 	if room <= 0 {
 		return 0, 0
@@ -917,6 +932,11 @@ func inputCaretRowCol(text string, caret, room int) (row, col int) {
 		caret = len(rs)
 	}
 	for i := 0; i < caret; i++ {
+		if rs[i] == '\n' {
+			row++
+			col = 0
+			continue
+		}
 		w := ansiStringWidth(string(rs[i]))
 		if col+w > room {
 			row++
