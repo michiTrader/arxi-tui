@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/michiTrader/arxi_tui/internal/driver"
@@ -822,11 +823,15 @@ func applyEdit(input string, caret int, k term.Key) (string, int, bool) {
 		caret = len(r)
 	}
 	switch {
+	case k.Type == term.KeyLeft && k.Mod&(term.ModCtrl|term.ModAlt) != 0:
+		return input, wordLeft(r, caret), true
 	case k.Type == term.KeyLeft:
 		if caret > 0 {
 			caret--
 		}
 		return input, caret, true
+	case k.Type == term.KeyRight && k.Mod&(term.ModCtrl|term.ModAlt) != 0:
+		return input, wordRight(r, caret), true
 	case k.Type == term.KeyRight:
 		if caret < len(r) {
 			caret++
@@ -855,6 +860,39 @@ func applyEdit(input string, caret int, k term.Key) (string, int, bool) {
 	default:
 		return input, caret, false
 	}
+}
+
+// wordLeft moves the caret to the start of the previous word: skip any spaces to
+// the left, then the run of non-spaces. Boundaries are whitespace runs, not
+// punctuation — the same rule the sibling line editor and a shell's Ctrl+Left
+// use — and a newline counts as space (unicode.IsSpace), so the jump crosses a
+// line break in a multi-line prompt the way the terminal's own word-left does.
+func wordLeft(r []rune, caret int) int {
+	if caret > len(r) {
+		caret = len(r)
+	}
+	for caret > 0 && unicode.IsSpace(r[caret-1]) {
+		caret--
+	}
+	for caret > 0 && !unicode.IsSpace(r[caret-1]) {
+		caret--
+	}
+	return caret
+}
+
+// wordRight is wordLeft's mirror: skip spaces to the right, then the run of
+// non-spaces, landing the caret just past the current word.
+func wordRight(r []rune, caret int) int {
+	if caret < 0 {
+		caret = 0
+	}
+	for caret < len(r) && unicode.IsSpace(r[caret]) {
+		caret++
+	}
+	for caret < len(r) && !unicode.IsSpace(r[caret]) {
+		caret++
+	}
+	return caret
 }
 
 // clampCaret pins a caret into a buffer's rune range, used when a caller replaces
