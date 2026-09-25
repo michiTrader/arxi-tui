@@ -122,3 +122,84 @@ func TestInputCaretVerticalMove(t *testing.T) {
 		t.Errorf("down from the last row moved the caret to %d, want %d (unchanged)", got, last)
 	}
 }
+
+// A pasted block and a Shift/Ctrl+Enter newline both put a literal '\n' in the
+// buffer, so the input must break a row on it independently of width. These pin
+// that hard break and the caret mapping across it — the half that lets a
+// multi-line prompt be edited at all.
+
+// TestExplicitNewlineBreaksRows checks a '\n' starts a new visual row even when
+// the line is far narrower than the pane, and that a trailing newline leaves an
+// empty row for the caret to sit on (where the next typed glyph will land).
+func TestExplicitNewlineBreaksRows(t *testing.T) {
+	got := inputVisualRows("one\ntwo\nthree", 40)
+	want := []string{"one", "two", "three"}
+	if strings.Join(got, "|") != strings.Join(want, "|") {
+		t.Errorf("inputVisualRows on a three-line prompt gave %q, want %q; a '\\n' must break a row regardless of width", got, want)
+	}
+
+	trailing := inputVisualRows("hi\n", 40)
+	wantTrailing := []string{"hi", ""}
+	if strings.Join(trailing, "|") != strings.Join(wantTrailing, "|") {
+		t.Errorf("inputVisualRows on \"hi\\n\" gave %q, want %q; a trailing newline needs an empty row for the caret", trailing, wantTrailing)
+	}
+}
+
+// TestCaretMapsAcrossExplicitNewline pins the (row, col) for carets on both sides
+// of a hard break. Counterfactual: a mapper that ignores '\n' keeps col climbing
+// and reports the second line's carets on row 0, which is the corner-clamp bug in
+// a different disguise.
+func TestCaretMapsAcrossExplicitNewline(t *testing.T) {
+	const room = 40
+	text := "ab\ncd" // runes: a0 b1 \n2 c3 d4
+	cases := []struct {
+		caret    int
+		row, col int
+	}{
+		{0, 0, 0},
+		{2, 0, 2}, // after "ab", before the newline
+		{3, 1, 0}, // after the newline, before 'c'
+		{5, 1, 2}, // after "cd"
+	}
+	for _, c := range cases {
+		row, col := inputCaretRowCol(text, c.caret, room)
+		if row != c.row || col != c.col {
+			t.Errorf("caret %d over %q mapped to (row %d, col %d), want (row %d, col %d)", c.caret, text, row, col, c.row, c.col)
+		}
+	}
+}
+
+// TestInputCaretVerticalMoveAcrossNewline checks up/down cross a hard break the
+// same way they cross a wrap: down from the first line lands on the second at the
+// kept column, and up returns.
+func TestInputCaretVerticalMoveAcrossNewline(t *testing.T) {
+	const room = 40
+	text := "abc\nxy" // a0 b1 c2 \n3 x4 y5; row 0 = abc, row 1 = xy
+
+	down := InputCaretVerticalMove(text, 1, room, +1) // row 0 col 1 -> row 1 col 1
+	if down != 5 {
+		t.Errorf("down from index 1 (row 0 col 1) went to %d, want 5 (row 1 col 1, the 'y'); the hard break must be crossed like a wrap", down)
+	}
+	if up := InputCaretVerticalMove(text, down, room, -1); up != 1 {
+		t.Errorf("up from index %d went to %d, want 1; up across a newline must undo the down", down, up)
+	}
+}
+
+// TestRenderInputPaintsMultipleLinesForNewlines is the integration guard: a
+// buffer with newlines must paint one row per line through renderInput, with the
+// caret on a painted row — the whole point of holding a multi-line prompt.
+func TestRenderInputPaintsMultipleLinesForNewlines(t *testing.T) {
+	prefixRaw := json.RawMessage(`"┃ "`)
+	node := &scene.Node{Type: "input", Bind: "user.input", PrefixRaw: prefixRaw}
+	r := Renderer{Width: 40, Height: 24}
+
+	text := "first line\nsecond line\nthird"
+	f := r.renderInput(node, fold.State{UserInput: text, UserInputCaret: len([]rune(text))})
+
+	if len(f.Live) != 3 {
+		t.Fatalf("a three-line prompt painted %d rows, want 3; renderInput is not honouring the explicit newlines", len(f.Live))
+	}
+	if f.Cursor.Line < 0 || f.Cursor.Line >= len(f.Live) {
+		t.Errorf("caret reported on row %d, but rows 0..%d were painted", f.Cursor.Line, len(f.Live)-1)
+	}
+}
