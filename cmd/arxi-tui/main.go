@@ -204,6 +204,19 @@ func run(scenePath string) error {
 	fmt.Fprint(tty, "\033[?2004h")
 	defer fmt.Fprint(tty, "\033[?2004l")
 
+	// Kitty keyboard, disambiguate-escape-codes only (CSI > 1 u). This is what
+	// lets Shift+Enter arrive as its own key (CSI 13;2u) instead of a bare CR
+	// indistinguishable from Enter, so the newline gesture is reachable with the
+	// chord most users reach for. The flag is the mildest level: ordinary text
+	// still arrives as text and legacy keys keep their bytes, so nothing else in
+	// the decoder changes — only the previously-unreachable modified chords gain
+	// a spelling. A terminal that does not implement Kitty silently ignores both
+	// the push and the pop (an unknown CSI is dropped, never printed), so Ctrl+J
+	// remains the newline that works everywhere. Popped (CSI < u) before the
+	// alternate buffer is left so the shell's keyboard mode is restored.
+	fmt.Fprint(tty, "\033[>1u")
+	defer fmt.Fprint(tty, "\033[<u")
+
 	// Phase 0.5: spawn the arxi core as a serve subprocess and speak the
 	// NDJSON request/response protocol. Log-follow reads the run's event
 	// log file. When no arxi binary is available (Phase 0 dev, or non-interactive
@@ -771,6 +784,24 @@ func findUserInput(n *scene.Node) *scene.Node {
 	return nil
 }
 
+// isNewlineGesture reports whether a key should insert a literal newline into the
+// input rather than submit the line. Two spellings, so a newline is reachable on
+// as many terminals as possible: Shift/Ctrl+Enter (the chord the user reaches
+// for, delivered as a modified KeyEnter — Shift needs the Kitty disambiguation
+// enabled at startup, Ctrl does not), and Ctrl+J, the 0x0a the decoder reports as
+// 'j'+ModCtrl and the newline that needs no negotiation at all (it is also what
+// Windows delivers for Ctrl+Enter). Alt+Enter is deliberately not used: Windows
+// Terminal binds it to fullscreen, so the sibling project avoids it and so do we.
+func isNewlineGesture(k term.Key) bool {
+	if k.Type == term.KeyEnter && k.Mod&(term.ModShift|term.ModCtrl) != 0 {
+		return true
+	}
+	if k.Type == term.KeyRunes && len(k.Runes) == 1 && k.Runes[0] == 'j' && k.Mod&term.ModCtrl != 0 {
+		return true
+	}
+	return false
+}
+
 // typeKey applies one keypress to the input buffer at the caret, or submits the
 // line. It returns the new buffer and the new caret (a rune index into it).
 // Enter submits as run.prompt: in Phase 0 the event lands in the local fold
@@ -778,6 +809,15 @@ func findUserInput(n *scene.Node) *scene.Node {
 // core over the NDJSON wire and comes back through the log, so the fold never
 // learns a second path.
 func typeKey(input string, caret int, k term.Key, ctx context.Context, drv Driver) (string, int) {
+	// A newline gesture inserts a literal '\n' at the caret instead of
+	// submitting, so a prompt can span several lines. Plain Enter still submits;
+	// the two are told apart by the modifier (Shift/Ctrl+Enter) or by Ctrl+J,
+	// which is the newline Windows Terminal and conhost deliver for Ctrl+Enter
+	// with no Kitty negotiation. This is checked before the Enter-submits branch
+	// so the modified chord never reaches it.
+	if isNewlineGesture(k) {
+		return insertText(input, caret, "\n")
+	}
 	if k.Type == term.KeyEnter {
 		text := strings.TrimSpace(input)
 		if text == "" {
