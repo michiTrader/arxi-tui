@@ -194,6 +194,15 @@ func run(scenePath string) error {
 	fmt.Fprint(tty, "\033[?1000h\033[?1006h")
 	defer fmt.Fprint(tty, "\033[?1006l\033[?1000l")
 
+	// Bracketed paste: the terminal wraps a pasted block in \033[200~ … \033[201~
+	// so it arrives as one EventPaste with its newlines intact, instead of a burst
+	// of keys in which every newline is a plain Enter. Without it a multi-line
+	// paste submits every line but the last (the reported bug); with it the whole
+	// block lands at the caret. Torn down before the alternate buffer is left, so
+	// the shell is handed back with paste bracketing off exactly as it was found.
+	fmt.Fprint(tty, "\033[?2004h")
+	defer fmt.Fprint(tty, "\033[?2004l")
+
 	// Phase 0.5: spawn the arxi core as a serve subprocess and speak the
 	// NDJSON request/response protocol. Log-follow reads the run's event
 	// log file. When no arxi binary is available (Phase 0 dev, or non-interactive
@@ -675,6 +684,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							input, caret = typeKey(input, caret, ev.Key, ctx, drv)
 						}
 					}
+				case term.EventPaste:
+					// A paste is text, never keys: nothing in it dispatches an
+					// action or the escape hatch, so it disarms the panic gesture
+					// like any other input and lands whole at the caret. Its
+					// newlines are kept — a pasted command block is the block it
+					// was, and the buffer holds '\n' so the input renders the
+					// extra rows — where the alternative, one Enter per line,
+					// submits every line but the last. cleanPaste drops any other
+					// control byte so a stray ESC in the clipboard cannot inject
+					// an escape sequence into the line the host re-emits.
+					panicGesture.Reset()
+					input, caret = insertText(input, caret, cleanPaste(ev.Text))
 				case term.EventResize:
 					// A resize only needs a fresh frame at the new size, delivered
 					// by the batch repaint below like every other event in the run.
@@ -848,6 +869,51 @@ func clampCaret(input string, caret int) int {
 		return n
 	}
 	return caret
+}
+
+// insertText inserts a run of text into the buffer at the caret (a rune index),
+// returning the new buffer and the caret past the inserted run. It is the paste
+// path: a whole block lands as one edit, where applyEdit inserts a single
+// keypress. Rune-indexed for the same reason applyEdit is — a byte offset would
+// split a multi-byte glyph and desynchronise the caret from the text.
+func insertText(input string, caret int, ins string) (string, int) {
+	r := []rune(input)
+	if caret < 0 {
+		caret = 0
+	}
+	if caret > len(r) {
+		caret = len(r)
+	}
+	insR := []rune(ins)
+	out := make([]rune, 0, len(r)+len(insR))
+	out = append(out, r[:caret]...)
+	out = append(out, insR...)
+	out = append(out, r[caret:]...)
+	return string(out), caret + len(insR)
+}
+
+// cleanPaste keeps a pasted block insertable. Newlines survive so a pasted code
+// block is the block it was (the buffer holds '\n' and the input renders the
+// rows); a tab becomes a single space so the caret's column arithmetic stays
+// honest; and every other control byte is dropped so a stray ESC or CSI in the
+// clipboard cannot inject an escape sequence into the line the host re-emits.
+// The terminal already normalised CR to LF before this saw the text.
+func cleanPaste(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n':
+			b.WriteRune(r)
+		case r == '\t':
+			b.WriteByte(' ')
+		case r < 0x20 || r == 0x7f:
+			// drop: a control byte in the clipboard is not text to edit
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // uiCommandKey handles Enter on a `/ui …` line: it applies the patch to the
