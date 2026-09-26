@@ -529,6 +529,7 @@ func (c Command) applyPlugin(name string, src []byte, fetch Fetcher) (Result, er
 		return Result{}, fmt.Errorf("/ui plugin: unknown subcommand %q; expected add or remove", c.Key)
 	}
 }
+
 // not have, and it lists the ids that do exist.
 //
 // The listing is not politeness. Measured on the scenes this repo ships,
