@@ -223,17 +223,18 @@ func run(scenePath string) error {
 	fmt.Fprint(tty, "\033[>1u")
 	defer fmt.Fprint(tty, "\033[<u")
 
-	// Cursor shape is deliberately NOT forced. DECSCUSR (CSI Ps SP q) can only
-	// choose shape + blink-on/off; it cannot ask for the terminal's own blink
-	// rate or its smooth fade — those belong to the terminal and no escape sets
-	// them. Forcing "blinking block" (1) made the caret hard-blink at the
-	// terminal's square-wave rate, which read as a fast, ugly strobe next to the
-	// gentle default cursor the user is used to; forcing "steady block" (2) read
-	// as frozen. Leaving it unset hands the user exactly the caret their terminal
-	// profile draws — the normal, smooth one — which is what was asked for. A
-	// thick block that also blinks the way the user likes is a terminal-profile
-	// setting (mintty/Windows Terminal), not something a well-behaved TUI should
-	// override on their behalf.
+	// Cursor shape: a blinking block (DECSCUSR 1) — the thick caret the user asked
+	// for, left blinking so it reads as a live cursor rather than a frozen box.
+	// DECSCUSR only chooses the shape and whether it blinks; the blink *rate* is
+	// the terminal's own, the same gentle cadence its default caret uses, so a
+	// block here blinks exactly like the bar it replaces. The earlier "fast, ugly"
+	// blink was not this escape but the emit path restarting the blink on every
+	// animation frame (fixed in emitFrame via cursorShown); with that gone the
+	// block blinks normally on the idle and the animated scene alike. Restored to
+	// the terminal default (0) on the way out so the user's shell keeps its caret.
+	// A terminal that does not implement DECSCUSR ignores the sequence.
+	fmt.Fprint(tty, "\033[1 q")
+	defer fmt.Fprint(tty, "\033[0 q")
 
 	// Selection highlight: teal (OSC 17 sets the highlight background). When the
 	// user drags to copy from the transcript, the default highlight on many
@@ -476,6 +477,12 @@ func (d *serveDriver) Close() error {
 // the scene may render but the core never provides").
 func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.Theme, eventCh <-chan fold.Event, drv Driver, sceneNotice string) error {
 	panicGesture := &driver.PanicGesture{}
+	// cursorShown tracks whether the terminal caret is currently visible, so the
+	// emit path re-sends the show/hide escape only when it changes rather than on
+	// every frame — the fix for the animated-scene strobe (see emitFrame). It
+	// starts false: the first frame that hosts a caret turns it on once, and the
+	// terminal's own blink runs from there.
+	cursorShown := false
 	var collected []fold.Event
 	var input string
 	// caret is the rune index of the edit point within input, host-owned view
@@ -617,7 +624,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			chatScroll = r.ChatScrollMax
 		}
 		clock.reconcile(active)
-		emitFrame(tty, frame, theme, h)
+		emitFrame(tty, frame, theme, h, &cursorShown)
 		armTicker()
 	}
 
@@ -1341,7 +1348,10 @@ func warningNotice(warnings []scene.Warning) string {
 // the cell-diff repaint (the emitter's own machinery) is Phase 0.5 work on
 // top of the same Frame.
 func render(w io.Writer, doc *scene.Document, r engine.Renderer, theme *theme.Theme, state fold.State) {
-	emitFrame(w, r.RenderFrame(doc, state), theme, r.Height)
+	// A single non-interactive frame: nil cursorShown means "emit the visibility
+	// escape unconditionally", which is right for a one-shot paint that has no
+	// previous frame to compare against.
+	emitFrame(w, r.RenderFrame(doc, state), theme, r.Height, nil)
 }
 
 // frameBegin opens every repaint: it enters synchronized-output mode (DECSET
@@ -1372,12 +1382,20 @@ const frameBegin = "\033[?2026h"
 // the staircase — and CUP sidesteps it entirely by naming the row and column of
 // every line. The whole paint is wrapped in synchronized output so it is seen
 // once, done.
-func emitFrame(w io.Writer, f ui.Frame, theme *theme.Theme, screenH int) {
+//
+// cursorShown tracks the caret's visibility across frames so the visibility
+// escape is emitted only when it changes. This is not a micro-optimisation: an
+// animated scene repaints ~12×/s, and re-hiding then re-showing the caret on
+// every one of those frames restarts the terminal's own blink cadence 12 times a
+// second — which is exactly the fast, ugly strobe reported on the demo, in place
+// of the caret's normal gentle blink. Because the whole frame is wrapped in
+// synchronized output, the caret never streaks across the rows as they paint
+// even though it is not hidden first, so the hide-during-paint that caused the
+// strobe buys nothing. Left visible and merely repositioned, the terminal's
+// native blink runs uninterrupted whether or not the scene is animating.
+func emitFrame(w io.Writer, f ui.Frame, theme *theme.Theme, screenH int, cursorShown *bool) {
 	var b strings.Builder
 	b.WriteString(frameBegin)
-	// Hide the cursor for the duration of the paint so it does not strobe across
-	// the rows as they are written, then restore it (positioned) at the end.
-	b.WriteString("\033[?25l")
 	// Auto-wrap off: a row exactly as wide as the terminal would otherwise wrap
 	// onto the next line, push every row below it down by one, and land the caret
 	// — and the tail erase — on rows that no longer mean what they say.
@@ -1401,11 +1419,23 @@ func emitFrame(w io.Writer, f ui.Frame, theme *theme.Theme, screenH int) {
 
 	// The caret is the frame's, not the last byte's. A text field whose caret sits
 	// in the bottom-right corner (where the last row's paint left it) does not look
-	// like a text field; a frame that hosts no caret keeps it hidden so nothing
-	// blinks on a row that means nothing.
+	// like a text field; a frame that hosts no caret hides the caret so nothing
+	// blinks on a row that means nothing. The show/hide escape is emitted only on a
+	// change (see the doc comment) so the terminal's blink is never restarted on an
+	// unchanged caret.
 	if !f.Cursor.Hidden {
 		b.WriteString(fmt.Sprintf("\033[%d;%dH", f.Cursor.Line+1, f.Cursor.Col+1))
-		b.WriteString("\033[?25h")
+		if cursorShown == nil || !*cursorShown {
+			b.WriteString("\033[?25h")
+			if cursorShown != nil {
+				*cursorShown = true
+			}
+		}
+	} else if cursorShown == nil || *cursorShown {
+		b.WriteString("\033[?25l")
+		if cursorShown != nil {
+			*cursorShown = false
+		}
 	}
 	b.WriteString("\033[?2026l") // end synchronized output: present the frame
 	fmt.Fprint(w, b.String())
