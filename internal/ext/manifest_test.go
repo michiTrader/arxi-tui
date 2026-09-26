@@ -236,6 +236,54 @@ func TestAcceptsAFragmentBindingHostState(t *testing.T) {
 	}
 }
 
+// TestRefusesADeclarativeFragmentUsingItsOwnNamespace is H5's declarative
+// counterfactual at the ext boundary: a declarative manifest (no executable,
+// hence no binds) whose fragment binds its own `<id>.*` namespace is refused,
+// because a zero-code plugin streams nothing — its namespace is empty and any use
+// of it is undeclared (BINDS.md §4.4, the load-time face of the
+// declarative/behavioral split). It complements TestAcceptsAFragmentBindingHostState:
+// a declarative fragment may bind host state but not its own empty namespace.
+//
+// The refusal must be the empty-namespace message specifically, not the generic
+// unsigned-bind one, because the two point the author at different fixes — bind a
+// host field or go behavioral, versus fix a typo — and it must carry the
+// manifest-absolute address the rebase provides.
+func TestRefusesADeclarativeFragmentUsingItsOwnNamespace(t *testing.T) {
+	// The manifest id is "tick", so "tick.price" is the plugin's own namespace.
+	// Laid out so the fragment object opens on line 9, the line the rebased
+	// refusal must resolve to.
+	src := `{
+  "id": "tick",
+  "name": "T",
+  "version": "1.0.0",
+  "protocol": "ext/v1",
+  "mounts": [
+    {
+      "where": "top-right",
+      "fragment": {
+        "type": "text",
+        "bind": "tick.price"
+      }
+    }
+  ]
+}`
+	m, err := ParseNamed("plugin.json", []byte(src))
+	if err != nil {
+		t.Fatalf("ParseNamed: %v", err)
+	}
+	err = m.Validate()
+	if err == nil {
+		t.Fatal("Validate accepted a declarative fragment binding tick.price; a declarative plugin declares no binds, so its own namespace is empty and using it must be refused (BINDS.md §4.4)")
+	}
+	if !strings.Contains(err.Error(), "declares no binds") {
+		t.Fatalf("declarative-namespace refusal = %q, want the empty-namespace message (\"declares no binds\") — the fix is to bind a host field or go behavioral, not to correct a field name, so it must not read as the generic unsigned-bind refusal", err.Error())
+	}
+	loc := locOf(t, err)
+	if loc.File != "plugin.json" || loc.Line != 9 {
+		t.Fatalf("declarative-namespace refusal at %s:%d, want plugin.json:9; the rebase must report the manifest line the fragment occupies so an author can jump to it", loc.File, loc.Line)
+	}
+}
+
 // TestRefusesAMountWithNoWhereOrFragment covers the two structural mount
 // refusals: a mount must say where it lands and must carry a fragment. Neither
 // is a no-op — a mount with no where is unplaceable, and a mount with no fragment
