@@ -366,7 +366,15 @@ func (m *Manifest) validateMounts() error {
 // detached copy. See rebaseFragment for how the manifest-absolute address is
 // reconstructed and the one case (a single-line manifest) where the column is
 // approximate.
+//
+// It validates with the plugin scope (H5): a bind in the manifest's own
+// `<id>.` namespace resolves iff the manifest declares it, rather than being
+// refused as unsigned. For a declarative manifest the scope's binds are empty —
+// the checkBehavioral refusal above guarantees a manifest reaching here has no
+// `binds` — so any use of the plugin's own namespace is refused as the empty-
+// namespace case, which is exactly the declarative/behavioral split at load time.
 func (m *Manifest) validateFragment(i int, fragment json.RawMessage) error {
+	scope := m.pluginScope()
 	wrapped, ok := m.rebaseFragment(fragment)
 	if !ok {
 		// The fragment bytes were not found in the source (a hand-built
@@ -378,13 +386,29 @@ func (m *Manifest) validateFragment(i int, fragment json.RawMessage) error {
 		if err != nil {
 			return err
 		}
-		return doc.Validate()
+		return doc.ValidateWithPlugin(scope)
 	}
 	doc, err := scene.ParseNamed(m.name(), wrapped)
 	if err != nil {
 		return err
 	}
-	return doc.Validate()
+	return doc.ValidateWithPlugin(scope)
+}
+
+// pluginScope projects the manifest's identity and declared binds into the
+// scene-owned scope the fragment validator consults (H5 / BINDS.md §4.4). The
+// scene package cannot import ext (the arch seam), so the projection lives here
+// and reads the manifest's `binds` map directly — it is never copied into a
+// second inventory, so the manifest stays the one source the way SignedBinds
+// documents. A declarative manifest has no binds, so the scope carries the id
+// with an empty bind set: its namespace exists but is empty, which is what makes
+// a declarative fragment's use of it the refused empty-namespace case.
+func (m *Manifest) pluginScope() *scene.PluginScope {
+	binds := make(map[string]string, len(m.Binds))
+	for name, decl := range m.Binds {
+		binds[name] = decl.Kind
+	}
+	return &scene.PluginScope{ID: m.ID, Binds: binds}
 }
 
 // rebaseFragment builds a scene document wrapping one fragment such that the

@@ -594,8 +594,31 @@ counterfactual test).
   H6 wires this behind `/ui plugin add <url>`/`remove <id>`.
 
 - **H4** [H2] Merge plugin tokens with precedence (user > plugin > factory).
-- **H5** [H2] Validate the `<plugin-id>.*` namespace (declared vs used, with
-  `file:line`).
+- **H5 — DONE (2026-09-26).** `scene.ValidateWithPlugin(*PluginScope)` lifts the
+  unsigned-bind refusal for a bind in a plugin's own `<id>.` namespace, but only
+  when the plugin declares it — the plugin-namespace analogue of §4.7's `row.*`
+  scope, threaded through `validateBindsScoped` beside the row scope and branched
+  in `validateOneBind` (`internal/scene/validate.go`). `Validate()` is unchanged
+  (the same walk with no plugin scope). A signed host bind resolves *before* the
+  plugin scope, so a plugin whose id spells a host namespace (`agent`) cannot
+  shadow `agent.working`. Three refusals, each `file:line`: a `<id>.*` bind in a
+  **declarative** plugin (no executable, hence no binds — empty namespace, streams
+  nothing); a namespace bind for a **field the plugin does not declare**; and a
+  declared bind used under a node type its `kind` cannot draw (`kind` set closed
+  at `text`→{text,marquee} and `series`→{sparkline}, mirroring the render axes the
+  way `overlayAnchors` mirrors the engine's anchor set). `ext.validateFragment`
+  projects `m.ID`+`m.Binds` into the scope and validates each mounted fragment
+  with it (`internal/ext/manifest.go`, `pluginScope()`), reading the manifest's
+  `binds` map directly rather than copying it into a second inventory. Because
+  `checkBehavioral` refuses any manifest with `binds`, a manifest reaching the
+  fragment check is declarative, so its scope's binds are empty and using its own
+  namespace is the refused empty-namespace case — the load-time face of the
+  declarative/behavioral split. Counterfactual, run by hand: neutering the
+  `validatePluginBind` branch (accept everything in-namespace) fails the wrong-kind,
+  undeclared-field and declarative-empty scene tests, while the declared-and-correct
+  and out-of-namespace tests still pass — so the branch is exactly what enforces
+  the rule. The `arxi_tui/internal/scene` package still imports no UI package and,
+  crucially, no `ext`: the scope is a scene-owned type the loader projects into.
 - **H6** [H3,H5] Implement `/ui plugin add <url>` (fetch, validate, mount) for
   the declarative path.
 - **H7** [H6] Freeze the Scene 6 golden (community ticker).

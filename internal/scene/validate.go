@@ -42,6 +42,79 @@ func (d *Document) Validate() error {
 	return d.validateBinds(d.Root, nodePathRoot)
 }
 
+// PluginScope is the schema a mounted plugin fragment is validated against: the
+// plugin's id — whose `<id>.` prefix opens the plugin bind namespace — and the
+// binds the plugin declares, each mapped to the node kind that value is legal
+// under. It is the plugin-namespace analogue of a row_template's RowSchema
+// (§4.7): the manifest's `binds` map is a plugin's schema the same way a source
+// list's RowSchema is a template's schema, and the validator consults it as the
+// single source.
+//
+// scene cannot import ext — the arch seam keeps the loader UI-free and, in the
+// other direction, keeps this validator free of the manifest parser — so the
+// caller projects the manifest's own `binds` map into this scene-owned shape.
+// That projection is a read, never a copy into a second inventory (the same
+// discipline SignedBinds documents): a plugin's declared binds must feed the
+// one validator directly, or the manifest and the check that gates it drift.
+type PluginScope struct {
+	// ID is the plugin id; its bind namespace is ID + ".". A declarative plugin
+	// (no executable) still has an id and thus a namespace — an empty one, since
+	// it declares no binds, which is exactly why using it is refused.
+	ID string
+	// Binds maps each declared, fully-qualified `<id>.<field>` bind to its
+	// declared kind (the node kind the value is legal under). Empty for a
+	// declarative plugin, which streams nothing.
+	Binds map[string]string
+}
+
+// ValidateWithPlugin is Validate for a document being composed from a plugin's
+// fragments: a bind in the plugin's own `<id>.` namespace resolves iff the
+// plugin declares it (H-C / BINDS.md §4.4), rather than being refused as
+// unsigned. Every other bind is checked exactly as Validate checks it, so a host
+// bind still resolves against the signed inventory and an unsigned foreign bind
+// is still refused. Validate is this method with no plugin scope.
+func (d *Document) ValidateWithPlugin(scope *PluginScope) error {
+	if d == nil || d.Root == nil {
+		return nil
+	}
+	return d.validateBindsScoped(d.Root, nodePathRoot, nil, scope)
+}
+
+// bindKindNodeTypes maps a declared plugin bind's `kind` to the node types that
+// may carry it. It is closed for overlayAnchors' reason (internal/patch): a kind
+// is the axis a value rides on the render side — a scalar string versus a numeric
+// series — so a kind the engine can draw nowhere would validate here and render
+// nowhere. The set starts at the two Scene 6 uses (BINDS.md §4.4): "text" is a
+// node that draws a scalar string, "series" is the sparkline's numeric axis. It
+// widens per node type as a signed change, never silently.
+var bindKindNodeTypes = map[string]map[string]bool{
+	"text":   {"text": true, "marquee": true},
+	"series": {"sparkline": true},
+}
+
+// bindKindList renders the closed kind set for an error message, sorted so the
+// message is stable across runs.
+func bindKindList() string {
+	out := make([]string, 0, len(bindKindNodeTypes))
+	for k := range bindKindNodeTypes {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
+}
+
+// bindKindNodeTypeList renders the node types a kind is legal on, sorted, for the
+// wrong-node-type refusal.
+func bindKindNodeTypeList(kind string) string {
+	types := bindKindNodeTypes[kind]
+	out := make([]string, 0, len(types))
+	for t := range types {
+		out = append(out, t)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
+}
+
 // signedBinds is the §4.5 inventory: every bind a scene may reference. A bind
 // not in this list fails validation at load time.
 //
@@ -134,7 +207,7 @@ func SignedBinds() []string {
 // stored on Node because the tree is also built by hand and by future patch
 // code, and a position field would then be a field that is sometimes a lie.
 func (d *Document) validateBinds(n *Node, path string) error {
-	return d.validateBindsScoped(n, path, nil)
+	return d.validateBindsScoped(n, path, nil, nil)
 }
 
 // rowSchemas signs, per array-of-objects bind, the `row.<field>` names a
@@ -158,9 +231,18 @@ func RowSchema(bind string) map[string]bool { return rowSchemas[bind] }
 // only inside a row_template: it holds the source list's bind and the
 // `row.<field>` names that template may address (D1 / BINDS.md §4.7). A `row.*`
 // bind is checked against it, and refused with an address outside any template.
-func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bool) error {
+// validateBindsScoped walks a subtree, carrying the access path (so a refusal
+// names where it happened), the row scope in effect, and the plugin scope in
+// effect. The row scope is non-nil only inside a row_template: it holds the
+// source list's bind and the `row.<field>` names that template may address (D1 /
+// BINDS.md §4.7). The plugin scope is document-wide when set (this document is
+// being composed from one plugin's fragments), so it is passed unchanged at every
+// recursion rather than opened at a subtree: a plugin bind is legal anywhere in
+// its own fragment, not only under a marker node. A `row.*` bind is checked
+// against the row scope; a `<plugin-id>.*` bind against the plugin scope.
+func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bool, pscope *PluginScope) error {
 	// Check this node's bind.
-	if err := d.validateOneBind(n.Bind, "bind", n, path, scope); err != nil {
+	if err := d.validateOneBind(n.Bind, "bind", n, path, scope, pscope); err != nil {
 		return err
 	}
 
@@ -168,7 +250,7 @@ func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bo
 	// carry an operator like "!=", so the bind is its leading field.
 	if n.When != "" {
 		if parts := strings.Fields(n.When); len(parts) > 0 && parts[0] != "" {
-			if err := d.validateOneBind(parts[0], "when condition", n, path, scope); err != nil {
+			if err := d.validateOneBind(parts[0], "when condition", n, path, scope, pscope); err != nil {
 				return err
 			}
 		}
@@ -178,7 +260,7 @@ func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bo
 	// else (G2 / SCENES.md Scene 4). Checked here, in the walk that reaches
 	// prefix and suffix too, so a scroll on a nested node is refused at its own
 	// position rather than only at the root.
-	if err := d.validateScroll(n, path, scope); err != nil {
+	if err := d.validateScroll(n, path, scope, pscope); err != nil {
 		return err
 	}
 
@@ -196,20 +278,21 @@ func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bo
 		return err
 	}
 
-	// Recurse into children, carrying the same scope: a node nested under a
-	// template row is still inside that template and may still read row.*.
+	// Recurse into children, carrying the same scopes: a node nested under a
+	// template row is still inside that template and may still read row.*, and a
+	// node anywhere in a plugin fragment may still read the plugin namespace.
 	for i, child := range n.Children {
-		if err := d.validateBindsScoped(child, childPath(path, i), scope); err != nil {
+		if err := d.validateBindsScoped(child, childPath(path, i), scope, pscope); err != nil {
 			return err
 		}
 	}
 	if prefix := n.PrefixNode(); prefix != nil {
-		if err := d.validateBindsScoped(prefix, prefixPath(path), scope); err != nil {
+		if err := d.validateBindsScoped(prefix, prefixPath(path), scope, pscope); err != nil {
 			return err
 		}
 	}
 	if n.Suffix != nil {
-		if err := d.validateBindsScoped(n.Suffix, suffixPath(path), scope); err != nil {
+		if err := d.validateBindsScoped(n.Suffix, suffixPath(path), scope, pscope); err != nil {
 			return err
 		}
 	}
@@ -225,7 +308,7 @@ func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bo
 				Msg: fmt.Sprintf("row_template on node type %q binds %q, which signs no row schema in BINDS.md §4.7; a template needs an array-of-objects bind (team.members, agent.todos, slash.matches) to instantiate rows over", n.Type, n.Bind),
 			}
 		}
-		if err := d.validateBindsScoped(n.RowTemplate, templatePath(path), childScope); err != nil {
+		if err := d.validateBindsScoped(n.RowTemplate, templatePath(path), childScope, pscope); err != nil {
 			return err
 		}
 	}
@@ -244,10 +327,11 @@ func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bo
 
 // validateOneBind refuses a bind that is neither a signed absolute bind nor a
 // legal relative one. A `row.*` bind is legal only inside a row_template and
-// only when its field is in that template's source schema; every other bind
-// must appear in the §4.5 inventory. `where` names the field for the message
-// ("bind" or "when condition").
-func (d *Document) validateOneBind(bind, where string, n *Node, path string, scope map[string]bool) error {
+// only when its field is in that template's source schema; a `<plugin-id>.*` bind
+// is legal only inside that plugin's fragment and only when the plugin declares
+// it (H-C / BINDS.md §4.4); every other bind must appear in the §4.5 inventory.
+// `where` names the field for the message ("bind" or "when condition").
+func (d *Document) validateOneBind(bind, where string, n *Node, path string, scope map[string]bool, pscope *PluginScope) error {
 	if bind == "" {
 		return nil
 	}
@@ -266,10 +350,65 @@ func (d *Document) validateOneBind(bind, where string, n *Node, path string, sco
 		}
 		return nil
 	}
-	if !signedBinds[bind] {
+	// A signed host bind resolves first, so a plugin id can never shadow host
+	// state: even a plugin whose id spells a host namespace (id "agent",
+	// "agent.working") cannot capture the host field, because the inventory is
+	// consulted before the plugin scope.
+	if signedBinds[bind] {
+		return nil
+	}
+	// Not a host bind. It is a legal plugin bind iff a plugin scope is in effect
+	// and this bind sits in that plugin's own `<id>.` namespace; the declared-vs-
+	// used check then decides it. A bind outside the scope's namespace (a
+	// different prefix, or no scope at all) is an ordinary unsigned bind.
+	if pscope != nil && strings.HasPrefix(bind, pscope.ID+".") {
+		return d.validatePluginBind(bind, where, n, path, pscope)
+	}
+	return &Error{
+		Loc: d.locOf(path),
+		Msg: fmt.Sprintf("unsigned bind %q in %s of node type %q; every bind must appear in BINDS.md §4.5", bind, where, n.Type),
+	}
+}
+
+// validatePluginBind is the H-C declared-vs-used check for a bind already known
+// to sit in the scope plugin's own namespace (BINDS.md §4.4). It refuses three
+// ways, each named so the author knows which half to fix:
+//
+//   - The plugin declares no binds at all (a declarative manifest: no executable,
+//     so no `binds`). Its namespace is empty because it streams nothing, so every
+//     use is undeclared — the load-time face of the declarative/behavioral split
+//     (ADR-0006). A zero-code plugin may bind only host fields.
+//   - The plugin declares binds but not this field. The field name is wrong or
+//     the declaration is missing; the manifest's `binds` map is the single source.
+//   - The field is declared but used under a node type its `kind` cannot draw.
+//     The kind is the axis the value rides (a scalar string vs a numeric series),
+//     the plugin-bind analogue of the axis a scroll/reveal prop rides, so the
+//     wrong pairing is refused rather than rendered as a silent mismatch.
+func (d *Document) validatePluginBind(bind, where string, n *Node, path string, pscope *PluginScope) error {
+	kind, declared := pscope.Binds[bind]
+	if !declared {
+		if len(pscope.Binds) == 0 {
+			return &Error{
+				Loc: d.locOf(path),
+				Msg: fmt.Sprintf("bind %q in %s of node type %q is in plugin %q's own namespace, but plugin %q declares no binds — a declarative plugin (no executable) streams nothing, so its namespace is empty and the use is undeclared (BINDS.md §4.4); a zero-code plugin may bind only host fields", bind, where, n.Type, pscope.ID, pscope.ID),
+			}
+		}
 		return &Error{
 			Loc: d.locOf(path),
-			Msg: fmt.Sprintf("unsigned bind %q in %s of node type %q; every bind must appear in BINDS.md §4.5", bind, where, n.Type),
+			Msg: fmt.Sprintf("bind %q in %s of node type %q is in plugin %q's namespace but the plugin declares no such field in its binds map (BINDS.md §4.4); declare it in the manifest, or correct the field name", bind, where, n.Type, pscope.ID),
+		}
+	}
+	legal, known := bindKindNodeTypes[kind]
+	if !known {
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("plugin %q declares bind %q with kind %q, which is not a known bind kind; the set is closed at %s (BINDS.md §4.4) and widens per node as a signed change", pscope.ID, bind, kind, bindKindList()),
+		}
+	}
+	if !legal[n.Type] {
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("bind %q is declared kind %q but is used on node type %q, which cannot draw that kind (BINDS.md §4.4); a %q bind is legal on node types %s — the kind is the axis the value rides, so the wrong node would draw nothing", bind, kind, n.Type, kind, bindKindNodeTypeList(kind)),
 		}
 	}
 	return nil
@@ -290,7 +429,7 @@ func (d *Document) validateOneBind(bind, where string, n *Node, path string, sco
 // hide the author's mistake behind a marquee that looks stuck. pause_when, when
 // present, is a bind and is checked as one — the same net a `when` gets — so a
 // misspelled pause bind is refused here rather than silently never pausing.
-func (d *Document) validateScroll(n *Node, path string, scope map[string]bool) error {
+func (d *Document) validateScroll(n *Node, path string, scope map[string]bool, pscope *PluginScope) error {
 	if n.Scroll == nil {
 		return nil
 	}
@@ -307,7 +446,7 @@ func (d *Document) validateScroll(n *Node, path string, scope map[string]bool) e
 		}
 	}
 	if n.Scroll.PauseWhen != "" {
-		if err := d.validateOneBind(n.Scroll.PauseWhen, "scroll pause_when", n, path, scope); err != nil {
+		if err := d.validateOneBind(n.Scroll.PauseWhen, "scroll pause_when", n, path, scope, pscope); err != nil {
 			return err
 		}
 	}
