@@ -305,14 +305,32 @@ func (m *Manifest) checkEmpty() error {
 // the merged theme and is H4's — so it is not run here. What this refuses is a
 // token *definition* the plugin itself got wrong (a bad colour, an unknown
 // attribute), before that definition is ever merged.
+//
+// It delegates to Theme() so the token block has exactly one parser: validation
+// and the H4 merge cannot drift on which bytes are legal, because the check that
+// gates Validate is the same call the merge reads its theme from.
 func (m *Manifest) validateTokensBlock() error {
+	_, err := m.Theme()
+	return err
+}
+
+// Theme parses the manifest's contributed token block into a theme so the host
+// can merge it into the active theme (H4). It returns an empty theme when the
+// manifest contributes no tokens, so a mount that adds only fragments merges a
+// no-op rather than forcing every caller to nil-check. It reuses
+// theme.LoadBytes — the one token validator, the same one a theme file gets — so
+// a token block Validate accepted parses here without a second, drift-prone
+// reader, and a malformed block is refused with the manifest-addressed file:line
+// rather than theme.LoadBytes's bare name.
+func (m *Manifest) Theme() (*theme.Theme, error) {
 	if !hasTokens(m.Tokens) {
-		return nil
+		return theme.FromMap(nil), nil
 	}
-	if _, err := theme.LoadBytes(m.name(), m.Tokens); err != nil {
-		return &Error{Loc: m.locAt("tokens"), Msg: fmt.Sprintf("plugin token block is invalid: %v", err), Err: err}
+	t, err := theme.LoadBytes(m.name(), m.Tokens)
+	if err != nil {
+		return nil, &Error{Loc: m.locAt("tokens"), Msg: fmt.Sprintf("plugin token block is invalid: %v", err), Err: err}
 	}
-	return nil
+	return t, nil
 }
 
 // validateMounts checks each mounted fragment. A mount must say where it goes

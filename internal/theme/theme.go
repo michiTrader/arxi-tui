@@ -112,6 +112,42 @@ func FromMap(tokens map[string]ui.Style) *Theme {
 	return &Theme{tokens: tokens}
 }
 
+// Merge layers the `over` theme on top of `base` and returns a fresh theme: every
+// token and timing token `over` defines wins over `base`'s of the same name, and
+// every name only `base` defines is carried through unchanged. Neither input is
+// mutated — the result owns new maps — because the active theme is recomposed
+// every time a plugin is enabled or removed, and a merge that wrote back into
+// `base` would corrupt the factory theme the next composition starts from.
+//
+// This is the mechanism TOKENS.md's plugin precedence (user > plugin > factory)
+// rests on, and the precedence is deliberately NOT encoded here: Merge only knows
+// "over wins". The signed order is the order the host layers the three —
+// Merge(Merge(factory, plugin), user) — so a plugin token overrides the factory
+// default and a user token overrides the plugin. Keeping Merge order-agnostic is
+// what lets the same primitive compose N plugins in turn without a special case
+// per layer; the one place the order matters is the one place it is written down,
+// where the caller builds the active theme.
+func Merge(base, over *Theme) *Theme {
+	out := &Theme{tokens: map[string]ui.Style{}, anim: map[string]AnimDef{}}
+	if base != nil {
+		for k, v := range base.tokens {
+			out.tokens[k] = v
+		}
+		for k, v := range base.anim {
+			out.anim[k] = v
+		}
+	}
+	if over != nil {
+		for k, v := range over.tokens {
+			out.tokens[k] = v
+		}
+		for k, v := range over.anim {
+			out.anim[k] = v
+		}
+	}
+	return out
+}
+
 // withAnim attaches a timing-token section to a compiled-in theme and returns
 // it, so a factory theme built through FromMap can carry its `anim` section the
 // way a JSON theme carries the one Load lifts out. It is package-private and
