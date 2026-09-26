@@ -505,7 +505,25 @@ counterfactual test).
   remove <id>` ships with H3, since unmount is the mechanical inverse of mount
   and the symmetry is what makes the id/token namespacing testable. Signing lifts
   no code guard; H2–H6 do, each with its own counterfactual.
-- **H2** [H1] Load a declarative plugin (scene fragment + tokens, zero code).
+- **H2 — DONE (2026-09-26).** `internal/ext` loads a declarative plugin manifest
+  (`manifest.go`): `ParseNamed`/`Parse` build the manifest with an address book
+  (top-level key offsets, `loc.go`), and `Validate` refuses, each with
+  `file:line`: a malformed identity block (id grammar `[a-z][a-z0-9-]{0,62}`,
+  required `name`/`version`, closed `protocol` set `ext/v1`); a **behavioral**
+  manifest (one with an `executable`) with "behavioral plugins are Block I" — the
+  discriminator that keeps "zero code" checkable at load as the absence of one
+  field; a declarative manifest declaring a behavioral field
+  (`capabilities`/`args`/`binds`/`consent_required`) — the discriminator failing
+  the other way; an empty plugin (no `mounts` and no `tokens`); a malformed token
+  block, through the new exported `theme.LoadBytes` (one validator, two callers —
+  `theme.Load` now delegates to it); and each mounted fragment through the scene
+  validator, with the fragment rebased onto the manifest bytes so a fragment
+  refusal reports the manifest-absolute `file:line`. The package stays on the
+  pure-data side of the arch seam (imports `scene` and `theme`, no UI package).
+  Counterfactuals run in both directions: disabling the executable check loads a
+  behavioral manifest (fails the counterfactual test), and disabling the rebase
+  drops the manifest-absolute address (fails the fragment-address test).
+
 - **H3** [H2] Mount fragments by id into the scene tree.
 - **H4** [H2] Merge plugin tokens with precedence (user > plugin > factory).
 - **H5** [H2] Validate the `<plugin-id>.*` namespace (declared vs used, with
