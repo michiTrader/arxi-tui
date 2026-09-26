@@ -191,7 +191,7 @@ this process. The four rejected alternatives and a word on each:
 4. **In-memory embedding** (zero IPC, one process). Rejected for all of (1):
    version skew, no fakeable protocol boundary, no crash isolation, and the TUI
    dies with the kernel — which is intolerable because the panic gesture
-   (invariant 6) must survive a kernel crash to restore the raw scene.
+   (invariant 6) must survive a kernel crash to run at all.
 
 Chose **subprocess**. The procgroup supervisor from arxi-sim
 (`internal/ext/supervisor`, `LESSONS.md:55-58`) ports wholesale: the TUI owns
@@ -570,9 +570,16 @@ not the first.
 4. Every error carries `file:line:`.
 5. If it can be expressed as data, code is not required.
 6. **The scene never captures the exit.** An immovable panic gesture
-   (`Ctrl-C` twice / `-scene ""`) restores the raw scene no matter what the
-   active scene or plugin does — this is what makes community content safe to
-   run.
+   (`Ctrl-C` twice) exits the program no matter what the active scene or plugin
+   does, and the factory raw scene is reachable at start (`-raw` / `-scene ""`)
+   — together they are what makes community content safe to run: there is
+   always a way out of a hostile scene and always a way back to a known-good
+   one. The first Ctrl-C clears the input line (never the transcript) and arms a
+   visible `press ctrl+c again to exit` hint for a 4s window; a second press
+   inside the window leaves. This is the owner-requested shape — the earlier
+   gesture wiped the whole run in place — and it does not weaken the invariant,
+   because exiting is a stronger escape than an in-process reset and the
+   gesture remains uncapturable by any scene.
 7. Plugins propose, never write; every plugin effect is an attributed event in
    the arxi log, and every power is granted at the gate, once, never
    re-asked on ordinary use and never self-extended without a user order.

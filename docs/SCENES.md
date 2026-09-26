@@ -70,8 +70,14 @@ the `input` node.
     "bind": "thinking.text", "prefix": { "text": "• Thinking · ", "style": "dim" },
     "suffix": { "bind": "usage.delta", "style": "dim" } },
 
-  { "id": "prompt", "type": "input", "bind": "user.input",
-    "prefix": "┃ ", "placeholder": "ask anything, or / for commands" },
+  { "id": "input_gap_top", "type": "text", "text": "" },
+
+  { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ " },
+
+  { "id": "input_gap_bottom", "type": "text", "text": "" },
+
+  { "id": "escape_hint", "type": "text", "text": "press ctrl+c again to exit",
+    "when": "host.escape.armed", "style": {"style": "dim"} },
 
   { "id": "menu", "type": "overlay", "anchor": "bottom", "when": "slash.active",
     "children": [
@@ -104,6 +110,17 @@ Decided here: Q1 marquee scrolls only its bound text; Q2 the menu is an
 overlay, not a stack row (the transcript must not jump); Q3 derivatives are
 host-computed, named, and bound by scenes; Q4 the categorizing list is a
 primitive so all menus in the ecosystem look alike.
+
+Input chrome (owner request, all expressed in the scene format): the `┃ ` bar
+marks *every* visual row of a multi-line input and of a user turn echoed in the
+transcript, so the symbol that means "you" while typing goes on meaning "you"
+in the history — the same bar the input wears. Two empty `text` spacers set the
+input off from the chat above and the status below. The `ask anything` placeholder
+is gone: an empty prompt is the bare bar. `escape_hint` is gated on
+`host.escape.armed` and shows `press ctrl+c again to exit` while the first
+Ctrl-C is armed (the host clears the input on that first press and leaves the
+transcript standing; a second press within the 4s window exits — see PLAN.md
+invariant 6 and BINDS.md `host.escape.armed`).
 
 ## Scene 3 — MAXIMUM (scene 2 + side panel + banner + floating tokens)
 
