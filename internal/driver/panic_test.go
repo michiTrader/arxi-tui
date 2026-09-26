@@ -20,7 +20,7 @@ func TestPanicGestureDoubleCtrlC(t *testing.T) {
 		t.Error("first Ctrl-C should arm the gesture")
 	}
 
-	// Second Ctrl-C within 1.5s triggers escape.
+	// Second Ctrl-C within armTimeout (4s) triggers escape.
 	if !g.HandleCtrlC(now.Add(500 * time.Millisecond)) {
 		t.Error("second Ctrl-C within armTimeout should trigger escape")
 	}
@@ -36,8 +36,8 @@ func TestPanicGestureTimeout(t *testing.T) {
 
 	g.HandleCtrlC(now)
 
-	// More than 1.5s later — should arm, not trigger.
-	if g.HandleCtrlC(now.Add(2 * time.Second)) {
+	// More than 4s later — should arm, not trigger.
+	if g.HandleCtrlC(now.Add(5 * time.Second)) {
 		t.Error("Ctrl-C after armTimeout should not trigger escape")
 	}
 }
