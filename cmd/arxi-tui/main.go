@@ -223,15 +223,17 @@ func run(scenePath string) error {
 	fmt.Fprint(tty, "\033[>1u")
 	defer fmt.Fprint(tty, "\033[<u")
 
-	// Cursor shape: a blinking block (DECSCUSR 1). The caret is the one piece of
-	// chrome the terminal draws for us; a solid block is what makes the input line
-	// look like the surface's own field, and the blink is the ordinary "a cursor
-	// lives here" tell a reader expects — a steady block reads as frozen. Restored
-	// to the terminal default (0) on the way out so the user's shell keeps the
-	// cursor it chose. A terminal that does not implement DECSCUSR ignores the
-	// sequence, so nothing else changes.
-	fmt.Fprint(tty, "\033[1 q")
-	defer fmt.Fprint(tty, "\033[0 q")
+	// Cursor shape is deliberately NOT forced. DECSCUSR (CSI Ps SP q) can only
+	// choose shape + blink-on/off; it cannot ask for the terminal's own blink
+	// rate or its smooth fade — those belong to the terminal and no escape sets
+	// them. Forcing "blinking block" (1) made the caret hard-blink at the
+	// terminal's square-wave rate, which read as a fast, ugly strobe next to the
+	// gentle default cursor the user is used to; forcing "steady block" (2) read
+	// as frozen. Leaving it unset hands the user exactly the caret their terminal
+	// profile draws — the normal, smooth one — which is what was asked for. A
+	// thick block that also blinks the way the user likes is a terminal-profile
+	// setting (mintty/Windows Terminal), not something a well-behaved TUI should
+	// override on their behalf.
 
 	// Selection highlight: teal (OSC 17 sets the highlight background). When the
 	// user drags to copy from the transcript, the default highlight on many
