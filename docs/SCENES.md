@@ -61,7 +61,7 @@ the `input` node.
 
 ```json
 { "root": { "type": "stack", "children": [
-  { "type": "text", "style": "header",
+  { "type": "text", "style": "dim",
     "text": "Δr×i v0.1.0 · Run /help for commands" },
 
   { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
@@ -111,8 +111,10 @@ overlay, not a stack row (the transcript must not jump); Q3 derivatives are
 host-computed, named, and bound by scenes; Q4 the categorizing list is a
 primitive so all menus in the ecosystem look alike.
 
-Input chrome (owner request, all expressed in the scene format): the `┃ ` bar
-marks *every* visual row of a multi-line input and of a user turn echoed in the
+Input chrome (owner request, all expressed in the scene format): the title line
+recedes under the `dim` token (a colourless theme has no grey but a dimmed
+attribute reads as one), so the transcript, not the version string, is the
+brightest thing on screen. The `┃ ` bar marks *every* visual row of a multi-line input and of a user turn echoed in the
 transcript, so the symbol that means "you" while typing goes on meaning "you"
 in the history — the same bar the input wears. Two empty `text` spacers set the
 input off from the chat above and the status below. The `ask anything` placeholder
