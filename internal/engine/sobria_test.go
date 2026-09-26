@@ -58,9 +58,14 @@ func TestSobriaSceneRenders(t *testing.T) {
 		t.Errorf("expected transcript to contain the assistant response; got:\n%s", got)
 	}
 
-	// The input prompt must use the sobria prefix and placeholder.
-	if !strings.Contains(got, "┃ ask anything") {
-		t.Errorf("expected sobria input prefix '┃ ' and placeholder; got:\n%s", got)
+	// The input prompt shows the sobria "┃ " bar. The placeholder text was
+	// removed — the empty line is the bar and nothing else — so "ask anything"
+	// must not appear anywhere, and the bar itself must.
+	if !strings.Contains(got, "┃ ") {
+		t.Errorf("expected sobria input prefix '┃ '; got:\n%s", got)
+	}
+	if strings.Contains(got, "ask anything") {
+		t.Errorf("the placeholder text was removed but 'ask anything' still renders; got:\n%s", got)
 	}
 
 	// The status bar must show agent mode, model name, and spark.

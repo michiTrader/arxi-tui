@@ -230,6 +230,43 @@ func TestLoopCtrlCKeepsTheChat(t *testing.T) {
 	}
 }
 
+// TestLoopArmedCtrlCShowsTheExitHint pins the visible half of the gesture: the
+// first Ctrl-C arms host.escape.armed, and the sobria scene's escape_hint node
+// (gated on that bind) must then paint "press ctrl+c again to exit". The frame
+// after the first press is the last one, since the second press exits without
+// repainting. Counterfactual: a scene without the escape_hint node, or a gesture
+// that never sets EscapeArmed, leaves the hint off the last frame.
+func TestLoopArmedCtrlCShowsTheExitHint(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factorySobria))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	if err := doc.Validate(); err != nil {
+		t.Fatalf("scene validation: %v", err)
+	}
+
+	script := []scheduledEvent{
+		{0, ctrlCharEvent('c')},                     // arms; hint appears
+		{50 * time.Millisecond, ctrlCharEvent('c')}, // exits
+	}
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: make(chan fold.Event, 64)}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	frames := strings.Split(tty.output(), frameBegin)
+	last := frames[len(frames)-1]
+	if !strings.Contains(stripANSI(last), "press ctrl+c again to exit") {
+		t.Errorf("the armed Ctrl-C hint never rendered; the escape_hint node is not gated on host.escape.armed. last frame:\n%s", last)
+	}
+}
+
 // TestLoopParksTheTerminalCursorInTheInputBar is the end-to-end half of the
 // caret contract: the bytes the loop writes must name a row and a column,
 // because nothing else moves the terminal cursor off the corner a full repaint
@@ -264,13 +301,15 @@ func TestLoopParksTheTerminalCursorInTheInputBar(t *testing.T) {
 	out := tty.output()
 
 	// The empty line parks the caret just past the two-column prefix, on the
-	// prompt row of the 24-row sobria frame: header, transcript, prompt, status.
-	if !strings.Contains(out, "\x1b[23;3H") {
+	// prompt row of the 24-row sobria frame. The layout now carries a blank
+	// spacer above and below the input, so the prompt sits on row 22: header(1),
+	// transcript(2-20), gap(21), prompt(22), gap(23), status(24).
+	if !strings.Contains(out, "\x1b[22;3H") {
 		t.Errorf("no cursor-position escape for the empty input; the caret is left in the corner. output:\n%q", out)
 	}
 	// After "hi" the caret walked two columns with the text.
-	if !strings.Contains(out, "\x1b[23;5H") {
-		t.Errorf("caret did not follow the typed text; want a park at row 23 column 5. output:\n%q", out)
+	if !strings.Contains(out, "\x1b[22;5H") {
+		t.Errorf("caret did not follow the typed text; want a park at row 22 column 5. output:\n%q", out)
 	}
 }
 
@@ -371,7 +410,7 @@ func TestLoopSlashMenuNavigateAndRun(t *testing.T) {
 	// node by id", which contains the same word.
 	ranCommand := false
 	for _, f := range frames {
-		if frameHasTranscriptLine(f, "❯ focus") && !strings.Contains(f, "Commands 5") {
+		if frameHasTranscriptLine(f, "┃ focus") && !strings.Contains(f, "Commands 5") {
 			ranCommand = true
 			break
 		}
@@ -419,9 +458,11 @@ func TestLoopSlashMenuEscapeCloses(t *testing.T) {
 	frames := strings.Split(out, frameBegin)
 	cleared, typingAgain := false, false
 	for _, f := range frames {
-		// The input row carries the sobria prefix, so the placeholder line is
-		// "┃ ask anything, or / for commands" — prefix included.
-		if frameHasTranscriptLine(f, "┃ ask anything, or / for commands") && !strings.Contains(f, "Commands") {
+		// The input row carries the sobria prefix, so an empty, menu-less input
+		// is exactly the "┃ " bar with no placeholder text (the placeholder was
+		// removed). A whole-row match on it means the line cleared and the menu
+		// closed.
+		if frameHasTranscriptLine(f, "┃ ") && !strings.Contains(f, "Commands") {
 			cleared = true
 		}
 		if strings.Contains(stripANSI(f), "┃ x") && !strings.Contains(f, "Commands") && !strings.Contains(f, "no matches") {
@@ -469,7 +510,7 @@ func TestLoopSlashMenuTabWalksCategories(t *testing.T) {
 	frames := strings.Split(tty.output(), frameBegin)
 	ranHelp := false
 	for _, f := range frames {
-		if frameHasTranscriptLine(f, "❯ help") && !strings.Contains(f, "Commands 5") {
+		if frameHasTranscriptLine(f, "┃ help") && !strings.Contains(f, "Commands 5") {
 			ranHelp = true
 			break
 		}
@@ -592,7 +633,7 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	// is already closed (no "Commands 5" header above it).
 	ranUI := false
 	for _, f := range frames {
-		if frameHasTranscriptLine(f, "❯ ui") && !strings.Contains(f, "Commands 5") {
+		if frameHasTranscriptLine(f, "┃ ui") && !strings.Contains(f, "Commands 5") {
 			ranUI = true
 			break
 		}

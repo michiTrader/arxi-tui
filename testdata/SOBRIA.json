@@ -11,8 +11,14 @@
     "bind": "thinking.text", "prefix": { "text": "• Thinking · ", "style": {"style": "dim"} },
     "suffix": { "bind": "usage.delta", "style": {"style": "dim"} } },
 
-  { "id": "prompt", "type": "input", "bind": "user.input",
-    "prefix": "┃ ", "placeholder": "ask anything, or / for commands" },
+  { "id": "input_gap_top", "type": "text", "text": "" },
+
+  { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ " },
+
+  { "id": "input_gap_bottom", "type": "text", "text": "" },
+
+  { "id": "escape_hint", "type": "text", "text": "press ctrl+c again to exit",
+    "when": "host.escape.armed", "style": {"style": "dim"} },
 
   { "id": "menu", "type": "overlay", "anchor": "bottom", "when": "slash.active",
     "children": [
