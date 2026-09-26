@@ -190,6 +190,12 @@ the text node's — and the `anim` token is checked against the theme's `anim`
 section at load (an empty token resolves `anim.default`, Q8), the same net a
 style token gets. It is a one-shot on appearance: the clock starts when the node
 appears, runs `0 → 1` once, and the node draws settled thereafter (ADR-0005).
+When the revealed prefix is wider than the pane, the renderer shows its last
+`width` columns rather than letting the single-line node overflow — the reveal
+scrolls to follow the writing edge (auto-wrap is off, so an overflow would
+otherwise churn only the last cell). This picks which columns show, not how many
+are revealed, so the phase mapping and a golden whose reveal fits its width are
+unchanged.
 
 `transition: { "anim": "<token>" }` is implemented too (G1), the second one-shot
 prop on that clock. A node with `transition` wears the theme's dim intensity
