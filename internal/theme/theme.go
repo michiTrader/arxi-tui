@@ -51,7 +51,22 @@ func Load(path string) (*Theme, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
+	return LoadBytes(path, data)
+}
 
+// LoadBytes is Load for a theme whose bytes are already in hand and whose origin
+// has a name. The name is what a refusal prints, so a caller that read the bytes
+// from a file passes the path and a caller validating an in-memory token block
+// (a plugin manifest's `tokens` section, H4) passes a name that identifies it.
+//
+// It is separated from Load rather than inlined because the token block a plugin
+// manifest carries is "exactly a theme's token block" (docs/TOKENS.md, DESIGN-
+// BLOCK-H.md H1): the existing token validator must check it, and the only way
+// for internal/ext to reach that validator without a second, drift-prone copy is
+// for the byte-level entry point to be the one Load itself uses. A plugin
+// contributing a malformed token is then refused by the same parse a malformed
+// theme file is, which is the point — one validator, two callers.
+func LoadBytes(name string, data []byte) (*Theme, error) {
 	// Decode into raw messages first so the `anim` section can be lifted out
 	// before the remainder is treated as style tokens. Unmarshalling straight
 	// into map[string]tokenDef would silently coerce the anim object into a
@@ -59,33 +74,33 @@ func Load(path string) (*Theme, error) {
 	// project refuses to ship — and the timing tokens would vanish.
 	var rawTop map[string]json.RawMessage
 	if err := json.Unmarshal(data, &rawTop); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, fmt.Errorf("%s: %w", name, err)
 	}
 
 	var anim map[string]AnimDef
 	if raw, ok := rawTop["anim"]; ok {
 		delete(rawTop, "anim")
 		if err := json.Unmarshal(raw, &anim); err != nil {
-			return nil, fmt.Errorf("%s: anim section: %w", path, err)
+			return nil, fmt.Errorf("%s: anim section: %w", name, err)
 		}
-		for name, def := range anim {
-			if err := validateAnimDef(name, def); err != nil {
-				return nil, fmt.Errorf("%s: %w", path, err)
+		for animName, def := range anim {
+			if err := validateAnimDef(animName, def); err != nil {
+				return nil, fmt.Errorf("%s: %w", name, err)
 			}
 		}
 	}
 
 	tokens := make(map[string]ui.Style, len(rawTop))
-	for name, rawDef := range rawTop {
+	for tokenName, rawDef := range rawTop {
 		var def tokenDef
 		if err := json.Unmarshal(rawDef, &def); err != nil {
-			return nil, fmt.Errorf("%s: token %q: %w", path, name, err)
+			return nil, fmt.Errorf("%s: token %q: %w", name, tokenName, err)
 		}
 		style, err := parseTokenDef(def)
 		if err != nil {
-			return nil, fmt.Errorf("%s: token %q: %w", path, name, err)
+			return nil, fmt.Errorf("%s: token %q: %w", name, tokenName, err)
 		}
-		tokens[name] = style
+		tokens[tokenName] = style
 	}
 
 	return &Theme{tokens: tokens, anim: anim}, nil
