@@ -477,12 +477,15 @@ func (d *serveDriver) Close() error {
 // the scene may render but the core never provides").
 func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.Theme, eventCh <-chan fold.Event, drv Driver, sceneNotice string) error {
 	panicGesture := &driver.PanicGesture{}
-	// cursorShown tracks whether the terminal caret is currently visible, so the
-	// emit path re-sends the show/hide escape only when it changes rather than on
-	// every frame — the fix for the animated-scene strobe (see emitFrame). It
-	// starts false: the first frame that hosts a caret turns it on once, and the
-	// terminal's own blink runs from there.
-	cursorShown := false
+	// caretState carries the emit path's memory of the caret across frames — its
+	// visibility and its last position — so an unchanged caret is neither re-shown
+	// nor re-positioned. Both are strobe sources on an animated scene that repaints
+	// ~12×/s: re-showing restarts the blink, and re-issuing the position CUP is read
+	// by the terminal as "the app moved the caret, light it solid", which kept the
+	// block lit ~85% of the time instead of letting it breathe (see emitFrame). It
+	// starts zeroed: the first frame that hosts a caret shows and positions it once,
+	// and the terminal's own blink runs from there.
+	caretState := &emitState{}
 	var collected []fold.Event
 	var input string
 	// caret is the rune index of the edit point within input, host-owned view
@@ -624,7 +627,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			chatScroll = r.ChatScrollMax
 		}
 		clock.reconcile(active)
-		emitFrame(tty, frame, theme, h, &cursorShown)
+		emitFrame(tty, frame, theme, h, caretState)
 		armTicker()
 	}
 
@@ -1348,8 +1351,8 @@ func warningNotice(warnings []scene.Warning) string {
 // the cell-diff repaint (the emitter's own machinery) is Phase 0.5 work on
 // top of the same Frame.
 func render(w io.Writer, doc *scene.Document, r engine.Renderer, theme *theme.Theme, state fold.State) {
-	// A single non-interactive frame: nil cursorShown means "emit the visibility
-	// escape unconditionally", which is right for a one-shot paint that has no
+	// A single non-interactive frame: a nil emitState means "emit the caret
+	// escapes unconditionally", which is right for a one-shot paint that has no
 	// previous frame to compare against.
 	emitFrame(w, r.RenderFrame(doc, state), theme, r.Height, nil)
 }
@@ -1383,6 +1386,17 @@ const frameBegin = "\033[?2026h"
 // every line. The whole paint is wrapped in synchronized output so it is seen
 // once, done.
 //
+// emitState is the emit path's cross-frame memory of the caret. The loop owns
+// one and passes it to every emitFrame; render()'s one-shot paint passes nil.
+// It exists so an unchanged caret costs no cursor escape at all — see the
+// emitFrame doc comment for why a caret escape per frame is a strobe.
+type emitState struct {
+	shown bool // whether the terminal caret is currently visible
+	valid bool // whether line/col below hold a real, already-emitted position
+	line  int
+	col   int
+}
+
 // cursorShown tracks the caret's visibility across frames so the visibility
 // escape is emitted only when it changes. This is not a micro-optimisation: an
 // animated scene repaints ~12×/s, and re-hiding then re-showing the caret on
@@ -1391,11 +1405,35 @@ const frameBegin = "\033[?2026h"
 // of the caret's normal gentle blink. Because the whole frame is wrapped in
 // synchronized output, the caret never streaks across the rows as they paint
 // even though it is not hidden first, so the hide-during-paint that caused the
-// strobe buys nothing. Left visible and merely repositioned, the terminal's
-// native blink runs uninterrupted whether or not the scene is animating.
-func emitFrame(w io.Writer, f ui.Frame, theme *theme.Theme, screenH int, cursorShown *bool) {
+// strobe buys nothing.
+//
+// Suppressing the visibility escape was necessary but not sufficient. The caret
+// position (CUP) was still re-sent every frame, and a terminal reads an explicit
+// position command as "the app just moved the caret, show it solid so the typist
+// finds it" — then resumes blinking a beat later. Re-issued 12×/s that beat never
+// arrives, so on the demo the block sat lit ~85% of the time with only a ~15%
+// blink dip: a different, slower strobe than the visibility one, but the same
+// cause — a per-frame caret escape fighting the terminal's own blink.
+//
+// The fix is to touch the caret only when it actually moves. The paint still
+// walks the cursor down the rows (CUP per row), so to return it home without a
+// caret CUP the whole paint is bracketed by DECSC/DECRC (ESC 7 / ESC 8): the
+// position the previous frame parked the caret on is saved before the rows are
+// drawn and restored after, landing the cursor back on the same cell it already
+// occupied. A terminal that resumes its blink on an unchanged position never
+// sees a move, so the caret breathes on an animated scene exactly as it does on
+// an idle one. Only a real caret move — a keystroke, an arrow — issues the CUP,
+// which is the one moment the solid-on flash is wanted. The caret is never drawn
+// as a cell (renderInput's contract): this is the native terminal caret, left
+// where the terminal can blink it and moved only when it truly moves.
+func emitFrame(w io.Writer, f ui.Frame, theme *theme.Theme, screenH int, st *emitState) {
 	var b strings.Builder
 	b.WriteString(frameBegin)
+	// Save the caret the previous frame parked the cursor on, before the paint
+	// walks it down the rows. DECRC at the end restores it, so an unchanged caret
+	// needs no CUP of its own. At frame start the SGR is already reset (every
+	// styled span resets itself), so DECSC/DECRC carry no stray attributes.
+	b.WriteString("\0337") // DECSC: save cursor position
 	// Auto-wrap off: a row exactly as wide as the terminal would otherwise wrap
 	// onto the next line, push every row below it down by one, and land the caret
 	// — and the tail erase — on rows that no longer mean what they say.
@@ -1416,26 +1454,45 @@ func emitFrame(w io.Writer, f ui.Frame, theme *theme.Theme, screenH int, cursorS
 		b.WriteString("\033[0J")
 	}
 	b.WriteString("\033[?7h") // restore auto-wrap
+	// DECRC: return the cursor to where it was before the paint (the caret). This
+	// is what lets an unchanged caret cost no positioning command below.
+	b.WriteString("\0338")
 
 	// The caret is the frame's, not the last byte's. A text field whose caret sits
 	// in the bottom-right corner (where the last row's paint left it) does not look
 	// like a text field; a frame that hosts no caret hides the caret so nothing
-	// blinks on a row that means nothing. The show/hide escape is emitted only on a
-	// change (see the doc comment) so the terminal's blink is never restarted on an
-	// unchanged caret.
-	if !f.Cursor.Hidden {
-		b.WriteString(fmt.Sprintf("\033[%d;%dH", f.Cursor.Line+1, f.Cursor.Col+1))
-		if cursorShown == nil || !*cursorShown {
+	// blinks on a row that means nothing. Position and visibility escapes are both
+	// emitted only on a change, so an unchanged caret — the common case on every
+	// animated frame — restarts neither the blink cadence nor the solid-on flash.
+	switch {
+	case st == nil:
+		// One-shot paint: no previous frame to diff against, so emit
+		// unconditionally. DECRC above is harmless here — the CUP that follows wins.
+		if !f.Cursor.Hidden {
+			b.WriteString(fmt.Sprintf("\033[%d;%dH", f.Cursor.Line+1, f.Cursor.Col+1))
 			b.WriteString("\033[?25h")
-			if cursorShown != nil {
-				*cursorShown = true
-			}
+		} else {
+			b.WriteString("\033[?25l")
 		}
-	} else if cursorShown == nil || *cursorShown {
-		b.WriteString("\033[?25l")
-		if cursorShown != nil {
-			*cursorShown = false
+	case !f.Cursor.Hidden:
+		moved := !st.valid || st.line != f.Cursor.Line || st.col != f.Cursor.Col
+		if moved {
+			b.WriteString(fmt.Sprintf("\033[%d;%dH", f.Cursor.Line+1, f.Cursor.Col+1))
 		}
+		if !st.shown {
+			b.WriteString("\033[?25h")
+			st.shown = true
+		}
+		st.valid = true
+		st.line, st.col = f.Cursor.Line, f.Cursor.Col
+	default: // caret hidden
+		if st.shown {
+			b.WriteString("\033[?25l")
+			st.shown = false
+		}
+		// A hidden caret has no position on screen; the next visible frame must
+		// re-issue its CUP, so the remembered position is no longer trustworthy.
+		st.valid = false
 	}
 	b.WriteString("\033[?2026l") // end synchronized output: present the frame
 	fmt.Fprint(w, b.String())

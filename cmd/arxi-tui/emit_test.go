@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -8,42 +9,86 @@ import (
 	"github.com/michiTrader/arxi_tui/internal/ui"
 )
 
-// The emit path must not restart the terminal's caret blink on every frame. An
-// animated scene repaints ~12×/s; the old emit hid the caret at the top of each
-// frame and showed it again at the bottom, so on those 12 frames a second the
-// terminal kept re-arming its blink from zero — the fast, ugly strobe reported
-// on the demo, in place of the caret's normal gentle blink. cursorShown makes
-// the show/hide escape fire only on a visibility change, so an unchanged visible
-// caret is repositioned but never re-shown.
+// caretCUP is the escape emitFrame writes to park the terminal caret at a
+// (line, col). Building it the same way emitFrame does keeps the test honest
+// about the exact bytes it is asserting on.
+func caretCUP(line, col int) string {
+	return fmt.Sprintf("\033[%d;%dH", line+1, col+1)
+}
+
+// The emit path must not touch the caret on a frame where the caret has not
+// moved. An animated scene repaints ~12×/s; two escapes used to fire on every
+// one of those frames and each is its own strobe. Re-showing (?25h) restarts the
+// blink cadence — the first, fast strobe. Re-positioning (CUP) is read by the
+// terminal as "the app moved the caret, light it solid", so at 12×/s the block
+// sat lit ~85% of the time with only a ~15% dip — the second, slower strobe the
+// demo showed once the first was fixed. An unchanged caret must therefore cost
+// neither escape; the caret is instead returned home by the DECRC that brackets
+// the paint.
 //
-// Counterfactual, run rather than argued: restoring the per-frame hide/show
-// (an unconditional "\x1b[?25l" at the top and "\x1b[?25h" at the bottom) puts
-// both escapes in the second frame and fails both checks below.
-func TestEmitFrameDoesNotRestartTheBlinkEachFrame(t *testing.T) {
-	f := ui.Frame{Live: []ui.Line{{ui.Span{Text: "hi"}}}, Cursor: ui.Cursor{Line: 0, Col: 0}}
+// Counterfactual, run rather than argued: replacing the moved-guard with an
+// unconditional CUP (the previous behaviour) puts the caret CUP back in the
+// second frame and fails the position check below; dropping the DECSC/DECRC
+// bracket leaves the caret stranded on the last painted row.
+func TestEmitFrameLeavesAnUnchangedCaretAlone(t *testing.T) {
 	th := theme.SOBRIA()
-	shown := false
+	// A caret past column 0 so its CUP is distinct from the row-0 paint CUP
+	// (\033[1;1H), which every frame emits to draw the first row.
+	caret := ui.Cursor{Line: 0, Col: 5}
+	first := ui.Frame{Live: []ui.Line{{ui.Span{Text: "scrolling text one"}}}, Cursor: caret}
+	// A different first row stands in for an animated repaint (a marquee that
+	// advanced) while the caret itself did not move.
+	second := ui.Frame{Live: []ui.Line{{ui.Span{Text: "scrolling text two"}}}, Cursor: caret}
+	st := &emitState{}
 
-	var first strings.Builder
-	emitFrame(&first, f, th, 24, &shown)
-	if !strings.Contains(first.String(), "\x1b[?25h") {
-		t.Fatalf("the first frame hosting a caret must show it once; it did not.\ngot: %q", first.String())
+	var one strings.Builder
+	emitFrame(&one, first, th, 24, st)
+	if !strings.Contains(one.String(), "\x1b[?25h") {
+		t.Fatalf("the first frame hosting a caret must show it once; it did not.\ngot: %q", one.String())
+	}
+	if !strings.Contains(one.String(), caretCUP(0, 5)) {
+		t.Fatalf("the first frame must position the caret; it did not.\ngot: %q", one.String())
 	}
 
-	var second strings.Builder
-	emitFrame(&second, f, th, 24, &shown)
-	if strings.Contains(second.String(), "\x1b[?25h") {
-		t.Errorf("a second visible frame re-sent the show-caret escape; on an animated scene this\n"+
-			"restarts the terminal blink every frame — the reported strobe.\ngot: %q", second.String())
+	var two strings.Builder
+	emitFrame(&two, second, th, 24, st)
+	if strings.Contains(two.String(), caretCUP(0, 5)) {
+		t.Errorf("a second frame with an unchanged caret re-sent its position CUP; at 12×/s the\n"+
+			"terminal keeps the block lit solid instead of blinking — the ~85%%-on strobe.\ngot: %q", two.String())
 	}
-	if strings.Contains(second.String(), "\x1b[?25l") {
-		t.Errorf("a visible frame hid the caret mid-paint; the per-frame hide/show is the strobe.\ngot: %q", second.String())
+	if strings.Contains(two.String(), "\x1b[?25h") {
+		t.Errorf("a second visible frame re-sent the show-caret escape; that restarts the blink\n"+
+			"cadence every frame — the fast strobe.\ngot: %q", two.String())
 	}
-	// The caret is still repositioned every frame — only the visibility escape is
-	// suppressed, not the CUP that keeps the caret on the input line.
-	if !strings.Contains(second.String(), "\x1b[1;1H") {
-		t.Errorf("the caret was not repositioned on the second frame; suppressing the blink restart\n"+
-			"must not also drop the CUP that parks it.\ngot: %q", second.String())
+	if strings.Contains(two.String(), "\x1b[?25l") {
+		t.Errorf("a visible frame hid the caret mid-paint; the per-frame hide/show is a strobe.\ngot: %q", two.String())
+	}
+	// The bracket that makes the above safe: without DECRC the paint would leave
+	// the cursor on the last row it drew, not on the caret.
+	if !strings.Contains(two.String(), "\0338") {
+		t.Errorf("the paint was not bracketed by DECRC; an unchanged caret with no CUP would be\n"+
+			"stranded on the last painted row.\ngot: %q", two.String())
+	}
+}
+
+// When the caret genuinely moves — a keystroke, an arrow — the emit must
+// reposition it. This is the one moment the terminal's solid-on flash is wanted,
+// and it is exactly what the unchanged-caret path above must not trigger.
+func TestEmitFrameRepositionsAMovedCaret(t *testing.T) {
+	th := theme.SOBRIA()
+	rows := []ui.Line{{ui.Span{Text: "hello there"}}}
+	first := ui.Frame{Live: rows, Cursor: ui.Cursor{Line: 0, Col: 5}}
+	second := ui.Frame{Live: rows, Cursor: ui.Cursor{Line: 0, Col: 8}}
+	st := &emitState{}
+
+	var one strings.Builder
+	emitFrame(&one, first, th, 24, st)
+
+	var two strings.Builder
+	emitFrame(&two, second, th, 24, st)
+	if !strings.Contains(two.String(), caretCUP(0, 8)) {
+		t.Errorf("a moved caret was not repositioned; the typist would watch the block sit on the\n"+
+			"old column while their edits land elsewhere.\ngot: %q", two.String())
 	}
 }
 
@@ -53,26 +98,30 @@ func TestEmitFrameTogglesCaretOnlyOnChange(t *testing.T) {
 	th := theme.SOBRIA()
 	visible := ui.Frame{Live: []ui.Line{{ui.Span{Text: "hi"}}}, Cursor: ui.Cursor{Line: 0, Col: 0}}
 	hidden := ui.Frame{Live: []ui.Line{{ui.Span{Text: "hi"}}}, Cursor: ui.Cursor{Hidden: true}}
-	shown := false
+	st := &emitState{}
 
 	var b strings.Builder
-	emitFrame(&b, visible, th, 24, &shown) // false -> true: show
-	if !shown {
+	emitFrame(&b, visible, th, 24, st) // false -> true: show
+	if !st.shown {
 		t.Fatalf("a visible frame must leave the caret marked shown")
 	}
 
 	var hide strings.Builder
-	emitFrame(&hide, hidden, th, 24, &shown) // true -> false: hide once
+	emitFrame(&hide, hidden, th, 24, st) // true -> false: hide once
 	if !strings.Contains(hide.String(), "\x1b[?25l") {
 		t.Errorf("a caret-less frame must hide the caret; it did not.\ngot: %q", hide.String())
 	}
-	if shown {
+	if st.shown {
 		t.Fatalf("a hidden frame must leave the caret marked not shown")
 	}
 
 	var reshow strings.Builder
-	emitFrame(&reshow, visible, th, 24, &shown) // false -> true: show again
+	emitFrame(&reshow, visible, th, 24, st) // false -> true: show again, and reposition
 	if !strings.Contains(reshow.String(), "\x1b[?25h") {
 		t.Errorf("returning to a caret-hosting frame must show the caret again; it did not.\ngot: %q", reshow.String())
+	}
+	if !strings.Contains(reshow.String(), caretCUP(0, 0)) {
+		t.Errorf("returning from a hidden caret must re-issue the position CUP; the caret's\n"+
+			"whereabouts were forgotten while it was hidden.\ngot: %q", reshow.String())
 	}
 }
