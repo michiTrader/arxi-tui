@@ -4,10 +4,17 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/michiTrader/arxi_tui/internal/theme"
 	"github.com/michiTrader/arxi_tui/internal/ui"
 )
+
+// epochAt is a deterministic wall time d after the Unix epoch, so blinkOn's
+// UnixMilli-based phase is fixed and reproducible in the test.
+func epochAt(d time.Duration) time.Time {
+	return time.UnixMilli(0).Add(d)
+}
 
 // caretCUP is the escape emitFrame writes to park the terminal caret at a
 // (line, col). Building it the same way emitFrame does keeps the test honest
@@ -16,112 +23,133 @@ func caretCUP(line, col int) string {
 	return fmt.Sprintf("\033[%d;%dH", line+1, col+1)
 }
 
-// The emit path must not touch the caret on a frame where the caret has not
-// moved. An animated scene repaints ~12×/s; two escapes used to fire on every
-// one of those frames and each is its own strobe. Re-showing (?25h) restarts the
-// blink cadence — the first, fast strobe. Re-positioning (CUP) is read by the
-// terminal as "the app moved the caret, light it solid", so at 12×/s the block
-// sat lit ~85% of the time with only a ~15% dip — the second, slower strobe the
-// demo showed once the first was fixed. An unchanged caret must therefore cost
-// neither escape; the caret is instead returned home by the DECRC that brackets
-// the paint.
+// The caret blink is host-driven, not the terminal's own: the cursor shape is
+// steady (DECSCUSR 2) and emitFrame shows or hides the block according to the
+// blink phase it is handed. Two earlier fixes kept the native blink and tried to
+// stop the emit path from disturbing it — first not re-showing, then not
+// re-positioning the caret — and both failed on an animated scene, because the
+// ~12×/s repaint walks the cursor down every painted row and the terminal
+// restarts its blink on any cursor motion. Owning the blink is what makes it one
+// clean on/off square wave on the idle and animated scene alike.
 //
-// Counterfactual, run rather than argued: replacing the moved-guard with an
-// unconditional CUP (the previous behaviour) puts the caret CUP back in the
-// second frame and fails the position check below; dropping the DECSC/DECRC
-// bracket leaves the caret stranded on the last painted row.
-func TestEmitFrameLeavesAnUnchangedCaretAlone(t *testing.T) {
+// So the visibility escape must follow the phase: on -> shown, off -> hidden, and
+// only on a transition (the block does not flicker within a phase). This is the
+// blink itself; getting it wrong is the strobe.
+func TestEmitFrameBlinksTheCaretWithThePhase(t *testing.T) {
 	th := theme.SOBRIA()
-	// A caret past column 0 so its CUP is distinct from the row-0 paint CUP
-	// (\033[1;1H), which every frame emits to draw the first row.
-	caret := ui.Cursor{Line: 0, Col: 5}
-	first := ui.Frame{Live: []ui.Line{{ui.Span{Text: "scrolling text one"}}}, Cursor: caret}
-	// A different first row stands in for an animated repaint (a marquee that
-	// advanced) while the caret itself did not move.
-	second := ui.Frame{Live: []ui.Line{{ui.Span{Text: "scrolling text two"}}}, Cursor: caret}
+	f := ui.Frame{Live: []ui.Line{{ui.Span{Text: "hi"}}}, Cursor: ui.Cursor{Line: 0, Col: 5}}
 	st := &emitState{}
 
-	var one strings.Builder
-	emitFrame(&one, first, th, 24, st)
-	if !strings.Contains(one.String(), "\x1b[?25h") {
-		t.Fatalf("the first frame hosting a caret must show it once; it did not.\ngot: %q", one.String())
+	// Phase on, from not-yet-shown: the caret must be shown.
+	var on1 strings.Builder
+	emitFrame(&on1, f, th, 24, st, true)
+	if !strings.Contains(on1.String(), "\x1b[?25h") {
+		t.Fatalf("the on phase must show the caret; it did not.\ngot: %q", on1.String())
 	}
-	if !strings.Contains(one.String(), caretCUP(0, 5)) {
-		t.Fatalf("the first frame must position the caret; it did not.\ngot: %q", one.String())
+	if !st.shown {
+		t.Fatalf("the on phase must leave the caret marked shown")
 	}
 
-	var two strings.Builder
-	emitFrame(&two, second, th, 24, st)
-	if strings.Contains(two.String(), caretCUP(0, 5)) {
-		t.Errorf("a second frame with an unchanged caret re-sent its position CUP; at 12×/s the\n"+
-			"terminal keeps the block lit solid instead of blinking — the ~85%%-on strobe.\ngot: %q", two.String())
+	// Phase still on: no visibility escape at all — re-showing every frame is the
+	// fast strobe the earlier fixes chased.
+	var on2 strings.Builder
+	emitFrame(&on2, f, th, 24, st, true)
+	if strings.Contains(on2.String(), "\x1b[?25h") || strings.Contains(on2.String(), "\x1b[?25l") {
+		t.Errorf("a second on-phase frame toggled the caret's visibility; the block must hold\n"+
+			"steady within a phase, or it strobes.\ngot: %q", on2.String())
 	}
-	if strings.Contains(two.String(), "\x1b[?25h") {
-		t.Errorf("a second visible frame re-sent the show-caret escape; that restarts the blink\n"+
-			"cadence every frame — the fast strobe.\ngot: %q", two.String())
+
+	// Phase off: the caret must be hidden, once.
+	var off1 strings.Builder
+	emitFrame(&off1, f, th, 24, st, false)
+	if !strings.Contains(off1.String(), "\x1b[?25l") {
+		t.Errorf("the off phase must hide the caret; it did not.\ngot: %q", off1.String())
 	}
-	if strings.Contains(two.String(), "\x1b[?25l") {
-		t.Errorf("a visible frame hid the caret mid-paint; the per-frame hide/show is a strobe.\ngot: %q", two.String())
+	if st.shown {
+		t.Errorf("the off phase must leave the caret marked not shown")
 	}
-	// The bracket that makes the above safe: without DECRC the paint would leave
-	// the cursor on the last row it drew, not on the caret.
-	if !strings.Contains(two.String(), "\0338") {
-		t.Errorf("the paint was not bracketed by DECRC; an unchanged caret with no CUP would be\n"+
-			"stranded on the last painted row.\ngot: %q", two.String())
+
+	// Phase still off: no escape.
+	var off2 strings.Builder
+	emitFrame(&off2, f, th, 24, st, false)
+	if strings.Contains(off2.String(), "\x1b[?25h") || strings.Contains(off2.String(), "\x1b[?25l") {
+		t.Errorf("a second off-phase frame toggled visibility; the block must stay dark within\n"+
+			"the phase.\ngot: %q", off2.String())
 	}
 }
 
-// When the caret genuinely moves — a keystroke, an arrow — the emit must
-// reposition it. This is the one moment the terminal's solid-on flash is wanted,
-// and it is exactly what the unchanged-caret path above must not trigger.
-func TestEmitFrameRepositionsAMovedCaret(t *testing.T) {
+// The steady cursor is repositioned every frame — that is safe precisely because
+// the shape does not blink, so a CUP restarts nothing. This is the invariant the
+// two failed fixes lacked: with a native blink they had to avoid the CUP, and
+// could not, because the paint issues one per row regardless.
+func TestEmitFramePositionsTheCaretEveryOnFrame(t *testing.T) {
 	th := theme.SOBRIA()
-	rows := []ui.Line{{ui.Span{Text: "hello there"}}}
-	first := ui.Frame{Live: rows, Cursor: ui.Cursor{Line: 0, Col: 5}}
-	second := ui.Frame{Live: rows, Cursor: ui.Cursor{Line: 0, Col: 8}}
+	// Distinct column so the caret CUP is not the row-0 paint CUP (\033[1;1H).
+	first := ui.Frame{Live: []ui.Line{{ui.Span{Text: "scrolling one"}}}, Cursor: ui.Cursor{Line: 0, Col: 5}}
+	second := ui.Frame{Live: []ui.Line{{ui.Span{Text: "scrolling two"}}}, Cursor: ui.Cursor{Line: 0, Col: 5}}
 	st := &emitState{}
 
-	var one strings.Builder
-	emitFrame(&one, first, th, 24, st)
+	emitFrame(&strings.Builder{}, first, th, 24, st, true)
 
+	// A later on-phase frame (an animation advanced the row) must still park the
+	// caret at its column: an unpositioned steady cursor would sit wherever the
+	// row paint left it.
 	var two strings.Builder
-	emitFrame(&two, second, th, 24, st)
-	if !strings.Contains(two.String(), caretCUP(0, 8)) {
-		t.Errorf("a moved caret was not repositioned; the typist would watch the block sit on the\n"+
-			"old column while their edits land elsewhere.\ngot: %q", two.String())
+	emitFrame(&two, second, th, 24, st, true)
+	if !strings.Contains(two.String(), caretCUP(0, 5)) {
+		t.Errorf("a repainted frame did not reposition the caret; the steady block would drift\n"+
+			"to the end of the last painted row.\ngot: %q", two.String())
 	}
 }
 
-// A frame that hosts no caret hides it, once, and a later visible frame shows it
-// again — the visibility escape tracks the transition, not the frame count.
-func TestEmitFrameTogglesCaretOnlyOnChange(t *testing.T) {
+// A frame that hosts no caret hides it regardless of the blink phase, and never
+// re-hides once hidden. Returning to a caret-hosting frame on an on phase shows
+// it again — the visibility tracks both the caret's presence and the phase.
+func TestEmitFrameHidesAnAbsentCaret(t *testing.T) {
 	th := theme.SOBRIA()
 	visible := ui.Frame{Live: []ui.Line{{ui.Span{Text: "hi"}}}, Cursor: ui.Cursor{Line: 0, Col: 0}}
 	hidden := ui.Frame{Live: []ui.Line{{ui.Span{Text: "hi"}}}, Cursor: ui.Cursor{Hidden: true}}
 	st := &emitState{}
 
-	var b strings.Builder
-	emitFrame(&b, visible, th, 24, st) // false -> true: show
+	emitFrame(&strings.Builder{}, visible, th, 24, st, true) // shown
 	if !st.shown {
-		t.Fatalf("a visible frame must leave the caret marked shown")
+		t.Fatalf("a visible on-phase frame must leave the caret marked shown")
 	}
 
+	// Absent caret, even on an on phase: hide it.
 	var hide strings.Builder
-	emitFrame(&hide, hidden, th, 24, st) // true -> false: hide once
+	emitFrame(&hide, hidden, th, 24, st, true)
 	if !strings.Contains(hide.String(), "\x1b[?25l") {
-		t.Errorf("a caret-less frame must hide the caret; it did not.\ngot: %q", hide.String())
+		t.Errorf("a caret-less frame must hide the caret even on the on phase; it did not.\ngot: %q", hide.String())
 	}
 	if st.shown {
 		t.Fatalf("a hidden frame must leave the caret marked not shown")
 	}
 
+	// Back to a caret on an on phase: show it again.
 	var reshow strings.Builder
-	emitFrame(&reshow, visible, th, 24, st) // false -> true: show again, and reposition
+	emitFrame(&reshow, visible, th, 24, st, true)
 	if !strings.Contains(reshow.String(), "\x1b[?25h") {
-		t.Errorf("returning to a caret-hosting frame must show the caret again; it did not.\ngot: %q", reshow.String())
+		t.Errorf("returning to a caret-hosting on-phase frame must show it again; it did not.\ngot: %q", reshow.String())
 	}
-	if !strings.Contains(reshow.String(), caretCUP(0, 0)) {
-		t.Errorf("returning from a hidden caret must re-issue the position CUP; the caret's\n"+
-			"whereabouts were forgotten while it was hidden.\ngot: %q", reshow.String())
+}
+
+// blinkOn is a pure function of wall time: it is true for one half-period and
+// false for the next, so any two repaints landing in the same half agree on the
+// phase without a shared counter. This is what lets a keystroke, an animation
+// tick and the blink ticker all paint a consistent caret.
+func TestBlinkOnSquareWave(t *testing.T) {
+	base := blinkHalfPeriod
+	// Two instants inside the same half-period agree.
+	if blinkOn(epochAt(0)) != blinkOn(epochAt(base/2)) {
+		t.Errorf("two instants in the same blink half-period disagreed on the phase")
+	}
+	// Crossing into the next half-period flips the phase.
+	if blinkOn(epochAt(0)) == blinkOn(epochAt(base+base/2)) {
+		t.Errorf("the phase did not flip across the blink half-period boundary")
+	}
+	// Two full periods later, the phase matches again.
+	if blinkOn(epochAt(0)) != blinkOn(epochAt(2*base)) {
+		t.Errorf("the phase did not repeat after a full blink period")
 	}
 }

@@ -223,17 +223,22 @@ func run(scenePath string) error {
 	fmt.Fprint(tty, "\033[>1u")
 	defer fmt.Fprint(tty, "\033[<u")
 
-	// Cursor shape: a blinking block (DECSCUSR 1) — the thick caret the user asked
-	// for, left blinking so it reads as a live cursor rather than a frozen box.
-	// DECSCUSR only chooses the shape and whether it blinks; the blink *rate* is
-	// the terminal's own, the same gentle cadence its default caret uses, so a
-	// block here blinks exactly like the bar it replaces. The earlier "fast, ugly"
-	// blink was not this escape but the emit path restarting the blink on every
-	// animation frame (fixed in emitFrame via cursorShown); with that gone the
-	// block blinks normally on the idle and the animated scene alike. Restored to
-	// the terminal default (0) on the way out so the user's shell keeps its caret.
-	// A terminal that does not implement DECSCUSR ignores the sequence.
-	fmt.Fprint(tty, "\033[1 q")
+	// Cursor shape: a STEADY block (DECSCUSR 2) — the thick caret the user asked
+	// for, deliberately not left to the terminal's own blink. Two earlier attempts
+	// kept the terminal-native blink (a blinking block, DECSCUSR 1) and tried to
+	// stop the emit path from disturbing it: first by not re-showing the caret each
+	// frame, then by not re-positioning it. Both failed on an animated scene,
+	// because the ~12×/s in-place repaint walks the cursor down every row it paints
+	// (a CUP per row), and this terminal restarts its blink on any cursor motion —
+	// not only on the caret's own CUP. A blinking shape simply cannot survive a
+	// constant repaint. So the terminal is told to hold the block steady and the
+	// host owns the blink instead: the emit path shows or hides the caret on a
+	// wall-clock cadence (see emitFrame / the loop's blink ticker), which is one
+	// deterministic on/off square wave on the idle and the animated scene alike —
+	// the consistency the user reported missing. Restored to the terminal default
+	// (0) on the way out. A terminal that does not implement DECSCUSR ignores it,
+	// and the host blink still runs by toggling visibility.
+	fmt.Fprint(tty, "\033[2 q")
 	defer fmt.Fprint(tty, "\033[0 q")
 
 	// Selection highlight: teal (OSC 17 sets the highlight background). When the
@@ -542,9 +547,30 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			tickCh = nil
 		}
 	}
+	// blinkTicker drives the host-owned caret blink. Unlike animTicker it is armed
+	// by the mere presence of a caret, not by an animation: the cursor shape is
+	// steady (DECSCUSR 2) and the terminal does not blink it, so without a wake-up
+	// the block would sit frozen on an idle scene. It runs at the blink half-period,
+	// the coarsest rate that still turns the block fully on and fully off.
+	var blinkTicker *time.Ticker
+	var blinkCh <-chan time.Time
+	armBlink := func(caretPresent bool) {
+		switch {
+		case caretPresent && blinkTicker == nil:
+			blinkTicker = time.NewTicker(blinkHalfPeriod)
+			blinkCh = blinkTicker.C
+		case !caretPresent && blinkTicker != nil:
+			blinkTicker.Stop()
+			blinkTicker = nil
+			blinkCh = nil
+		}
+	}
 	defer func() {
 		if animTicker != nil {
 			animTicker.Stop()
+		}
+		if blinkTicker != nil {
+			blinkTicker.Stop()
 		}
 	}()
 
@@ -627,8 +653,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			chatScroll = r.ChatScrollMax
 		}
 		clock.reconcile(active)
-		emitFrame(tty, frame, theme, h, caretState)
+		// The caret's blink is host-driven off the wall clock (see emitFrame): the
+		// phase is recomputed every repaint so a keystroke, an animation tick and the
+		// blink ticker all agree on it. armBlink keeps a ~2Hz ticker running whenever
+		// the frame hosts a caret, so an idle scene still blinks it — an animated
+		// scene's own ticker would do it, but an idle one repaints on input alone and
+		// would otherwise freeze the block on whichever half it last painted.
+		emitFrame(tty, frame, theme, h, caretState, blinkOn(time.Now()))
 		armTicker()
+		armBlink(!frame.Cursor.Hidden)
 	}
 
 	repaint()
@@ -646,6 +679,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// on the terminal channel, and a runaway animation cannot wedge the
 			// door. tickCh is nil while nothing animates, and a receive on a nil
 			// channel blocks forever, so this case simply never fires then.
+			repaint()
+
+		case <-blinkCh:
+			// The caret's blink half-period elapsed: repaint so emitFrame flips the
+			// block's visibility for the new phase. Like an animation tick it only
+			// repaints — it reads no input and dispatches no gesture, so the escape
+			// hatch (invariant 6) is untouched. blinkCh is nil while no caret is on
+			// screen, so a receive on it blocks forever and this case never fires.
 			repaint()
 
 		case ev, ok := <-termEvents:
@@ -1353,8 +1394,9 @@ func warningNotice(warnings []scene.Warning) string {
 func render(w io.Writer, doc *scene.Document, r engine.Renderer, theme *theme.Theme, state fold.State) {
 	// A single non-interactive frame: a nil emitState means "emit the caret
 	// escapes unconditionally", which is right for a one-shot paint that has no
-	// previous frame to compare against.
-	emitFrame(w, r.RenderFrame(doc, state), theme, r.Height, nil)
+	// loop, no blink ticker, and no previous frame to compare against. The blink
+	// phase is irrelevant with no loop, so pass false; a hosted caret is shown once.
+	emitFrame(w, r.RenderFrame(doc, state), theme, r.Height, nil, false)
 }
 
 // frameBegin opens every repaint: it enters synchronized-output mode (DECSET
@@ -1386,54 +1428,65 @@ const frameBegin = "\033[?2026h"
 // every line. The whole paint is wrapped in synchronized output so it is seen
 // once, done.
 //
-// emitState is the emit path's cross-frame memory of the caret. The loop owns
-// one and passes it to every emitFrame; render()'s one-shot paint passes nil.
-// It exists so an unchanged caret costs no cursor escape at all — see the
-// emitFrame doc comment for why a caret escape per frame is a strobe.
+// emitState is the emit path's cross-frame memory of the caret: whether it is
+// currently shown. The loop owns one and passes it to every emitFrame; render()'s
+// one-shot paint passes nil. It exists so the show/hide escapes that produce the
+// host-driven blink fire only on a change, not on every one of an animated
+// scene's ~12 repaints a second.
 type emitState struct {
 	shown bool // whether the terminal caret is currently visible
-	valid bool // whether line/col below hold a real, already-emitted position
-	line  int
-	col   int
 }
 
-// cursorShown tracks the caret's visibility across frames so the visibility
-// escape is emitted only when it changes. This is not a micro-optimisation: an
-// animated scene repaints ~12×/s, and re-hiding then re-showing the caret on
-// every one of those frames restarts the terminal's own blink cadence 12 times a
-// second — which is exactly the fast, ugly strobe reported on the demo, in place
-// of the caret's normal gentle blink. Because the whole frame is wrapped in
-// synchronized output, the caret never streaks across the rows as they paint
-// even though it is not hidden first, so the hide-during-paint that caused the
-// strobe buys nothing.
+// blinkHalfPeriod is one half of the caret's blink cycle: the caret is shown for
+// this long, then hidden for this long, so the full period is twice this. The
+// blink is host-driven (the cursor shape is steady, DECSCUSR 2) because the
+// terminal's own blink cannot survive a constantly-repainting scene — see the
+// cursor-shape comment in run(). 530ms is the cadence most terminals use for
+// their native caret, chosen so the block reads as an ordinary blinking cursor
+// rather than a strobe or a slow pulse.
+const blinkHalfPeriod = 530 * time.Millisecond
+
+// blinkOn reports whether the caret is in the shown half of its blink cycle at
+// wall time t. It is a pure function of the clock, so every repaint — driven by a
+// keystroke, an animation tick, or the blink ticker — agrees on the phase without
+// any shared counter to keep in step.
+func blinkOn(t time.Time) bool {
+	return (t.UnixMilli()/int64(blinkHalfPeriod/time.Millisecond))%2 == 0
+}
+
+// emitFrame writes one already-rendered frame to the terminal. It is the single
+// emit path: the loop's animation-aware repaint and the plain render() below both
+// go through it, so "the frame that knows about the clock" and "the frame that
+// does not" cannot emit differently.
 //
-// Suppressing the visibility escape was necessary but not sufficient. The caret
-// position (CUP) was still re-sent every frame, and a terminal reads an explicit
-// position command as "the app just moved the caret, show it solid so the typist
-// finds it" — then resumes blinking a beat later. Re-issued 12×/s that beat never
-// arrives, so on the demo the block sat lit ~85% of the time with only a ~15%
-// blink dip: a different, slower strobe than the visibility one, but the same
-// cause — a per-frame caret escape fighting the terminal's own blink.
+// The repaint is in place, never a full clear: each row is positioned absolutely
+// (CUP) and erased to end-of-line (EL) before it is painted, and the region below
+// the last row is erased once (ED) so a shorter frame leaves no tail behind.
+// Nothing sends CSI 2J. The whole paint is wrapped in synchronized output so it
+// is presented once.
 //
-// The fix is to touch the caret only when it actually moves. The paint still
-// walks the cursor down the rows (CUP per row), so to return it home without a
-// caret CUP the whole paint is bracketed by DECSC/DECRC (ESC 7 / ESC 8): the
-// position the previous frame parked the caret on is saved before the rows are
-// drawn and restored after, landing the cursor back on the same cell it already
-// occupied. A terminal that resumes its blink on an unchanged position never
-// sees a move, so the caret breathes on an animated scene exactly as it does on
-// an idle one. Only a real caret move — a keystroke, an arrow — issues the CUP,
-// which is the one moment the solid-on flash is wanted. The caret is never drawn
-// as a cell (renderInput's contract): this is the native terminal caret, left
-// where the terminal can blink it and moved only when it truly moves.
-func emitFrame(w io.Writer, f ui.Frame, theme *theme.Theme, screenH int, st *emitState) {
+// The caret does NOT blink by the terminal's own clock here. Its shape is steady
+// (DECSCUSR 2, set in run()); the blink is produced by this function showing or
+// hiding it according to blinkOn, passed in per frame. Two earlier attempts kept
+// the terminal-native blink and tried to keep the emit path from disturbing it —
+// first by not re-showing the caret each frame, then by not re-positioning it —
+// and both failed on an animated scene, because the ~12×/s in-place repaint walks
+// the cursor down every painted row and this terminal restarts its blink on any
+// cursor motion, not only on the caret's own CUP. A native blink cannot survive a
+// constant repaint. Owning the blink makes it one deterministic on/off square
+// wave, identical whether the scene animates or sits idle — the consistency the
+// user reported missing.
+//
+// With a steady cursor there is no blink phase for a CUP to restart, so the caret
+// is simply repositioned every frame; the strobe machinery the two failed fixes
+// added is gone. The show/hide escapes still fire only on a change, so an
+// unchanged blink phase costs nothing. The caret is never drawn as a cell
+// (renderInput's contract): this is the native terminal caret, positioned by CUP
+// and blinked by toggling its visibility. screenH is the terminal's row count,
+// needed for the tail erase.
+func emitFrame(w io.Writer, f ui.Frame, theme *theme.Theme, screenH int, st *emitState, on bool) {
 	var b strings.Builder
 	b.WriteString(frameBegin)
-	// Save the caret the previous frame parked the cursor on, before the paint
-	// walks it down the rows. DECRC at the end restores it, so an unchanged caret
-	// needs no CUP of its own. At frame start the SGR is already reset (every
-	// styled span resets itself), so DECSC/DECRC carry no stray attributes.
-	b.WriteString("\0337") // DECSC: save cursor position
 	// Auto-wrap off: a row exactly as wide as the terminal would otherwise wrap
 	// onto the next line, push every row below it down by one, and land the caret
 	// — and the tail erase — on rows that no longer mean what they say.
@@ -1454,45 +1507,33 @@ func emitFrame(w io.Writer, f ui.Frame, theme *theme.Theme, screenH int, st *emi
 		b.WriteString("\033[0J")
 	}
 	b.WriteString("\033[?7h") // restore auto-wrap
-	// DECRC: return the cursor to where it was before the paint (the caret). This
-	// is what lets an unchanged caret cost no positioning command below.
-	b.WriteString("\0338")
 
 	// The caret is the frame's, not the last byte's. A text field whose caret sits
 	// in the bottom-right corner (where the last row's paint left it) does not look
-	// like a text field; a frame that hosts no caret hides the caret so nothing
-	// blinks on a row that means nothing. Position and visibility escapes are both
-	// emitted only on a change, so an unchanged caret — the common case on every
-	// animated frame — restarts neither the blink cadence nor the solid-on flash.
+	// like a text field; a frame that hosts no caret keeps it hidden so nothing
+	// blinks on a row that means nothing. A steady cursor can be repositioned every
+	// frame without restarting any blink, so the CUP is unconditional; only the
+	// visibility escape — the blink itself — is gated on a change, both by the phase
+	// (on) and by whether the frame hosts a caret at all.
+	want := !f.Cursor.Hidden && (st == nil || on)
+	if !f.Cursor.Hidden {
+		b.WriteString(fmt.Sprintf("\033[%d;%dH", f.Cursor.Line+1, f.Cursor.Col+1))
+	}
 	switch {
 	case st == nil:
-		// One-shot paint: no previous frame to diff against, so emit
-		// unconditionally. DECRC above is harmless here — the CUP that follows wins.
-		if !f.Cursor.Hidden {
-			b.WriteString(fmt.Sprintf("\033[%d;%dH", f.Cursor.Line+1, f.Cursor.Col+1))
-			b.WriteString("\033[?25h")
+		// One-shot paint: no loop, no blink ticker, so show a hosted caret once and
+		// hide an absent one. There is no previous frame to diff against.
+		if f.Cursor.Hidden {
+			b.WriteString("\033[?25l")
 		} else {
-			b.WriteString("\033[?25l")
-		}
-	case !f.Cursor.Hidden:
-		moved := !st.valid || st.line != f.Cursor.Line || st.col != f.Cursor.Col
-		if moved {
-			b.WriteString(fmt.Sprintf("\033[%d;%dH", f.Cursor.Line+1, f.Cursor.Col+1))
-		}
-		if !st.shown {
 			b.WriteString("\033[?25h")
-			st.shown = true
 		}
-		st.valid = true
-		st.line, st.col = f.Cursor.Line, f.Cursor.Col
-	default: // caret hidden
-		if st.shown {
-			b.WriteString("\033[?25l")
-			st.shown = false
-		}
-		// A hidden caret has no position on screen; the next visible frame must
-		// re-issue its CUP, so the remembered position is no longer trustworthy.
-		st.valid = false
+	case want && !st.shown:
+		b.WriteString("\033[?25h")
+		st.shown = true
+	case !want && st.shown:
+		b.WriteString("\033[?25l")
+		st.shown = false
 	}
 	b.WriteString("\033[?2026l") // end synchronized output: present the frame
 	fmt.Fprint(w, b.String())
