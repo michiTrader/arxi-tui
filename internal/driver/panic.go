@@ -5,24 +5,32 @@ import (
 )
 
 // PanicGesture is the immovable escape hatch: Ctrl-C twice in quick succession
-// (within armTimeout) restores the raw scene no matter what a scene or plugin
-// may have done. It is host-owned and never delegable, because the scene is
+// (within armTimeout) leaves the program no matter what a scene or plugin may
+// have done. It is host-owned and never delegable, because the scene is
 // untrusted content and must never capture the only way out.
 //
-// This is the direct port of arxi-sim's interrupt: 1.5s is long enough that a
-// deliberate double tap always lands and short enough that a ctrl+c five
-// seconds later does not leave.
+// The window is 4s because the first press is not silent: it arms a visible
+// "press ctrl+c again to exit" hint (host.escape.armed), and the window has to
+// be long enough for a reader to see that hint and decide, not just long enough
+// for a reflexive double tap. It is still short of the ~5s where a stray Ctrl-C
+// pressed to clear the line, then a second one much later, would leave against
+// the reader's intent — the arm expires and the hint disappears well before
+// then.
 type PanicGesture struct {
 	armed   bool
 	armedAt time.Time
 }
 
-const armTimeout = 1500 * time.Millisecond
+// ArmTimeout is exported so the host loop can arm an expiry timer on the same
+// window: the first Ctrl-C shows a hint, and the loop has to disarm it (and
+// repaint the hint away) after this long when no second press follows, because
+// nothing else would wake the loop to notice the window closed.
+const ArmTimeout = 4 * time.Second
 
 // HandleCtrlC records a Ctrl-C press. Returns true if this press should trigger
 // the panic gesture (i.e. the second press arrived within armTimeout).
 func (g *PanicGesture) HandleCtrlC(now time.Time) bool {
-	if g.armed && now.Sub(g.armedAt) <= armTimeout {
+	if g.armed && now.Sub(g.armedAt) <= ArmTimeout {
 		// Second press within window — trigger escape
 		g.reset()
 		return true

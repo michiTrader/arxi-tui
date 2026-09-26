@@ -72,7 +72,12 @@ re-signed. These five binds are the full Phase 0 surface, mapped as follows:
 - `host.escape.armed` — derived from the in-process Ctrl-C count in
   `internal/driver`, not from the core. It is a scene *display* field; the
   panic gesture itself is handled in `cmd/arxi-tui` and is immovable
-  regardless (invariant 6).
+  regardless (invariant 6). The first Ctrl-C clears the input line (never the
+  transcript) and arms this bit for a 4s window (`driver.ArmTimeout`); the
+  sobria scene's `escape_hint` node shows `press ctrl+c again to exit` while it
+  is set, and a second Ctrl-C inside the window exits. The window is long
+  enough to read the hint, and the host runs an expiry timer so the bit — and
+  the hint — clear themselves if no second press follows.
 - `host.scene.error` — set by `internal/engine`'s validator on failure, read
   by the host's boot renderer. It survives a corrupt-on-disk scene via the
   raw-scene fallback (invariant 3), and is the one bind the scene may render

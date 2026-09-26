@@ -10,7 +10,7 @@ import (
 
 // The chat pane must visibly distinguish the user's turns from the agent's, or
 // the transcript reads as one voice and a reader cannot tell a question from an
-// answer — the gap the user reported. A user turn carries the "❯ " marker; an
+// answer — the gap the user reported. A user turn carries the "┃ " marker; an
 // agent turn does not. Counterfactual: dropping the role check (marking neither
 // or both) fails one half of this test.
 func TestChatMarksUserTurnsNotAgentTurns(t *testing.T) {
@@ -38,6 +38,38 @@ func TestChatMarksUserTurnsNotAgentTurns(t *testing.T) {
 	}
 	if strings.Contains(agentLine, userTurnMarker) {
 		t.Fatalf("agent turn %q wears the user marker; the marker no longer distinguishes the voices", agentLine)
+	}
+}
+
+// A submitted multi-line prompt must wear the "┃ " marker on every one of its
+// rows, matching the input bar it was typed in — the consistency the user asked
+// for when a three-line prompt showed the marker on the first line only and the
+// rest floated unmarked. Counterfactual: passing a nil continuation prefix to
+// WrapText (the old code) marks the first row and leaves rows 2 and 3 bare, so
+// the per-row assertion below fails on them.
+func TestMarksEveryRowOfAMultiLineUserTurn(t *testing.T) {
+	state := fold.State{History: []fold.ChatLine{
+		{Role: "user", Text: "line one\nline two\nline three"},
+	}}
+	node := &scene.Node{Bind: "chat.history"}
+	r := Renderer{Width: 80}
+
+	lines := strings.Split(r.renderMarkdown(node, state, -1).Plain(), "\n")
+
+	for _, want := range []string{"line one", "line two", "line three"} {
+		var row string
+		for _, l := range lines {
+			if strings.Contains(l, want) {
+				row = l
+				break
+			}
+		}
+		if row == "" {
+			t.Fatalf("row %q was not painted at all", want)
+		}
+		if !strings.HasPrefix(row, userTurnMarker) {
+			t.Errorf("row %q lacks the %q marker; every row of a multi-line user turn must carry it", row, userTurnMarker)
+		}
 	}
 }
 

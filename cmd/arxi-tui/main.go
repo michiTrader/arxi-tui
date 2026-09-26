@@ -96,8 +96,14 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
     "prefix": { "text": "• Thinking · ", "style": {"style": "dim"} },
     "suffix": { "bind": "usage.delta", "style": {"style": "dim"} } },
 
-  { "id": "prompt", "type": "input", "bind": "user.input",
-    "prefix": "┃ ", "placeholder": "ask anything, or / for commands" },
+  { "id": "input_gap_top", "type": "text", "text": "" },
+
+  { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ " },
+
+  { "id": "input_gap_bottom", "type": "text", "text": "" },
+
+  { "id": "escape_hint", "type": "text", "text": "press ctrl+c again to exit",
+    "when": "host.escape.armed", "style": {"style": "dim"} },
 
   { "id": "menu", "type": "overlay", "anchor": "bottom", "when": "slash.active",
     "children": [
@@ -216,6 +222,25 @@ func run(scenePath string) error {
 	// alternate buffer is left so the shell's keyboard mode is restored.
 	fmt.Fprint(tty, "\033[>1u")
 	defer fmt.Fprint(tty, "\033[<u")
+
+	// Cursor shape: a steady block (DECSCUSR 2). The caret is the one piece of
+	// chrome the terminal draws for us, and a thin blinking bar reads as a shell
+	// prompt sitting inside the frame; a solid block is what makes the input line
+	// look like the surface's own field. Restored to the terminal default (0) on
+	// the way out so the user's shell keeps the cursor it chose. A terminal that
+	// does not implement DECSCUSR ignores the sequence, so nothing else changes.
+	fmt.Fprint(tty, "\033[2 q")
+	defer fmt.Fprint(tty, "\033[0 q")
+
+	// Selection highlight: teal (OSC 17 sets the highlight background). When the
+	// user drags to copy from the transcript, the default highlight on many
+	// terminals is a muddy inverse that fights the sobria palette; a teal wash
+	// reads as a deliberate part of the theme. Reset with OSC 117 on the way out
+	// so the terminal's own selection colour returns. This is terminal-dependent
+	// like the Kitty push above: a terminal that does not implement OSC 17 drops
+	// it silently, and the selection simply keeps its native colour.
+	fmt.Fprint(tty, "\033]17;#0f766e\033\\")
+	defer fmt.Fprint(tty, "\033]117\033\\")
 
 	// Phase 0.5: spawn the arxi core as a serve subprocess and speak the
 	// NDJSON request/response protocol. Log-follow reads the run's event
@@ -487,6 +512,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	clock.resolveAnim = theme.Anim
 	var animTicker *time.Ticker
 	var tickCh <-chan time.Time
+	// escapeTimer fires once, ArmTimeout after the first Ctrl-C, to disarm the
+	// "press ctrl+c again to exit" hint and repaint it away when no second press
+	// followed. It is nil the rest of the time, and a receive on a nil channel
+	// blocks forever, so the case below simply never fires until a first Ctrl-C
+	// sets it.
+	var escapeTimer <-chan time.Time
 	armTicker := func() {
 		switch {
 		case clock.running() && animTicker == nil:
@@ -624,16 +655,20 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				case term.EventKey:
 					if isCtrlC(ev.Key) {
 						if panicGesture.HandleCtrlC(time.Now()) {
-							if len(collected) == 0 && input == "" {
-								return nil // nothing to restore: the door
-							}
-							collected = nil
-							input = ""
-							caret = 0
-						} else {
-							input = "" // first press clears the line
-							caret = 0
+							return nil // second press within the window: leave
 						}
+						// First press: clear the line the user is typing and arm
+						// the visible "press ctrl+c again to exit" hint
+						// (host.escape.armed). The chat is never cleared — Ctrl-C
+						// empties the input, not the transcript the user is reading
+						// — which is the reported change from the old behaviour
+						// that wiped the whole run. escapeTimer disarms the hint
+						// after the window so a single press does not leave the
+						// line armed forever; nothing else would wake the loop to
+						// notice the window closed.
+						input = ""
+						caret = 0
+						escapeTimer = time.After(driver.ArmTimeout)
 					} else if ev.Key.Type == term.KeyWheelUp || ev.Key.Type == term.KeyWheelDown {
 						// The mouse wheel scrolls the chat pane and nothing else: it
 						// does not type, and it does not disarm the panic gesture (a
@@ -729,6 +764,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				}
 			}
 			repaint()
+
+		case <-escapeTimer:
+			// The escape window closed with no second Ctrl-C: disarm the gesture
+			// so the "press ctrl+c again to exit" hint stops showing, and repaint
+			// so it actually leaves the screen. A key pressed in the meantime
+			// already called panicGesture.Reset(), so this is a no-op then except
+			// for the harmless repaint; guarding on Armed() avoids even that.
+			escapeTimer = nil
+			if panicGesture.Armed() {
+				panicGesture.Reset()
+				repaint()
+			}
 
 		case e, ok := <-eventCh:
 			if !ok {
