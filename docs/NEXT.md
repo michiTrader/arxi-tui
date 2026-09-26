@@ -164,24 +164,74 @@ different verbs, so the client cannot simply swap the type string:
 
 Consequences for the plan:
 
-- **M1a** Obtain the `run.start` request/response schema — either from a live
-  `arxi serve` via the implemented `schema` verb, or from the arxi repo.
-  Guessing the param names is a `bad_params` refusal waiting to happen and is
-  exactly the "verify, do not assume" rule; do not implement blind.
-- **M1b** [M1a] Decide the interaction model the swap forces: if the TUI starts
-  runs itself via `run.start`, the **first** user turn creates the run, but
-  **subsequent** turns still need a send-to-existing-run verb — and the only
-  such verb this build implements is `run.steer` (in the hello), because
-  `run.prompt` is `not_implemented`. So the real migration is likely
-  `run.start` for turn one + `run.steer` for the rest, not `run.start` alone.
-  This needs the user's product call on how a TUI session maps to runs.
-- **M1c** [M1a,M1b] Implement the chosen verbs in `internal/driver/ndjson.go`
-  and the `serveDriver` (`cmd/arxi-tui/main.go:364`), keeping the
-  `not_implemented`/refusal handling that already exists.
-- **M2** [M1c] Verify a real round-trip against a live `arxi serve`.
+- **M1a — DONE (2026-09-26, schema read from the arxi source, not guessed).**
+  The `run.start` request/response schema is now captured from the kernel source
+  and cross-checked against the captured hello. Wire params (the surface
+  normalises `-` to `_`, `arxi/internal/surface/surface.go:768-773`):
+  `actor` (string, required/positional), `prompt` (string, required/positional),
+  `budget` (number, **required, no default**), `max_turns` (number, optional,
+  default 0), `workspace` (string, optional, default `auto`, enum
+  `auto|shared|worktree|copy|none`), `model` (string, optional), `sim` (bool,
+  optional). The server dispatch reads exactly `actor, prompt, budget, max_turns,
+  sim, model` (`arxi/cmd/arxi/serve.go:186-196`) and maps them onto
+  `hostv1.SubmitRequest` (`arxi/host/v1/types.go:88-102`) — note wire `budget` →
+  `BudgetUSD`, wire `sim` → `Simulated`, and `actor` is resolved through the
+  agent store / a blueprint file (`resolveActor`), **not** inline blueprint text.
+  The response `result` is `hostv1.SubmitResult` (`arxi/host/v1/types.go:106-110`):
+  `job_id` (the run id every later verb uses), `accepted_seq`, `status` (enum
+  `queued|running|blocked|paused|succeeded|failed|cancelled|expired|unknown`).
+  Pinned by `arxi/cmd/arxi/serve_lifecycle_test.go:96-106` and the budget refusal
+  `serve_test.go:282`. No live `schema` query was needed; the wire schema is
+  fully determined by the source.
+- **M1b — RESOLVED, and the prior hypothesis was WRONG (2026-09-26).** The note
+  below (old M1b) assumed `run.steer` was implemented "(in the hello)" and that
+  the migration was `run.start` for turn one + `run.steer` for the rest. **That
+  premise is false against both the current arxi source and the captured hello.**
+  In this build BOTH `run.steer` AND `run.prompt` are declared-but-`not_implemented`:
+  `run.steer` has no handler in `lifecycleHandlerDescriptors`, `streamingHandlers`
+  or `protoHandlers` (`arxi/cmd/arxi/serve.go:175-281`), no Steer/Inject method on
+  the `lifecycleHost` interface (`serve.go:127-137`), and no steer capability
+  (`arxi/host/v1/capabilities.go:7-15`); the captured hello's `implemented` list
+  (`testdata/serve/session.ndjson:1`) is exactly `blueprint.validate`,
+  `inbox.approve`, `inbox.reject`, `inbox.reply`, `run.attach`, `run.cancel`,
+  `run.result`, `run.show`, `run.start`, `schema` — steer and prompt are in
+  `types` but not `implemented`. The CLI `run steer` exists (`arxi/cmd/arxi/steer.go`)
+  but routes through `injectCause`/`applyInjection`, a CLI-only path never wired
+  to the protocol server. **There is no protocol verb in this build that sends
+  text into an already-running run.** So the achievable session→run mappings are:
+  (a) one `run.start` per user turn (each turn its own run, no shared
+  conversational state at the protocol layer), or (b) block M1c until the kernel
+  gains a `run.steer`/`run.prompt` executor. This is still the user's product
+  call, but the deciding fact is now known rather than assumed: "start + steer" is
+  not an option on this build. **The gate for M2's live round-trip is to re-read
+  the hello's `implemented` list at connect time and gate on it**, since a
+  deployed kernel that differs from this source would change the answer, and
+  `run.steer`'s absence is the whole crux.
+- **M1c** [M1b] Implement `run.start` in `internal/driver/ndjson.go` and the
+  `serveDriver` (`cmd/arxi-tui/main.go:364`): send `{actor, prompt, budget, sim}`
+  (optionally `max_turns`, `model`), read `result.job_id`, and use it as the run
+  id for `run.attach`/`run.show`/`run.result`/`run.cancel`. Do **not** send
+  `workspace` unless a real enum value is chosen (the server defaults it to `auto`
+  when omitted). Keep the existing `not_implemented`/refusal handling. The three
+  values the source cannot supply — which `actor`/blueprint a TUI session uses,
+  the per-turn `budget`, and whether `sim` defaults on — are the product decisions
+  M1b flags, not wire-schema gaps.
+- **M2** [M1c] Verify a real round-trip against a live `arxi serve`, re-reading
+  the hello's `implemented` list at connect and gating on it.
 - **M3** [M2] Evaluate adopting the `run.attach`/`event.subscribe` path (a
   positive end-of-run marker) — deferred per ADR-0002
   (`docs/PLAN.md:230-280`); the trigger is needing that positive signal.
+
+  Superseded note (kept for the record, per the "record the wrong premise rather
+  than delete it" rule): the original M1b read *"the only such verb this build
+  implements is `run.steer` (in the hello), because `run.prompt` is
+  `not_implemented`. So the real migration is likely `run.start` for turn one +
+  `run.steer` for the rest."* Both clauses were wrong — steer is not implemented
+  and not in the hello — and the error ran in the flattering direction (it
+  described a clean migration that the wire does not support). It was written from
+  the prose of the hello's `types` list without checking the `implemented` list
+  beside it; the correction above cites the handler tables that decide the
+  question.
 
 ### Block B — Agent patches + side-by-side diff (A6 said ship behind this gate)
 
