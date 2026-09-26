@@ -524,7 +524,25 @@ counterfactual test).
   behavioral manifest (fails the counterfactual test), and disabling the rebase
   drops the manifest-absolute address (fails the fragment-address test).
 
-- **H3** [H2] Mount fragments by id into the scene tree.
+- **H3 — DONE (2026-09-26).** `patch.Mount` composes a loaded declarative
+  manifest's fragments into the host document (`internal/patch/mount.go`),
+  reusing `add.go`'s write-path `insert` at each mount's `where` — the D2 grammar
+  plus the overlay-anchor form (`top-right`/`bottom`/… → a top-level child of
+  root) ADDRESSING.md §4 / H-B signs — so a plugin author and a `/ui add` user
+  cannot drift on what a position means. Every mounted node id is rewritten to
+  `<plugin-id>/<id>` (H-B.3) before the id-uniqueness invariant (ADDRESSING.md §3)
+  runs over the composed tree, so N strangers' trees compose without collision and
+  a surviving duplicate is the plugin declaring the same raw id twice — refused
+  with the id named. `Mount` re-validates the composed document (invariant 3) and
+  runs `m.Validate()` itself, so a behavioral manifest is refused even when handed
+  straight to the mounter. `patch.Unmount` is the fork-4 inverse: drop every node
+  whose id begins `<plugin-id>/` (tokens are H4's half), which names no host node.
+  `patch` imports `ext` (never the reverse), keeping `ext`'s pure-loader arch
+  seam. Counterfactuals run in both directions: the prefix collision test composes
+  two plugins sharing a raw id (prefixed → distinct; raw → collides), and the
+  behavioral and self-collision guards were reverted by hand and observed to fail.
+  H6 wires this behind `/ui plugin add <url>`/`remove <id>`.
+
 - **H4** [H2] Merge plugin tokens with precedence (user > plugin > factory).
 - **H5** [H2] Validate the `<plugin-id>.*` namespace (declared vs used, with
   `file:line`).
