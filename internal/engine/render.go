@@ -711,10 +711,13 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 }
 
 // userTurnMarker is prepended to a user's chat turn so the transcript visibly
-// separates the human's words from the agent's. It matches the "❯ " prompt glyph
-// the factory scenes already use for the input line, so the same symbol means
-// "you" at the point of typing and in the history above.
-const userTurnMarker = "❯ "
+// separates the human's words from the agent's. It is the same "┃ " bar the
+// input line wears, so the symbol that means "you" while typing goes on meaning
+// "you" once the turn is in the history above — the consistency the reader asked
+// for. It rides every visual row of the turn, not only the first (see the
+// continuation prefix in renderMarkdown), so a multi-line prompt reads as one
+// marked block instead of a marked first line over an unmarked tail.
+const userTurnMarker = "┃ "
 
 // userTurnToken paints the user's own turns in the transcript. It is a distinct
 // token from the pane's default so the theme can lift the human's words above
@@ -744,19 +747,23 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 		for _, h := range state.History {
 			text := h.Text
 			turnToken := token
+			var cont ui.Line
 			if h.Role == "user" {
 				// Mark the user's own turns so the transcript does not read as a
 				// single voice. Without a marker a reader cannot tell what they
 				// asked from what the agent answered — the differentiation the
 				// chat was missing. The marker is prepended to the text before
-				// wrapping so it rides the first row of the turn; agent turns stay
-				// unmarked, which is the default voice of the pane. The turn is
-				// wrapped under userTurnToken so it also carries the user's colour,
-				// while an agent turn keeps the pane's own token.
+				// wrapping so it rides the first row of the turn, and passed as
+				// the continuation prefix so every wrapped or newline-broken row
+				// carries it too; agent turns stay unmarked, which is the default
+				// voice of the pane. The turn is wrapped under userTurnToken so it
+				// also carries the user's colour, while an agent turn keeps the
+				// pane's own token.
 				text = userTurnMarker + text
 				turnToken = userTurnToken
+				cont = ui.Line{{Text: userTurnMarker, Style: userTurnToken}}
 			}
-			lines = append(lines, ui.WrapText(text, turnToken, r.Width, nil)...)
+			lines = append(lines, ui.WrapText(text, turnToken, r.Width, cont)...)
 			lines = append(lines, ui.Line{}) // one blank row between turns
 		}
 		if len(lines) > 0 {
