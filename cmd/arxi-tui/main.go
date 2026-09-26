@@ -487,6 +487,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	clock.resolveAnim = theme.Anim
 	var animTicker *time.Ticker
 	var tickCh <-chan time.Time
+	// escapeTimer fires once, ArmTimeout after the first Ctrl-C, to disarm the
+	// "press ctrl+c again to exit" hint and repaint it away when no second press
+	// followed. It is nil the rest of the time, and a receive on a nil channel
+	// blocks forever, so the case below simply never fires until a first Ctrl-C
+	// sets it.
+	var escapeTimer <-chan time.Time
 	armTicker := func() {
 		switch {
 		case clock.running() && animTicker == nil:
@@ -624,16 +630,20 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				case term.EventKey:
 					if isCtrlC(ev.Key) {
 						if panicGesture.HandleCtrlC(time.Now()) {
-							if len(collected) == 0 && input == "" {
-								return nil // nothing to restore: the door
-							}
-							collected = nil
-							input = ""
-							caret = 0
-						} else {
-							input = "" // first press clears the line
-							caret = 0
+							return nil // second press within the window: leave
 						}
+						// First press: clear the line the user is typing and arm
+						// the visible "press ctrl+c again to exit" hint
+						// (host.escape.armed). The chat is never cleared — Ctrl-C
+						// empties the input, not the transcript the user is reading
+						// — which is the reported change from the old behaviour
+						// that wiped the whole run. escapeTimer disarms the hint
+						// after the window so a single press does not leave the
+						// line armed forever; nothing else would wake the loop to
+						// notice the window closed.
+						input = ""
+						caret = 0
+						escapeTimer = time.After(driver.ArmTimeout)
 					} else if ev.Key.Type == term.KeyWheelUp || ev.Key.Type == term.KeyWheelDown {
 						// The mouse wheel scrolls the chat pane and nothing else: it
 						// does not type, and it does not disarm the panic gesture (a
@@ -729,6 +739,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				}
 			}
 			repaint()
+
+		case <-escapeTimer:
+			// The escape window closed with no second Ctrl-C: disarm the gesture
+			// so the "press ctrl+c again to exit" hint stops showing, and repaint
+			// so it actually leaves the screen. A key pressed in the meantime
+			// already called panicGesture.Reset(), so this is a no-op then except
+			// for the harmless repaint; guarding on Armed() avoids even that.
+			escapeTimer = nil
+			if panicGesture.Armed() {
+				panicGesture.Reset()
+				repaint()
+			}
 
 		case e, ok := <-eventCh:
 			if !ok {

@@ -21,12 +21,16 @@ type PanicGesture struct {
 	armedAt time.Time
 }
 
-const armTimeout = 4 * time.Second
+// ArmTimeout is exported so the host loop can arm an expiry timer on the same
+// window: the first Ctrl-C shows a hint, and the loop has to disarm it (and
+// repaint the hint away) after this long when no second press follows, because
+// nothing else would wake the loop to notice the window closed.
+const ArmTimeout = 4 * time.Second
 
 // HandleCtrlC records a Ctrl-C press. Returns true if this press should trigger
 // the panic gesture (i.e. the second press arrived within armTimeout).
 func (g *PanicGesture) HandleCtrlC(now time.Time) bool {
-	if g.armed && now.Sub(g.armedAt) <= armTimeout {
+	if g.armed && now.Sub(g.armedAt) <= ArmTimeout {
 		// Second press within window — trigger escape
 		g.reset()
 		return true

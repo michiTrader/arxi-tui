@@ -178,6 +178,58 @@ func TestLoopFirstCtrlCClearsInput(t *testing.T) {
 	}
 }
 
+// TestLoopCtrlCKeepsTheChat is the direct guard for the reported change: Ctrl-C
+// clears the line the user is typing, never the transcript they are reading. The
+// old gesture wiped the whole run on the second press; the new one leaves it
+// standing and simply exits. The test folds a driver turn into the chat, clears
+// a half-typed line with one Ctrl-C, exits with the second, and asserts the
+// agent's words are still on screen in the final frame — the frame painted after
+// the first Ctrl-C, since the second returns without repainting.
+func TestLoopCtrlCKeepsTheChat(t *testing.T) {
+	doc, err := scene.ParseDocument([]byte(factoryRAW))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+
+	evCh := make(chan fold.Event, 64)
+	defer close(evCh)
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		evCh <- fold.Event{Type: "llm.response", Seq: 1,
+			Payload: map[string]any{"text": "keep me on screen"}}
+	}()
+
+	// Type "abc", let the driver turn land, then one Ctrl-C (clears the line,
+	// arms, keeps the chat) and a second within the window (exits).
+	script := []scheduledEvent{
+		{40 * time.Millisecond, keyEvent('a')},
+		{10 * time.Millisecond, keyEvent('b')},
+		{10 * time.Millisecond, keyEvent('c')},
+		{20 * time.Millisecond, ctrlCharEvent('c')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+	}
+
+	tty := newFakeTTY(80, 24, script)
+	drv := &testDriver{evCh: evCh}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), evCh, drv, ""); err != nil {
+		t.Fatalf("loop returned error: %v", err)
+	}
+
+	// The last painted frame is the one after the first Ctrl-C (the second
+	// returns without repainting). It is the frame that must still hold the
+	// transcript — checking cumulative output would pass on an earlier frame
+	// even if the last one wiped the chat, which is exactly the old behaviour.
+	frames := strings.Split(tty.output(), frameBegin)
+	last := frames[len(frames)-1]
+	if !strings.Contains(last, "keep me on screen") {
+		t.Errorf("Ctrl-C wiped the transcript; the agent's turn must survive a line-clearing Ctrl-C. last frame:\n%s", last)
+	}
+}
+
 // TestLoopParksTheTerminalCursorInTheInputBar is the end-to-end half of the
 // caret contract: the bytes the loop writes must name a row and a column,
 // because nothing else moves the terminal cursor off the corner a full repaint
