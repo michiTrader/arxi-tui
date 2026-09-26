@@ -51,6 +51,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/michiTrader/arxi_tui/internal/ext"
 	"github.com/michiTrader/arxi_tui/internal/scene"
 )
 
@@ -115,11 +116,39 @@ type ViewStateOp struct {
 // applied document would make the invariant depend on every call site
 // remembering to discard it.
 func Apply(name string, src []byte, command string) (Result, error) {
+	return ApplyWithFetch(name, src, command, nil)
+}
+
+// Fetcher retrieves the bytes of a plugin manifest named by a URL, for the
+// `/ui plugin add <url>` verb.
+//
+// It is an interface, and the network lives behind it, for the same reason
+// internal/eval keeps the only real HTTP client out of the loop: this package
+// is a pure source-to-source transform everywhere else, and a manifest URL is
+// the one input that cannot be resolved without egress. Keeping the fetch
+// injected means patch stays testable offline (a fake Fetcher returns fixture
+// bytes) and the one real implementation lives in the host, where a network
+// call belongs — not compiled into the mutation surface every /ui command
+// shares. It returns the name the manifest should be addressed under (the URL)
+// alongside the bytes, so a refusal inside a fetched manifest still names where
+// it came from.
+type Fetcher interface {
+	Fetch(rawURL string) (name string, data []byte, err error)
+}
+
+// ApplyWithFetch is Apply with a Fetcher supplied, for the one verb that needs
+// it. `/ui plugin add <url>` cannot be resolved without fetching the manifest,
+// so the host passes its network Fetcher here; every other verb ignores it, and
+// Apply is the fetch-free spelling for the callers (and tests) that never touch
+// the plugin path. A nil Fetcher is legal: only `plugin add` consults it, and
+// it is refused with a clear message rather than a nil-pointer panic when the
+// context has no network.
+func ApplyWithFetch(name string, src []byte, command string, fetch Fetcher) (Result, error) {
 	cmd, err := Parse(command)
 	if err != nil {
 		return Result{}, err
 	}
-	return cmd.apply(name, src)
+	return cmd.apply(name, src, fetch)
 }
 
 // Command is one parsed /ui invocation.
@@ -236,6 +265,16 @@ func Parse(line string) (Command, error) {
 			return Command{}, fmt.Errorf("/ui set needs a node id, a key and a value: /ui set <node-id> <key> <value>")
 		}
 		return Command{Verb: "set", Target: args[0], Key: args[1], Value: strings.Join(args[2:], " ")}, nil
+	case "plugin":
+		// /ui plugin add <url>  or  /ui plugin remove <id>. Unlike the other
+		// verbs this one takes a subcommand rather than a node id, because a
+		// plugin is not a node in the document: `add` fetches a manifest and
+		// mounts its fragments (H3/H6) and `remove` drops the mounted subtree
+		// (Unmount). The subcommand is parsed here, in the one grammar reader, so
+		// the fetch/mount dispatch in apply reads a resolved Command rather than
+		// re-splitting the line — the same reason `add`/`move` resolve their
+		// where clause in Parse and not in apply.
+		return parsePlugin(args)
 	default:
 		return Command{}, fmt.Errorf("unknown /ui verb %q: expected one of %s", verb, strings.Join(Verbs(), ", "))
 	}
@@ -255,11 +294,50 @@ func Parse(line string) (Command, error) {
 // property the engine already reads. `hide` and `show` also name a node by its
 // existing id, but they write no property: they mutate the `ui.hidden`
 // view-state set (BINDS.md §4.3, D3), which the engine walk reads as a
-// visibility filter, so the document source is untouched.
-func Verbs() []string { return []string{"add", "move", "set", "style", "hide", "show"} }
+// visibility filter, so the document source is untouched. `plugin` is the verb
+// that reaches outside the document entirely: `plugin add <url>` fetches a
+// manifest and composes its fragments (H3/H6), `plugin remove <id>` drops them
+// (Unmount) — it addresses a plugin by its id, not a node, and `add` is the one
+// verb that needs a Fetcher because its argument names bytes the host has not
+// read yet.
+func Verbs() []string {
+	return []string{"add", "move", "set", "style", "hide", "show", "plugin"}
+}
+
+// parsePlugin reads the `plugin` verb's `add <url>` / `remove <id>` subcommand.
+//
+// The subcommand is carried in Key and its one argument in Value, reusing the
+// Command fields the other verbs already have rather than growing a
+// plugin-specific struct: a plugin command is still one verb and one string,
+// which is the closed shape Command exists to keep (widening it towards
+// arbitrary JSON is the collapse its comment warns against). `add`'s argument
+// is a URL and `remove`'s is a plugin id — both opaque single tokens here — so
+// neither needs the where-clause machinery `add`/`move` carry.
+func parsePlugin(args []string) (Command, error) {
+	if len(args) == 0 {
+		return Command{}, fmt.Errorf("/ui plugin needs a subcommand: /ui plugin add <url> or /ui plugin remove <id>")
+	}
+	switch sub := args[0]; sub {
+	case "add":
+		// The URL is a single token: a manifest URL with a space in it is not a
+		// URL, and splitting on spaces would let a fat-fingered second word be
+		// silently dropped rather than refused.
+		if len(args) != 2 {
+			return Command{}, fmt.Errorf("/ui plugin add needs exactly one manifest URL: /ui plugin add <url>")
+		}
+		return Command{Verb: "plugin", Key: "add", Value: args[1]}, nil
+	case "remove":
+		if len(args) != 2 {
+			return Command{}, fmt.Errorf("/ui plugin remove needs exactly one plugin id: /ui plugin remove <id>")
+		}
+		return Command{Verb: "plugin", Key: "remove", Value: args[1]}, nil
+	default:
+		return Command{}, fmt.Errorf("unknown /ui plugin subcommand %q: expected add or remove", sub)
+	}
+}
 
 // apply performs the source-to-source edit and re-validates the result.
-func (c Command) apply(name string, src []byte) (Result, error) {
+func (c Command) apply(name string, src []byte, fetch Fetcher) (Result, error) {
 	switch c.Verb {
 	case "add":
 		return c.applyAdd(name, src)
@@ -267,6 +345,8 @@ func (c Command) apply(name string, src []byte) (Result, error) {
 		return c.applyMove(name, src)
 	case "hide", "show":
 		return c.applyViewState(name, src)
+	case "plugin":
+		return c.applyPlugin(name, src, fetch)
 	}
 
 	var root map[string]json.RawMessage
@@ -410,7 +490,46 @@ func (c Command) applyViewState(name string, src []byte) (Result, error) {
 	return Result{Doc: doc, Source: src, Summary: c.summary(), ViewState: op}, nil
 }
 
-// unknownTargetError explains a /ui command that named a node the scene does
+// applyPlugin handles the `plugin` verb: `remove` unmounts a plugin's subtree,
+// `add` fetches a manifest and mounts its fragments (H6, the declarative path).
+//
+// Both halves delegate to the H3 composer (Mount/Unmount), which already carries
+// the id prefixing, the uniqueness invariant, the behavioral-manifest refusal and
+// the invariant-3 re-validation — so this method is only the fetch-and-parse step
+// `add` needs and the argument routing `remove` does not. `remove` is a pure
+// source-to-source edit and needs no Fetcher; `add` cannot proceed without one,
+// and a nil Fetcher is refused with a reason rather than dereferenced.
+//
+// The manifest is parsed but not separately validated here: Mount runs
+// m.Validate() itself (it is the single point foreign fragments enter the tree),
+// so a behavioral manifest fetched from a URL is refused by the same gate a local
+// one is, and validating twice would be a second answer to "is this manifest
+// legal".
+func (c Command) applyPlugin(name string, src []byte, fetch Fetcher) (Result, error) {
+	switch c.Key {
+	case "remove":
+		return Unmount(name, src, c.Value)
+	case "add":
+		if fetch == nil {
+			return Result{}, fmt.Errorf("/ui plugin add %q: no plugin fetcher is available in this context, so the manifest cannot be retrieved; plugin add reaches the network and is only wired where the host supplies a Fetcher", c.Value)
+		}
+		manifestName, data, err := fetch.Fetch(c.Value)
+		if err != nil {
+			return Result{}, err
+		}
+		m, err := ext.ParseNamed(manifestName, data)
+		if err != nil {
+			return Result{}, err
+		}
+		return Mount(name, src, m)
+	default:
+		// parsePlugin only ever produces add/remove, so this is unreachable
+		// unless a Command is built by hand with a bad Key; naming the key is the
+		// remedy for that construction bug.
+		return Result{}, fmt.Errorf("/ui plugin: unknown subcommand %q; expected add or remove", c.Key)
+	}
+}
+
 // not have, and it lists the ids that do exist.
 //
 // The listing is not politeness. Measured on the scenes this repo ships,

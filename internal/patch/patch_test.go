@@ -295,15 +295,24 @@ func TestStyleWritesTheSpellingTheRendererReads(t *testing.T) {
 //
 // The sweep is over Verbs(), which is also what the refusal message and the
 // host registry read, so a verb that exists is a verb this runs.
+//
+// It drives every verb through ApplyWithFetch with a fake fetcher rather than
+// Apply, because `plugin` is the first verb whose argument names bytes the host
+// has not read — `plugin add` cannot round-trip without a fetcher. The fetcher
+// is ignored by every other verb, so this is Apply's behaviour for them and the
+// one extra input the plugin verb needs, supplied the same way the per-verb line
+// is.
 func TestEveryVerbRoundTripsThroughTheValidator(t *testing.T) {
 	name, src := sobria(t)
+	fetch := &fakeFetcher{data: []byte(sweepManifest), name: "probe.json"}
 	lines := map[string]string{
-		"add":   `/ui add node below status {"type":"text","text":"hello"}`,
-		"move":  `/ui move status above chat`,
-		"style": "/ui style status dim",
-		"set":   "/ui set status text hello",
-		"hide":  "/ui hide status",
-		"show":  "/ui show status",
+		"add":    `/ui add node below status {"type":"text","text":"hello"}`,
+		"move":   `/ui move status above chat`,
+		"style":  "/ui style status dim",
+		"set":    "/ui set status text hello",
+		"hide":   "/ui hide status",
+		"show":   "/ui show status",
+		"plugin": "/ui plugin add https://example.test/probe.json",
 	}
 
 	for _, verb := range Verbs() {
@@ -312,7 +321,7 @@ func TestEveryVerbRoundTripsThroughTheValidator(t *testing.T) {
 			t.Errorf("verb %q is in Verbs() and this sweep has no line for it.\nConsequence: a verb reachable from the menu and named in every refusal message is exercised by no test, so its branch of mutate() can be wrong and the suite stays green.\nRemedy: add a line for it here.", verb)
 			continue
 		}
-		res, err := Apply(name, src, line)
+		res, err := ApplyWithFetch(name, src, line, fetch)
 		if err != nil {
 			t.Errorf("%q must produce a scene the validator accepts, and it did not: %v\nConsequence: the verb is unusable from the interface.\nRemedy: fix the mutation, not the test.", line, err)
 			continue
