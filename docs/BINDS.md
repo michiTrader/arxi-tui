@@ -204,10 +204,12 @@ either to a host-owned field (Section 4.1–4.3) or to a field the plugin declar
 it will stream. An undeclared plugin bind is a validation error with `file:line`.
 
 **Declared-vs-used rule (H1, signed 2026-09-23; argued in
-`docs/DESIGN-BLOCK-H.md`).** This is the concrete scope rule H5 implements, and
-it is the plugin-namespace analogue of §4.7's `row.*` rule — the manifest's
-`binds` map is a plugin's schema the same way a source list's `RowSchema` is a
-template's schema:
+`docs/DESIGN-BLOCK-H.md`). Implemented H5 (2026-09-26,
+`internal/scene/validate.go` `ValidateWithPlugin`/`validatePluginBind`, wired by
+`internal/ext/manifest.go` `pluginScope`).** This is the concrete scope rule H5
+implements, and it is the plugin-namespace analogue of §4.7's `row.*` rule — the
+manifest's `binds` map is a plugin's schema the same way a source list's
+`RowSchema` is a template's schema:
 
 - A `<plugin-id>.<field>` bind resolves **iff** it appears inside a fragment
   mounted by a plugin whose `id` is `<plugin-id>` **and** `<field>` is a key of
