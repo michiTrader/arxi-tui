@@ -132,3 +132,49 @@ func TestRevealReportsOneShotActivity(t *testing.T) {
 			"that never changes", len(emptyActive))
 	}
 }
+
+// When the revealed text grows wider than the pane, the reveal scrolls
+// horizontally to keep the writing edge on screen: the visible line is the last
+// r.Width columns of the revealed prefix, so the newest graphemes are always
+// shown instead of overflowing a single-line node and churning the last column
+// (which, with auto-wrap off, is all the reader would see). This is the reported
+// fix — before it, a long reveal only animated its final cell and the rest had
+// to be read by widening the terminal.
+//
+// Counterfactual, run rather than argued: dropping the window in renderText
+// leaves the visible line at the full revealed width (38 > 10 here) and keeps
+// the head ("HEAD") on screen while the edge ("EDGE") overflows off the right —
+// so both assertions below flip.
+func TestRevealScrollsToFollowTheWritingEdge(t *testing.T) {
+	// A distinctive head, a run of filler, and a distinctive writing edge.
+	const content = "HEAD" + "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx" + "EDGE" // 4 + 30 + 4 = 38 columns
+	body := `{ "root": { "id": "rv", "type": "text", "text": "` + content + `",
+	  "reveal": { "anim": "reveal.fast" } } }`
+	doc, err := scene.ParseDocument([]byte(body))
+	if err != nil {
+		t.Fatalf("premise broken: reveal doc must parse; got %v", err)
+	}
+	if verr := doc.Validate(); verr != nil {
+		t.Fatalf("premise broken: reveal doc must validate; got %v", verr)
+	}
+
+	const width = 10
+	// Phase 1.0: the whole 38-column string is revealed, well past the 10-column
+	// pane, so the window must show the tail.
+	r := Renderer{Width: width, Height: 1, AnimPhase: map[string]float64{"rv": 1.0}}
+	got := strings.TrimRight(r.RenderFrame(doc, fold.Fold(nil)).Plain(), " ")
+
+	if len([]rune(got)) > width {
+		t.Errorf("the revealed line is %d columns wide, wider than the %d-column pane; the reveal is\n"+
+			"not being windowed, so it overflows the single-line node and the last cell churns.\n"+
+			"line: %q", len([]rune(got)), width, got)
+	}
+	if !strings.Contains(got, "EDGE") {
+		t.Errorf("the writing edge %q is not on screen; the reveal must scroll to follow the newest\n"+
+			"graphemes, not freeze on the head. line: %q", "EDGE", got)
+	}
+	if strings.Contains(got, "HEAD") {
+		t.Errorf("the head %q is still on screen at width %d; a followed edge means the start has\n"+
+			"scrolled off. line: %q", "HEAD", width, got)
+	}
+}
