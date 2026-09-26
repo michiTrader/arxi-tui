@@ -619,8 +619,28 @@ counterfactual test).
   and out-of-namespace tests still pass — so the branch is exactly what enforces
   the rule. The `arxi_tui/internal/scene` package still imports no UI package and,
   crucially, no `ext`: the scope is a scene-owned type the loader projects into.
-- **H6** [H3,H5] Implement `/ui plugin add <url>` (fetch, validate, mount) for
-  the declarative path.
+- **H6 — DONE (2026-09-26).** `/ui plugin add <url>` and `/ui plugin remove <id>`
+  are the declarative plugin path's command surface. `patch.parsePlugin` reads the
+  subcommand into `Command{Verb:"plugin", Key:add|remove, Value:url|id}` — one verb
+  and one string, the closed shape `Command` keeps — and `Verbs()` advertises
+  `plugin`, so the slash-menu agreement sweep and the verb round-trip sweep both
+  cover it (the menu `ui` description names it). `applyPlugin` routes `remove` to
+  `Unmount` (a pure source edit, no fetch) and `add` through an injected
+  `patch.Fetcher` to `ext.ParseNamed` + `Mount`, so the H3 composer's guarantees
+  (id prefixing, uniqueness, the behavioral refusal, invariant-3 re-validation)
+  are reused rather than reimplemented — a fetched behavioral manifest is refused
+  by the same gate a local one is, which is H6's load-bearing counterfactual
+  (fetching does not buy a manifest past H2). The network lives behind the
+  `Fetcher` seam exactly as `internal/eval` keeps the only real HTTP client at the
+  edge: `patch` stays a pure offline transform (a fake fetcher returns fixture
+  bytes in tests), `Apply` is the fetch-free spelling that delegates to
+  `ApplyWithFetch(nil)`, and the one real implementation —
+  `cmd/arxi-tui.httpManifestFetcher` (http/https only, a 15s timeout, a 1 MiB body
+  cap) — is threaded into `uiCommandKey`. Counterfactuals run: removing the
+  nil-fetcher guard panics the no-fetcher test, the behavioral manifest is refused
+  by Mount, mount+remove round-trips back to the original document, and the fetch
+  size cap is exercised at exactly the cap (accepted) and one past it (refused).
+
 - **H7** [H6] Freeze the Scene 6 golden (community ticker).
 - **H8** Implement `on_press` action routing (`cmd:/slash`, `focus:<node>`,
   `answer:<kind>`) — needed for interactive fragments (Scene 8 buttons).
