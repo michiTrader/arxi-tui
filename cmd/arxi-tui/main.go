@@ -84,7 +84,7 @@ const factoryRAW = `{ "root": { "type": "stack", "children": [
 // factorySobria is the Scene 2 sobria default, embedded as a fallback constant
 // so the interface boots even when testdata/SOBRIA.json is missing.
 const factorySobria = `{ "root": { "type": "stack", "children": [
-  { "type": "text", "style": {"style": "header"},
+  { "type": "text", "style": {"style": "dim"},
     "text": "Δr×i v0.1.0 · Run /help for commands" },
 
   ` + factoryNoticeNode + `,
@@ -223,13 +223,14 @@ func run(scenePath string) error {
 	fmt.Fprint(tty, "\033[>1u")
 	defer fmt.Fprint(tty, "\033[<u")
 
-	// Cursor shape: a steady block (DECSCUSR 2). The caret is the one piece of
-	// chrome the terminal draws for us, and a thin blinking bar reads as a shell
-	// prompt sitting inside the frame; a solid block is what makes the input line
-	// look like the surface's own field. Restored to the terminal default (0) on
-	// the way out so the user's shell keeps the cursor it chose. A terminal that
-	// does not implement DECSCUSR ignores the sequence, so nothing else changes.
-	fmt.Fprint(tty, "\033[2 q")
+	// Cursor shape: a blinking block (DECSCUSR 1). The caret is the one piece of
+	// chrome the terminal draws for us; a solid block is what makes the input line
+	// look like the surface's own field, and the blink is the ordinary "a cursor
+	// lives here" tell a reader expects — a steady block reads as frozen. Restored
+	// to the terminal default (0) on the way out so the user's shell keeps the
+	// cursor it chose. A terminal that does not implement DECSCUSR ignores the
+	// sequence, so nothing else changes.
+	fmt.Fprint(tty, "\033[1 q")
 	defer fmt.Fprint(tty, "\033[0 q")
 
 	// Selection highlight: teal (OSC 17 sets the highlight background). When the
