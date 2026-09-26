@@ -217,6 +217,25 @@ func run(scenePath string) error {
 	fmt.Fprint(tty, "\033[>1u")
 	defer fmt.Fprint(tty, "\033[<u")
 
+	// Cursor shape: a steady block (DECSCUSR 2). The caret is the one piece of
+	// chrome the terminal draws for us, and a thin blinking bar reads as a shell
+	// prompt sitting inside the frame; a solid block is what makes the input line
+	// look like the surface's own field. Restored to the terminal default (0) on
+	// the way out so the user's shell keeps the cursor it chose. A terminal that
+	// does not implement DECSCUSR ignores the sequence, so nothing else changes.
+	fmt.Fprint(tty, "\033[2 q")
+	defer fmt.Fprint(tty, "\033[0 q")
+
+	// Selection highlight: teal (OSC 17 sets the highlight background). When the
+	// user drags to copy from the transcript, the default highlight on many
+	// terminals is a muddy inverse that fights the sobria palette; a teal wash
+	// reads as a deliberate part of the theme. Reset with OSC 117 on the way out
+	// so the terminal's own selection colour returns. This is terminal-dependent
+	// like the Kitty push above: a terminal that does not implement OSC 17 drops
+	// it silently, and the selection simply keeps its native colour.
+	fmt.Fprint(tty, "\033]17;#0f766e\033\\")
+	defer fmt.Fprint(tty, "\033]117\033\\")
+
 	// Phase 0.5: spawn the arxi core as a serve subprocess and speak the
 	// NDJSON request/response protocol. Log-follow reads the run's event
 	// log file. When no arxi binary is available (Phase 0 dev, or non-interactive
