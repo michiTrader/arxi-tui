@@ -1018,6 +1018,22 @@ func (r *Renderer) renderText(n *scene.Node, state fold.State) ui.Frame {
 	}
 	if n.Reveal != nil {
 		text = r.revealPrefix(n, text)
+		// A reveal types one grapheme at a time from the left. Once the revealed
+		// text is wider than the pane it would overflow this single-line node, and
+		// with auto-wrap off (emitFrame) the terminal parks at the last column and
+		// overwrites that one cell with every new grapheme — so the reader watches
+		// the last column churn and has to widen the terminal to read what was
+		// typed. Instead, scroll the reveal horizontally to follow the writing
+		// edge: show the last r.Width columns, keeping the newest graphemes on
+		// screen the way a real terminal scrolls when the caret hits the right
+		// margin. revealPrefix still decides how *much* is revealed; this only
+		// chooses which columns of it are shown, so the phase→length mapping and
+		// the golden at a fitting width are both unchanged.
+		if r.Width > 0 {
+			if w := ansi.StringWidth(text); w > r.Width {
+				text = ansi.Cut(text, w-r.Width, w)
+			}
+		}
 	}
 	return ui.Frame{
 		Live:   []ui.Line{{ui.Span{Text: text, Style: style}}},
