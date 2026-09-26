@@ -516,6 +516,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// keystroke that hides a node must survive the next repaint.
 	uiHidden := map[string]bool{}
 
+	// pluginFetch is the network side of `/ui plugin add <url>` (H6). It is the
+	// only real HTTP client the loop holds, injected into the /ui dispatch so the
+	// patch surface stays a pure offline transform (patch.Fetcher is the seam).
+	// Built once here so its timeout and size cap are the loop's, not re-chosen
+	// per keystroke.
+	pluginFetch := newHTTPManifestFetcher()
+
 	// The host animation clock (ADR-0005). It holds per-node elapsed time
 	// across frames like uiHidden above, feeds the renderer a phase, and reads
 	// back which nodes are animating so the ticker below runs only while one
@@ -758,7 +765,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// nothing, with the menu showing an empty list. Asking
 						// the command surface first means a line it recognises is
 						// never the menu's to swallow.
-						if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden); handled {
+						if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch); handled {
 							input = next
 							caret = clampCaret(input, caret)
 						} else if strings.HasPrefix(input, "/") {
@@ -1119,7 +1126,15 @@ func cleanPaste(s string) string {
 // its output, so the error names `file:line` — and it reaches the screen
 // through `host.scene.error`, the bind BINDS.md §2 signs for exactly this.
 // The user sees why, on the scene they still have.
-func uiCommandKey(input string, k term.Key, doc **scene.Document, notice *string, hidden map[string]bool) (bool, string) {
+//
+// # Why the fetcher is a parameter
+//
+// `/ui plugin add <url>` is the one command that reaches the network, and the
+// fetch is injected (patch.Fetcher) rather than reached for here so the patch
+// surface stays offline-pure and this function stays testable with a fake. A
+// nil fetch is legal — every non-plugin command ignores it, and `plugin add`
+// with no fetch is refused with a reason rather than a panic.
+func uiCommandKey(input string, k term.Key, doc **scene.Document, notice *string, hidden map[string]bool, fetch patch.Fetcher) (bool, string) {
 	if k.Type != term.KeyEnter {
 		return false, input
 	}
@@ -1146,7 +1161,7 @@ func uiCommandKey(input string, k term.Key, doc **scene.Document, notice *string
 		return true, ""
 	}
 
-	res, err := patch.Apply((*doc).Name(), src, text)
+	res, err := patch.ApplyWithFetch((*doc).Name(), src, text, fetch)
 	if err != nil {
 		*notice = err.Error()
 		return true, ""
