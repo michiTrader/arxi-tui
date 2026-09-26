@@ -203,3 +203,31 @@ func TestRenderInputPaintsMultipleLinesForNewlines(t *testing.T) {
 		t.Errorf("caret reported on row %d, but rows 0..%d were painted", f.Cursor.Line, len(f.Live)-1)
 	}
 }
+
+// TestEveryInputRowCarriesThePrefix pins the reported request: the "┃ " bar
+// marks every visual row of a multi-line input, not only the first. The old
+// renderer indented the continuation rows with blank spaces of the prefix width,
+// so the bar floated over a tail with no left edge; a reader typing three lines
+// wants the same "┃ " on all three. Counterfactual: the space-indent version
+// puts "  " (two blanks) as the leading span on rows 1+ and fails this.
+func TestEveryInputRowCarriesThePrefix(t *testing.T) {
+	prefixRaw := json.RawMessage(`"┃ "`)
+	node := &scene.Node{Type: "input", Bind: "user.input", PrefixRaw: prefixRaw}
+	r := Renderer{Width: 40, Height: 24}
+
+	text := "first line\nsecond line\nthird"
+	f := r.renderInput(node, fold.State{UserInput: text, UserInputCaret: 0})
+
+	if len(f.Live) != 3 {
+		t.Fatalf("expected three painted rows, got %d", len(f.Live))
+	}
+	for i, l := range f.Live {
+		if len(l) == 0 || l[0].Text != "┃ " {
+			got := "<empty row>"
+			if len(l) > 0 {
+				got = l[0].Text
+			}
+			t.Errorf("input row %d leads with %q, want the %q bar; every row of a multi-line input must carry the same left edge", i, got, "┃ ")
+		}
+	}
+}

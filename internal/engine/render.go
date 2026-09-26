@@ -838,8 +838,12 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 
 	// The text wraps into a column `room` wide — the pane minus the prefix — so
 	// every visual row, first and continuation, has the same room and the caret
-	// column arithmetic is uniform. A continuation row hangs under the first row's
-	// text (indented by the prefix width) so a wrapped line reads as one input.
+	// column arithmetic is uniform. The prefix is repeated on every row rather
+	// than blanked to spaces on the continuations: the "┃ " bar marks the whole
+	// input as one field, and a reader typing a multi-line prompt sees the same
+	// left edge on every line instead of a marked first line over a floating tail.
+	// The caret column is still prefixW+col because the repeated prefix has the
+	// same width the old indent did, so the arithmetic below is unchanged.
 	inputStyle := styleNameOr(n.Style, "input")
 	room := r.Width - prefixW
 	if room < 1 {
@@ -848,13 +852,10 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 	rowsText := inputVisualRows(state.UserInput, room)
 
 	live := make([]ui.Line, 0, len(rowsText))
-	for i, rt := range rowsText {
+	for _, rt := range rowsText {
 		var cells ui.Line
-		switch {
-		case i == 0 && prefix != "":
+		if prefix != "" {
 			cells = append(cells, ui.Span{Text: prefix, Style: "input"})
-		case i > 0 && prefixW > 0:
-			cells = append(cells, ui.Span{Text: strings.Repeat(" ", prefixW), Style: "input"})
 		}
 		cells = append(cells, ui.Span{Text: rt, Style: inputStyle})
 		live = append(live, cells)
