@@ -134,6 +134,17 @@ func advanceFocus(ids []string, current string, forward bool) string {
 	return ids[idx-1]
 }
 
+// pluginActionRouter is the seam press dispatch reaches a behavioral plugin
+// through (I4). It is satisfied by *supervisor.Registry, which the loop holds and
+// I5 populates behind the consent gate; press.go depends on the small interface
+// rather than the concrete registry so the arch seam stays clean and a test can
+// route to a fake. SendAction resolves the plugin by id, applies the granted
+// capability gate, and writes the `action` frame; it reports (never crashes) when
+// the plugin is unmounted, ungranted, or down (§I-E, §I-G).
+type pluginActionRouter interface {
+	SendAction(pluginID, action string, args map[string]string) error
+}
+
 // focusKey handles the two keys H8 adds to the loop: Tab/Shift-Tab move the focus
 // cursor over the pressable nodes, and Enter dispatches the focused node's
 // on_press. It returns handled=false for every other key and for Enter while the
@@ -144,7 +155,7 @@ func advanceFocus(ids []string, current string, forward bool) string {
 // with "/", Tab and Enter belong to the menu, so focusKey is never reached then.
 // Ctrl-C never reaches here either, so the escape hatch stays uncapturable
 // (invariant 6) whatever a button's action names.
-func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, notice *string, hidden map[string]bool, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), ctx context.Context, drv Driver) (bool, string, string) {
+func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, notice *string, hidden map[string]bool, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) (bool, string, string) {
 	switch {
 	case k.Type == term.KeyTab:
 		ids := pressableIDs(*doc, hidden)
@@ -160,7 +171,7 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, notice *s
 			// is not a button, say). Enter is not ours; let it submit as usual.
 			return false, input, uiFocus
 		}
-		newFocus := dispatchPress(node.OnPress, uiFocus, doc, notice, hidden, fetch, applyTokens, ctx, drv)
+		newFocus := dispatchPress(node.OnPress, uiFocus, doc, notice, hidden, fetch, applyTokens, actions, ctx, drv)
 		// Clear the input the way the command paths do: a press is a submitted
 		// action, not text left in the buffer.
 		return true, "", newFocus
@@ -181,10 +192,15 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, notice *s
 //     other slash line is submitted as a prompt — the Phase-0 contract typeKey
 //     already honours, so a button and a keystroke cannot diverge on what a
 //     command means.
+//   - ext: routes the press to a behavioral plugin subprocess (I4). The plugin id
+//     and action name were split by ParseAction; the router resolves the live
+//     plugin, applies its granted capability gate, and writes the `action` frame.
+//     A plugin that is unmounted, ungranted, or down is reported (never a crash),
+//     the §I-G placeholder-not-crash rule on the input side.
 //   - answer: is recognised (the vocabulary is signed) but not yet actioned:
 //     answering an inbox item needs the behavioral driver channel Block I builds,
 //     so the press reports the deferral rather than dropping silently.
-func dispatchPress(onPress, currentFocus string, doc **scene.Document, notice *string, hidden map[string]bool, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), ctx context.Context, drv Driver) string {
+func dispatchPress(onPress, currentFocus string, doc **scene.Document, notice *string, hidden map[string]bool, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) string {
 	action, err := scene.ParseAction(onPress)
 	if err != nil {
 		// The document validated at load, so a malformed action should be
@@ -207,6 +223,22 @@ func dispatchPress(onPress, currentFocus string, doc **scene.Document, notice *s
 		line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(action.Arg), "/"))
 		if line != "" {
 			_ = drv.SubmitPrompt(ctx, line)
+		}
+		return currentFocus
+	case scene.ActionExt:
+		if actions == nil {
+			// No plugin host is attached (the router is only nil in a context that
+			// mounts no plugins). Report rather than drop, so an ext: press is never
+			// a silent no-op.
+			*notice = fmt.Sprintf("ext:%s:%s cannot be routed: no plugin host is attached", action.PluginID, action.Arg)
+			return currentFocus
+		}
+		// A plain ext:<id>:<action> press carries no args: the {row.field} values
+		// §I-E resolves against the row scope ride on the same template-row
+		// dispatch H8 parked (a template row's on_press is not yet substituted per
+		// element at press time), so the resolved args arrive here once that lands.
+		if err := actions.SendAction(action.PluginID, action.Arg, nil); err != nil {
+			*notice = err.Error()
 		}
 		return currentFocus
 	case scene.ActionAnswer:

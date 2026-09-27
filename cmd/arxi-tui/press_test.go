@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -85,7 +86,7 @@ func TestFocusKeyTabMovesTheCursor(t *testing.T) {
 	]}}`)
 	notice := ""
 
-	handled, input, focus := focusKey(term.Key{Type: term.KeyTab}, "typed", "", &doc, &notice, map[string]bool{}, nil, nil, context.Background(), &testDriver{})
+	handled, input, focus := focusKey(term.Key{Type: term.KeyTab}, "typed", "", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
 	if !handled {
 		t.Fatal("Tab was not handled, so it would fall through to typeKey and insert a literal tab into the buffer")
 	}
@@ -96,7 +97,7 @@ func TestFocusKeyTabMovesTheCursor(t *testing.T) {
 		t.Errorf("Tab from the input home moved focus to %q, want the first pressable node %q", focus, "one")
 	}
 
-	_, _, back := focusKey(term.Key{Type: term.KeyTab, Mod: term.ModShift}, "typed", "", &doc, &notice, map[string]bool{}, nil, nil, context.Background(), &testDriver{})
+	_, _, back := focusKey(term.Key{Type: term.KeyTab, Mod: term.ModShift}, "typed", "", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
 	if back != "two" {
 		t.Errorf("Shift-Tab from the input home moved focus to %q, want the last pressable node %q", back, "two")
 	}
@@ -112,7 +113,7 @@ func TestFocusKeyEnterDispatchesFocusAction(t *testing.T) {
 	]}}`)
 	notice := ""
 
-	handled, input, focus := focusKey(term.Key{Type: term.KeyEnter}, "", "go", &doc, &notice, map[string]bool{}, nil, nil, context.Background(), &testDriver{})
+	handled, input, focus := focusKey(term.Key{Type: term.KeyEnter}, "", "go", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
 	if !handled {
 		t.Fatal("Enter on a focused button was not handled, so the button cannot be pressed")
 	}
@@ -134,7 +135,7 @@ func TestFocusKeyEnterDispatchesCmdViaDriver(t *testing.T) {
 	notice := ""
 	drv := &testDriver{evCh: make(chan fold.Event, 4)}
 
-	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "", "run", &doc, &notice, map[string]bool{}, nil, nil, context.Background(), drv)
+	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "", "run", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), drv)
 	if !handled {
 		t.Fatal("Enter on a cmd: button was not handled")
 	}
@@ -152,7 +153,7 @@ func TestFocusKeyEnterOnInputFallsThrough(t *testing.T) {
 	]}}`)
 	notice := ""
 
-	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "hello", "", &doc, &notice, map[string]bool{}, nil, nil, context.Background(), &testDriver{})
+	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "hello", "", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
 	if handled {
 		t.Error("Enter was captured while the input held focus; it must fall through so typeKey submits the buffer")
 	}
@@ -165,7 +166,7 @@ func TestDispatchAnswerIsDeferredWithNotice(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"text","text":"OK","on_press":"answer:approve"}}`)
 	notice := ""
 
-	focus := dispatchPress("answer:approve", "btn", &doc, &notice, map[string]bool{}, nil, nil, context.Background(), &testDriver{})
+	focus := dispatchPress("answer:approve", "btn", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
 	if focus != "btn" {
 		t.Errorf("an answer: press moved focus to %q; it should leave the cursor where it was", focus)
 	}
@@ -180,11 +181,88 @@ func TestDispatchFocusUnknownNodeReportsAndKeepsFocus(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"text","text":"x","id":"here","on_press":"focus:nowhere"}}`)
 	notice := ""
 
-	focus := dispatchPress("focus:nowhere", "here", &doc, &notice, map[string]bool{}, nil, nil, context.Background(), &testDriver{})
+	focus := dispatchPress("focus:nowhere", "here", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
 	if focus != "here" {
 		t.Errorf("a focus: to an unknown node moved focus to %q; it must leave the cursor where it was", focus)
 	}
 	if !strings.Contains(notice, "nowhere") {
 		t.Errorf("a focus: to an unknown node left notice %q, want it to name the missing id", notice)
+	}
+}
+
+// fakeRouter records the ext: presses routed to it, standing in for the live
+// supervisor.Registry the loop holds. It lets the press tests prove dispatch
+// reaches the router with the plugin id and action split correctly, without
+// spawning a subprocess.
+type fakeRouter struct {
+	calls []routedAction
+	err   error
+}
+
+type routedAction struct {
+	pluginID string
+	action   string
+	args     map[string]string
+}
+
+func (r *fakeRouter) SendAction(pluginID, action string, args map[string]string) error {
+	r.calls = append(r.calls, routedAction{pluginID, action, args})
+	return r.err
+}
+
+// An ext: press routes to the plugin action router with the plugin id and action
+// name that ParseAction split off, and leaves the focus cursor where it was (a
+// press is not a focus move). This is I4's core: the dispatcher reaches the
+// behavioral plugin rather than dropping the press or crashing.
+func TestDispatchExtRoutesToPluginRouter(t *testing.T) {
+	doc := pressDoc(t, `{"root":{"type":"text","text":"R","id":"btn","on_press":"ext:tick:refresh"}}`)
+	notice := ""
+	router := &fakeRouter{}
+
+	focus := dispatchPress("ext:tick:refresh", "btn", &doc, &notice, map[string]bool{}, nil, nil, router, context.Background(), &testDriver{})
+	if focus != "btn" {
+		t.Errorf("an ext: press moved focus to %q; a plugin press is not a focus move and must leave the cursor put", focus)
+	}
+	if len(router.calls) != 1 {
+		t.Fatalf("an ext: press routed %d actions, want exactly 1; the dispatcher must reach the plugin router, not drop the press", len(router.calls))
+	}
+	if got := router.calls[0]; got.pluginID != "tick" || got.action != "refresh" {
+		t.Errorf("ext:tick:refresh routed to plugin %q action %q, want plugin \"tick\" action \"refresh\"; the id and action were split wrong or swapped", got.pluginID, got.action)
+	}
+	if notice != "" {
+		t.Errorf("a successful ext: press left notice %q, want none; a routed action is not an error", notice)
+	}
+}
+
+// A router error (the plugin is unmounted, ungranted, or down) is reported to the
+// user, never a crash and never a silent drop — the §I-G placeholder-not-crash
+// rule on the input side.
+func TestDispatchExtReportsRouterError(t *testing.T) {
+	doc := pressDoc(t, `{"root":{"type":"text","text":"R","id":"btn","on_press":"ext:tick:refresh"}}`)
+	notice := ""
+	router := &fakeRouter{err: errors.New("no behavioral plugin with that id is mounted: \"tick\"")}
+
+	focus := dispatchPress("ext:tick:refresh", "btn", &doc, &notice, map[string]bool{}, nil, nil, router, context.Background(), &testDriver{})
+	if focus != "btn" {
+		t.Errorf("a refused ext: press moved focus to %q; it must leave the cursor put", focus)
+	}
+	if !strings.Contains(notice, "mounted") {
+		t.Errorf("a refused ext: press left notice %q, want the router's reason so the press is not a silent no-op", notice)
+	}
+}
+
+// With no router attached (the loop context that mounts no plugins), an ext:
+// press still reports rather than dropping silently or panicking on a nil
+// interface.
+func TestDispatchExtWithNoRouterReports(t *testing.T) {
+	doc := pressDoc(t, `{"root":{"type":"text","text":"R","id":"btn","on_press":"ext:tick:refresh"}}`)
+	notice := ""
+
+	focus := dispatchPress("ext:tick:refresh", "btn", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
+	if focus != "btn" {
+		t.Errorf("an ext: press with no router moved focus to %q; it must leave the cursor put", focus)
+	}
+	if !strings.Contains(notice, "ext:tick:refresh") {
+		t.Errorf("an ext: press with no router left notice %q, want it to name the action rather than drop silently or panic", notice)
 	}
 }
