@@ -53,6 +53,7 @@ import (
 
 	"github.com/michiTrader/arxi_tui/internal/ext"
 	"github.com/michiTrader/arxi_tui/internal/scene"
+	"github.com/michiTrader/arxi_tui/internal/theme"
 )
 
 // Result is the outcome of applying one /ui command.
@@ -85,6 +86,38 @@ type Result struct {
 	// its own `ui.hidden`. A nil pointer means the command was an ordinary
 	// source edit; a non-nil one means "do not diff, apply this to view state".
 	ViewState *ViewStateOp
+
+	// Tokens is set only by the `plugin` verb (add/remove) and carries the
+	// token-layer change the mount or unmount makes, so the host can recompose
+	// its active theme (H4). Unlike ViewState it is *not* exclusive with a
+	// source edit: a `plugin add` both changes the document (its mounted
+	// fragments live in Doc/Source) and contributes tokens, so Tokens rides
+	// alongside the source edit rather than replacing it. A `plugin remove`
+	// likewise removes both the mounted nodes (Doc/Source) and the token layer
+	// (Tokens). A nil pointer means the command touched no token layer — every
+	// non-plugin verb leaves it nil.
+	Tokens *PluginTokens
+}
+
+// PluginTokens is the token-layer change a `plugin add`/`remove` makes, handed
+// to the host so it can recompose the active theme. Like ViewStateOp it carries
+// the op rather than the resulting theme: the layered composition lives in the
+// loop — which holds the factory base and one layer per mounted plugin — so a
+// second copy of it here would be a second answer to "which tokens are active".
+//
+// The precedence TOKENS.md signs is `user > plugin > factory`, and it is the
+// order the host layers the three (Merge(Merge(factory, plugin), user)), not
+// anything encoded here: this op only says "this plugin's layer changed". ID
+// names the plugin whose layer it is — the same id the mounted node prefix uses
+// — so the host keys its layer set by it and a remove drops exactly the layer a
+// prior add contributed. Theme is the plugin's parsed token block on an add
+// (empty, never nil, when the plugin contributes no tokens, so the host merges a
+// no-op rather than nil-checking); Remove is true on an unmount, when Theme is
+// nil and only the id is needed to drop the layer.
+type PluginTokens struct {
+	ID     string
+	Theme  *theme.Theme
+	Remove bool
 }
 
 // ViewStateOp is a mutation of host-owned view state produced by `hide`/`show`.

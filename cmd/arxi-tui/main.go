@@ -535,6 +535,25 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// reveal resolves the same anim section ValidateTokens checked its token
 	// against at load.
 	clock.resolveAnim = theme.Anim
+
+	// The plugin token layers (H4). baseTheme is the factory theme the loop was
+	// handed; pluginLayers holds one entry per mounted plugin. The active `theme`
+	// variable is recomposed from them whenever a plugin is added or removed, so
+	// a plugin's tokens win over factory and a `/ui plugin remove` drops exactly
+	// what its `add` contributed. applyPluginTokens is the one place that mutates
+	// the layer set and reassigns `theme`; it also re-points the clock's anim
+	// lookup, so a one-shot token a plugin contributes (reveal/transition/enter)
+	// resolves the same way a factory one does. The continuous-marquee tick rate
+	// stays at the boot value (marqueeFPS above): re-arming the ticker mid-session
+	// is out of H4's scope, and a plugin that adds a faster marquee cadence is a
+	// rare case not worth risking the ticker invariants for.
+	baseTheme := theme
+	var pluginLayers []pluginThemeLayer
+	applyPluginTokens := func(op *patch.PluginTokens) {
+		pluginLayers = applyTokenLayer(pluginLayers, op)
+		theme = composeTheme(baseTheme, pluginLayers)
+		clock.resolveAnim = theme.Anim
+	}
 	var animTicker *time.Ticker
 	var tickCh <-chan time.Time
 	// escapeTimer fires once, ArmTimeout after the first Ctrl-C, to disarm the
@@ -765,7 +784,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// nothing, with the menu showing an empty list. Asking
 						// the command surface first means a line it recognises is
 						// never the menu's to swallow.
-						if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch); handled {
+						if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens); handled {
 							input = next
 							caret = clampCaret(input, caret)
 						} else if strings.HasPrefix(input, "/") {
@@ -1134,7 +1153,17 @@ func cleanPaste(s string) string {
 // surface stays offline-pure and this function stays testable with a fake. A
 // nil fetch is legal — every non-plugin command ignores it, and `plugin add`
 // with no fetch is refused with a reason rather than a panic.
-func uiCommandKey(input string, k term.Key, doc **scene.Document, notice *string, hidden map[string]bool, fetch patch.Fetcher) (bool, string) {
+//
+// # Why the token callback is a parameter
+//
+// A `plugin add`/`remove` changes the active theme's token layers (H4), and
+// that composition state lives in the loop, not here — the patch surface is
+// stateless across commands. So the loop passes applyTokens, the one closure
+// that owns the layer set, and this function hands it the Result's token op
+// when one is present. A nil callback is legal for the same reason a nil fetch
+// is: every non-plugin command leaves Result.Tokens nil, so the callback is
+// never reached, and the direct-call tests can pass nil.
+func uiCommandKey(input string, k term.Key, doc **scene.Document, notice *string, hidden map[string]bool, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens)) (bool, string) {
 	if k.Type != term.KeyEnter {
 		return false, input
 	}
@@ -1176,6 +1205,15 @@ func uiCommandKey(input string, k term.Key, doc **scene.Document, notice *string
 		return true, ""
 	}
 	*doc = res.Doc
+	// A plugin add/remove also changes the active theme's token layers (H4).
+	// This rides alongside the document replacement rather than instead of it,
+	// because a mount both places fragments (the new *doc) and contributes
+	// tokens: the caller owns the layer set, so it applies the op. Guarded on
+	// applyTokens so the direct-call tests, which never issue a plugin command,
+	// can pass nil.
+	if res.Tokens != nil && applyTokens != nil {
+		applyTokens(res.Tokens)
+	}
 	// The change-diff view PLAN.md requires is, at this stage, the summary
 	// line: the patch states what it altered in the user's vocabulary before
 	// the change is trusted. A diff of re-indented JSON is not a description
@@ -1183,6 +1221,61 @@ func uiCommandKey(input string, k term.Key, doc **scene.Document, notice *string
 	// agent-driven half, where the proposal arrives before it is applied.
 	*notice = "/ui: " + res.Summary
 	return true, ""
+}
+
+// pluginThemeLayer is one mounted plugin's contributed token block, kept in the
+// loop beside the factory base so the active theme can be recomposed whenever a
+// plugin is added or removed (H4). The id is the plugin's — the same one its
+// mounted node prefix uses — so a `/ui plugin remove <id>` drops exactly the
+// layer its `add` contributed.
+type pluginThemeLayer struct {
+	id  string
+	thm *theme.Theme
+}
+
+// composeTheme layers every active plugin's tokens over the factory base and
+// returns the result, the token half of TOKENS.md's `user > plugin > factory`
+// precedence. The order is the whole point and it is spelled here rather than in
+// theme.Merge (which only knows "over wins"): factory is the base, each plugin
+// layer is merged in mount order so a later plugin's token overrides an earlier
+// one's, and the user layer — when the boot path grows one — is merged last so a
+// user token overrides every plugin. Recomposing from the base each time, rather
+// than un-merging a single layer, is why a remove is exact: there is no residue
+// of a dropped plugin's tokens because the merge starts fresh from factory.
+func composeTheme(base *theme.Theme, layers []pluginThemeLayer) *theme.Theme {
+	out := base
+	for _, l := range layers {
+		out = theme.Merge(out, l.thm)
+	}
+	return out
+}
+
+// applyTokenLayer folds one plugin token op into the ordered layer set and
+// returns the new set. A remove drops the layer whose id matches, keyed by id so
+// it names no factory or user token; an add replaces the layer for an id already
+// present (a re-add of the same plugin is not a second layer) and otherwise
+// appends, so the order the set is composed in is mount order — a plugin mounted
+// later wins a token conflict with one mounted earlier, the same "over wins" rule
+// theme.Merge applies within a single pair. It is a free function taking the set
+// because the set is a loop local, not a field on any type the loop owns —
+// exactly as applyViewState is a free function over the ui.hidden map.
+func applyTokenLayer(layers []pluginThemeLayer, op *patch.PluginTokens) []pluginThemeLayer {
+	if op.Remove {
+		next := make([]pluginThemeLayer, 0, len(layers))
+		for _, l := range layers {
+			if l.id != op.ID {
+				next = append(next, l)
+			}
+		}
+		return next
+	}
+	for i := range layers {
+		if layers[i].id == op.ID {
+			layers[i].thm = op.Theme
+			return layers
+		}
+	}
+	return append(layers, pluginThemeLayer{id: op.ID, thm: op.Theme})
 }
 
 // applyViewState folds one hide/show set op into the loop's ui.hidden set.

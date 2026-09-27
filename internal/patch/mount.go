@@ -65,6 +65,16 @@ func Mount(hostName string, hostSrc []byte, m *ext.Manifest) (Result, error) {
 		return Result{}, err
 	}
 
+	// The contributed token layer (H4). Validate already parsed it once (its
+	// well-formedness net delegates to Theme()), so this cannot introduce a new
+	// refusal — it reads the same bytes through the same one parser. An empty,
+	// non-nil theme comes back when the plugin declares no tokens, so the host
+	// merges a no-op rather than nil-checking.
+	plgTheme, err := m.Theme()
+	if err != nil {
+		return Result{}, err
+	}
+
 	var tree any
 	if err := json.Unmarshal(hostSrc, &tree); err != nil {
 		return Result{}, fmt.Errorf("%s: host scene is not valid JSON: %w", hostName, err)
@@ -121,6 +131,7 @@ func Mount(hostName string, hostSrc []byte, m *ext.Manifest) (Result, error) {
 		Source:  out,
 		Summary: fmt.Sprintf("mounted plugin %q (%d fragment(s))", m.ID, len(m.Mounts)),
 		Diff:    diff,
+		Tokens:  &PluginTokens{ID: m.ID, Theme: plgTheme},
 	}, nil
 }
 
@@ -241,11 +252,13 @@ func overlayAnchorList() string {
 // then unmount canonicalises back to the original document, because prefixing
 // makes "the plugin's nodes" a decidable set that names no host node.
 //
-// It removes only nodes, not tokens: H3 mounts fragments, and the token merge is
-// H4's, so the token half of unmount lands with it. Removal names no host node
-// (a host id never begins `<plugin-id>/`, since `/` is not in the id grammar), so
-// it cannot orphan one — the same property that lets `show *` clear ui.hidden
-// without naming an id (F3).
+// It removes the plugin's nodes and, through Result.Tokens, signals the host to
+// drop the plugin's token layer (H4) — the token half of unmount the H3 note
+// promised would land with the merge. Node removal names no host node (a host id
+// never begins `<plugin-id>/`, since `/` is not in the id grammar), so it cannot
+// orphan one — the same property that lets `show *` clear ui.hidden without
+// naming an id (F3) — and the token layer is keyed by the same id, so dropping it
+// cannot touch a factory or user token either.
 func Unmount(hostName string, hostSrc []byte, pluginID string) (Result, error) {
 	if pluginID == "" {
 		return Result{}, fmt.Errorf("%s: unmount needs a plugin id; it names the `<plugin-id>/` namespace to remove", hostName)
@@ -287,6 +300,7 @@ func Unmount(hostName string, hostSrc []byte, pluginID string) (Result, error) {
 		Source:  out,
 		Summary: fmt.Sprintf("unmounted plugin %q (%d node(s))", pluginID, removed),
 		Diff:    diff,
+		Tokens:  &PluginTokens{ID: pluginID, Remove: true},
 	}, nil
 }
 
