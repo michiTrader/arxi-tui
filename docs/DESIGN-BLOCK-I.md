@@ -333,3 +333,187 @@ Signing this proposal lifts no code guard. I2 (supervisor), I3 (frame ingestion)
 I4 (input routing), I5 (consent gate) and I6 (tools door) each land with their own
 counterfactual test, exactly as H2–H6 did.
 
+## I-I — the behavioral package installer (PROPOSAL, awaiting signature)
+
+This section drafts the one thing standing between I5 and a live behavioral
+mount, and the core of I6. It is paper only: signing it lifts no guard, and the
+installer lands with its own counterfactuals like every I-beat before it.
+
+### The gap this closes
+
+`supervisor.Mount` (`internal/ext/supervisor/mount.go:62`) already runs the whole
+consent-gated lifecycle — decide by identity, prompt, grant, spawn, register,
+pump — and it is proven end to end by the helper-process pattern in
+`mount_test.go`. It takes a `digest string`, and its own comment is emphatic:
+"passing a stale or empty digest silently makes every mount look like a different
+plugin." That digest is `ext.PackageDigest` (`internal/ext/identity.go:84`) over a
+**package tree on disk** (executable + manifest), and `PackageDigest` too already
+exists and is strict — regular files only, symlinks refused, length-framed so no
+two files can be confused by concatenation.
+
+What does not exist is everything between "a URL the user typed" and "a package
+tree on disk." `httpManifestFetcher` (`cmd/arxi-tui/plugin_fetch.go`) fetches
+**manifest bytes only** — one JSON document — because that is all a *declarative*
+plugin (Block H) ever needed. A behavioral plugin is at least two files, and its
+grant binds to their bytes. Wiring the modal loop against a fabricated digest
+would break the exact grant-transfer safety the gate exists for (recorded as the
+blocker in `NEXT.md` under I5-consent-loop). So the installer is a real, named
+prerequisite, not a nicety: **fetch a package, lay it out, digest the laid-out
+tree, then Mount is the small addition NEXT.md already anticipates.**
+
+### Decision 1 — transport is a single gzipped tar (`.tar.gz`), one URL
+
+A behavioral package is more than one file, so the manifest-bytes fetch does not
+generalise. Three shapes were weighed:
+
+- **(a) one archive from one URL**, extracted host-side;
+- **(b) the manifest lists per-file URLs** the installer fetches individually;
+- **(c) an index JSON of `{path, url, sha256}`** the installer walks.
+
+Recommended: **(a), a `.tar.gz`.** It keeps a *single origin*, which matters
+because the origin is exactly what the digest and the grant bind to — (b) and (c)
+turn one attacker-controlled URL into N, each a separate egress the host must
+bound and each able to serve different bytes on the install fetch than on the
+preview fetch. (a) also matches the shape the rest of the system already speaks:
+the registry entry carries one `manifest_url` (J2), and "one fetch to browse" is
+its stated ethos. Extraction is host-side and is where the lay-out invariants are
+enforced (Decision 3), so a single opaque blob is *safer* here than a list of
+things the host fetches on faith.
+
+Format is **gzip over tar**, both from the Go standard library
+(`archive/tar`, `compress/gzip`). This honours the install rule verbatim — "the
+user installs arxi, not arxi's dependencies" — and adds **zero** runtime
+requirement onto the user's machine: no `tar` binary is shelled out to, no new
+module enters `go.mod`. zip and zstd were rejected for exactly that reason (zstd
+is a dependency; zip's central-directory model complicates streaming under a size
+cap for no gain over tar).
+
+### Decision 2 — the manifest lives at `<root>/plugin.json`, inside the digest
+
+The manifest must be a **digested file in the tree**, not a sidecar fetched
+separately, because the grant binds to the bytes the user consented to and the
+manifest *is* those terms (its `executable`, `args`, `capabilities` are the
+identity). If the manifest were fetched out of band, a later edit to it would not
+move the digest and a remembered grant would silently cover new terms — the whole
+failure `PackageDigest` was built to prevent, reintroduced one level up.
+
+Fix it at a **well-known path in the bundle root: `plugin.json`.** A fixed name
+means the installer needs no out-of-band pointer to find the terms, and because
+the file is inside the digested tree, editing it after consent changes the digest
+and re-asks. `manifest.Executable` is resolved relative to the same bundle root
+(Decision 3). `plugin.json` over `manifest.json` only to avoid colliding with the
+many unrelated `manifest.json` conventions; the choice is a fork below, not a
+load-bearing claim.
+
+### Decision 3 — extraction is the security boundary, and it enforces the missing in-package rule
+
+`identity.go`'s comment already promises the executable is "relative, in-package,
+no `..`/symlink," but **no code enforces that today** — `checkBehavioral`
+(`manifest.go:257`) refuses *every* behavioral manifest at load (the H2 guarantee),
+so the in-package check has never had a package to run against. The installer is
+that missing enforcement, applied at the moment bytes hit the disk:
+
+- **path traversal refused.** Every tar entry's cleaned path must stay inside the
+  root — `..`, absolute paths, and drive-relative Windows paths are refused
+  (`filepath.IsLocal` is the stdlib predicate for exactly this). This is the
+  classic tar/zip-slip write-outside-root, and it is refused at *write* time, not
+  digest time, because by digest time the damage is already on disk.
+- **only regular files and directories.** Symlinks, hardlinks, devices, FIFOs are
+  refused. This deliberately **mirrors `PackageDigest`'s own refusal** so the two
+  agree: a bundle that would fail the digest walk is rejected earlier, at
+  extraction, with a message that names the offending entry. A symlink is a
+  pointer to bytes the digest never read (I-H); accepting one at extraction and
+  refusing it at digest would be two rules where there must be one.
+- **decompression bounded.** Total extracted bytes and entry count are capped, the
+  same spirit as the manifest 1 MiB cap: a gzip bomb is endpoint harm the digest
+  cannot prevent because it strikes before the digest runs. The cap is generous
+  for a real plugin and small enough that a bomb is cut off.
+- **executable resolves in-package.** After extraction, `manifest.Executable` must
+  `filepath.IsLocal`-resolve to a **regular file** under the root. An executable
+  outside the package is code the digest never covered (DESIGN-BLOCK-H.md); this
+  is the check that sentence has been describing all along.
+
+### Decision 4 — laid out by digest under `~/.arxi/plugins/`, atomically
+
+Extract into a **temp dir**, digest the temp tree, then **atomic-rename** it to
+`~/.arxi/plugins/<id>/<digest>/`. Three properties fall out, each paid for
+elsewhere in this tree:
+
+- **keyed by digest**, so the exact bytes a grant binds to are addressable, and a
+  re-install of identical bytes is idempotent (same target path, no-op rename).
+- **atomic**, so a crash mid-extract never leaves a half-tree that digests to a
+  phantom — the `DiskConsentStore` atomic-write precedent (`consent_disk.go`),
+  same reason: a torn write to a security record is worse than no write.
+- **digest-before-rename closes the TOCTOU window.** The digest is computed over
+  the temp tree and the rename target is *named by that digest*, so what you
+  digested is bit-for-bit what you keep and later spawn — nothing can be swapped
+  between the hash and the mount. The `~/.arxi` tree is the one the consent store
+  and run log already own, so no new root is introduced.
+
+### The flow, reusing every existing validator (no second parser)
+
+1. **fetch** the `.tar.gz` under a size cap and timeout — the `httpManifestFetcher`
+   bounds (`plugin_fetch.go`), generalised from a JSON body to an archive body;
+   http/https only, as today.
+2. **extract** into a temp dir under Decision 3's rules (traversal, entry-kind,
+   and size refusals applied per entry as it is written).
+3. **read `<root>/plugin.json`** and `ext.Parse`+`Validate` it — the *same*
+   validator H2/H6 use, so a malformed behavioral manifest is refused by the parse
+   that refuses a malformed declarative one, no new parser. This is also where the
+   installer accepts a behavioral manifest that `ext.LoadFile` still refuses: the
+   installer is the one gated door that lifts the H2 executable refusal, exactly as
+   `Mount` is the one door that spawns. A *declarative* manifest reaching the
+   installer is refused here — a package with no executable has nothing behavioral
+   to install, and it belongs on the H6 manifest-only path.
+4. **`PackageDigest(root)`** over the laid-out tree.
+5. **atomic-rename** temp → `~/.arxi/plugins/<id>/<digest>/` (Decision 4).
+6. **hand `(manifest, digest, execPath)` to `supervisor.Mount`**, which decides
+   consent by identity — now against a *real* digest — prompts through
+   `ext.ConsentScene` when unseen, grants, and spawns. Nothing in `Mount` changes;
+   it was written waiting for this caller.
+
+### Forks to resolve at signing (each to its recommended default)
+
+1. **Transport format** — single `.tar.gz` (recommended, Decision 1) vs. per-file
+   URLs vs. an index-of-files.
+2. **Compression** — gzip only, stdlib (recommended) vs. also accept zip vs. zstd
+   (rejected: a runtime dependency).
+3. **Manifest filename in the bundle** — `plugin.json` (recommended) vs.
+   `manifest.json` vs. a name the registry entry declares.
+4. **Install-cache retention** — keep-by-digest until an explicit
+   `/ui plugin remove`, GC nothing implicitly (recommended: a remembered grant
+   references a digest, and deleting its bytes would make the silent remount fail
+   at spawn) vs. keep last-N per id vs. GC on unmount.
+5. **Pre-extraction integrity** — the registry entry MAY carry the bundle's
+   sha256 for a cheap early reject before extraction (recommended as *advisory*
+   only) vs. rely solely on `PackageDigest` post-extraction. The authority is and
+   stays `PackageDigest` over the laid-out tree, because that is what the consent
+   identity binds to; a registry sha256 is a fail-fast convenience, never the
+   thing consent is checked against.
+
+### Costs named, per the dependency rule
+
+- **No new module dependency.** `archive/tar`, `compress/gzip`, `io`,
+  `path/filepath`, `os` are stdlib. Zero runtime requirement lands on the user's
+  machine; the `GOOS=android` artifact is unaffected.
+- **New disk footprint** under `~/.arxi/plugins/`, bounded (Decision 4), visible,
+  and removable via `/ui plugin remove`.
+- **New egress class**: fetching an archive rather than a JSON document — same
+  bounded, timed, http/https-only fetch, one wider content type.
+
+### Guards this lifts by signing: none
+
+The installer lands with its own counterfactuals, each built and measured rather
+than argued (the I-beat method): a traversal entry (`../evil`) is refused; a
+symlink entry is refused; a bundle whose `plugin.json` declares an out-of-package
+`executable` is refused; a gzip bomb is cut off at the cap; and the load-bearing
+one — **a one-byte edit anywhere in the bundle changes the digest and re-asks** —
+proven by installing, granting-and-remembering, mutating one byte, reinstalling,
+and observing the gate return `DecisionNeedsConsent` rather than the remembered
+grant. That last is the grant-transfer safety the whole gate exists for, and it is
+the reason a fabricated digest was never an option.
+
+
+
+
+

@@ -1007,8 +1007,22 @@ counterfactual test).
     / part of I6): fetch a package bundle, lay it out, `PackageDigest` it, then the
     modal mount is a small, testable addition (the helper-process pattern
     `supervisor/mount_test.go` uses proves the spawn side already works end to end).
+  - **I5-installer-design — DRAFTED (2026-09-27), awaiting signature.** The
+    behavioral package installer the blocker above named is now argued on paper:
+    DESIGN-BLOCK-I.md §I-I. A behavioral package ships as a single `.tar.gz` from
+    one URL (stdlib `archive/tar`+`compress/gzip`, no runtime dependency); its
+    manifest lives at `<root>/plugin.json` **inside** the digested tree so editing
+    the terms moves the digest; extraction is the security boundary (traversal,
+    symlink and decompression-bomb refusals, and the in-package `executable` check
+    `identity.go` promises but no code enforces yet); and the tree is laid out by
+    digest under `~/.arxi/plugins/<id>/<digest>/` with a digest-before-rename step
+    that closes the TOCTOU window. Signing lifts no guard; the installer lands with
+    its own counterfactuals (the load-bearing one: a one-byte bundle edit re-asks).
+    Once signed, the I5 modal mount is the small addition the blocker above
+    describes.
 - **I6** [I5] Gate B (tools): a plugin-by-link teaches the agent a tool, running
-  as its own process, under the consent contract.
+  as its own process, under the consent contract. Its package-delivery half is
+  the §I-I installer above (drafted); the tool-door half remains.
 
 ### Block J — Phase 3: the community installer as a scene (Scene 7) [H]
 
