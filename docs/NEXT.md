@@ -641,7 +641,27 @@ counterfactual test).
   by Mount, mount+remove round-trips back to the original document, and the fetch
   size cap is exercised at exactly the cap (accepted) and one past it (refused).
 
-- **H7** [H6] Freeze the Scene 6 golden (community ticker).
+- **H7 — DONE (2026-09-26).** The Scene 6 golden is frozen as the composed
+  declarative-ticker scene. `testdata/plugins/TICKER.manifest.json` is the
+  declarative manifest an author ships (id `tick`, `profit`/`loss` tokens, one
+  top-right overlay fragment, no `executable`); `testdata/TICKER.json` is the
+  composed Scene 6 document `patch.Mount` produces from it and a dedicated host,
+  pinned as `TICKER.frame`/`.styled` and rendered through the ordinary engine
+  path. `TestTickerJSONIsTheMountOutput` proves the fixture is byte-for-byte the
+  mount output (not hand-authored), the witness test asserts the overlay reached
+  the frame with no `UNKNOWN NODE TYPE`, and the styled golden witnesses both
+  contributed tokens surviving the `Merge(factory, plugin)` composition.
+  **The golden pins the honest declarative frame, not the mock-driven preview**
+  DESIGN-BLOCK-H.md H7 sketched: declaring `binds` makes a manifest behavioral
+  (H2 refuses it) and painting a declared `mock` for an unsatisfied bind is the
+  Q16 preview renderer — that is Block J. A declarative plugin streams nothing,
+  so the overlay shows its chrome and a no-data placeholder, which is the frame
+  the design itself calls "the honest frame a declarative-only load produces".
+  The Scene 6 heading was reformatted to `TICKER (a community plugin shipped by
+  link)` so the progress audit's fixture↔scene name match resolves (exactly as
+  Scene 9 was reformatted for SUBAGENTS, E4); the audit now counts 6 of 11
+  scenes pinned. Note: this pins Scene 6 against a dedicated minimal host, not
+  the behavioral stream (Block I) or the installer preview (Block J).
 - **H8** Implement `on_press` action routing (`cmd:/slash`, `focus:<node>`,
   `answer:<kind>`) — needed for interactive fragments (Scene 8 buttons).
 

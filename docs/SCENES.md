@@ -285,7 +285,7 @@ document. Decided: Q10 relative binds exist inside templates; Q11
 `switch`/`slider` are first-class primitives (the only forced v0 addition);
 Q12 full-screen overlays are legal but can never capture the escape hatch.
 
-## Scene 6 — A COMMUNITY PLUGIN SHIPPED BY LINK (the ticker)
+## Scene 6 — TICKER (a community plugin shipped by link)
 
 `/ui plugin add https://…/tick` → manifest with `executable`,
 `capabilities`, `consent_required`, and `mounts` declaring its UI as
@@ -316,10 +316,13 @@ the id-uniqueness invariant without collision, and a mount's `where` reuses the
 D2 addressing grammar plus overlay anchors (`docs/ADDRESSING.md`). **Block H
 implements only the declarative path** (a plugin with no `executable`: load,
 mount, merge tokens, validate the namespace, `/ui plugin add`, and this scene's
-golden pinned at the *mounted-but-unsatisfied* state where `tick.price` renders
-as its declared `mock`); the behavioral fields are *specified* here so the
-schema freezes once, but the process supervisor, the consent gate, and the
-NDJSON stream are Block I.
+golden pinned at the *honest declarative frame* — the overlay's chrome plus its
+`profit`/`loss` tokens and a no-data placeholder, because a stream-less plugin
+has no live value to show); the behavioral fields are *specified* here so the
+schema freezes once, but the process supervisor, the consent gate, the NDJSON
+stream, and the mock-driven preview of an unsatisfied `tick.price` (Q16) are
+Block I/J. (H7 pins that declarative frame as `testdata/TICKER.json`, the
+`patch.Mount` output composed from `testdata/plugins/TICKER.manifest.json`.)
 
 ## Scene 7 — COMMUNITY (browse, preview, install, from inside the TUI)
 
