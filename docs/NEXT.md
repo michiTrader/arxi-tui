@@ -800,7 +800,44 @@ counterfactual test).
   asserted in a test across the unix/Windows split; the reap of the direct child
   is pinned by `TestSupervisorCloseReapsTheProcess`. The `ui.plugin.<id>` liveness
   bind (§4.3) is written by the loop from this supervisor's terminal state in I3.
-- **I3** [I2] Stream NDJSON frames into `<plugin-id>.*` binds.
+- **I3 — DONE (2026-09-26).** Behavioral plugin frames become resolvable binds.
+  Three pieces, each with a counterfactual run by hand. (1) `internal/ext`
+  gains a host-owned `PluginStore` (`store.go`): `Ingest` maps a `bind` frame
+  into `<plugin-id>.<field>` — the host composes the prefix, so a plugin only
+  ever utters a *relative* field and can never write outside its namespace
+  (§I-C) — validating each field against the manifest `binds` map (the runtime
+  face of H5's load-time rule, the map consulted directly, never copied) and
+  the value's shape against the declared `kind` (`text`→scalar, `series`→numeric
+  array; the wire-value axis of scene's node-type `bindKindNodeTypes`). A
+  batched frame (fork 2) is validated whole and committed whole, so one bad
+  field lands none of them — the torn-frame guarantee, counterfactual: a
+  commit-as-you-go variant leaves a partial write and fails the atomic test.
+  `Snapshot` returns a fresh `map[string]string` (JSON→string projection owned
+  by the store so the engine never decodes plugin JSON), merged with the
+  `ui.plugin.<id>` liveness bind; `DropPlugin` erases exactly one prefix (the
+  dotted test kills a `HasPrefix` that would take a sibling `ticker`). (2) The
+  renderer resolves both families: `resolveBindRow` consults a new
+  `Renderer.PluginValues` snapshot — an input separate from `fold.State` for the
+  invariant-2 reason (a plugin's value entering the fold would make a stranger's
+  process an authority over the run log, ADR-0003), threaded through `child()`
+  and the `when`/row chokepoints like `curRow`, with `bindTruthy` single-sourcing
+  the placeholder-is-falsy rule so a `when: ui.plugin.<id>` gate reads it too. A
+  nil snapshot (every non-plugin golden, the pure path) resolves every plugin
+  bind to absent → placeholder, so no golden moves; counterfactual: neutering the
+  lookup fails exactly the resolve, no-leak and liveness-shown tests. (3)
+  `Supervisor.DrainInto` (`supervisor/pump.go`) is the "stream frames into binds"
+  verb over a real subprocess: it drains `Frames()`, ingests `bind` frames
+  (dropping a single malformed/undeclared frame, never killing the process — §I-G),
+  and writes liveness from the terminal state — `dead` with values frozen on an
+  error exit, `DropPlugin` on a clean Close (`/ui plugin remove`); counterfactual:
+  always-drop erases the frozen values and fails the death test. Two parts are
+  scoped out and recorded at their sites: the loop wiring that launches the pump
+  goroutine and feeds the snapshot to the renderer each repaint waits on the live
+  mount (I5, which spawns behind consent), and a pre-publish `live` / backoff
+  `error` liveness needs a supervisor lifecycle signal I2 does not expose (the
+  bridge uses first-frame as the `live` proxy). The `series` kind is stored and
+  resolvable but drawn by nothing yet — the `sparkline` node is signed and
+  unimplemented, a later per-node change.
 - **I4** [H8,I3] Route input via `on_press` to plugin actions.
 - **I5** [I2] Consent gate by identity (name/version/executable/args/capability
   set/digest) with "remember" — Q15.
