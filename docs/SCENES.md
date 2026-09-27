@@ -341,6 +341,22 @@ action vocabulary is closed per surface and extended only through registered
 names; Q19 tab order follows scene order, and the input may opt out
 (`tab: false`) to protect the typing flow.
 
+Dispatch status (H8, 2026-09-26): `on_press` graduated from the wholesale
+refusal (`internal/scene/validate.go`) to a validated, dispatched property. The
+closed action grammar — `cmd:<command>`, `focus:<node>`, `answer:<kind>` — is
+signed in BINDS.md §4.8 and parsed by `scene.ParseAction`; `validateOnPress`
+refuses a prefix outside the set, an empty argument, an out-of-vocabulary
+`answer` kind, and the reserved `ext:` arm (behavioral plugins, Block I / I4),
+each with `file:line`. The host loop (`cmd/arxi-tui/press.go`) owns the
+`ui.focus` cursor: Tab/Shift-Tab move it over the pressable nodes in scene order
+with the input as home (Q19), and Enter on a focused node dispatches its action
+— `focus:` moves the cursor, `cmd:` runs the command through the same surface a
+typed line takes, and `answer:` is recognised but reports its deferral to the
+Block I driver channel rather than dropping silently. Two parts are
+signed-but-unbuilt by design: the `tab: false` input opt-out (the input-as-home
+ring already protects typing), and the `answer:` inbox call. No Scene 8 golden
+is frozen yet — that waits on the `button` node type and a composed fixture.
+
 ## Scene 9 — SUBAGENTS (below the input)
 
 A `list` bound to `team.members`, per-row spinner-or-glyph by state,
@@ -359,8 +375,13 @@ template as a silent style drop; combining the spinner-or-glyph with the role
 label on one row waits on that decision. The per-row `when` gate, the empty
 state, and the falsy-out-of-template rule are pinned by
 `internal/engine/row_template_test.go`. Clicking a row into its agent
-(`on_press: "cmd:/agent {row.id}"`) is still refused (`on_press`,
-`internal/scene/validate.go`) and lands with the action-dispatch work (H8).
+(`on_press: "cmd:/agent {row.id}"`) now validates rather than being refused
+wholesale (H8 graduated `on_press`, and `validateOnPress` checks the
+`{row.<field>}` interpolation against the row schema). What still waits is the
+*dispatch* of a template row: the host focus ring and press dispatch
+(`cmd/arxi-tui/press.go`) act on top-level pressable nodes, and pressing an
+instantiated row needs the per-element `{row.field}` substitution at press
+time, which is the remaining half of the row-click work parked here.
 
 ## Scene 10 — DASHBOARD (2×2 with click-to-maximize)
 

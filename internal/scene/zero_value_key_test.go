@@ -53,13 +53,14 @@ func TestAKeyWrittenEmptyIsStillAKeyTheAuthorWrote(t *testing.T) {
 	// unrenderedFields tomorrow fails here until it has a case: a key with no
 	// case is how this hole stayed open in the first place.
 	empties := map[string]string{
-		"on_press": `""`,
-		// row_template graduated (D1) and scroll graduated (G2): both are
-		// rendered now, so neither is in unrenderedFields and there is nothing
-		// here to measure about them. scroll's departure also took the last
-		// json.RawMessage key out of unrenderedFields — the raw exemption below
-		// now guards the mechanism against the next raw field that enters,
-		// rather than a live entry.
+		// row_template graduated (D1), scroll graduated (G2), and on_press
+		// graduated (H8): all three are handled now — rendered, or (on_press)
+		// validated by validateOnPress and dispatched by the host — so none is in
+		// unrenderedFields and there is nothing here to measure about them. That
+		// leaves the map empty, the state the comment on assertEveryEmptyHasAKeyToMeasure
+		// calls "reachable ... after the last field graduates": this map is empty
+		// with it, and the runtime-probe tests below (min_width, count/categories)
+		// are what keep the union machinery guarded when no static entry exists.
 	}
 
 	assertEveryEmptyHasAKeyToMeasure(t, empties)
@@ -455,7 +456,17 @@ func isRawJSONField(jsonKey string) bool {
 // patch path Phase 2 designs. A guard that silently stops applying to the
 // callers a whole phase is about to add is worse than the hole it closed.
 func TestAHandBuiltDocumentWithNoSourceStillRefuses(t *testing.T) {
-	doc := &Document{Root: &Node{Type: "text", Text: "x", OnPress: "cmd:/help"}}
+	// unrenderedFields is empty since on_press graduated (H8), so this test
+	// injects its own entry: the property under test is the union's value half,
+	// not any particular field. `count` is a non-raw field whose non-zero value
+	// (true) survives the marshal declaredUnrenderedFields does, so it is reported
+	// from the node's values alone — the only half a hand-built Document, which
+	// has no declaredKeys, can be refused through.
+	const probe = "count"
+	unrenderedFields[probe] = "test probe: added at runtime to exercise the value half of the union"
+	defer delete(unrenderedFields, probe)
+
+	doc := &Document{Root: &Node{Type: "list", Bind: "team.members", Count: true}}
 
 	if len(doc.declaredKeys) != 0 {
 		t.Fatalf("premise broken: a hand-built Document is supposed to have no declaredKeys; got %v\n"+
@@ -465,16 +476,16 @@ func TestAHandBuiltDocumentWithNoSourceStillRefuses(t *testing.T) {
 
 	verr := doc.Validate()
 	if verr == nil {
-		t.Fatalf("a Document built in memory declaring on_press validates clean.\n\n" +
-			"consequence: refuseUnrendered is reading only the parser's declaredKeys, so every\n" +
-			"caller that does not come from a file — tests, and the Phase 2 patch path — has no\n" +
-			"unrendered-field refusal at all. The guard was not loosened, it was switched off\n" +
-			"for a whole class of caller, silently.\n" +
-			"remedy: keep the union. declaredUnrenderedFields answers from the node's values and\n" +
-			"is the only half that works without source text.")
+		t.Fatalf("a Document built in memory declaring %q validates clean.\n\n"+
+			"consequence: refuseUnrendered is reading only the parser's declaredKeys, so every\n"+
+			"caller that does not come from a file — tests, and the Phase 2 patch path — has no\n"+
+			"unrendered-field refusal at all. The guard was not loosened, it was switched off\n"+
+			"for a whole class of caller, silently.\n"+
+			"remedy: keep the union. declaredUnrenderedFields answers from the node's values and\n"+
+			"is the only half that works without source text.", probe)
 	}
-	if !strings.Contains(verr.Error(), "on_press") {
-		t.Errorf("the refusal does not name on_press: %q", verr.Error())
+	if !strings.Contains(verr.Error(), probe) {
+		t.Errorf("the refusal does not name %q: %q", probe, verr.Error())
 	}
 }
 
@@ -618,7 +629,15 @@ func TestEveryNodeCarryingFieldIsClearedBeforeMarshalling(t *testing.T) {
 // contain the field — PLAN.md invariant 4 is that a refusal names a position,
 // and a position that is wrong is worse than the file-only fallback.
 func TestTheRefusalAddressesTheNodeThatCarriesTheKey(t *testing.T) {
-	body := `{"root":{"type":"box","children":[{"type":"text","text":"x","on_press":""}]}}`
+	// unrenderedFields is empty since on_press graduated (H8), so this test
+	// injects its own entry. `count` written false is dropped by omitempty, so it
+	// reaches refuseUnrendered only through declaredKeys — the path this test
+	// exists to address-check, since declaredKeys is indexed by node path.
+	const probe = "count"
+	unrenderedFields[probe] = "test probe: added at runtime to address-check the declaredKeys path"
+	defer delete(unrenderedFields, probe)
+
+	body := `{"root":{"type":"box","children":[{"type":"list","bind":"team.members","count":false}]}}`
 
 	doc, err := ParseDocument([]byte(body))
 	if err != nil {
@@ -626,7 +645,7 @@ func TestTheRefusalAddressesTheNodeThatCarriesTheKey(t *testing.T) {
 	}
 	verr := doc.Validate()
 	if verr == nil {
-		t.Fatalf("the nested empty on_press was not refused at all: %s", body)
+		t.Fatalf("the nested empty %q was not refused at all: %s", probe, body)
 	}
 
 	serr, ok := verr.(*Error)
@@ -638,7 +657,7 @@ func TestTheRefusalAddressesTheNodeThatCarriesTheKey(t *testing.T) {
 		t.Errorf("the refusal for a key on the child node is addressed at column %d, which is the\n"+
 			"root object, not the node that wrote it.\n\n"+
 			"document: %s\nrefusal:  %v\n\n"+
-			"consequence: the reader is sent to a line that does not contain on_press. A wrong\n"+
+			"consequence: the reader is sent to a line that does not contain the key. A wrong\n"+
 			"address is worse than no address: the file-only fallback makes the reader search,\n"+
 			"while a confident wrong column makes them conclude the validator is broken.\n"+
 			"remedy: refuseUnrendered receives the node's path; the declaredKeys lookup must\n"+

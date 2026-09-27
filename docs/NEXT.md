@@ -693,8 +693,34 @@ counterfactual test).
   Scene 9 was reformatted for SUBAGENTS, E4); the audit now counts 6 of 11
   scenes pinned. Note: this pins Scene 6 against a dedicated minimal host, not
   the behavioral stream (Block I) or the installer preview (Block J).
-- **H8** Implement `on_press` action routing (`cmd:/slash`, `focus:<node>`,
-  `answer:<kind>`) — needed for interactive fragments (Scene 8 buttons).
+- **H8 — DONE (2026-09-26).** `on_press` action routing. The closed action
+  grammar is signed in BINDS.md §4.8 — `cmd:<command>`, `focus:<node>`,
+  `answer:<kind>`, with `ext:` reserved and refused (behavioral plugins, Block I
+  / I4) — and read by one function, `scene.ParseAction`, so the validator and the
+  host dispatcher cannot drift on what a legal action is. `on_press` graduated
+  from the wholesale `unrenderedFields` refusal (the last standing entry, so that
+  map is empty now) to `validateOnPress`, which refuses a prefix outside the set,
+  an empty argument, an out-of-vocabulary `answer` kind, the reserved `ext:` arm,
+  and a `{row.<field>}` interpolation naming a field the enclosing template's row
+  schema does not declare (Q20) — each with `file:line`. The host loop
+  (`cmd/arxi-tui/press.go`) owns the `ui.focus` cursor as view state like
+  `ui.hidden`: Tab/Shift-Tab move it over the pressable nodes in document order
+  with the input as home (Q19, so the typing flow is always one Tab away), and
+  Enter on a focused node dispatches its action — `focus:` sets the cursor,
+  `cmd:` runs the command through the same `uiCommandKey`/`SubmitPrompt` surface a
+  typed line takes (so a button and a keystroke cannot diverge), and `answer:` is
+  recognised but reports its deferral to the Block I driver channel rather than
+  dropping silently. The two universal-property audits were reconciled: `on_press`
+  joins `id` as an addresses-not-draws property, held to round-trip **plus** a
+  malformed-action refusal so the exemption stays load-bearing. Counterfactuals
+  run in both directions: neutering `validateOnPress` fails the scene refusal
+  tests and the engine's malformed-action check; breaking `advanceFocus` or the
+  `cmd:` dispatch arm fails the host press tests. Two parts are signed-but-unbuilt
+  by design and recorded at their sites: the `tab: false` input opt-out (the
+  input-as-home ring already protects typing) and the `answer:` inbox call (needs
+  Block I), plus dispatch of a *template* row (Scene 9's `cmd:/agent {row.id}`),
+  which needs the per-element `{row.field}` substitution at press time. This
+  unblocks I4 (the `ext:` arm) and Scene 8's interactive buttons.
 
 ### Block I — Phase 3: behavioral plugins (NDJSON subprocess) [H]
 

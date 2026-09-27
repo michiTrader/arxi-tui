@@ -516,6 +516,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// keystroke that hides a node must survive the next repaint.
 	uiHidden := map[string]bool{}
 
+	// uiFocus is the `ui.focus` cursor (BINDS.md §4.3/§4.8): the id of the
+	// currently focused node, host-owned view state held across frames like
+	// uiHidden. The empty string is the input's home slot — focus defaults there
+	// at boot (H8). Tab/Shift-Tab move it over the pressable nodes, and Enter on a
+	// focused node dispatches its on_press. The engine already reads state.UIFocus
+	// for focus_glow, so a moved cursor lights the glow with no new engine code.
+	uiFocus := ""
+
 	// pluginFetch is the network side of `/ui plugin add <url>` (H6). It is the
 	// only real HTTP client the loop holds, injected into the /ui dispatch so the
 	// patch surface stays a pure offline transform (patch.Fetcher is the seam).
@@ -608,6 +616,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// is re-attached on every repaint for the same reason the input buffer
 		// and the scene error are (Fold rebuilds State from the log each frame).
 		state.UIHidden = uiHidden
+		// ui.focus is host-owned view state re-attached each frame like ui.hidden
+		// above (H8): the fold would forget a cursor kept only in State. The
+		// engine reads it for focus_glow, so the focused node lights up.
+		state.UIFocus = uiFocus
 		// Invariant 3's other half: the fallback scene is on screen, and this
 		// is the notice that says why. It is re-applied on every repaint
 		// because Fold rebuilds State from the event list each frame
@@ -793,6 +805,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// here, so the escape hatch stays uncapturable
 							// (invariant 6) no matter what the menu does.
 							input, caret, slashSel = slashMenuKey(input, caret, ev.Key, slashSel, ctx, drv)
+						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens, ctx, drv); handled {
+							// H8 press routing: Tab/Shift-Tab move the ui.focus
+							// cursor over the pressable nodes, and Enter on a
+							// focused node dispatches its on_press. It sits after
+							// the slash branch so the menu keeps Tab/Enter while
+							// open, and returns handled=false for Enter while the
+							// input holds focus — so typeKey's submit below is
+							// untouched. Ctrl-C never reaches here (invariant 6).
+							input = nextInput
+							uiFocus = nextFocus
+							caret = clampCaret(input, caret)
 						} else if ev.Key.Type == term.KeyUp || ev.Key.Type == term.KeyDown {
 							// Vertical caret motion on a wrapped (multi-line) input.
 							// It is intercepted here rather than in applyEdit because
