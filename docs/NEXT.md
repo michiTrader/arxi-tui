@@ -724,8 +724,47 @@ counterfactual test).
 
 ### Block I — Phase 3: behavioral plugins (NDJSON subprocess) [H]
 
-- **I1** Design the subprocess plugin protocol (NDJSON frames → bind
-  namespace).
+- **I1 — SIGNED (2026-09-26).** The subprocess plugin protocol, drafted as a
+  reviewable proposal in `docs/DESIGN-BLOCK-I.md` (PR #75, owner-accepted and
+  merged to master), is now signed into the frozen docs — PLAN.md ADR-0007 (the
+  wire), BINDS.md §4.3 (the `ui.plugin.<id>` liveness bind) and §4.8 (the `ext:`
+  reservation, wire now signed), and SCENES.md Scene 6 (the behavioral-protocol
+  note). It settles what I2–I6 depend on: a **second** NDJSON channel over the
+  subprocess's stdin/stdout, reusing `internal/driver/ndjson.go`'s framing, cap,
+  error-code set and cancellable `readLine` wholesale but kept separate from the
+  host↔core channel because that channel *is* the run log and a plugin's
+  `tick.price` must never enter the fold (two channels, two authorities, matching
+  ADR-0003's namespace split); a `hello`/ack handshake where the host tells the
+  plugin its `plugin_id` and `granted` capability subset, so the plugin publishes
+  only **relative** `bind` frames the host prefixes into `<plugin-id>.*` and can
+  never forge another namespace; async push composed with pull-by-frame (ADR-0004)
+  through a host-owned latest-value store held like `ui.hidden`, with a fifth
+  loop `select` case that only adds a reason to repaint (ADR-0005) and
+  last-value-wins backpressure; `ext:<plugin-id>:<action>` input routed as an
+  `id`-correlated `action` frame with host-resolved `{row.field}` args (H8's
+  reserved fourth prefix, dispatched by I4); a consent-gate-first lifecycle over
+  the ported arxi-sim procgroup supervisor with the escape hatch untouched
+  (invariant 6); and the I5 identity tuple
+  `name+version+protocol+executable+args+capability-set+digest`, the `digest`
+  computed by the loader over the fetched package, not declared. The four open
+  forks were resolved to their recommended defaults, the same way Blocks G and H
+  resolved theirs: (1) the host ack is **required before the plugin may publish**,
+  since the ack is the one point that communicates `granted` and publishing
+  before it is acting on ungranted power; (2) a **batched multi-field `bind`
+  frame** is allowed so a coherent snapshot lands atomically for one repaint (a
+  torn frame showing a new price beside an old sparkline is the failure this
+  prevents under pull-by-frame); (3) a **live mount shows the plain placeholder,
+  not `mock`**, before the first frame, keeping "waiting" and "preview" (Block J's
+  `BindDecl.Mock`) visually distinct and the Scene 6 golden pinned on the mock
+  frame; (4) process death triggers **bounded restarts with backoff, then freezes
+  at the last-published values** — never crash (the fold is untouched, invariant
+  2), never busy-loop respawn, with the death reported through the new
+  `ui.plugin.<id>` liveness bind so the diagnosis the placeholder cannot carry is
+  visible. New vocabulary signed before I2: the `ui.plugin.<id>` host view-state
+  bind (§4.3) and the `digest` computation (computed, not a manifest field).
+  Signing lifts no code guard; I2 (supervisor), I3 (frame ingestion), I4 (input
+  routing), I5 (consent gate) and I6 (tools door) each land with their own
+  counterfactual, exactly as H2–H6 did.
 - **I2** [I1] Implement the subprocess lifecycle (spawn/supervise/kill),
   porting arxi-sim's procgroup supervisor.
 - **I3** [I2] Stream NDJSON frames into `<plugin-id>.*` binds.
