@@ -13,8 +13,8 @@ import (
 	"github.com/michiTrader/arxi_tui/internal/ui"
 )
 
-// H7 freezes the Scene 6 golden: a community plugin shipped by link, mounted into
-// the default host scene and rendered through the ordinary engine path.
+// H7 freezes the Scene 6 golden: a community plugin shipped by link, composed
+// into a host scene and rendered through the ordinary engine path.
 //
 // The frame it pins is the honest *declarative* one, and the choice is
 // load-bearing. Block H implements only the declarative plugin path (SCENES.md
@@ -25,92 +25,119 @@ import (
 // here: declaring `binds` makes a manifest behavioral (H2 refuses it), and
 // painting a declared mock for an unsatisfied bind is the preview renderer Q16
 // signs into Block J. So this golden pins what a declarative-only load actually
-// produces, which is exactly the phrase the design uses for it: the ticker
-// overlay composed top-right, its profit/loss tokens resolving through the merged
-// theme, and no data, because a stream-less plugin has none to show.
+// produces, which is the phrase the design itself uses for it: the ticker overlay
+// composed top-right, its profit/loss tokens resolving through the merged theme,
+// and no data, because a stream-less plugin has none to show.
 //
-// What it witnesses end-to-end, and no earlier Block H test did in one fixture:
-//   - a manifest loaded by ext, composed into a real host by patch.Mount, and
-//     rendered by the engine — the whole declarative path at once;
-//   - both contributed tokens (profit, loss) surviving the merge and reaching the
-//     styled frame, so a dropped plugin token is a reviewable golden diff;
-//   - the host UI still present under the mount, so a plugin adds rather than
-//     replaces.
+// The fixtures follow the established scene-golden shape (SUBAGENTS, ANIMATION):
+// testdata/TICKER.json is the composed Scene 6 document — the pinned contract the
+// frame and styled goldens render — and testdata/plugins/TICKER.manifest.json is
+// the plugin an author ships. TICKER.json is not hand-authored: TestTickerJSONIs
+// TheMountOutput proves it is byte-for-byte what patch.Mount produces from the
+// manifest and the host below, so the pinned scene is the real composition and a
+// drift in the mount is a golden diff rather than a divergence nobody sees.
 
-// tickerHostEvents folds the host into the same state SOBRIA's own golden uses,
-// so the frame under the ticker is the recognisable default UI and a diff here is
-// about the mount, not about a host state this test invented. agent.turn_done
-// leaves agent.working false, so the thinking marquee is absent and the frame is
-// deterministic.
-func tickerHostEvents() []fold.Event {
-	return []fold.Event{
-		{Type: "run.started", Seq: 1, Payload: map[string]any{
-			"run_id": "r1", "actor": "user", "budget_usd": 10.0,
-			"max_turns": 10, "simulated": false,
-		}},
-		{Type: "agent.activated", Seq: 2, Payload: map[string]any{"agent": "backend"}},
-		{Type: "llm.response", Seq: 3, Payload: map[string]any{
-			"agent": "backend", "model": "openai/gpt-4o",
-			"text":      "Hola! How can I help you today?",
-			"tokens_in": 25, "tokens_out": 35, "cost_usd": 0.001,
-		}},
-		{Type: "agent.turn_done", Seq: 4, Payload: map[string]any{"agent": "backend"}},
-	}
-}
+// tickerHost is the minimal host the ticker mounts into: a header, the gated
+// notice node every shipped scene must carry (host.scene.error), a chat pane and
+// an input. It is dedicated rather than SOBRIA so the composed golden isolates
+// what the plugin adds instead of restating the whole default UI, and it binds
+// the notice so the composed scene satisfies the shipped-scene obligation on its
+// own.
+const tickerHost = `{ "root": { "type": "stack", "children": [
+  { "type": "text", "style": {"style": "dim"}, "text": "Δr×i · community plugin demo" },
+  { "id": "notice", "type": "text", "bind": "host.scene.error",
+    "when": "host.scene.error", "style": {"style": "banner"} },
+  { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+  { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ " }
+]}}`
 
-// tickerComposed loads the declarative ticker manifest, mounts it into the
-// SOBRIA host, and returns the composed document together with the theme the host
-// renders it under. The theme is Merge(factory, plugin): the plugin's
-// profit/loss tokens layered over the factory look at plugin precedence
-// (TOKENS.md user > plugin > factory). Validating the composed scene against that
-// merged theme is what makes the fixture's claim "shippable" rather than "merely
-// parseable" — a `style:"profit"` that resolved to no token in any active theme
-// would be a scene naming a token nothing defines, and the render would emit an
-// unstyled span while the golden pretended coverage.
-func tickerComposed(t *testing.T) *scene.Document {
+// tickerManifest loads and validates the declarative ticker manifest. It fails
+// the test if the manifest does not load, because H7 must start from a manifest
+// H2 accepts — otherwise the golden would be measuring the loader, not the mount.
+func tickerManifest(t *testing.T) *ext.Manifest {
 	t.Helper()
-
-	host, err := os.ReadFile("../../testdata/SOBRIA.json")
-	if err != nil {
-		t.Fatalf("read SOBRIA.json: %v", err)
-	}
-	manifestSrc, err := os.ReadFile("../../testdata/TICKER.manifest.json")
+	src, err := os.ReadFile("../../testdata/plugins/TICKER.manifest.json")
 	if err != nil {
 		t.Fatalf("read TICKER.manifest.json: %v", err)
 	}
-
-	m, err := ext.ParseNamed("TICKER.manifest.json", manifestSrc)
+	m, err := ext.ParseNamed("TICKER.manifest.json", src)
 	if err != nil {
 		t.Fatalf("ParseNamed(ticker manifest): %v", err)
 	}
 	if err := m.Validate(); err != nil {
 		t.Fatalf("the ticker manifest does not load: %v; H7 must start from a manifest H2 accepts", err)
 	}
+	return m
+}
 
-	res, err := patch.Mount("SOBRIA.json", host, m)
+// tickerDoc reads the composed Scene 6 document, the pinned contract the frame
+// and styled goldens render. It validates structurally and — the shippability
+// premise — against the merged theme Merge(factory, plugin): the plugin's
+// profit/loss tokens layered over the factory look at plugin precedence
+// (TOKENS.md user > plugin > factory). A `style:"profit"` that resolved to no
+// token in any active theme would be a scene naming a token nothing defines, and
+// the render would emit an unstyled span while the golden pretended coverage.
+func tickerDoc(t *testing.T) *scene.Document {
+	t.Helper()
+	doc, err := scene.ParseFile("../../testdata/TICKER.json")
 	if err != nil {
-		t.Fatalf("Mount refused the declarative ticker: %v; H7's premise is that a declarative plugin composes into the host", err)
+		t.Fatalf("parse TICKER.json: %v", err)
 	}
-
-	pluginTheme, err := m.Theme()
+	if err := doc.Validate(); err != nil {
+		t.Fatalf("the composed Scene 6 golden must validate structurally; got %v", err)
+	}
+	pluginTheme, err := tickerManifest(t).Theme()
 	if err != nil {
 		t.Fatalf("manifest token block did not parse: %v", err)
 	}
 	merged := theme.Merge(theme.Factory(), pluginTheme)
-	if errs := scene.ValidateTokens(res.Doc, merged); len(errs) > 0 {
-		t.Fatalf("premise broken: the mounted ticker names a token the merged theme does not ship,\n"+
+	if errs := scene.ValidateTokens(doc, merged); len(errs) > 0 {
+		t.Fatalf("premise broken: the composed ticker names a token the merged theme does not ship,\n"+
 			"so it is not a shippable scene; got %v", errs)
 	}
-	return res.Doc
+	return doc
 }
 
-// tickerFrame renders the composed scene at a fixed size against the host state,
-// the single source of truth the witness and both golden tests share so they
-// cannot drift on which frame is being asserted.
+// tickerFrame renders the composed scene at a fixed size, the single source of
+// truth the witness and both golden tests share so they cannot drift on which
+// frame is being asserted. The fold state is empty: the host binds resolve to
+// their empty projections and the ticker overlay is static, so the frame is
+// deterministic without inventing host activity the scene is not about.
 func tickerFrame(t *testing.T) ui.Frame {
 	t.Helper()
-	r := Renderer{Width: 80, Height: 24}
-	return r.RenderFrame(tickerComposed(t), fold.Fold(tickerHostEvents()))
+	r := Renderer{Width: 72, Height: 12}
+	return r.RenderFrame(tickerDoc(t), fold.Fold(nil))
+}
+
+// TestTickerJSONIsTheMountOutput proves testdata/TICKER.json is exactly what
+// patch.Mount composes from the manifest and tickerHost — so the pinned Scene 6
+// contract is the real declarative-plugin composition, not a hand-authored
+// lookalike. UPDATE_GOLDEN=1 regenerates TICKER.json from the mount, which is the
+// only way it is ever written: the fixture cannot drift from the composer,
+// because the composer is what produces it.
+func TestTickerJSONIsTheMountOutput(t *testing.T) {
+	m := tickerManifest(t)
+	res, err := patch.Mount("TICKER.json", []byte(tickerHost), m)
+	if err != nil {
+		t.Fatalf("Mount refused the declarative ticker: %v; H7's premise is that a declarative plugin composes into the host", err)
+	}
+
+	goldenPath := "../../testdata/TICKER.json"
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile(goldenPath, res.Source, 0644); err != nil {
+			t.Fatalf("write TICKER.json: %v", err)
+		}
+		return
+	}
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", goldenPath, err)
+	}
+	if string(res.Source) != string(want) {
+		t.Errorf("TICKER.json is not the mount output; the pinned Scene 6 scene has drifted from what\n"+
+			"patch.Mount composes from the manifest and host.\n--- mount produced ---\n%s\n--- TICKER.json ---\n%s",
+			res.Source, string(want))
+	}
 }
 
 // TestTickerSceneWitnessesTheMountedPlugin asserts, before the byte-for-byte
@@ -137,9 +164,9 @@ func TestTickerSceneWitnessesTheMountedPlugin(t *testing.T) {
 				"remedy: patch.Mount must compose the fragment and the engine must render the overlay.", want, got)
 		}
 	}
-	// The host under it is still the default UI, not replaced by the mount.
-	if !strings.Contains(got, "Hola! How can I help you today?") {
-		t.Errorf("the host transcript is gone after mounting; a plugin adds to the host tree, it does not\n"+
+	// The host under it is still present, not replaced by the mount.
+	if !strings.Contains(got, "community plugin demo") {
+		t.Errorf("the host header is gone after mounting; a plugin adds to the host tree, it does not\n"+
 			"replace it. frame:\n%s", got)
 	}
 }
@@ -160,9 +187,9 @@ func TestTickerSceneStyledFrameCarriesPluginTokens(t *testing.T) {
 }
 
 // TestTickerSceneMatchesGolden freezes the plain frame. UPDATE_GOLDEN=1
-// regenerates it. This is the durable pin: a change to the mount placement, the
-// overlay render, the fragment, or the host it composes into shows up here as a
-// reviewable golden diff.
+// regenerates it. This is the durable pin: a change to the overlay render, the
+// fragment, or the host it composes into shows up here as a reviewable golden
+// diff.
 func TestTickerSceneMatchesGolden(t *testing.T) {
 	got := tickerFrame(t).Plain()
 

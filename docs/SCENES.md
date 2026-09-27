@@ -285,7 +285,7 @@ document. Decided: Q10 relative binds exist inside templates; Q11
 `switch`/`slider` are first-class primitives (the only forced v0 addition);
 Q12 full-screen overlays are legal but can never capture the escape hatch.
 
-## Scene 6 — A COMMUNITY PLUGIN SHIPPED BY LINK (the ticker)
+## Scene 6 — TICKER (a community plugin shipped by link)
 
 `/ui plugin add https://…/tick` → manifest with `executable`,
 `capabilities`, `consent_required`, and `mounts` declaring its UI as

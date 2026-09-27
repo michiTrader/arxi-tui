@@ -1,0 +1,67 @@
+{
+  "root": {
+    "children": [
+      {
+        "style": {
+          "style": "dim"
+        },
+        "text": "Δr×i · community plugin demo",
+        "type": "text"
+      },
+      {
+        "bind": "host.scene.error",
+        "id": "notice",
+        "style": {
+          "style": "banner"
+        },
+        "type": "text",
+        "when": "host.scene.error"
+      },
+      {
+        "bind": "chat.history",
+        "grow": 1,
+        "id": "chat",
+        "type": "markdown"
+      },
+      {
+        "bind": "user.input",
+        "id": "prompt",
+        "prefix": "┃ ",
+        "type": "input"
+      },
+      {
+        "anchor": "top-right",
+        "border": "single",
+        "children": [
+          {
+            "children": [
+              {
+                "style": {
+                  "style": "profit"
+                },
+                "text": "TICK",
+                "type": "text"
+              },
+              {
+                "text": " · ",
+                "type": "text"
+              },
+              {
+                "style": {
+                  "style": "loss"
+                },
+                "text": "no data yet",
+                "type": "text"
+              }
+            ],
+            "type": "row"
+          }
+        ],
+        "id": "tick/overlay",
+        "min_width": 18,
+        "type": "overlay"
+      }
+    ],
+    "type": "stack"
+  }
+}
