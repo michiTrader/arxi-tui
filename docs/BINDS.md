@@ -163,6 +163,7 @@ written only through registered commands (`cmd:/slash`, `cmd:/max`,
 | `ui.max` | text \| null | the `id` of the maximized pane; set by `cmd:/max <pane>` (Scene 10) | on `cmd:/max` action | null — no pane is maximized |
 | `ui.surface` | text | the active surface/page identifier (e.g. `"chat"`, `"config"`, `"plugins"`) | on `cmd:/surface <name>` | `"chat"` — the default surface |
 | `ui.hidden` | set of node ids | the ids the user has hidden via `cmd:/ui hide <id>`; `cmd:/ui show <id>` removes one, `cmd:/ui show *` clears the set | on `cmd:/ui hide`/`show` | empty set — every node's visibility is decided by its `when` alone |
+| `ui.plugin.<id>` | text | the process lifecycle status of a mounted behavioral plugin, written by the host supervisor: `"starting"` (spawned, pre-handshake), `"live"` (handshake acked, streaming), `"error"` (repeated malformed frames or restart backoff), `"dead"` (process exited, frozen at last values) | on spawn, handshake ack, restart, and death (Block I supervisor) | empty string — no behavioral plugin with that id is mounted, so the bind is falsy for `when` |
 
 **Consumption of `ui.hidden` (signed 2026-09-22, D3).** Unlike every other row
 in this table, `ui.hidden` is consumed by the **engine walk**, not by a scene
@@ -187,6 +188,24 @@ D3, and `TestHideAndShowAreRefusedRatherThanInventingABind`):
 The empty set is the default and a no-op, so signing this row moves no existing
 golden. `ui.hidden.<id>` MAY later be exposed as a derived truthy membership
 bind (for a "N hidden" badge); that is secondary and not signed here.
+
+**The `ui.plugin.<id>` liveness bind (I1, signed 2026-09-26; argued in
+`docs/DESIGN-BLOCK-I.md` §I-G, ADR-0007).** It is host view state, not a plugin
+bind, and the distinction is load-bearing: a behavioral plugin writes only
+**relative** fields into its own `<plugin-id>.*` namespace over the wire (it
+never utters a prefix, §I-C), so it can neither write nor forge a `ui.*` field.
+The supervisor owns this bind — the wire's counter-field rule keeps a scene
+alive when a plugin is silent (an unsatisfied `<plugin-id>.*` bind is a
+placeholder, §4.4), but that rule cannot tell "no value yet" apart from "the
+process died and these values are stale." The liveness bind is the diagnosis
+the placeholder cannot carry: a footer or overlay reads `when: ui.plugin.tick`
+to show a plugin is degraded, exactly the "quiescence is an event with a
+diagnosis" lesson the supervisor is ported to honour. It lives in `ui.*` rather
+than the plugin namespace precisely so a dying plugin cannot suppress the report
+of its own death. The empty-string default is falsy, so signing this row moves
+no golden until a behavioral plugin is actually mounted (Block I), and no
+declarative plugin (Block H) ever sets it — a stream-less plugin has no process
+to be live.
 
 ### 4.4 Plugin namespace contract
 
