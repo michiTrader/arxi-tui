@@ -10,22 +10,28 @@ import (
 // tests pin what ParseAction accepts and, through validateOnPress, what a
 // document is refused for — the two must agree because they are the same reader.
 
-// The three live prefixes each parse to their kind with the argument kept
+// The four live prefixes each parse to their kind with the argument kept
 // verbatim (interpolation is the host's job at press time, so the arg is not
 // expanded here). A regression that dropped the argument would make every
-// cmd:/focus:/answer: dispatch a no-op with no error.
+// cmd:/focus:/answer:/ext: dispatch a no-op with no error. ext: additionally
+// splits its plugin id off into PluginID, so both segments are checked.
 func TestParseActionAcceptsTheClosedPrefixes(t *testing.T) {
 	cases := []struct {
-		in       string
-		wantKind ActionKind
-		wantArg  string
+		in         string
+		wantKind   ActionKind
+		wantArg    string
+		wantPlugin string
 	}{
-		{"cmd:/agent 5", ActionCmd, "/agent 5"},
-		{"cmd:/max chat", ActionCmd, "/max chat"},
-		{"focus:reject", ActionFocus, "reject"},
-		{"answer:approve", ActionAnswer, "approve"},
-		{"answer:reject", ActionAnswer, "reject"},
-		{"answer:reply", ActionAnswer, "reply"},
+		{"cmd:/agent 5", ActionCmd, "/agent 5", ""},
+		{"cmd:/max chat", ActionCmd, "/max chat", ""},
+		{"focus:reject", ActionFocus, "reject", ""},
+		{"answer:approve", ActionAnswer, "approve", ""},
+		{"answer:reject", ActionAnswer, "reject", ""},
+		{"answer:reply", ActionAnswer, "reply", ""},
+		{"ext:tick:refresh", ActionExt, "refresh", "tick"},
+		// A colon inside the action name belongs to the action, not the id: the
+		// id cannot contain a colon, so only the first colon splits.
+		{"ext:tick:reset:hard", ActionExt, "reset:hard", "tick"},
 	}
 	for _, tc := range cases {
 		got, err := ParseAction(tc.in)
@@ -33,7 +39,7 @@ func TestParseActionAcceptsTheClosedPrefixes(t *testing.T) {
 			t.Errorf("ParseAction(%q) refused a well-formed action: %v\n"+
 				"consequence: a scene author who wrote a legal action gets a load-time refusal, so a\n"+
 				"button that should work cannot be authored at all.\n"+
-				"remedy: accept cmd:/focus:/answer: with a non-empty argument (BINDS.md §4.8).", tc.in, err)
+				"remedy: accept cmd:/focus:/answer:/ext: with a non-empty argument (BINDS.md §4.8).", tc.in, err)
 			continue
 		}
 		if got.Kind != tc.wantKind {
@@ -42,12 +48,17 @@ func TestParseActionAcceptsTheClosedPrefixes(t *testing.T) {
 		if got.Arg != tc.wantArg {
 			t.Errorf("ParseAction(%q).Arg = %q, want %q: the argument is the whole content of the action, and a dropped one makes the dispatch a no-op", tc.in, got.Arg, tc.wantArg)
 		}
+		if got.PluginID != tc.wantPlugin {
+			t.Errorf("ParseAction(%q).PluginID = %q, want %q: the host routes an ext: press by plugin id, and a lost id sends the action nowhere", tc.in, got.PluginID, tc.wantPlugin)
+		}
 	}
 }
 
 // Every malformed action is refused, each for the reason a repair loop can act
 // on. A prefix outside the set, an empty argument, an out-of-vocabulary answer
-// kind, and the reserved ext: arm are the four ways an action can be wrong.
+// kind, and an ext: missing either of its two segments are the ways an action
+// can be wrong. ext: is no longer refused wholesale (I4 dispatches it); it is
+// refused only when its plugin id or action name is empty.
 func TestParseActionRefusesMalformedActions(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -60,7 +71,10 @@ func TestParseActionRefusesMalformedActions(t *testing.T) {
 		{"empty focus argument", "focus:", "no node id"},
 		{"empty answer argument", "answer:", "no kind"},
 		{"answer kind outside the set", "answer:maybe", "closed answer vocabulary"},
-		{"ext is deferred to Block I", "ext:tick:refresh", "Block I"},
+		{"ext with no plugin id or action", "ext:", "no plugin id"},
+		{"ext with an empty plugin id", "ext::refresh", "no plugin id"},
+		{"ext with no action name", "ext:tick:", "no action name"},
+		{"ext with no action segment at all", "ext:tick", "no plugin id"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -69,8 +83,8 @@ func TestParseActionRefusesMalformedActions(t *testing.T) {
 				t.Fatalf("ParseAction(%q) accepted a malformed action.\n"+
 					"consequence: the action vocabulary is not closed, so a mistyped or unsupported\n"+
 					"action loads and the host silently does nothing with it — the silent drop.\n"+
-					"remedy: refuse any prefix outside cmd:/focus:/answer:, an empty argument, an\n"+
-					"answer kind outside the closed set, and the reserved ext: arm (BINDS.md §4.8).", tc.in)
+					"remedy: refuse any prefix outside cmd:/focus:/answer:/ext:, an empty argument, an\n"+
+					"answer kind outside the closed set, and an ext: missing a segment (BINDS.md §4.8).", tc.in)
 			}
 			if !strings.Contains(err.Error(), tc.mustSay) {
 				t.Errorf("ParseAction(%q) refused, but the message %q does not say %q, so the author\n"+
@@ -119,6 +133,27 @@ func TestValidateOnPressAcceptsAWellFormedAction(t *testing.T) {
 		t.Errorf("a well-formed on_press was refused: %v\n"+
 			"consequence: H8 signed cmd:/help as a legal action, so a button using it must load.\n"+
 			"remedy: validateOnPress must accept a cmd: action with a command line.", verr)
+	}
+}
+
+// A well-formed ext: action validates clean at load: the scene layer checks only
+// the grammar (I4 lifts H8's wholesale refusal), while whether plugin "tick" is
+// mounted and granted is a runtime concern the host dispatcher reports on. A
+// scene author must be able to write ext:tick:refresh before the plugin is
+// mounted — the same load-vs-runtime split focus: lives under.
+func TestValidateOnPressAcceptsAWellFormedExtAction(t *testing.T) {
+	body := `{"root":{"type":"text","text":"Refresh","on_press":"ext:tick:refresh"}}`
+	doc, err := ParseDocument([]byte(body))
+	if err != nil {
+		t.Fatalf("premise broken: %v", err)
+	}
+	if verr := doc.Validate(); verr != nil {
+		t.Errorf("a well-formed ext: on_press was refused at load: %v\n"+
+			"consequence: I4 dispatches ext:<plugin-id>:<action>, so a scene author must be able to\n"+
+			"author it before the plugin is mounted; refusing it at load makes a plugin button\n"+
+			"unwritable.\n"+
+			"remedy: validateOnPress accepts a well-formed ext: action; the mounted/granted check is\n"+
+			"the runtime dispatcher's, not the validator's (BINDS.md §4.8, DESIGN-BLOCK-I §I-E).", verr)
 	}
 }
 
