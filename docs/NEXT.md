@@ -922,13 +922,31 @@ counterfactual test).
   rejection spawns a refused plugin (fails `TestMountDoesNotSpawnOnReject`). Two
   parts are scoped out and recorded here: the **consent scene** (rendering the
   identity tuple and reading a Y/N/remember answer) is Scene-7-adjacent UI and
-  rides on the scene layer, so `Prompt` is the seam it will satisfy; and the
-  **disk-backed `ConsentStore`** waits on the config layer, so a grant survives a
-  re-mount within a session but not a host restart until it lands. The loop
+  rides on the scene layer, so `Prompt` is the seam it will satisfy. The loop
   wiring that calls `Mount` from `/ui plugin add` for a *behavioral* manifest
   (holding the gate, store and registry beside `ui.hidden`) waits on that consent
   scene — the routing mechanism (I4) and the live-mount orchestration (this) are
   both complete; what remains is the screen that asks the user.
+  - **I5-disk — DONE (2026-09-27).** `ext.DiskConsentStore`
+    (`internal/ext/consent_disk.go`) is the persisted `ConsentStore` the "remember"
+    promise (Q15) needs across a host restart, not just a re-mount in one session.
+    It is kept **path-agnostic** — `OpenDiskConsentStore(path)` takes the file
+    location, because the only thing the config layer decides here is *where* the
+    file lives; folding an OS path into the store would put that decision in the
+    wrong layer. Keyed by the identity string, so persistence inherits the whole
+    identity contract (a version/digest/arg change is a different key and re-asks).
+    The write is atomic (temp file in the same dir, then rename) so a crash leaves
+    either the old or the new complete allow-list, never a truncated one; a missing
+    file is the first run (empty, no error) while a file that exists but does not
+    parse is **refused, not silently emptied** — starting empty on a corrupt file
+    would forget every remembered grant and look identical to a fresh install. A
+    write failure is retained on `Err()` rather than surfaced from `Remember` (which
+    cannot return an error without changing the seam for `MemoryConsentStore`), and
+    because the *session* grant is valid regardless of disk, a full disk must not
+    block a mount the user just approved. Counterfactuals run by hand: disabling
+    the flush fails the persist-across-reopen test; swallowing a malformed file into
+    an empty store fails the refusal test. What remains for the loop is only the
+    config layer choosing the path and pointing a gate at it.
 - **I6** [I5] Gate B (tools): a plugin-by-link teaches the agent a tool, running
   as its own process, under the consent contract.
 
