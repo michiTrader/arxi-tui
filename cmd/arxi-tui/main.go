@@ -550,27 +550,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	baseTheme := theme
 	var pluginLayers []pluginThemeLayer
 	applyPluginTokens := func(op *patch.PluginTokens) {
-		if op.Remove {
-			next := pluginLayers[:0:0]
-			for _, l := range pluginLayers {
-				if l.id != op.ID {
-					next = append(next, l)
-				}
-			}
-			pluginLayers = next
-		} else {
-			replaced := false
-			for i := range pluginLayers {
-				if pluginLayers[i].id == op.ID {
-					pluginLayers[i].thm = op.Theme
-					replaced = true
-					break
-				}
-			}
-			if !replaced {
-				pluginLayers = append(pluginLayers, pluginThemeLayer{id: op.ID, thm: op.Theme})
-			}
-		}
+		pluginLayers = applyTokenLayer(pluginLayers, op)
 		theme = composeTheme(baseTheme, pluginLayers)
 		clock.resolveAnim = theme.Anim
 	}
@@ -1268,6 +1248,34 @@ func composeTheme(base *theme.Theme, layers []pluginThemeLayer) *theme.Theme {
 		out = theme.Merge(out, l.thm)
 	}
 	return out
+}
+
+// applyTokenLayer folds one plugin token op into the ordered layer set and
+// returns the new set. A remove drops the layer whose id matches, keyed by id so
+// it names no factory or user token; an add replaces the layer for an id already
+// present (a re-add of the same plugin is not a second layer) and otherwise
+// appends, so the order the set is composed in is mount order — a plugin mounted
+// later wins a token conflict with one mounted earlier, the same "over wins" rule
+// theme.Merge applies within a single pair. It is a free function taking the set
+// because the set is a loop local, not a field on any type the loop owns —
+// exactly as applyViewState is a free function over the ui.hidden map.
+func applyTokenLayer(layers []pluginThemeLayer, op *patch.PluginTokens) []pluginThemeLayer {
+	if op.Remove {
+		next := make([]pluginThemeLayer, 0, len(layers))
+		for _, l := range layers {
+			if l.id != op.ID {
+				next = append(next, l)
+			}
+		}
+		return next
+	}
+	for i := range layers {
+		if layers[i].id == op.ID {
+			layers[i].thm = op.Theme
+			return layers
+		}
+	}
+	return append(layers, pluginThemeLayer{id: op.ID, thm: op.Theme})
 }
 
 // applyViewState folds one hide/show set op into the loop's ui.hidden set.
