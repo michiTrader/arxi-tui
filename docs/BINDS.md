@@ -356,11 +356,15 @@ The closed prefix set, and what each one does when pressed:
 | `answer:` | a kind, e.g. `answer:approve`, `answer:reject` | answer the agent's pending prompt/inbox item with that kind (Scene 8's approve/reject buttons). The **kind vocabulary is itself closed** — `approve`, `reject`, `reply` — mirroring the arxi core's `inbox.approve`/`inbox.reject`/`inbox.reply` verbs, so a scene author and the core agree on what a button means. |
 
 `ext:<plugin-id>:<action>` is a **fourth** prefix reserved for behavioral
-plugins (a press routed to a subprocess over NDJSON). It is **not** part of H8:
-DESIGN-BLOCK-I §I-E signs it and I4 implements it, because it needs the
-subprocess channel Block I builds. H8 refuses an `ext:` action with an address
-that names Block I, so the vocabulary is closed today (an unknown prefix is
-refused) without pretending the `ext:` arm works.
+plugins (a press routed to a subprocess over NDJSON). Its **wire is now signed**
+— DESIGN-BLOCK-I §I-E / ADR-0007 fix the `action` frame it produces
+(`{"type":"action","id":…,"action":…,"args":…}`, with `{row.field}` values
+resolved by the host before they cross the channel) — but it is still **not**
+dispatched by H8: I4 implements the `ext:` arm, because it needs the subprocess
+channel Block I builds and a `granted` capability to route to. H8 refuses an
+`ext:` action with an address that names Block I, so the vocabulary is closed
+today (an unknown prefix is refused) without pretending the `ext:` arm works.
+
 
 Argument interpolation reuses §4.7 unchanged: inside a `row_template`, an
 `on_press` argument may contain `{row.<field>}`, replaced by the current
