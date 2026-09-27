@@ -54,9 +54,12 @@ func ConsentScene(m *Manifest, digest string) (*scene.Document, error) {
 	// Identity block. name+version lead as the human handle; id/protocol are the
 	// machine identity below it; the executable+args line is what will actually
 	// run, so it is plain (not dimmed) — it is not secondary. The digest is dimmed
-	// like the other machine metadata but shown in full: a truncated digest is a
-	// weaker identity than the grant is bound to, and the screen must not claim a
-	// shorter check than the gate performs.
+	// like the other machine metadata and carried in full: the document holds the
+	// whole hash so a wide terminal shows all of it, and the row is placed so the
+	// clip a narrow terminal applies falls at the tail, not the head — a shared
+	// prefix is the useless half of a hash to eyeball, and no human verifies a
+	// sha256 by sight anyway (the gate computes Identity() over the full value;
+	// this row is informational, "these exact bytes").
 	rows = append(rows,
 		textRow(fmt.Sprintf("%s  v%s", m.Name, m.Version), "header"),
 		textRow(fmt.Sprintf("id: %s   protocol: %s", m.ID, m.Protocol), "dim"),
