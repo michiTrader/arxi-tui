@@ -838,7 +838,48 @@ counterfactual test).
   bridge uses first-frame as the `live` proxy). The `series` kind is stored and
   resolvable but drawn by nothing yet — the `sparkline` node is signed and
   unimplemented, a later per-node change.
-- **I4** [H8,I3] Route input via `on_press` to plugin actions.
+- **I4 — DONE (2026-09-27).** Route input via `on_press` to plugin actions. Three
+  pieces, each with a counterfactual run by hand. (1) `internal/scene` lifts H8's
+  wholesale `ext:` refusal: `ActionExt` graduates `ext:<plugin-id>:<action>` from
+  refused-with-a-Block-I-address to a parsed action (`action.go`), splitting the
+  two segments on the **first** colon only (the manifest id grammar has no colon,
+  so a colon inside the action name stays there) into `PluginID` and `Arg`, each
+  refused when empty with `file:line`. Whether a plugin with that id is mounted
+  and granted is a runtime concern, so a well-formed `ext:` validates clean at
+  load — the same load-vs-runtime split `focus:` lives under (a `focus:` naming no
+  node reports at press time, not load). Counterfactual: the scene tests move
+  `ext:tick:refresh` from the refused set to the accepted set and add the
+  two-segment refusals; reverting the parse fails them. (2)
+  `internal/ext/supervisor` gains the host→plugin half: `Supervisor.SendAction`
+  (`send.go`) writes the `{type:action,id,action,args}` frame (§I-E, ADR-0007) to
+  the live child's stdin, gated on the granted `actions.register` capability — the
+  wire face of "power granted at the gate, once" (invariant 7). The sender is
+  registered after the ack (a plugin cannot receive an action before it knows its
+  grants) and cleared when the child dies, so a press racing a restart reports
+  `ErrPluginNotLive` rather than writing to a dead pipe. `Registry` (`registry.go`)
+  maps plugin id → supervisor and owns the host-side correlation id; a missing id
+  is `ErrPluginNotMounted`, distinct from not-granted and not-live so the three
+  reports differ. The `echoaction` helper mode makes the round-trip observable on
+  `Frames()`; counterfactuals run: disabling the capability gate routes an
+  ungranted action (fails the ungranted test), and not registering the sender
+  makes every `SendAction` `ErrPluginNotLive` (fails the round-trip and registry
+  tests). (3) The host loop dispatches the arm: `dispatchPress`
+  (`cmd/arxi-tui/press.go`) gains the `ActionExt` case, routing the split id and
+  action through a `pluginActionRouter` seam (satisfied by `supervisor.Registry`,
+  held by the loop beside `ui.hidden`/`ui.focus`). A router error or a nil router
+  is reported to the user, never a silent drop or a nil-interface panic — the §I-G
+  placeholder-not-crash rule on the input side; counterfactual: dropping the
+  `SendAction` call fails the routes-to-router press test. Two parts are scoped out
+  and recorded at their sites: the loop's registry is **empty until I5** mounts a
+  plugin behind the consent gate (so an `ext:` press reports "no plugin with that
+  id is mounted" today — the routing mechanism is complete, the live spawn is
+  I5's), and the per-element `{row.field}` argument substitution an `ext:` press in
+  a template will carry rides on the same template-row dispatch H8 parked, so a
+  plain `ext:<id>:<action>` press sends empty args and the resolved-args map
+  arrives at `SendAction` once that lands. The `id`-correlated `ok`/error ack
+  (§I-E, a PROPOSAL "so a button can show it was accepted") is a noted refinement:
+  the plugin proposes by publishing new bind values (I3), so `SendAction` returns
+  once the frame is written and does not wait on a reply.
 - **I5** [I2] Consent gate by identity (name/version/executable/args/capability
   set/digest) with "remember" — Q15.
 - **I6** [I5] Gate B (tools): a plugin-by-link teaches the agent a tool, running

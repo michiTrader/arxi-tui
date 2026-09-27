@@ -355,15 +355,24 @@ The closed prefix set, and what each one does when pressed:
 | `focus:` | a node `id`, e.g. `focus:reject` | set `ui.focus` (§4.3) to that id. It is the declarative twin of `cmd:/focus <node>`: a button can hand focus to a sibling without the user knowing the command. The id is resolved at press time against the live scene; a `focus:` naming no node in the scene leaves focus unchanged and reports it, never crashes. |
 | `answer:` | a kind, e.g. `answer:approve`, `answer:reject` | answer the agent's pending prompt/inbox item with that kind (Scene 8's approve/reject buttons). The **kind vocabulary is itself closed** — `approve`, `reject`, `reply` — mirroring the arxi core's `inbox.approve`/`inbox.reject`/`inbox.reply` verbs, so a scene author and the core agree on what a button means. |
 
-`ext:<plugin-id>:<action>` is a **fourth** prefix reserved for behavioral
-plugins (a press routed to a subprocess over NDJSON). Its **wire is now signed**
-— DESIGN-BLOCK-I §I-E / ADR-0007 fix the `action` frame it produces
+`ext:<plugin-id>:<action>` is a **fourth** prefix routing a press to a
+behavioral plugin (a press routed to a subprocess over NDJSON). Its wire is
+signed — DESIGN-BLOCK-I §I-E / ADR-0007 fix the `action` frame it produces
 (`{"type":"action","id":…,"action":…,"args":…}`, with `{row.field}` values
-resolved by the host before they cross the channel) — but it is still **not**
-dispatched by H8: I4 implements the `ext:` arm, because it needs the subprocess
-channel Block I builds and a `granted` capability to route to. H8 refuses an
-`ext:` action with an address that names Block I, so the vocabulary is closed
-today (an unknown prefix is refused) without pretending the `ext:` arm works.
+resolved by the host before they cross the channel) — and it is **dispatched by
+I4**: `scene.ParseAction` splits the `<plugin-id>` and `<action>` segments (only
+the first colon splits, so a colon inside the action name stays with it) and
+checks both are non-empty; the host loop routes the press through the plugin
+registry (`internal/ext/supervisor.Registry`), which resolves the live plugin by
+id, applies its granted `actions.register` capability, and writes the frame. As
+with `focus:`, the mounted/granted/live check is a **runtime** concern: a
+well-formed `ext:` validates clean at load (a scene author may write
+`ext:tick:refresh` before the plugin is mounted), and a press against an
+unmounted, ungranted, or dead plugin is **reported, never crashed** (§I-G). What
+remains signed-but-unbuilt is the per-element `{row.field}` argument
+substitution — a plain `ext:<id>:<action>` press carries no args today, and the
+resolved-args map rides on the same template-row dispatch H8 parked (Scene 9's
+`cmd:/agent {row.id}`).
 
 
 Argument interpolation reuses §4.7 unchanged: inside a `row_template`, an
@@ -385,11 +394,16 @@ refinement so no golden depends on a field the engine does not yet read.
 
 Refusals, each addressed with `file:line`:
 
-- An `on_press` whose prefix is outside the closed set (`cmd:`/`focus:`/`answer:`,
-  or `ext:` with the Block-I message): refusal naming the node and listing the
+- An `on_press` whose prefix is outside the closed set
+  (`cmd:`/`focus:`/`answer:`/`ext:`): refusal naming the node and listing the
   legal prefixes.
 - An `on_press` with a prefix but an empty argument (`cmd:`, `focus:`, `answer:`
   with nothing after the colon): refusal, because a command/id/kind is the whole
   content of the action.
 - An `answer:` whose kind is outside the closed kind set: refusal naming the kind
   and the legal set, the same net a mistyped bind gets.
+- An `ext:` missing either segment (`ext:` with no id, `ext::action` with an
+  empty id, or `ext:id` / `ext:id:` with no action): refusal, because the
+  `<plugin-id>` and `<action>` are both required to build the `action` frame.
+  Whether the named plugin is mounted and granted is a runtime report, not a
+  load-time refusal.

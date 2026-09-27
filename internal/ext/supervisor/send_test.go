@@ -1,0 +1,168 @@
+package supervisor
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+)
+
+// These tests pin I4's host→plugin half: SendAction writes an `action` frame to
+// the live child gated on the granted capability, and the Registry routes a
+// press by plugin id. The "echoaction" helper mode echoes each received action
+// back as an "actionecho" frame, so the round-trip is observable on Frames() —
+// the assertion a subprocess test can actually make.
+
+// waitFirstFrame blocks until the plugin's first published frame arrives, which
+// I2 forwards only after the handshake acks — so it is the point at which the
+// child is live and SendAction's sender has been registered. A test that sent an
+// action before this would race the handshake and see ErrPluginNotLive for a
+// reason that is not what it is testing.
+func waitFirstFrame(t *testing.T, s *Supervisor) {
+	t.Helper()
+	select {
+	case f, ok := <-s.Frames():
+		if !ok {
+			t.Fatalf("Frames closed before the plugin was live; err=%v", s.Err())
+		}
+		if f.Type != "bind" {
+			t.Fatalf("first frame type = %q, want the handshake-proof bind frame", f.Type)
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("plugin never became live (no first frame within 6s)")
+	}
+}
+
+// TestSupervisorSendActionRoundTrips proves an ext: press reaches the plugin with
+// its action name and args intact. The helper echoes the received action back, so
+// finding "refresh" and the resolved arg on Frames() proves the frame crossed the
+// wire whole. Counterfactual: clearing the sender in runOnce (never registering
+// c.enc) makes SendAction return ErrPluginNotLive and no echo ever arrives — the
+// registration is what makes the wire two-way.
+func TestSupervisorSendActionRoundTrips(t *testing.T) {
+	s := Start(context.Background(), helperConfig("echoaction", "tick", []string{capActionsRegister}))
+	defer s.Close()
+	waitFirstFrame(t, s)
+
+	if err := s.SendAction("a1", "refresh", map[string]string{"symbol": "AAPL"}); err != nil {
+		t.Fatalf("SendAction on a live, granted plugin failed: %v\n"+
+			"consequence: an ext: press cannot reach the plugin, so a plugin button does nothing.\n"+
+			"remedy: SendAction must write the action frame to the live child's stdin.", err)
+	}
+
+	deadline := time.After(6 * time.Second)
+	for {
+		select {
+		case f, ok := <-s.Frames():
+			if !ok {
+				t.Fatal("Frames closed before the action was echoed back")
+			}
+			if f.Type != "actionecho" {
+				continue // the earlier bind frames; keep reading for the echo
+			}
+			raw := string(f.Raw)
+			if !strings.Contains(raw, `"action":"refresh"`) {
+				t.Errorf("echoed frame %s does not carry action \"refresh\"; the action name was lost or altered on the wire", raw)
+			}
+			if !strings.Contains(raw, `"symbol":"AAPL"`) {
+				t.Errorf("echoed frame %s does not carry the resolved arg symbol=AAPL; args must cross the wire as concrete values (§I-E)", raw)
+			}
+			if !strings.Contains(raw, `"id":"a1"`) {
+				t.Errorf("echoed frame %s does not carry the correlation id \"a1\"; the host owns the id and it must reach the plugin", raw)
+			}
+			return
+		case <-deadline:
+			t.Fatal("no actionecho within 6s; the action frame did not reach the plugin")
+		}
+	}
+}
+
+// TestSupervisorSendActionRefusesUngranted proves the capability gate is
+// load-bearing: a plugin the user did not grant actions.register cannot be sent
+// an action even while it is live. The gate is checked before the child is
+// touched, so the refusal is the same whether or not the process is up.
+// Counterfactual: removing the isGranted check makes this SendAction succeed and
+// route an action to a plugin that was never consented that power (invariant 7).
+func TestSupervisorSendActionRefusesUngranted(t *testing.T) {
+	// Granted the empty set: the plugin is live but was consented no capabilities.
+	s := Start(context.Background(), helperConfig("echoaction", "tick", nil))
+	defer s.Close()
+	waitFirstFrame(t, s)
+
+	err := s.SendAction("a1", "refresh", nil)
+	if !errors.Is(err, ErrCapabilityNotGranted) {
+		t.Fatalf("SendAction to an ungranted plugin err = %v, want ErrCapabilityNotGranted\n"+
+			"consequence: a scene could route actions to a plugin the user never granted the\n"+
+			"actions.register capability — power taken, not granted at the gate (invariant 7).\n"+
+			"remedy: SendAction refuses when actions.register is absent from the granted set.", err)
+	}
+}
+
+// TestSupervisorSendActionNotLive proves a press arriving while the plugin is
+// down is reported, not crashed: after Close the sender is cleared, so SendAction
+// (with the capability granted, so it passes the gate and reaches the live check)
+// returns ErrPluginNotLive. This is the §I-G "the scene draws, never crashes"
+// rule on the host→plugin side.
+func TestSupervisorSendActionNotLive(t *testing.T) {
+	s := Start(context.Background(), helperConfig("echoaction", "tick", []string{capActionsRegister}))
+	waitFirstFrame(t, s)
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	err := s.SendAction("a1", "refresh", nil)
+	if !errors.Is(err, ErrPluginNotLive) {
+		t.Fatalf("SendAction to a closed plugin err = %v, want ErrPluginNotLive\n"+
+			"consequence: a press against a dead plugin panics or writes to a dead pipe instead\n"+
+			"of reporting; the escape hatch and the scene must survive a plugin's death.\n"+
+			"remedy: the sender is cleared when the child dies, and SendAction reports it.", err)
+	}
+}
+
+// TestRegistryRoutesByID proves the registry finds the right plugin by id and
+// reports the two failure modes distinctly: an unmounted id is
+// ErrPluginNotMounted, a routed press reaches the named plugin, and a removed
+// plugin is unmounted again. Counterfactual: a Remove that also Closed the
+// supervisor, or an Add that did not replace by id, would each be observable as a
+// press reaching the wrong process or none.
+func TestRegistryRoutesByID(t *testing.T) {
+	reg := NewRegistry()
+
+	// A press to a plugin no one mounted is reported, never a crash.
+	if err := reg.SendAction("tick", "refresh", nil); !errors.Is(err, ErrPluginNotMounted) {
+		t.Fatalf("SendAction to an empty registry err = %v, want ErrPluginNotMounted; a scene may\n"+
+			"name ext:tick:refresh before the plugin is mounted, and that must report, not crash", err)
+	}
+
+	s := Start(context.Background(), helperConfig("echoaction", "tick", []string{capActionsRegister}))
+	defer s.Close()
+	waitFirstFrame(t, s)
+	reg.Add("tick", s)
+
+	if err := reg.SendAction("tick", "refresh", map[string]string{"k": "v"}); err != nil {
+		t.Fatalf("SendAction through the registry to a mounted plugin failed: %v", err)
+	}
+	// Confirm it actually reached the plugin (not just returned nil): the echo
+	// carries the host-generated correlation id, which the registry owns.
+	deadline := time.After(6 * time.Second)
+	for {
+		select {
+		case f, ok := <-s.Frames():
+			if !ok {
+				t.Fatal("Frames closed before the routed action was echoed")
+			}
+			if f.Type == "actionecho" && strings.Contains(string(f.Raw), `"action":"refresh"`) {
+				goto routed
+			}
+		case <-deadline:
+			t.Fatal("the registry-routed action never reached the plugin")
+		}
+	}
+routed:
+	reg.Remove("tick")
+	if err := reg.SendAction("tick", "refresh", nil); !errors.Is(err, ErrPluginNotMounted) {
+		t.Fatalf("SendAction after Remove err = %v, want ErrPluginNotMounted; a stale button after an\n"+
+			"unmount must route nowhere, not to a torn-down supervisor", err)
+	}
+}

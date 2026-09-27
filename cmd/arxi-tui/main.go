@@ -24,6 +24,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/michiTrader/arxi_tui/internal/driver"
 	"github.com/michiTrader/arxi_tui/internal/engine"
+	"github.com/michiTrader/arxi_tui/internal/ext/supervisor"
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/patch"
 	"github.com/michiTrader/arxi_tui/internal/scene"
@@ -531,6 +532,16 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// per keystroke.
 	pluginFetch := newHTTPManifestFetcher()
 
+	// pluginActions is the routing table for behavioral-plugin presses (I4): an
+	// on_press ext:<plugin-id>:<action> is routed through it to the named plugin's
+	// subprocess. It is the host→plugin companion to pluginFetch's host→core
+	// surface, held beside ui.hidden/ui.focus as host view-side state. It is empty
+	// until I5 mounts a plugin behind the consent gate, so today an ext: press
+	// reports "no plugin with that id is mounted" rather than dispatching — the
+	// routing mechanism is complete, filling the registry with a live supervisor
+	// is I5's to do.
+	pluginActions := supervisor.NewRegistry()
+
 	// The host animation clock (ADR-0005). It holds per-node elapsed time
 	// across frames like uiHidden above, feeds the renderer a phase, and reads
 	// back which nodes are animating so the ticker below runs only while one
@@ -805,7 +816,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// here, so the escape hatch stays uncapturable
 							// (invariant 6) no matter what the menu does.
 							input, caret, slashSel = slashMenuKey(input, caret, ev.Key, slashSel, ctx, drv)
-						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens, ctx, drv); handled {
+						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens, pluginActions, ctx, drv); handled {
 							// H8 press routing: Tab/Shift-Tab move the ui.focus
 							// cursor over the pressable nodes, and Enter on a
 							// focused node dispatches its on_press. It sits after

@@ -134,6 +134,12 @@ type Supervisor struct {
 	frames chan Frame
 	done   chan struct{}
 
+	// send holds the live child's stdin encoder so SendAction can route an
+	// `action` frame to it (I4). It carries its own lock, separate from mu below,
+	// so a SendAction blocked writing a frame cannot block run()'s reads and
+	// writes of err.
+	send sender
+
 	mu  sync.Mutex
 	err error
 
@@ -233,6 +239,12 @@ func (s *Supervisor) runOnce() error {
 		c.close(s.cfg.ShutdownTimeout)
 		return err
 	}
+	// The ack has been sent, so the child knows its grants and may now receive an
+	// action (I4). Register its encoder for SendAction, and clear it before the
+	// child is reaped so a press racing the death sees no live sender and reports
+	// ErrPluginNotLive rather than writing to a closing pipe.
+	s.send.set(c.enc)
+	defer s.send.clear()
 	readErr := make(chan error, 1)
 	go func() { readErr <- s.readLoop(c) }()
 	select {
