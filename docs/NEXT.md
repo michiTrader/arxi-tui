@@ -765,8 +765,41 @@ counterfactual test).
   Signing lifts no code guard; I2 (supervisor), I3 (frame ingestion), I4 (input
   routing), I5 (consent gate) and I6 (tools door) each land with their own
   counterfactual, exactly as H2–H6 did.
-- **I2** [I1] Implement the subprocess lifecycle (spawn/supervise/kill),
-  porting arxi-sim's procgroup supervisor.
+- **I2 — DONE (2026-09-26).** `internal/ext/supervisor` runs a behavioral plugin
+  as a subprocess and speaks the ext/v1 wire (ADR-0007) to it. It is a copy of
+  arxi-sim's procgroup supervisor (ADR-0001), **never an import**: the ported part
+  is the cross-platform kill-the-whole-tree mechanics — `process_unix.go`
+  (`Setpgid` + a negative-pid `SIGTERM`/`SIGKILL` so a plugin's grandchildren die
+  too) and `process_windows.go` (a `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` Job Object
+  + `CREATE_NEW_PROCESS_GROUP`) — so an unmount leaves no orphan (invariant 6). The
+  package imports `internal/ext` for the `Manifest` and no UI package. `Start` is
+  non-blocking (the handshake, reader and any restart run on the supervisor's own
+  goroutine, so mounting never stalls the loop); `runOnce` spawns → handshakes →
+  reads until death, always leaving the child dead and reaped before it returns.
+  The handshake reads the plugin's `hello` (bounded by `HandshakeTimeout`), gates
+  on the manifest `protocol` token, and answers with the ack carrying `plugin_id`
+  and `granted` — **the ack precedes any forwarded frame**, so a plugin cannot act
+  on ungranted power (fork 1). `stderr` is reserved for human logs (pointed at the
+  host's stderr, never parsed as frames). The reader forwards every non-handshake
+  frame verbatim on `Frames()` as `{Type, Raw}` — mapping a `bind` frame into the
+  `<plugin-id>.*` store is I3, so the supervisor keeps the raw bytes rather than
+  committing to a shape. Death policy is fork 4: a restartable death
+  (`ErrUnexpectedExit` — EOF, a clean exit the host did not request, a spawn
+  failure) costs one attempt of the bounded budget and a doubling backoff, then
+  freezes with the error recorded; a fatal protocol error (`ErrFatalProtocol` — a
+  wrong wire version, a frame before the hello) stops at once and does not consume
+  the budget; a handshake timeout (`ErrHandshakeTimeout`) is restartable (a slow
+  start is not proof of a broken plugin). `Close` cancels, kills the group and
+  reaps, idempotently — the runtime companion to `/ui plugin remove <id>`.
+  Counterfactuals run (all three by hand): a wrong `plugin_id` in the ack makes the
+  helper exit and the happy-path test time out; classifying the protocol mismatch
+  as `ErrUnexpectedExit` restarts three times instead of stopping; removing the
+  `attempt >= MaxRestarts` guard never settles (14 launches in 10s under backoff,
+  which also witnesses the backoff working). Note: the whole-group kill (an
+  orphaned grandchild) is guaranteed by the ported mechanics but not portably
+  asserted in a test across the unix/Windows split; the reap of the direct child
+  is pinned by `TestSupervisorCloseReapsTheProcess`. The `ui.plugin.<id>` liveness
+  bind (§4.3) is written by the loop from this supervisor's terminal state in I3.
 - **I3** [I2] Stream NDJSON frames into `<plugin-id>.*` binds.
 - **I4** [H8,I3] Route input via `on_press` to plugin actions.
 - **I5** [I2] Consent gate by identity (name/version/executable/args/capability
