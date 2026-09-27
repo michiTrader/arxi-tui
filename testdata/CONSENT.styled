@@ -1,0 +1,13 @@
+«border:┌ A plugin is requesting consent ──────────────────────────────────────┐»
+«border:│»«header:Community Ticker  v1.0.0»                                              «border:│»
+«border:│»«dim:id: tick   protocol: ext/v1»                                           «border:│»
+«border:│»runs: ./tick --interval 5s                                            «border:│»
+«border:│»«dim:package digest: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca49599»«border:│»
+«border:│»                                                                      «border:│»
+«border:│»«header:Capabilities requested:»                                               «border:│»
+«border:│»  • actions.register                                                  «border:│»
+«border:│»  • events.emit                                                       «border:│»
+«border:│»                                                                      «border:│»
+«border:│»«banner:Grant these powers?  [y] grant   [n] reject»                           «border:│»
+«border:│»«banner:[r] grant and remember for this exact plugin»                          «border:│»
+«border:└──────────────────────────────────────────────────────────────────────┘»
