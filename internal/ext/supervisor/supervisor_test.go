@@ -78,10 +78,25 @@ func TestHelperProcess(t *testing.T) {
 		os.Exit(0)
 	}
 	// Otherwise stay alive, draining host→plugin frames until the pipe closes
-	// (the host killed us), then exit.
+	// (the host killed us), then exit. In "echoaction" mode each host→plugin
+	// `action` frame is echoed back verbatim as an "actionecho" frame, so the
+	// SendAction round-trip is observable on the host's Frames() channel — the
+	// only way a subprocess test can prove the action landed intact.
 	for {
-		if _, err := in.read(); err != nil {
+		line, err := in.read()
+		if err != nil {
 			os.Exit(0)
+		}
+		if os.Getenv("ARXI_MODE") == "echoaction" {
+			var a struct {
+				Type   string            `json:"type"`
+				ID     string            `json:"id"`
+				Action string            `json:"action"`
+				Args   map[string]string `json:"args"`
+			}
+			if json.Unmarshal([]byte(line), &a) == nil && a.Type == "action" {
+				_ = enc.Encode(map[string]any{"type": "actionecho", "id": a.ID, "action": a.Action, "args": a.Args})
+			}
 		}
 	}
 }
