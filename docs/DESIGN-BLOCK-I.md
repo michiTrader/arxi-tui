@@ -1,4 +1,4 @@
-# Block I — Phase 3 behavioral plugin protocol (proposal, awaiting signature)
+# Block I — Phase 3 behavioral plugin protocol (signed 2026-09-26)
 
 This document drafts the paper decision Block I needs before I2–I6 can be
 implemented: **the subprocess plugin protocol** (task I1) — the NDJSON wire a
@@ -9,12 +9,24 @@ used (`docs/DESIGN-BLOCK-D.md`, `docs/DESIGN-BLOCK-G.md`,
 *before* a supervisor or a reader loop depends on it, and it is written to be
 signed into the frozen docs by the owner — not merged as fact.
 
-**Status: proposal, awaiting signature.** As with Blocks D, G and H, signing the
+**Status: signed 2026-09-26.** The proposal below was accepted and signed into
+the frozen docs — PLAN.md ADR-0007 (the wire protocol), BINDS.md §4.3 (the
+`ui.plugin.<id>` liveness bind) and §4.8 (the `ext:` reservation, wire now
+signed), and SCENES.md Scene 6 (the behavioral-protocol note). The four open
+forks were resolved to their recommended defaults, recorded in NEXT.md's I1
+entry the same way Blocks G and H recorded theirs: (1) the host ack is required
+before the plugin may publish; (2) a batched multi-field `bind` frame is
+allowed; (3) a live mount shows the plain placeholder, not `mock`, before the
+first frame; (4) process death triggers bounded restarts with backoff, then
+freezes at the last-published values.
+
+As with Blocks D, G and H, signing the
 *design* lifts no code guard. The `executable`-bearing manifest refusal
 (`internal/ext/manifest.go:257-260`, `checkBehavioral`) and the absence of any
 process supervisor are lifted by the *implementation* that replaces them (I2–I6),
 each with its own counterfactual test. This file is the argued record behind the
 signatures the owner grants.
+
 
 ## What Block H and the sibling projects already settled, and what they did not
 
@@ -299,20 +311,21 @@ the gate is consulted (`DESIGN-BLOCK-H.md`).
 | host→plugin | `ok`/error | `id`, `ok`, `error{code,…}`         | correlate / acknowledge an action                              |
 | either      | error      | `code`, `message`, `fix`, `operation` | closed-set refusal (`line_too_long`, `bad_params`, …)        |
 
-## Open forks for the owner (each resolved to a recommended default above)
+## Forks resolved at signing (each to its recommended default above)
 
-1. **Host ack required before publish** — recommend yes (I-B): the ack is the one
-   point that communicates `granted`.
-2. **Batched multi-field `bind` frame** — recommend allow (I-C): a coherent
+1. **Host ack required before publish** — resolved **yes** (I-B): the ack is the
+   one point that communicates `granted`.
+2. **Batched multi-field `bind` frame** — resolved **allow** (I-C): a coherent
    snapshot should land in one repaint.
-3. **`mock` on a live mount before the first frame** — recommend no (I-G): keep
-   preview and waiting visually distinct.
-4. **Restart policy on process death** — recommend bounded restarts with backoff
-   then freeze-at-last-values (I-G).
+3. **`mock` on a live mount before the first frame** — resolved **no** (I-G):
+   keep preview and waiting visually distinct.
+4. **Restart policy on process death** — resolved **bounded restarts with
+   backoff then freeze-at-last-values** (I-G).
 
-## New vocabulary this design would sign before I2
+## New vocabulary this design signed before I2
 
-- A host-owned plugin liveness/error bind in `BINDS.md` §4.3 (I-G).
+- A host-owned plugin liveness/error bind, `ui.plugin.<id>`, in `BINDS.md` §4.3
+  (I-G) — signed 2026-09-26.
 - The `digest` computation for the I5 identity tuple (I-H) — computed, not a
   manifest field.
 
