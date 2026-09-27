@@ -972,6 +972,41 @@ counterfactual test).
     `supervisor.Mount` from `/ui plugin add` for a *behavioral* manifest (holding
     the gate/store/registry beside `ui.hidden`) — is the next increment; this lands
     the view first, exactly as B4 pinned the diff view before B5 wired it live.
+  - **I5-consent-loop (wiring) — PARTIAL (2026-09-27).** Two install-independent
+    halves of the loop wiring landed, each pure and counterfactual-tested rather
+    than buried in the 1.7k-line loop select. (1) The **config layer** the gate
+    reserved: `consentStorePath()` (`cmd/arxi-tui/consent.go`) resolves the
+    allow-list location (`ARXI_CONSENT_FILE` override, else `~/.arxi/consent.json`,
+    the same `~/.arxi` tree the run log uses) and `openConsentGate()` builds the
+    `ext.Gate` over the `DiskConsentStore`. A malformed/unreadable file falls back
+    to a **session** store and leaves the file untouched — re-asking one session
+    preserves the grants for recovery, where a reset would destroy them and a boot
+    refusal would let an allow-list problem take down the whole TUI. Proven by a
+    grant-remembered-across-reopen test (the counterfactual — a memory fallback —
+    fails it) and a malformed-file test that asserts the bytes are still on disk
+    after fallback. (2) The **keypress→answer** mapping: `consentAnswerForKey`
+    (`cmd/arxi-tui/consent_prompt.go`) turns a key pressed against the screen into
+    a `supervisor.ConsentAnswer` — `y` grants the declared set session-only, `r`
+    grants and remembers, `n`/Esc reject, and **every other key leaves the prompt
+    standing** ("no answer is not a yes", Q15; the counterfactual — a granting
+    default branch — fails the standing-prompt test). Kept a pure function of the
+    key for the same reason `focusKey`'s grammar is: the keypress→grant mapping is
+    the security-load-bearing decision, and a pure function is what a counterfactual
+    pins exactly.
+    **Blocked and remaining:** the third half — the modal loop state that shows
+    `ext.ConsentScene`, feeds keys through `consentAnswerForKey`, and calls
+    `supervisor.Mount` from a *behavioral* `/ui plugin add` — cannot land honestly
+    yet, because `Mount` needs the `digest` and `identity.go` is emphatic that a
+    stale/empty digest "silently makes every mount look like a different plugin".
+    The digest is `PackageDigest` over the **fetched package (executable + manifest)**
+    (§I-H), but the loop's `patch.Fetcher` (`plugin_fetch.go`) fetches **manifest
+    bytes only** — there is no package-tree download or executable installer, so
+    there is nothing to digest. Wiring the spawn against a fabricated digest would
+    break the exact grant-transfer safety the gate exists for. The remaining wiring
+    therefore waits on a behavioral package installer (Block J installer territory
+    / part of I6): fetch a package bundle, lay it out, `PackageDigest` it, then the
+    modal mount is a small, testable addition (the helper-process pattern
+    `supervisor/mount_test.go` uses proves the spawn side already works end to end).
 - **I6** [I5] Gate B (tools): a plugin-by-link teaches the agent a tool, running
   as its own process, under the consent contract.
 
