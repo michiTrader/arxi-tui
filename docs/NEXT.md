@@ -593,7 +593,38 @@ counterfactual test).
   behavioral and self-collision guards were reverted by hand and observed to fail.
   H6 wires this behind `/ui plugin add <url>`/`remove <id>`.
 
-- **H4** [H2] Merge plugin tokens with precedence (user > plugin > factory).
+- **H4 — DONE (2026-09-26).** Plugin tokens are merged into the live host at the
+  signed precedence `user > plugin > factory` (TOKENS.md). The `theme.Merge`
+  primitive and `m.Theme()` parser already existed (H7's golden witnessed
+  `Merge(factory, plugin)`); H4 wires them into the running loop and closes the
+  silent half-mount where a plugin's fragments landed but its own tokens never
+  reached the active theme, rendering it unstyled. `patch.Result` gains
+  `Tokens *PluginTokens` (`internal/patch/patch.go`): a `plugin add` carries the
+  plugin's parsed token block keyed by id (empty-not-nil when it declares none,
+  so the host merges a no-op rather than nil-checking), a `plugin remove` signals
+  dropping that layer by id — the token half of unmount the H3 note deferred. The
+  precedence is *not* encoded in the op or in `Merge` (which only knows "over
+  wins"); it is the loop's layering order. The loop keeps the factory `baseTheme`
+  and one `pluginThemeLayer` per mounted plugin, and `applyTokenLayer` (a free
+  function beside `applyViewState`) folds each op into that ordered set:
+  add-replaces-by-id so a re-mount is not a second layer, remove-drops by id so it
+  names no factory/user token. `composeTheme` recomposes the active theme from the
+  base over every layer in mount order — a later plugin wins a token conflict with
+  an earlier one, and the user layer merges last when the boot path grows one — so
+  a remove is exact (recompose from the base leaves no residue). It also re-points
+  the clock's anim lookup so a plugin's one-shot token (reveal/transition/enter)
+  resolves; the continuous-marquee tick rate stays at the boot value by design
+  (re-arming the ticker mid-session is out of scope). `uiCommandKey` threads the
+  callback and applies `Result.Tokens` alongside the document replacement (a mount
+  changes both). Counterfactuals run in both directions: on the patch side,
+  Mount not setting `Tokens` fails `TestMountCarriesThePluginTokenLayer`; on the
+  loop side, `composeTheme` ignoring its layers fails the plugin-over-factory,
+  user-over-plugin and later-plugin precedence tests, and a remove no-op fails the
+  add-then-remove round-trip. Note: the boot path still has no user theme layer
+  (main.go loads only the compiled-in factory `SOBRIA`), so the `user >` half is
+  proven through `composeTheme`'s ordering rather than a live user file — the
+  layer merges last the moment such a file exists.
+
 - **H5 — DONE (2026-09-26).** `scene.ValidateWithPlugin(*PluginScope)` lifts the
   unsigned-bind refusal for a bind in a plugin's own `<id>.` namespace, but only
   when the plugin declares it — the plugin-namespace analogue of §4.7's `row.*`
