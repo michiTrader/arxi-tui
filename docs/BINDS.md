@@ -316,3 +316,57 @@ Refusals, each addressed with `file:line`:
 A field declared by the schema but absent or empty in a *particular* element is
 falsy and renders as the `"[…]"` placeholder (§4.6) — never a crash. Misspelled
 is a load-time refusal; absent-in-one-row is a run-time placeholder.
+
+## 4.8 The `on_press` action namespace (Q18, signed 2026-09-26, H8)
+
+`on_press` is universal (SCENES.md §Scene 8, Q18) — any node may carry it — and
+its value is a single string naming the action a press dispatches. Q18's
+decision is that **the action vocabulary is closed per surface and extended only
+through registered names**, so `on_press` is not free text: it is a `prefix:arg`
+pair whose prefix is drawn from a closed set, and a prefix outside that set is a
+load-time refusal, not a silent no-op. This is the same net every other field in
+this document gets, and it is signed here because H8 is the first beat that reads
+`on_press` rather than refusing it wholesale.
+
+The closed prefix set, and what each one does when pressed:
+
+| prefix | argument | effect |
+|---|---|---|
+| `cmd:` | a command line, e.g. `cmd:/agent 5`, `cmd:/max chat` | run the command exactly as if the user had typed it into the input and pressed Enter. The `cmd:/slash`, `cmd:/max`, `cmd:/focus`, `cmd:/ui …` (incl. `plugin`) forms §4.3 names are the registered commands; a `cmd:` naming an unknown command is handled by the same command surface a typed one is (it is not this field's job to enumerate the command registry — that would be a second copy of it). |
+| `focus:` | a node `id`, e.g. `focus:reject` | set `ui.focus` (§4.3) to that id. It is the declarative twin of `cmd:/focus <node>`: a button can hand focus to a sibling without the user knowing the command. The id is resolved at press time against the live scene; a `focus:` naming no node in the scene leaves focus unchanged and reports it, never crashes. |
+| `answer:` | a kind, e.g. `answer:approve`, `answer:reject` | answer the agent's pending prompt/inbox item with that kind (Scene 8's approve/reject buttons). The **kind vocabulary is itself closed** — `approve`, `reject`, `reply` — mirroring the arxi core's `inbox.approve`/`inbox.reject`/`inbox.reply` verbs, so a scene author and the core agree on what a button means. |
+
+`ext:<plugin-id>:<action>` is a **fourth** prefix reserved for behavioral
+plugins (a press routed to a subprocess over NDJSON). It is **not** part of H8:
+DESIGN-BLOCK-I §I-E signs it and I4 implements it, because it needs the
+subprocess channel Block I builds. H8 refuses an `ext:` action with an address
+that names Block I, so the vocabulary is closed today (an unknown prefix is
+refused) without pretending the `ext:` arm works.
+
+Argument interpolation reuses §4.7 unchanged: inside a `row_template`, an
+`on_press` argument may contain `{row.<field>}`, replaced by the current
+element's field at press time (Q20). Scene 9's row is `cmd:/agent {row.id}`.
+There is no alias vocabulary — one relative namespace, for §4.7's reason.
+
+**Tab order (Q19, signed with H1's scenes).** A press needs a pressable node in
+focus. Focus is the single `ui.focus` cursor (§4.3): Tab and Shift-Tab move it
+in **scene order** over the nodes that carry an `on_press`, and the input node is
+the home of the cursor (focus defaults to it at boot, and Tab returns to it after
+the last pressable node), so the typing flow is always one Tab away — Q19's
+"protect the typing flow" concern. Enter while a pressable node holds focus
+dispatches its `on_press`; Enter while the input holds focus submits the buffer
+as it does today. Q19 also signs a `tab: false` opt-out on the input for a
+buttons-only surface; that explicit opt-out is **not** implemented by H8 (the
+input-as-home ring already protects typing), and is left as a signed-but-unbuilt
+refinement so no golden depends on a field the engine does not yet read.
+
+Refusals, each addressed with `file:line`:
+
+- An `on_press` whose prefix is outside the closed set (`cmd:`/`focus:`/`answer:`,
+  or `ext:` with the Block-I message): refusal naming the node and listing the
+  legal prefixes.
+- An `on_press` with a prefix but an empty argument (`cmd:`, `focus:`, `answer:`
+  with nothing after the colon): refusal, because a command/id/kind is the whole
+  content of the action.
+- An `answer:` whose kind is outside the closed kind set: refusal naming the kind
+  and the legal set, the same net a mistyped bind gets.
