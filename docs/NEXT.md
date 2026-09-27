@@ -947,6 +947,31 @@ counterfactual test).
     the flush fails the persist-across-reopen test; swallowing a malformed file into
     an empty store fails the refusal test. What remains for the loop is only the
     config layer choosing the path and pointing a gate at it.
+  - **I5-consent-scene (view) — DONE (2026-09-27).** `ext.ConsentScene(m, digest)`
+    (`internal/ext/consent_scene.go`) is the visual half of the `Prompt` seam
+    `supervisor.Mount` takes — the screen shown when the gate returns
+    `DecisionNeedsConsent`. It is a **host-generated scene** built exactly the way
+    the change-diff view is (ADR-0003, `patch/diff.go`): a box over a stack of
+    styled `text` rows, authored through the normal `scene.ParseNamed` path, no new
+    engine capability. It renders the whole identity tuple the grant binds to (I-H):
+    name+version, id/protocol, the executable+args `runs:` line, the package digest
+    (carried full; a narrow terminal clips the tail, and no human eyeballs a
+    sha256 — the gate computes `Identity()` over the full value), and every
+    requested capability one per row (a capability-less manifest states "no host
+    powers" rather than rendering blank). Plain rows carry **no** style token, not
+    `"text"`: the Factory backstop signs `dim`/`header`/`banner` (and the diff
+    tokens) but not `"text"`, so a plain row must reference no token to render under
+    both themes — proven by `TestConsentSceneValidates` against SOBRIA and Factory.
+    `TestConsentSceneShowsEveryIdentityField` is the property no golden guarantees
+    alone (a byte-match to a fixture that itself dropped a field proves only that
+    the omission is stable); counterfactual run by hand: dropping a capability from
+    the render fails exactly it. `testdata/CONSENT.styled` freezes the rendered
+    frame through the engine (`internal/engine/consent_view_test.go`), the diff
+    view's golden twin. **Scoped out and remaining:** the interactive half — the
+    loop layer that reads a Y/N/remember keypress against this screen and calls
+    `supervisor.Mount` from `/ui plugin add` for a *behavioral* manifest (holding
+    the gate/store/registry beside `ui.hidden`) — is the next increment; this lands
+    the view first, exactly as B4 pinned the diff view before B5 wired it live.
 - **I6** [I5] Gate B (tools): a plugin-by-link teaches the agent a tool, running
   as its own process, under the consent contract.
 
