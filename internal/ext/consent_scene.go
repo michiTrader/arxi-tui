@@ -60,9 +60,9 @@ func ConsentScene(m *Manifest, digest string) (*scene.Document, error) {
 	rows = append(rows,
 		textRow(fmt.Sprintf("%s  v%s", m.Name, m.Version), "header"),
 		textRow(fmt.Sprintf("id: %s   protocol: %s", m.ID, m.Protocol), "dim"),
-		textRow("runs: "+runLine(m), "text"),
+		textRow("runs: "+runLine(m), ""),
 		textRow("package digest: "+digest, "dim"),
-		textRow("", "text"), // a blank spacer row, kept so the columns keep a readable rhythm
+		textRow("", ""), // a blank spacer row, kept so the rows keep a readable rhythm
 	)
 
 	// Capability block. This is the decision the screen exists to inform, so the
@@ -75,10 +75,10 @@ func ConsentScene(m *Manifest, digest string) (*scene.Document, error) {
 		rows = append(rows, textRow("  (none — this plugin runs with no host powers)", "dim"))
 	} else {
 		for _, c := range m.Capabilities {
-			rows = append(rows, textRow("  • "+c, "text"))
+			rows = append(rows, textRow("  • "+c, ""))
 		}
 	}
-	rows = append(rows, textRow("", "text"))
+	rows = append(rows, textRow("", ""))
 
 	// The prompt. The keys named here are the ones the loop's consent-reading
 	// layer binds (a later increment); the view states them so the golden pins
@@ -123,13 +123,24 @@ func runLine(m *Manifest) string {
 }
 
 // textRow is one line of the consent screen: a text node carrying the literal
-// content under the token that emphasises it. It mirrors diff.go's lineNode so
-// the two host-generated views author a styled line the same way rather than
-// each inventing its own node shape.
+// content, optionally under a token that emphasises it. It mirrors diff.go's
+// lineNode so the two host-generated views author a styled line the same way
+// rather than each inventing its own node shape.
+//
+// An empty token emits a node with NO style key rather than a node styled
+// "text": the Factory backstop theme signs dim/header/banner (and the diff
+// tokens) but not "text", so a plain row must reference no token at all to
+// render under both themes — and a node with no style is exactly a plain,
+// full-brightness line, which is what the runs line and the capability rows
+// want. Only the tokens both themes sign (header/dim/banner) are used for the
+// emphasised rows.
 func textRow(text, token string) map[string]any {
-	return map[string]any{
-		"type":  "text",
-		"text":  text,
-		"style": map[string]any{"style": token},
+	row := map[string]any{
+		"type": "text",
+		"text": text,
 	}
+	if token != "" {
+		row["style"] = map[string]any{"style": token}
+	}
+	return row
 }
