@@ -278,6 +278,15 @@ func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bo
 		return err
 	}
 
+	// An on_press names an action in the closed cmd:/focus:/answer: grammar
+	// (H8 / BINDS.md §4.8). Checked here, in the same walk, so a malformed action
+	// on a nested node is refused at its own position; the row scope is passed so
+	// a {row.<field>} interpolation inside a template is checked against the row
+	// schema (Q20).
+	if err := d.validateOnPress(n, path, scope); err != nil {
+		return err
+	}
+
 	// Recurse into children, carrying the same scopes: a node nested under a
 	// template row is still inside that template and may still read row.*, and a
 	// node anywhere in a plugin fragment may still read the plugin namespace.
@@ -529,6 +538,54 @@ func (d *Document) validateEnter(n *Node, path string) error {
 	return nil
 }
 
+// validateOnPress refuses an on_press whose action is malformed, with an address.
+//
+// on_press graduated from the unrenderedFields refusal to this typed one in H8,
+// the same graduation scroll (G2) and reveal (G3) made: the field was refused
+// wholesale while the action vocabulary was unsigned, and now that BINDS.md §4.8
+// signs the closed prefix set the validator checks the value rather than
+// rejecting the key. Unlike scroll and reveal there is no node-type refusal —
+// on_press is universal (SCENES.md Scene 8, Q18), any node may be pressable — so
+// the only thing to refuse is a value the closed grammar does not accept.
+//
+// ParseAction is the single reader of the grammar (the host dispatcher calls the
+// same function), so a prefix outside cmd:/focus:/answer:, an empty argument, an
+// unknown answer kind, and the reserved ext: arm are all refused here with the
+// message ParseAction composes — the same net every other field gets, addressed
+// with file:line so the Phase 2 repair loop can act on it.
+//
+// When the on_press sits inside a row_template its argument may interpolate
+// {row.<field>} (Q20), and each such reference is checked against the enclosing
+// template's row schema exactly as a bare row.* bind is (§4.7): a {row.foo} the
+// element type does not declare is a load-time refusal, not a token that silently
+// fails to expand at press time. A {row.*} outside any template is refused the
+// same way a bare row.* bind outside a template is — relative interpolation needs
+// a row to be relative to.
+func (d *Document) validateOnPress(n *Node, path string, scope map[string]bool) error {
+	if n.OnPress == "" {
+		return nil
+	}
+	action, err := ParseAction(n.OnPress)
+	if err != nil {
+		return &Error{Loc: d.locOf(path), Msg: fmt.Sprintf("node type %q: %s", n.Type, err)}
+	}
+	for _, token := range interpolationTokens(action.Arg) {
+		if scope == nil {
+			return &Error{
+				Loc: d.locOf(path),
+				Msg: fmt.Sprintf("on_press on node type %q interpolates %q, but relative interpolation is only legal inside a row_template (BINDS.md §4.7/§4.8); there is no row to be relative to here", n.Type, "{"+token+"}"),
+			}
+		}
+		if !scope[token] {
+			return &Error{
+				Loc: d.locOf(path),
+				Msg: fmt.Sprintf("on_press on node type %q interpolates %q, which is not in the row schema of the enclosing list (BINDS.md §4.7); check the field name against the list's element type", n.Type, "{"+token+"}"),
+			}
+		}
+	}
+	return nil
+}
+
 // does not draw. Accepting one is the failure mode this project has now paid
 // for three times: a style key the validator learned and styleName() did not,
 // a border token checked by the validator and dropped by both drawing paths,
@@ -568,15 +625,21 @@ func (d *Document) validateEnter(n *Node, path string) error {
 // Scene 4, G-B) and the host clock is signed (ADR-0005), so the engine draws it
 // on a marquee and validateScroll refuses it elsewhere with an address — a
 // rendering plus a typed refusal, no longer a blanket unrendered-field refusal.
-// `on_press` stays here for row_template's reason: it is behaviour PLAN.md
-// schedules for Phase 3 (the action vocabulary of SCENES.md Q18), and inventing
-// dispatch now would build format ahead of the phase meant to design it. A
-// refusal costs the author one addressed message and costs the project nothing
-// it has to keep.
-var unrenderedFields = map[string]string{
-	"on_press": "the action vocabulary is closed per surface (SCENES.md Q18) and " +
-		"dispatch is Phase 3 interaction work; no node type presses anything yet",
-}
+// `on_press` has now graduated too (H8): BINDS.md §4.8 signs the closed action
+// vocabulary (cmd:/focus:/answer:), validateOnPress refuses a malformed action
+// with an address, and the host loop dispatches a well-formed one — so a valid
+// on_press loads and is acted on rather than refused wholesale. It was the last
+// standing entry, so the map is empty today.
+//
+// An empty map is not a dead mechanism. The refusal machinery stays wired and is
+// exercised by the runtime-probe tests (unrendered_test.go injects an entry and
+// asserts the validator's behaviour changes), and the moment a field is added to
+// Node that the engine cannot yet draw and no verb yet reads, it earns an entry
+// here and gets an addressed refusal for free — the forward-compatibility net
+// PLAN.md signs. The three historical entries (row_template D1, scroll G2,
+// on_press H8) each left the moment their behaviour landed, which is exactly the
+// graduation this map exists to permit.
+var unrenderedFields = map[string]string{}
 
 // refuseUnrendered reports a field the validator understands and the renderer
 // ignores. The message says "not yet rendered" rather than "invalid" on
