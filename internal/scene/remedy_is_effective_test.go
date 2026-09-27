@@ -336,10 +336,12 @@ func remedyProbeDocuments(t *testing.T) []remedyProbe {
 		// token is checked separately by ValidateTokens.
 		"enter": `{"root":{"type":"stack","enter":{"row":true,"stagger":"default"},"children":[{"type":"text","text":"x"}]}}`,
 
-		// Already in unrenderedFields, so the subtest returns early — their
-		// promise is checked by TestEveryUnrenderedFieldIsActuallyRefused with
-		// the real reason string. They are listed so a key cannot be missing
-		// here by omission.
+		// row_template graduated (D1) and on_press graduated (H8): neither is in
+		// unrenderedFields, so both validate clean and exercise the inject-and-check
+		// path like scroll/reveal/transition/enter above. They are listed so a key
+		// cannot be missing here by omission. on_press:"cmd:/help" is a well-formed
+		// action (validateOnPress accepts it), which is what lets it validate clean
+		// before the probe injects an entry for it.
 		"row_template": `{"root":{"type":"list","bind":"agent.todos","row_template":{"type":"text","bind":"model.name"}}}`,
 		"on_press":     `{"root":{"type":"text","text":"x","on_press":"cmd:/help"}}`,
 	}

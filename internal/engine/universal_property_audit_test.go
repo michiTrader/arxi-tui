@@ -114,21 +114,29 @@ func TestEveryUniversalPropertyIsHonouredOrRefused(t *testing.T) {
 				return
 			}
 
-			// Outcome 3: the property is addressing rather than drawing,
-			// so identical frames are correct and the two outcomes above
-			// cannot apply. There is exactly one such property and it is
-			// named here rather than left to a map, because a map is how
-			// the previous version of this audit let two real gaps out.
+			// Outcome 3: the property addresses or dispatches rather than
+			// draws, so identical frames are correct and the two outcomes
+			// above cannot apply. Two properties are in this class, and both
+			// are named here rather than left to a map, because a map is how
+			// the previous version of this audit let two real gaps out:
 			//
-			// The exemption is not a skip. A skipped case proves nothing
-			// and would survive the field being deleted — which is the
-			// precise failure this rewrite exists to fix. So the property
-			// is held to the strongest bar that is true of it: the parser
-			// must round-trip it. That fails if `id` is removed from
-			// scene.Node, so the exemption cannot outlive the thing it
-			// exempts.
+			//   - `id` addresses a node for patches; nothing in the engine
+			//     reads it.
+			//   - `on_press` names an action the host loop dispatches (H8);
+			//     the engine draws it on no node type.
+			//
+			// Neither is a skip. Each is held to the strongest bar that is
+			// true of it — the parser must round-trip `id`, and `on_press`
+			// must both round-trip and refuse a malformed action — so the
+			// exemption fails the moment the field or its validation is
+			// removed, which is the precise state that made both invisible
+			// before their phases built them.
 			if prop == "id" {
 				assertRoundTrips(t, prop, probe.with)
+				return
+			}
+			if prop == "on_press" {
+				assertOnPressIsValidatedNotDrawn(t, probe.with)
 				return
 			}
 
@@ -257,6 +265,56 @@ func assertRoundTrips(t *testing.T, prop, body string) {
 			"every patch that names a node unaddressable, with no diagnostic.\n"+
 			"remedy: keep the field on scene.Node; this property is exempt from the frame\n"+
 			"comparison because it addresses rather than draws, not from existing.", prop, prop)
+	}
+}
+
+// assertOnPressIsValidatedNotDrawn is the bar for on_press, the property H8
+// graduated: the engine draws it on no node type (the host loop dispatches a
+// press, so identical frames are correct), but it is emphatically not a silent
+// drop, because the scene layer validates the action grammar (BINDS.md §4.8).
+//
+// It holds both halves, so the exemption cannot become decorative:
+//
+//   - the parser must round-trip the key — this fails if on_press leaves
+//     scene.Node, the exact state that made it invisible before H8; and
+//   - a malformed action must be refused with an address — this fails if
+//     validateOnPress is removed, the state that would let a typo'd action drop
+//     silently, which is the outcome this whole audit exists to reject.
+//
+// The second half is why on_press is not merely `id`: id is only addressed, but
+// on_press is addressed *and* checked, so the stronger bar is available and is
+// the honest one to hold it to.
+func assertOnPressIsValidatedNotDrawn(t *testing.T, body string) {
+	t.Helper()
+	doc, err := scene.ParseDocument([]byte(body))
+	if err != nil {
+		t.Fatalf("premise broken: the on_press probe must parse; got %v", err)
+	}
+	if doc.Root == nil || doc.Root.OnPress == "" {
+		t.Errorf("SCENES.md calls on_press universal and a document setting it parses into a\n" +
+			"node that does not carry it.\n" +
+			"consequence: encoding/json discarded the key in silence — the scene parses,\n" +
+			"validates and renders with the action gone before the host could dispatch it,\n" +
+			"the exact state on_press was in before H8.\n" +
+			"remedy: keep the field on scene.Node; on_press is exempt from the frame comparison\n" +
+			"because the host dispatches it rather than the engine drawing it, not from existing.")
+		return
+	}
+
+	// The dispatch half: a malformed action must be refused, or a typo'd on_press
+	// would validate clean and the host would silently do nothing with it.
+	bad := strings.Replace(body, "cmd:/help", "bogus:/help", 1)
+	bd, err := scene.ParseDocument([]byte(bad))
+	if err != nil {
+		t.Fatalf("premise broken: the malformed-on_press probe must parse; got %v", err)
+	}
+	if verr := bd.Validate(); verr == nil {
+		t.Errorf("an on_press naming an unknown action prefix (bogus:) validated clean.\n" +
+			"consequence: on_press would be exempt from the frame comparison and unchecked, so a\n" +
+			"mistyped action loads, reports success, and the host dispatches nothing — the silent\n" +
+			"drop with no diagnostic. The exemption above would be certifying a hole.\n" +
+			"remedy: validateOnPress must refuse an action outside the closed cmd:/focus:/answer:\n" +
+			"vocabulary with an address (BINDS.md §4.8).")
 	}
 }
 

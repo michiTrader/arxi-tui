@@ -137,7 +137,11 @@ var nestedUniversalProbes = map[string]nestedUniversalProbe{
 			"span inside one line its owner composes, so there is no space to divide",
 	},
 	"on_press": {
-		set: `"on_press":"cmd:/help"`,
+		set:            `"on_press":"cmd:/help"`,
+		addressingOnly: true,
+		why: "`on_press` names an action the host loop dispatches on a press (H8), not a thing the " +
+			"engine draws; a valid action changes no frame at any position, and a malformed one is " +
+			"refused by validateOnPress in the same walk that reaches prefix/suffix",
 	},
 	"scroll": {
 		set: `"scroll":{"speed":2,"pause_when":"agent.working"}`,
