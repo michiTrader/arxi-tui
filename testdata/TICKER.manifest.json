@@ -1,0 +1,27 @@
+{
+  "id": "tick",
+  "name": "Community Ticker",
+  "version": "1.2.0",
+  "protocol": "ext/v1",
+
+  "tokens": {
+    "profit": { "fg": "green" },
+    "loss":   { "fg": "red" }
+  },
+
+  "mounts": [
+    {
+      "where": "top-right",
+      "fragment": {
+        "id": "overlay",
+        "type": "overlay", "anchor": "top-right", "min_width": 18,
+        "border": "single",
+        "children": [
+          { "type": "row", "children": [
+            { "type": "text", "text": "TICK",        "style": {"style": "profit"} },
+            { "type": "text", "text": " · " },
+            { "type": "text", "text": "no data yet", "style": {"style": "loss"} } ] } ]
+      }
+    }
+  ]
+}
