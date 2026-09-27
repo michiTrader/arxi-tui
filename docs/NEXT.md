@@ -880,8 +880,55 @@ counterfactual test).
   (§I-E, a PROPOSAL "so a button can show it was accepted") is a noted refinement:
   the plugin proposes by publishing new bind values (I3), so `SendAction` returns
   once the frame is written and does not wait on a reply.
-- **I5** [I2] Consent gate by identity (name/version/executable/args/capability
-  set/digest) with "remember" — Q15.
+- **I5 — DONE (2026-09-27).** Consent gate by identity, with "remember." Three
+  pieces, each with a counterfactual run by hand. (1) `internal/ext/identity.go`
+  computes the grant identity tuple — `name + version + protocol + executable +
+  args + capability-set + digest` (§I-H, Q15) — ported from arxi-sim's
+  `identity.go`, never imported: `Identity` hashes a named struct so a field
+  insert can never silently reorder the pre-image, sorts the capability set so
+  membership (not declaration order) is the authority, and takes the digest as
+  an argument because it is `PackageDigest`'s job, not the manifest's. `PackageDigest`
+  hashes a fetched package tree canonically (slash-normalised path + exec-bit +
+  byte-length-framed content), refusing symlinks and non-regular entries — a
+  symlink points at bytes the digest never read, so a grant bound to the tree
+  would cover content the consent screen never showed. Counterfactuals: dropping
+  the digest from the pre-image, or the capability sort, each fails
+  `TestIdentityBindsEveryTupleField`; the symlink refusal is Windows-conditional
+  (privilege) so the content/mode half stands alone. (2) `internal/ext/consent.go`
+  is the gate: a closed capability vocabulary (`KnownCapability`), a three-way
+  `Classify` (Granted / NotGranted / NotDeclared) so "it never asked" and "you
+  said no" are different refusals (§I-H), a `ConsentStore` seam with a
+  session-scoped `MemoryConsentStore` (the disk-backed store lands with the
+  config layer), and a `Gate` whose `Decide` answers `DecisionRemembered` /
+  `DecisionNeedsConsent` by identity and whose `Grant` refuses any capability the
+  manifest did not declare or the closed set does not know — the gate is the one
+  place authority is widened past what was asked, and it does not. `remember`
+  decides persistence and nothing else; a rejection is the absence of a Grant, so
+  it is session-local by construction. Counterfactuals: `Grant` persisting
+  regardless of `remember` fails the session-local test; `Classify` skipping the
+  declared check collapses the two denials and fails the three-way test; a
+  version or digest bump re-asks (`TestAVersionBumpReAsks`). (3)
+  `internal/ext/supervisor/mount.go` is the one verb I3 and I4 each pointed at
+  with "the live mount is I5": `Mount` runs the load-time order (§I-F) —
+  `gate.Decide` → prompt only if unseen → **only on a grant** spawn the
+  supervisor, `Registry.Add` it, and launch the `DrainInto` pump goroutine — with
+  `cfg.Granted` **overwritten** by the gate's decision so a caller cannot
+  pre-fill it to smuggle a capability past the gate (invariant 7). The consent
+  `Prompt` is a callback so the orchestration carries no UI (a test supplies a
+  fixed answer; the real loop supplies the consent scene); a rejection returns
+  `ErrConsentRejected` and spawns nothing. Counterfactuals: keeping the caller's
+  `cfg.Granted` (skipping the overwrite) makes the helper reject its ack and no
+  bind lands (fails `TestMountIgnoresCallerSuppliedGranted`); ignoring the
+  rejection spawns a refused plugin (fails `TestMountDoesNotSpawnOnReject`). Two
+  parts are scoped out and recorded here: the **consent scene** (rendering the
+  identity tuple and reading a Y/N/remember answer) is Scene-7-adjacent UI and
+  rides on the scene layer, so `Prompt` is the seam it will satisfy; and the
+  **disk-backed `ConsentStore`** waits on the config layer, so a grant survives a
+  re-mount within a session but not a host restart until it lands. The loop
+  wiring that calls `Mount` from `/ui plugin add` for a *behavioral* manifest
+  (holding the gate, store and registry beside `ui.hidden`) waits on that consent
+  scene — the routing mechanism (I4) and the live-mount orchestration (this) are
+  both complete; what remains is the screen that asks the user.
 - **I6** [I5] Gate B (tools): a plugin-by-link teaches the agent a tool, running
   as its own process, under the consent contract.
 
