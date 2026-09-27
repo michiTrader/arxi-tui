@@ -50,9 +50,18 @@ func signedRowsFromDocument(t *testing.T) map[string]bool {
 			continue
 		}
 		name := m[1]
-		// The plugin namespace is open by construction (ADR-0003): its row
-		// documents a shape, not a name the validator can enumerate.
-		if strings.HasPrefix(name, "<") {
+		// A `<…>` segment anywhere in the name marks a *parameterized* row: it
+		// documents a namespace shape, not a name the validator can enumerate,
+		// because the parameter is a runtime plugin id. Two rows are of this
+		// kind — the open plugin namespace `<plugin-id>.*` (ADR-0003), whose
+		// parameter leads, and the host-owned per-plugin liveness bind
+		// `ui.plugin.<id>` (§4.3, ADR-0007), whose parameter trails a fixed
+		// host prefix. Both resolve by prefix at runtime (the plugin store and
+		// the supervisor own them), so neither belongs in the exact-match
+		// signedBinds inventory this test audits. Matching `<` anywhere rather
+		// than only at the start is safe because no fixed signed bind contains
+		// one.
+		if strings.Contains(name, "<") {
 			continue
 		}
 		// Table header separators and prose rows are not bind names. Every

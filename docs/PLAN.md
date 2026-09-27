@@ -421,6 +421,132 @@ composed two authors' trees). And the namespace validator reads the manifest's
 `binds` map as its **single source** — the `row.*` `rowSchemas` scope mechanism
 pointed at a plugin's declared binds — never a fourth hand-copied inventory.
 
+#### ADR-0007 — the behavioral plugin wire protocol (`ext/v1`)
+
+Signed from `docs/DESIGN-BLOCK-I.md` (I1). ADR-0006 froze the manifest schema
+and made `executable` the declarative/behavioral discriminator, but deliberately
+left the wire a behavioral plugin speaks unspecified — H builds the declarative
+path, I builds the process. This ADR freezes that wire *before* a supervisor or
+a reader loop depends on it, so I2–I6 land against a fixed vocabulary rather
+than inventing one under the pressure of a running process.
+
+**The channel is a second NDJSON stream, not the core channel.** The
+host↔plugin channel runs over the subprocess's stdin/stdout and reuses
+`internal/driver/ndjson.go`'s conventions wholesale — one JSON object per line
+per direction, the 1 MiB `maxLineBytes` cap and `line_too_long` refusal, the
+closed `protoError{Code, Message, Fix, Operation}` shape with its
+permanent/transient branch, and the context-cancellable `readLine`. It is a
+*separate* channel from the host↔core one for an authority reason, not a
+convenience one: the core channel **is** the run log (ADR-0002), and a plugin's
+`tick.price` is not a run event and must never enter the fold (`BINDS.md` §4.4
+is a separate authority). Two channels, two authorities, matching the namespace
+split in ADR-0003. **stderr is reserved for human logs, never frames**, the
+mirror of why the core keeps its run log separate from its response stream.
+
+**The wire version is the manifest `protocol` token, not a second negotiation.**
+`protocol` is already a closed set `{"ext/v1"}` (`manifest.go` `legalProtocols`);
+the plugin sends `hello` first with that string and the host validates it exactly
+as `Handshake` validates the surface version, so the manifest declaration and the
+wire handshake cannot drift. The host answers with an ack carrying `plugin_id`
+(so the plugin never hard-codes its namespace prefix) and `granted` (the subset
+of the manifest `capabilities` the user consented to at the I5 gate). This ack is
+where invariant 7's "power granted at the gate, once" reaches the wire: the plugin
+learns its powers from the host at handshake, not by asking per use, and — the
+recommended fork, adopted — **the ack is required before the plugin may
+publish**, because it is the single point that communicates `granted` and a
+plugin publishing before it knows its grants is a plugin acting on ungranted
+power.
+
+**A plugin names only relative fields; the host owns the prefix.** A `bind`
+frame carries `field` (`"price"`, never `"tick.price"`); the host composes
+`plugin_id + "." + field` and checks it against the manifest `binds` map keys.
+The plugin can only ever write inside its own namespace *by construction* — it
+never utters the prefix — which is the wire enforcement of ADR-0003's "the gate
+is the boundary," and the wire analogue of the `<plugin-id>/` id-prefix mechanic
+H-B uses for mounted node ids. `kind` is **not** repeated on the wire: it is
+declared once in the manifest `binds` map, and repeating it would let the two
+disagree, the same reasoning that made `executable` a single discriminator. The
+host looks up the declared `kind` and validates the frame's `value` shape against
+it (`text` → scalar → `text` node; `series` → number array → `sparkline`),
+refusing a shape mismatch the way the load-time wrong-node-type check does. The
+recommended fork is adopted: **a batched multi-field frame is allowed**
+(`{"type":"bind","binds":{…}}`) so a coherent snapshot lands atomically for one
+repaint — pull-by-frame reads all binds at once, so a torn frame showing a new
+price beside an old sparkline is the failure this prevents.
+
+**Async push composes with pull-by-frame through a host-owned latest-value
+store.** The subprocess pushes asynchronously; binds are pulled per frame
+(ADR-0004). The bridge is a `pluginStore` held across frames exactly like
+`ui.hidden` and the animation clock — one reader goroutine per live plugin
+drains stdout with the cancellable `readLine` pattern and writes into
+`map[bindPath]json.RawMessage` under a mutex; per frame, bind resolution reads a
+snapshot. The store is **view state, not fold state** (the fold never waits on
+the plugin, invariant 2; it is rebuilt from the log each frame per ADR-0004 and
+would forget a pushed value), re-attached to the renderer each repaint the way
+`ui.hidden` is. A `bind` frame requests a repaint through the existing 120 ms
+coalescing budget — a fifth loop `select` case fed by a `chan struct{}` the
+reader signals, the same shape ADR-0005 gave the animation ticker: it adds a
+*reason to repaint*, never a new render path, and cannot capture the exit.
+**Backpressure is last-value-wins**: a bind is a projection, so only the newest
+value matters for a frame; the store overwrites (drop-and-notify, never block),
+which is why `kind:"series"` sends the whole window each frame rather than
+deltas — last-value-wins requires each frame to be self-contained.
+
+**Input routes to the plugin as an `action` frame; the plugin still only
+proposes.** When the user activates a node whose `on_press` is
+`ext:<plugin-id>:<action>` (the fourth prefix H8 reserved and refused), the host
+sends `{"type":"action","id":…,"action":…,"args":…}` where `args` carries
+`{row.field}` values *already resolved by the host* (§4.7) — the plugin receives
+concrete values, never scene syntax — and requires the `granted` set to include
+the relevant capability. An `action` never mutates host state directly: the
+plugin responds by publishing new bind values or, for run-touching effects, by
+emitting through the core under its granted capability, so every effect is an
+attributed event (invariant 7). The host answers with an `id`-correlated
+`ok`/refusal frame (reusing the `protoResponse` shape) so a button can show it
+was accepted.
+
+**Lifecycle is consent-gate-first, then the ported procgroup supervisor.** The
+order is load-time: `Manifest.Validate()` → I5 consent gate → spawn — a process
+is never spawned before consent ("download ≠ trust ≠ grant", Q15). The arxi-sim
+procgroup supervisor ports **by copy** (ADR-0001), never an import: the host owns
+the child and kills the whole process group on exit so no orphan survives. The
+escape hatch is untouched (invariant 6) — Ctrl-C twice / `-scene ""` exits and
+can `SIGKILL`+respawn the plugin without the interface dying, and the reader lives
+on its own `select` case that cannot capture the exit. `/ui plugin remove <id>`
+kills the group, drops the reader, and clears the plugin's slice of the store —
+the runtime companion to H3's node/token unmount. On process death, the
+recommended fork is adopted: **bounded restarts with backoff, then freeze at
+last-published values** — never crash (the fold is untouched), never busy-loop
+respawn ("quiescence is an event with a diagnosis", `LESSONS.md`).
+
+**Placeholder versus mock stay distinct.** Before the first frame on a live
+mount, a bind is unsatisfied and renders as the standard placeholder, falsy for
+`when` (the counter-field rule, ADR-0003). The recommended fork is adopted:
+**a live mount uses the plain placeholder, and `BindDecl.Mock` is reserved for
+Block J preview** — "waiting" (no value yet) and "preview" (here is what it will
+look like) must read differently, and the Scene 6 golden (H7) stays pinned on the
+mock frame while a live run shows the placeholder until the socket speaks.
+
+**Consent identity (I5) is the inherited tuple plus a computed digest.**
+`name + version + protocol + executable + args + capability-set + digest`, mapped
+to the built manifest fields, with exact set equality on capabilities and a
+version bump or arg change re-asking. `digest` is the one component with no
+manifest field: a content hash over the package bytes (executable + manifest)
+*computed by the loader over the fetched package, not declared* — "an executable
+outside the package is code the digest never covered." Rejection is
+session-local; grants persist as identity-bound allow-lists ("remember"); and
+`not_declared` (absent from the manifest) versus `not_granted` (present, consent
+refused) are different refusals, so a user can tell "it never asked" from "you
+said no."
+
+**New vocabulary this ADR signs before I2:** a host-owned plugin liveness/status
+bind, `ui.plugin.<id>`, in `BINDS.md` §4.3 (host view state, written by the
+supervisor, never by the plugin), and the `digest` computation for the I5
+identity tuple (computed, not a manifest field). Signing this ADR lifts no code
+guard: the `executable`-bearing manifest refusal (`internal/ext/manifest.go`
+`checkBehavioral`) and the absence of any supervisor are lifted by I2–I6, each
+with its own counterfactual test, exactly as H2–H6 did.
+
 ## When data, when code
 
 | I want… | Tool |

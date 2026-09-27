@@ -324,6 +324,28 @@ stream, and the mock-driven preview of an unsatisfied `tick.price` (Q16) are
 Block I/J. (H7 pins that declarative frame as `testdata/TICKER.json`, the
 `patch.Mount` output composed from `testdata/plugins/TICKER.manifest.json`.)
 
+**Behavioral wire protocol (I1, signed 2026-09-26; argued in
+`docs/DESIGN-BLOCK-I.md`, ADR-0007).** The NDJSON frames the `executable`
+process speaks are now frozen so I2–I6 land against a fixed vocabulary. It is a
+**second** NDJSON channel over the subprocess's stdin/stdout, distinct from the
+host↔core channel: the core channel *is* the run log, and `tick.price` is not a
+run event and must never enter the fold, so two channels carry two authorities.
+The plugin sends `hello` with its manifest `protocol` (`ext/v1`); the host acks
+with the plugin's `plugin_id` and the `granted` capability subset, and the
+plugin thereafter publishes **relative** `bind` frames (`{"field":"price",…}`)
+that the host prefixes into `tick.price` — a plugin never utters the prefix, so
+it cannot write outside its own namespace or forge another's. Async pushes reach
+the per-frame pull (ADR-0004) through a host-owned latest-value store held like
+`ui.hidden`, with last-value-wins backpressure and a coalesced repaint; a press
+on `on_press: ext:tick:<action>` becomes an `action` frame with host-resolved
+`{row.field}` args, and the plugin still only proposes. Death freezes at the last
+values and is reported through the host-owned `ui.plugin.tick` liveness bind
+(§4.3), never a crash. The four design forks resolved to their recommended
+defaults (ack-before-publish, batched multi-field frames, live mount shows the
+plain placeholder not `mock`, bounded-restart-then-freeze); the supervisor,
+consent gate, reader loop and `ext:` dispatch are I2–I6, each with its own guard.
+
+
 ## Scene 7 — COMMUNITY (browse, preview, install, from inside the TUI)
 
 The installer *is* a scene: a `list` of registry entries, a `markdown`
