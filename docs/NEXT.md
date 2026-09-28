@@ -1158,6 +1158,25 @@ counterfactual test).
     fake-tty harness, so the glue is verified by build + the pieces it composes, as
     with the earlier I6 loop-wiring commit. **Remaining for I6:** the tool-door half
     (the agent-facing side of Gate B).
+  - **I6-tooldoor-design — DRAFTED (2026-09-28), awaiting signature.** DESIGN-BLOCK-I.md
+    §I-J drafts the last unbuilt piece of Gate B: how a mounted plugin teaches the
+    **agent** a tool it can call, as distinct from an I3 `bind` (a scene projection
+    the agent never reads) and an I4 `action` (user-originated, plugin need not reply).
+    A tool is an agent-originated request/response that crosses the two-channel
+    boundary, so the host is the broker. The draft names the hard dependency first —
+    the agent-facing half is blocked on Block M (no real agent wired yet) and a
+    coordinated `arxi` core surface-version bump for a tool-injection verb, neither of
+    which this host can invent — and splits out a **plugin-facing half buildable and
+    testable headless today**, exactly as I4 built action routing before I5 mounted a
+    live plugin: a manifest `tools` array + `ToolDecl`, a new `tools.register`
+    capability gated at I5, and `Supervisor.CallTool` (the await-a-reply sibling of
+    I4's fire-and-forget `SendAction`, reusing the id-correlated `action`/`ok` channel).
+    Five decisions with forks resolved to recommended defaults; new vocabulary
+    (manifest `tools`, `ToolDecl`, `tools.register`) named for signing; the core
+    surface verb named as a dependency, not signed here (the fabricated-core mistake
+    §I-I refused with a fabricated digest). **Remaining for I6:** owner signature on
+    §I-J, then the buildable plugin-facing half with its counterfactuals; the
+    agent-facing half stays blocked on Block M + the surface bump.
 
 ### Block J — Phase 3: the community installer as a scene (Scene 7) [H]
 

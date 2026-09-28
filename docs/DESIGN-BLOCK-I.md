@@ -513,6 +513,245 @@ and observing the gate return `DecisionNeedsConsent` rather than the remembered
 grant. That last is the grant-transfer safety the whole gate exists for, and it is
 the reason a fabricated digest was never an option.
 
+## I-J — the tool door (Gate B, agent-facing) (PROPOSAL, awaiting signature)
+
+This section drafts the second half of I6 and the last unbuilt piece of Gate B.
+The §I-I installer is the *package-delivery* half — how a plugin's bytes reach
+the disk under consent. This is the *tool* half — how a mounted plugin teaches
+the **agent** a tool it can call. It is paper only: signing it lifts no guard,
+and each buildable beat lands with its own counterfactual like every I-beat
+before it.
+
+### What already exists, and why it is not this
+
+Three mechanisms look adjacent and none of them is the tool door:
+
+- **`bind` frames (I3).** A plugin publishes a value the *scene* draws. It is a
+  projection the fold never sees (invariant 2); nothing consumes it but a render
+  walk. The agent never reads it.
+- **`action` frames (I4/I-E).** A *user* presses `ext:<id>:<action>` and the host
+  routes it to the plugin. `SendAction` writes the frame and returns without
+  waiting — "the plugin proposes by publishing new bind values" — because a
+  button needs no return value, only a repaint. The agent is not involved and
+  no result comes back.
+- **the core's own tools.** The agent (the `arxi` core, driven over the
+  surface-versioned NDJSON channel, `ndjson.go`) has a *fixed* tool set baked
+  into its surface vocabulary (`hostSurfaceVersion = 1`). Nothing in that
+  vocabulary lets the host add a tool at connection time.
+
+The tool door is the missing thing all three imply: a plugin declares a tool,
+the **agent discovers it, calls it, and gets a result back synchronously enough
+to continue its turn.** That is a request/response the agent originates and the
+plugin answers — the exact opposite direction from `action` (user originates,
+plugin need not answer), and it crosses the two-channel boundary
+(`BINDS.md` §4.4: the core channel *is* the run log; the ext channel must never
+enter it) that every other I-beat kept the plugin on one side of.
+
+### The hard dependency, named first (Block M and a core surface bump)
+
+The half of this door that faces the **agent** cannot be built today, and the
+honest design says so before proposing anything buildable:
+
+- **There is no agent yet.** Block M (core integration — the TUI drives a real
+  agent) is on the critical path and unbuilt. The `arxi` core exists and speaks
+  the NDJSON surface, but the TUI has only wired `run.prompt`; a tool the agent
+  calls has no consumer until M lands.
+- **The core surface has no tool-injection verb.** The host advertising a
+  plugin's tool to the agent is a message the core must *understand*, and the
+  core refuses unknown parameters rather than ignoring them
+  (`ndjson.go:203-206`). Adding "here are extra tools for this session" is a
+  **surface-version bump coordinated with the `arxi` repo**, not a frame this
+  host can invent unilaterally — the same reason `hostSurfaceVersion` gates the
+  handshake in the first place. This is cross-repo work owned by the core's
+  vocabulary, and it is *named here as a dependency, never signed here.*
+
+So this design splits cleanly, and the split is the whole point of writing it
+now: the **plugin-facing** half (declare a tool, validate it against consent,
+route an agent call to the plugin and await its reply) is buildable and testable
+headless today, exactly as I4 built and tested action routing while "the loop's
+registry is empty until I5." The **agent-facing** half (advertise the tool over
+the core channel, receive the core's call) waits on M and the surface bump, and
+must not be faked against a fabricated core the way a fabricated digest was
+correctly refused in §I-I.
+
+### Decision 1 — a tool is declared in the manifest, never registered at runtime
+
+A tool must be a **field in the manifest**, inside the digested tree, for the
+same reason the `executable`, `args` and `capabilities` are (§I-H): the grant
+binds to the bytes the user consented to, and a tool is *power the agent can
+invoke on its own*. A tool that appeared over the wire after mount would be
+authority the consent screen never showed and the digest never covered — the
+identical failure `PackageDigest` was built to prevent, one level up. So a new
+manifest field:
+
+```json
+"tools": [
+  { "name": "quote",
+    "description": "Fetch the latest quote for a ticker symbol.",
+    "parameters": { "type": "object",
+      "properties": { "symbol": { "type": "string" } },
+      "required": ["symbol"] } }
+]
+```
+
+`ToolDecl{Name, Description, Parameters}` mirrors `BindDecl` (`manifest.go:105`):
+`Parameters` is an opaque `json.RawMessage` JSON-Schema object the host forwards
+to the agent verbatim and never interprets — the host is a broker, not a
+validator of the agent's argument semantics. The manifest `tools` array is the
+single source of what a plugin may expose, consulted directly, never copied — the
+same rule H5 set for `binds`.
+
+### Decision 2 — the agent-visible name is host-composed `<plugin-id>.<tool>`
+
+The name the agent sees is composed by the host from the plugin id and the
+declared tool name, exactly as I3 composes `<plugin-id>.<field>` for binds
+(§I-C). A plugin utters only its *relative* tool name and can never shadow a core
+tool or another plugin's tool — the wire-security property that made the bind
+namespace safe makes the tool namespace safe for free. A bare tool name the
+plugin chose would let a malicious package register `read_file` and intercept the
+agent's calls to the core's own `read_file`; host composition makes that
+unrepresentable rather than merely refused.
+
+### Decision 3 — a distinct capability `tools.register`, gated at the I5 gate
+
+The closed capability set today is `events.subscribe`, `events.emit`,
+`inbox.answer`, `actions.register` (`consent.go:26-33`). A tool the agent invokes
+autonomously is strictly more power than a user-pressed `action`: the user is not
+in the loop at call time, so the grant must be *legible as that*. Recommend a new
+capability **`tools.register`** — "this plugin may add tools your agent can call
+on its own" — rather than overloading `actions.register`, which the consent
+screen presents as "may receive button presses." Two grants, two sentences the
+user can weigh separately.
+
+This extends the closed set, so it is **new vocabulary to sign** (like
+`ui.plugin.<id>` was signed before I2). `Grant` already refuses any capability
+the closed set does not know (`consent.go`, I5), so the token is inert until the
+set is widened and the gate is the one place the widening happens.
+
+### Decision 4 — the agent's call is synchronous; the plugin answers with a result
+
+This is the crux and the one place the plugin does **not** merely propose into a
+bind. The agent calls a tool to *get an answer it will reason over in the same
+turn*; a value dribbling into a scene bind three frames later (the I4 model) is
+useless to it. So the invocation is a request/response the host brokers:
+
+1. **core → host** (waits on the surface bump, M): the agent calls
+   `<plugin-id>.<tool>` with JSON args.
+2. **host → plugin**: the existing `action` frame (§I-E), `id`-correlated —
+   `{ "type": "action", "id": "t7", "action": "quote", "args": {…} }`. The host
+   already owns this frame and this correlation id (`registry.go`, I4). No new
+   plugin-facing frame is invented; the tool door *reuses the action channel and
+   adds the wait.*
+3. **plugin → host**: the `id`-correlated reply already drafted as the §I-E
+   PROPOSAL and listed in the frame vocabulary —
+   `{ "type": "ok", "id": "t7", "result": {…} }` or an `error` frame. This is
+   where that PROPOSAL graduates from "so a button can show it was accepted" to
+   load-bearing: a button ignored the reply, a tool cannot.
+4. **host → core**: the result, correlated to the agent's call.
+
+The host **awaits** the plugin reply on a worker goroutine with a timeout, never
+on the loop — a hung plugin must never freeze the interface or the panic gesture
+(invariant 6), the same rule `startInstall` (§I5-modal) already follows. A
+timeout or an `error` reply becomes a **tool-error returned to the agent**, which
+decides what to do next; the host neither crashes nor blocks, and last-value
+bind state is untouched.
+
+### Decision 5 — the fold stays host-owned; a tool result is an attributed event, not a fold authority
+
+A tool call belongs in the run log — the fold already carries `ToolCalls`
+(`fold/fold.go:73`). But the *result* comes from a stranger's process, and
+invariant 2 (ADR-0003) is absolute: a plugin value must never enter the fold as
+an authority. The resolution is the one "plugins propose, they never write" gives
+for free: the tool call and its result are events **authored by the host on the
+plugin's behalf**, attributed to the plugin id, entering through the same gate
+every plugin effect does (invariant 7). The fold records "the agent called
+`<plugin-id>.<tool>`, which returned R, from plugin P" — the plugin proposed R,
+the host attributed it, and no forged sequence or authorship is possible. The
+agent's reasoning over R is the agent's own; the fold's authority over *what
+happened* stays host-owned.
+
+### What is buildable now (plugin-facing half), with counterfactuals
+
+Independent of M and the surface bump, and testable headless exactly as I4 was:
+
+1. **`ToolDecl` + manifest `tools`** in `internal/ext` — parsed by the same
+   `ext.Parse` the installer already uses, validated by `ValidateBehavioral`
+   (`behavioral.go`): a tool naming a duplicate relative name is refused; a tool
+   with an empty name or absent `parameters` is refused; `tools` present without
+   the `tools.register` capability declared is a contradiction refusal (the
+   `consent_required:false`-with-`executable` precedent, `manifest.go`).
+   Counterfactual: reverting each refusal accepts a malformed `tools` block.
+2. **`tools.register`** added to the closed capability set (`consent.go`) and to
+   the I5 identity tuple's capability-set component automatically (it is exact-set
+   equality already, §I-H) — so granting tool power re-asks a plugin that never
+   had it. Counterfactual: a plugin gaining a `tools.register` grant it did not
+   have before must return `DecisionNeedsConsent`, proven by the existing
+   capability-set-equality test extended with the new token.
+3. **`Supervisor.CallTool(name, args) (result, error)`** in
+   `internal/ext/supervisor` — the request/response sibling of I4's fire-and-
+   forget `SendAction`: it writes the `action` frame under the granted
+   `tools.register` capability, then **awaits** the `id`-correlated reply with a
+   timeout, mapping a timeout and an `error` reply to distinct Go errors so the
+   agent-facing layer can report them apart. The `echoaction` helper mode already
+   makes the round-trip observable (`send_test.go` precedent); a new
+   `replytool` helper answers with a result. Counterfactuals: dropping the
+   capability gate routes an ungranted tool call (fails the ungranted test); a
+   helper that never replies must surface the timeout error, not hang (fails a
+   deadline-bounded test).
+
+### What waits on Block M and the surface bump (agent-facing half)
+
+Named, not built, so no code is written against a fabricated core:
+
+- the host→core advertisement of granted plugin tools at connection time (a new
+  surface verb, a coordinated `arxi` surface-version bump);
+- the core→host tool-call frame and the host→core result frame on the surface
+  channel;
+- the fold events for a plugin tool call/result (Decision 5), which need the
+  event vocabulary M settles.
+
+### Forks to resolve at signing (each to its recommended default)
+
+1. **Capability** — a new `tools.register` (recommended, Decision 3) vs. reuse
+   `actions.register`. Recommend new: the grant sentence must distinguish
+   "receives button presses" from "your agent may call this on its own."
+2. **Tool declaration site** — manifest `tools` array (recommended, Decision 1)
+   vs. runtime registration over the wire (rejected: power the digest never
+   covered and the consent screen never showed).
+3. **Invocation shape** — synchronous `id`-correlated reply the host awaits with
+   a timeout (recommended, Decision 4) vs. async-via-binds like I4 (rejected: the
+   agent needs a result inside its turn; a bind is a scene projection, not a
+   return value).
+4. **Agent-visible name** — host-composed `<plugin-id>.<tool>` (recommended,
+   Decision 2) vs. a plugin-chosen bare name (rejected: shadows a core tool).
+5. **Result-to-fold attribution** — host authors the call/result events on the
+   plugin's behalf, attributed to the plugin id (recommended, Decision 5) vs. the
+   plugin writing the fold (rejected outright: invariant 2).
+
+### New vocabulary this design would sign before the buildable half
+
+- The manifest `tools` array and `ToolDecl{Name, Description, Parameters}` in
+  `internal/ext` — a declared, digested field like `binds`.
+- The `tools.register` capability, extending the closed set in `consent.go` and
+  joining the I5 identity tuple's capability-set component.
+
+### Named dependency this design does NOT sign (owned by the `arxi` core)
+
+- The core surface verb that advertises host-supplied tools to the agent, the
+  core→host tool-call frame, and the result frame — a coordinated
+  surface-version bump in the `arxi` repo, blocked on Block M wiring a real
+  agent. This is the core's vocabulary, not this host's, and inventing it here
+  would be the fabricated-core mistake §I-I refused to make with a fabricated
+  digest.
+
+### Guards this lifts by signing: none
+
+Signing lifts no code guard. The buildable half lands with the counterfactuals
+listed above, each constructed and measured rather than argued (the I-beat
+method); the agent-facing half lands only once M and the surface bump exist, with
+its own counterfactuals then.
+
+
 
 
 
