@@ -1,0 +1,21 @@
+┌ Community — browse and install ────────────────────────────────────────────┐
+│search community plugins               Focus an entry with Tab and press Enter│
+│Community Ticker                       to install it. Each entry installs from│
+│A top-right price ticker with a live spits signed manifest_url through the    │
+│# Community Ticker                     same consent gate as /ui plugin add —  │
+│                                       the registry only points at the        │
+│Streams the latest price into a        manifest, it grants nothing on its own.│
+│top-right overlay and                                                         │
+│keeps a short sparkline of recent                                             │
+│moves. Behavioral: runs a small                                               │
+│subprocess and asks for the events.emit                                       │
+│capability.                                                                   │
+│Header Clock                                                                  │
+│A wall-clock in the header, updated onc                                       │
+│# Header Clock                                                                │
+│                                                                              │
+│Adds the current time to the header.                                          │
+│Declarative: mounts a                                                         │
+│single text node and ships its own dim                                        │
+│token, no subprocess.                                                         │
+└──────────────────────────────────────────────────────────────────────────────┘
