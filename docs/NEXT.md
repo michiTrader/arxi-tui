@@ -1020,9 +1020,29 @@ counterfactual test).
     its own counterfactuals (the load-bearing one: a one-byte bundle edit re-asks).
     Once signed, the I5 modal mount is the small addition the blocker above
     describes.
+  - **I6-installer-core — LANDED (2026-09-27), stacked on the design.** The two
+    pieces §I-I puts at the center — extraction as the security boundary and the
+    digest-keyed atomic lay-out — are implemented in `internal/ext/installer.go`
+    as pure units a signed §I-I needs unchanged. `Installer.Extract` reads a
+    `.tar.gz` (stdlib `archive/tar`+`compress/gzip`, no new module) and enforces
+    the Decision 3 invariants at *write* time: `filepath.IsLocal` traversal
+    refusal, regular-files-and-directories-only (mirroring `PackageDigest`'s
+    symlink/non-regular refusal so a bundle that would fail the digest walk is
+    rejected earlier), and a shared decompression byte budget plus an
+    entry-count cap. `Installer.LayoutByDigest` is Decision 4: digest the temp
+    tree, then atomic-rename to `root/<id>/<digest>/` — digest-before-rename
+    closes the TOCTOU window, keyed-by-digest makes identical bytes idempotent.
+    Counterfactual-tested (traversal vs benign, symlink vs regular, byte and
+    entry caps exact at the boundary, one-byte-change re-keys the digest; the
+    traversal guard proven load-bearing by reverting it). **Remaining** before
+    the modal mount: a behavioral-aware manifest validation path (`Validate()`
+    refuses every behavioral manifest today, H2 — a decision to settle at
+    signing), the in-package `executable` resolution check, the HTTP archive
+    fetch at the `cmd/` edge, and the loop wiring into `supervisor.Mount`.
 - **I6** [I5] Gate B (tools): a plugin-by-link teaches the agent a tool, running
   as its own process, under the consent contract. Its package-delivery half is
-  the §I-I installer above (drafted); the tool-door half remains.
+  the §I-I installer above (drafted; extraction+lay-out core landed); the
+  tool-door half remains.
   - **I6-behavioral-validate — LANDED (2026-09-27).** §I-I step 3, now that the
     design is signed (§I-I merged): `Manifest.ValidateBehavioral` (`behavioral.go`)
     is the installer's gated door — the one validation path that accepts a manifest
@@ -1043,6 +1063,7 @@ counterfactual test).
     load-bearing by reverting them. Remaining for the I5 modal mount: the HTTP
     archive fetch at the `cmd/` edge (§I-I step 1), then wiring `supervisor.Mount`
     with a real digest.
+
 
 ### Block J — Phase 3: the community installer as a scene (Scene 7) [H]
 
