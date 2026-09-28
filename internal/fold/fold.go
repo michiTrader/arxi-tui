@@ -198,7 +198,7 @@ type State struct {
 	// list on every filter keystroke, and resets it to 0 when the menu
 	// reopens. A list bound to slash.matches renders this row bright and every
 	// other row dim (docs/BINDS.md §4.3).
-	SlashSelected int    `json:"slash.selected"`
+	SlashSelected int `json:"slash.selected"`
 	// CommunityQuery, CommunityMatches and CommunitySelected are the community
 	// installer's live view state (Scene 7, BINDS.md §4.3, signed in the J3
 	// follow-up). They are the slash.* triple's analogue for a registry browse:
@@ -219,8 +219,8 @@ type State struct {
 	CommunityMatches  []CommunityMatch `json:"community.matches"`
 	CommunitySelected int              `json:"community.selected"`
 	UIFocus           string           `json:"ui.focus"`
-	UIMax         string `json:"ui.max"`
-	UISurface     string `json:"ui.surface"`
+	UIMax             string           `json:"ui.max"`
+	UISurface         string           `json:"ui.surface"`
 	// UIHidden is the set of node ids the user has hidden through `/ui hide <id>`
 	// (BINDS.md §4.3, signed as D3). It is a set and not a scalar for the reason
 	// the design pinned: every other `ui.*` row is a single id, so a scalar
