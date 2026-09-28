@@ -268,4 +268,3 @@ func TestStartInstallBridgesConsentToTheLoop(t *testing.T) {
 		t.Fatal("the worker never reported an outcome after the rejection; the goroutine is wedged")
 	}
 }
-

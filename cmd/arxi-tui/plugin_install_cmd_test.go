@@ -112,4 +112,3 @@ func TestParsePluginRemoveIDLeavesOtherLinesAlone(t *testing.T) {
 		}
 	}
 }
-
