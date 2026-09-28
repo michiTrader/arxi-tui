@@ -861,10 +861,30 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 	prefix := n.PrefixText()
 	prefixW := ansiStringWidth(prefix)
 
+	// The line the field shows is the value of whatever bind it carries, not only
+	// user.input. user.input is the one bind the keystroke loop maintains a live
+	// caret for, so it keeps UserInputCaret; every other view-state bind
+	// (community.query is the first) has no caret field in the fold yet, so the
+	// caret rests at the end of the resolved text — the only honest position until
+	// the loop that edits that bind lands, and the one a freshly displayed query
+	// wants. Resolving through resolveBind instead of special-casing user.input is
+	// what lets an input bound to community.query show the typed query rather than
+	// the frozen placeholder; a resolved placeholderValue collapses to the empty
+	// line below, so an unresolved bind still shows its hint and never "[…]".
+	value := state.UserInput
+	caret := state.UserInputCaret
+	if n.Bind != "user.input" {
+		value = resolveBind(n.Bind, state)
+		if value == placeholderValue {
+			value = ""
+		}
+		caret = len([]rune(value))
+	}
+
 	// Empty line: draw the placeholder on one row, caret just past the prefix. The
 	// placeholder keeps its own token; the typed line takes the declared token (or
 	// "input"), and the paragraph above records what welding the two cost once.
-	if !(n.Bind == "user.input" && state.UserInput != "") {
+	if value == "" {
 		var cells ui.Line
 		if prefix != "" {
 			cells = append(cells, ui.Span{Text: prefix, Style: "input"})
@@ -891,7 +911,7 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 	if room < 1 {
 		room = 1
 	}
-	rowsText := inputVisualRows(state.UserInput, room)
+	rowsText := inputVisualRows(value, room)
 
 	live := make([]ui.Line, 0, len(rowsText))
 	for _, rt := range rowsText {
@@ -903,7 +923,7 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 		live = append(live, cells)
 	}
 
-	row, col := inputCaretRowCol(state.UserInput, state.UserInputCaret, room)
+	row, col := inputCaretRowCol(value, caret, room)
 	return ui.Frame{
 		Live:   live,
 		Width:  r.Width,
