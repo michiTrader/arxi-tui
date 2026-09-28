@@ -255,7 +255,7 @@ diff scene is. No new node type. Composition uses only `list`/`markdown`/`input`
 The registry-index → scene function is a pure `index -> *scene.Document`, testable
 by a golden the way `Diff.Scene` is — that golden is J5.
 
-## J4 — bundle sharing (context)
+## J4 — bundle sharing
 
 A bundle is scene + theme + plugins under one manifest, one consent screen. The
 theme half reuses `theme.Merge` at the signed precedence
@@ -265,6 +265,82 @@ block. The plugin half reuses `patch.Mount`. "One consent screen" is a UX
 aggregation over the existing Q15 gate (one identity grant covering all the
 bundle's components), **not a new gate**. J4 is composition of J1–J3 plus I5; no
 new merge or mount primitive is required.
+
+### The bundle manifest schema (`bundle/v1`)
+
+The one new artifact J4 adds is the bundle manifest itself: the document that
+names, in one place, the curated interface a share carries. It is JSON for the
+same three reasons the scene, the plugin manifest and the registry index are —
+a model writes it without hallucinating, every language parses it, and it embeds
+the scene, token block and plugin references that are already JSON here. It
+mirrors `registry.go`/`manifest.go` deliberately (closed-set `version`, an
+addressed `*Error`, a pure `Validate` that never fetches), so a bundle refusal
+carries `file:line` for free and cannot drift from a manifest refusal on what an
+address looks like.
+
+Fields:
+
+- `version` (string, required) — the closed-set schema tag, `bundle/v1`. Closed
+  because the bundle shape is code on both sides, exactly as `legalProtocols`
+  and `legalRegistryVersions` are: an unknown version is refused at load, never
+  negotiated.
+- `name` (string, required) — the human-facing label the one consent screen
+  shows. Consent to an unnamed bundle is consent the user could not read, the
+  same argument the manifest's required `name` makes.
+- `description` (string, required) — the one-line summary of what the bundle
+  installs. A bundle with no description is one the user accepts blind, the same
+  argument the registry entry's required `description` makes.
+- `scene` (object, optional) — an embedded scene document (a `root` node tree),
+  the interface the bundle ships. Validated through `scene.ParseNamed` +
+  `Validate`, the same net a hand-written document gets, with its address rebased
+  onto the bundle bytes so a refusal points at the bundle line the author wrote.
+- `theme` (object, optional) — an embedded token block, exactly the shape a
+  plugin manifest's `tokens` block and a theme file have. Validated through
+  `theme.LoadBytes` — the one token validator — and merged at the signed
+  `plugin`-layer precedence by the deferred wiring.
+- `plugins` (array, optional) — the plugins the bundle needs, each a
+  `{ "manifest_url": "https://…" }` reference. HTTPS-only, the same security
+  refusal `registry.go` makes and for the same reason: a bundle is
+  attacker-controlled data, and a plaintext or `file://` URL would let it
+  redirect an install to swapped code or a local path. **The references are
+  discovery, not embedded code** — the plugin half of the install still flows
+  through the existing H6/I5 pipeline (fetch each `manifest_url`, full manifest
+  `Validate`, the Q15 consent gate) exactly as `/ui plugin add` does; the bundle
+  grants nothing the install pipeline does not already gate.
+
+`checkEmpty`, ported from the manifest: a bundle must contribute at least one of
+`scene`, `theme` or `plugins`. A bundle that bundles nothing is a grant that
+bought nothing — the user shared something and the workspace did not change,
+indistinguishable from a broken load.
+
+### What lands now vs. what is deferred (the J-block pattern)
+
+J4 lands its **pure, fully-testable core first** — the bundle manifest parser and
+validator (`internal/ext/bundle.go`), a pure `bytes -> validated *Bundle` unit
+with counterfactual tests — exactly as J2 landed `ParseRegistry` and J3 landed
+the pure `InstallerScene` before their live wiring. The **loop wiring** — fetch
+each referenced manifest, compute the aggregated Q15 identity, show the *one*
+consent screen (`ext.ConsentScene`'s bundle sibling), then `theme.Merge` the
+tokens and `patch.Mount` the scene + plugins on a single grant — is the follow-up
+increment, gated on the same live-loop surface the I5 modal mount uses. Splitting
+here keeps the security-load-bearing decision (what a bundle may name, and that
+every plugin reference is HTTPS) pinned by a counterfactual now, and leaves the
+aggregation as a small, testable addition once the modal loop holds it.
+
+### Open forks for the owner (each resolved to a recommended default above)
+
+1. **`scene`/`theme` embedded vs referenced by URL** — recommend embedded: a
+   bundle is a single shareable document, and a scene fetched from a second URL
+   reintroduces the man-in-the-middle window the HTTPS-only plugin rule closes,
+   for the one component the consent screen renders verbatim.
+2. **`plugins` embedded manifests vs `manifest_url` references** — recommend
+   references: the plugin half must flow through the H6/I5 install pipeline
+   unchanged (fetch, `Validate`, consent), and embedding a manifest would fork
+   that path into a second, drift-prone copy. The bundle discovers URLs; it
+   grants nothing.
+3. **One consent screen as aggregation vs a new gate** — recommend aggregation
+   (as the section states): one identity grant covering the bundle's components,
+   over the existing Q15 gate, never a new authority.
 
 ## J5 — freeze the Scene 7 golden
 
