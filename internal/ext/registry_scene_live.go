@@ -27,9 +27,12 @@ package ext
 // The search input shows the typed query: renderInput now resolves any
 // view-state bind, so community.query appears in the box as the loop writes it
 // (this was the first deferred affordance, landed in its own engine increment
-// with a both-directions counterfactual). What remains deferred are the two
-// affordances that still need vocabulary or scope the engine does not carry,
-// each the honest placeholder rather than a broken half:
+// with a both-directions counterfactual). The selected row now wears a leading
+// marker too: the engine synthesizes a per-row row.selected boolean from
+// community.selected and the row_template gates a caret glyph on
+// `when: "row.selected"` (see liveInstallerList) — the second deferred
+// affordance, landed here. One affordance still needs vocabulary the engine does
+// not carry, and it is the honest placeholder rather than a broken half:
 //
 //   - The right column stays the static help pane, not the selected entry's
 //     preview. A selection-driven preview needs the selected entry's fields as
@@ -38,12 +41,6 @@ package ext
 //     preview inline instead would just be the static cards again, not a preview
 //     pane, so the honest placeholder is the fixed explanation InstallerScene
 //     already carries.
-//   - The list has no selection highlight. Highlighting the community.selected
-//     row needs the row's index inside its own scope, which row_template does not
-//     carry today (no list does — team.members and slash.matches draw every row
-//     the same). That, too, is a later increment; drawing one row bright is not
-//     required for the loop to move the selection, only for the user to see which
-//     row it is on, and the loop increment is where that becomes observable.
 
 import (
 	"encoding/json"
@@ -100,12 +97,23 @@ func LiveInstallerScene() (*scene.Document, error) {
 // community.matches. Each instance stacks the entry's name, version and
 // description — the fields a user scans to choose — read through the row.*
 // namespace the §4.7 schema for community.matches signs (row.name/row.version/
-// row.description among the six). manifest_url and preview are carried by the
+// row.description among the seven). manifest_url and preview are carried by the
 // scope but not drawn here: the URL is the install target the loop acts on, and
 // the preview is the right pane's job once selection lands, so drawing them in
 // every row would be noise now and duplicate the preview pane later. The row
 // template naming only signed fields is what the validator checks at load, so a
 // typo here is a load-time refusal, not a silent blank row.
+//
+// The selected row wears a leading marker. The name line is a row of a
+// `when: "row.selected"` caret glyph and the name text; on the one row whose
+// index equals community.selected the glyph draws and the name shifts right,
+// on every other row the gated glyph is absent and the name sits at column
+// zero. This is the highlight community.selected exists to drive (BINDS.md
+// §4.3), expressed with only signed mechanism: a per-row boolean and the same
+// `when` gate Scene 9 uses for its per-row spinner. It is a marker rather than a
+// brightened style because this engine's `when` shows or hides a node, it does
+// not switch one node's token between two values, and a marker that appears is a
+// standard, unambiguous selection cue that needs no second, negated node.
 func liveInstallerList() map[string]any {
 	return map[string]any{
 		"type": "list",
@@ -114,7 +122,13 @@ func liveInstallerList() map[string]any {
 		"row_template": map[string]any{
 			"type": "stack",
 			"children": []any{
-				map[string]any{"type": "text", "bind": "row.name", "style": map[string]any{"style": "header"}},
+				map[string]any{
+					"type": "row",
+					"children": []any{
+						map[string]any{"type": "text", "when": "row.selected", "text": "> ", "style": map[string]any{"style": "header"}},
+						map[string]any{"type": "text", "bind": "row.name", "style": map[string]any{"style": "header"}},
+					},
+				},
 				map[string]any{"type": "text", "bind": "row.version", "style": map[string]any{"style": "dim"}},
 				map[string]any{"type": "text", "bind": "row.description"},
 			},

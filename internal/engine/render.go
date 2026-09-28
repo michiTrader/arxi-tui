@@ -1808,7 +1808,16 @@ func rowScopesFor(bind string, state fold.State) []map[string]string {
 		// every signed field here and no other keeps the builder and the
 		// validator agreeing on the row's vocabulary.
 		rows := make([]map[string]string, 0, len(state.CommunityMatches))
-		for _, m := range state.CommunityMatches {
+		for i, m := range state.CommunityMatches {
+			// row.selected is the one field here not read off the element: it is
+			// synthesized from the row's position against community.selected, the
+			// host's highlight index (BINDS.md §4.3, §4.7). It exists because the
+			// list has to draw one row bright and this engine's `when` is a bare
+			// truthiness test with no comparison operator — a scene cannot ask
+			// "row.index == community.selected" itself, so the projection answers
+			// the comparison once, per row, as the boolean the row_template gates
+			// on. It is the community analogue of row.busy: a per-row boolean the
+			// template reads to decide a per-row affordance, not a value it prints.
 			rows = append(rows, map[string]string{
 				"row.id":           m.ID,
 				"row.name":         m.Name,
@@ -1816,6 +1825,7 @@ func rowScopesFor(bind string, state fold.State) []map[string]string {
 				"row.manifest_url": m.ManifestURL,
 				"row.description":  m.Description,
 				"row.preview":      m.Preview,
+				"row.selected":     boolField(i == state.CommunitySelected),
 			})
 		}
 		return rows

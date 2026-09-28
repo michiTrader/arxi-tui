@@ -337,7 +337,19 @@ misspelled absolute bind is.
 | `team.members` | `row.id`, `row.state`, `row.role`, `row.busy`, `row.turns`, `row.spent_usd` |
 | `agent.todos` | `row.task`, `row.blocked_on`, `row.actor` |
 | `slash.matches` | `row.name`, `row.category`, `row.description` |
-| `community.matches` | `row.id`, `row.name`, `row.version`, `row.manifest_url`, `row.description`, `row.preview` |
+| `community.matches` | `row.id`, `row.name`, `row.version`, `row.manifest_url`, `row.description`, `row.preview`, `row.selected` |
+
+`community.matches` carries one row field, **`row.selected`**, that is not an
+element column: it is a boolean the engine synthesizes per row from
+`community.selected`, true on the row whose index equals the cursor. It is signed
+here rather than in the `{id, name, …}` element schema (§4.1) because it is not
+data the host fetched — it is the highlight answer. This engine's `when` is a
+bare truthiness test with no comparison operator, so a scene cannot write
+`row.index == community.selected` itself; the projection answers that comparison
+once per row and the `row_template` gates its highlight on `when: "row.selected"`,
+the same shape `team.members` uses for `when: "row.busy"`. A `row.index` integer
+would be dead without an operator to compare it, so the boolean is the honest
+projection of "is this the selected row", not a convenience over one.
 
 Interpolation (Q20): in an `on_press` argument, `{row.<field>}` is replaced by
 the element's field. Scene 9's row is `on_press: "cmd:/agent {row.id}"`. The
