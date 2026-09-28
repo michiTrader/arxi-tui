@@ -316,6 +316,27 @@ the static `InstallerScene` retires the way `ui.hidden`'s exemption did once its
 consumer existed.
 
 
+**Follow-up increment (2026-09-28) — the search input shows the typed query.**
+The first of the three affordances above, landed as its own engine change:
+`renderInput` resolved a bound field's value only when `n.Bind == "user.input"`,
+so the installer's search box — bound to `community.query` — drew its placeholder
+even with a query folded. It now resolves whatever bind the input carries through
+`resolveBind`. `user.input` keeps its live `UserInputCaret`; every other
+view-state bind rests the caret at the end of the resolved text, because the fold
+holds no caret index for it yet — that is the keystroke loop's to add. A resolved
+`placeholderValue` collapses to the empty line, so an unresolved bind still shows
+its hint and never draws `[…]`. The `COMMUNITY-LIVE` frame goldens move from the
+placeholder to the folded query `tick`. `TestLiveInstallerSearchInputShowsThe­Query`
+drives `community.query` with a value in no row and asserts both directions (the
+query shows; an empty query restores the placeholder), so it fails on the
+pre-change engine; the counterfactual — neutering the view-state branch to draw
+no value — returns the placeholder and fails both that witness and
+`TestLiveInstallerDrawsEveryMatch`'s placeholder-absence check. **Deferred after
+this:** the `community.selected.*` preview pane (new signed absolute binds) and
+the row-selection highlight (a `row_template` carries no row index today), plus
+the keystroke loop that writes the fold fields via `FilterEntries`.
+
+
 **PROPOSAL, under ADR-0003, copying the `Diff.Scene` construction pattern.** The
 installer is a document the host **generates from the fetched index** — built as
 `map[string]any`, marshalled, re-parsed through `scene.ParseNamed`, exactly as the
