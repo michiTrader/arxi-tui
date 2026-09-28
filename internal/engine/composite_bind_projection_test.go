@@ -279,6 +279,10 @@ var templateProjectedBinds = map[string]struct {
 		witness: "row.state",
 		reason:  "one row_template instance per member (Scene 9); a bare bind has no scalar projection",
 	},
+	"community.matches": {
+		witness: "row.name",
+		reason:  "one row_template instance per registry entry (Scene 7, J3 follow-up); a bare bind has no scalar projection",
+	},
 }
 
 // rowTemplateVaries reports whether a list whose row_template draws `witness`
