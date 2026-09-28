@@ -78,6 +78,35 @@ var pulseBindsWithoutFoldFields = map[string]string{
 	// comment warns against.
 }
 
+// derivedBindsWithoutScalarField are signed scalar binds whose value is folded
+// but NOT in a single json-tagged State field this guard can perturb: it is
+// derived from composite state indexed by another field. This is a third
+// category the two buckets above do not cover — a pulse has no folded value at
+// all, a scalar bind has exactly one field, and these have a folded value that
+// comes from two fields at once. Listing them here is the same on-the-record
+// exemption walkConsumedBinds is in the signed-bind audit: not "cannot be
+// projected" and not "no folded value", but "the folded value varies, proven by
+// a behavioural test this reflection guard cannot express". Each entry names
+// that test, so the exemption is a pointer to a live check and not a place a
+// bind can hide.
+//
+//   - community.selected.{name,version,preview} resolve community.selected (an
+//     int field) against community.matches (a slice field) to the selected
+//     entry's field, in selectedCommunityMatch. Perturbing either field alone
+//     misses the point — the value depends on the *pair* — so the single-field
+//     perturbation this guard does cannot witness the dependence. That the
+//     projection follows the selection is proven at the frame by
+//     TestLiveInstallerPreviewPaneShowsTheSelectedEntry (moving the cursor
+//     changes which blurb is drawn) and at the resolver by the three
+//     community.selected.* cases in
+//     TestEverySignedScalarBindTheFoldComputesReachesTheFrame (index 1 yields the
+//     second entry's field, which fails on a projection that ignored the cursor).
+var derivedBindsWithoutScalarField = map[string]string{
+	"community.selected.name":    "resolves community.selected against community.matches (selectedCommunityMatch); varies by TestLiveInstallerPreviewPaneShowsTheSelectedEntry and the community.selected.* cases in TestEverySignedScalarBindTheFoldComputesReachesTheFrame",
+	"community.selected.version": "resolves community.selected against community.matches (selectedCommunityMatch); varies by TestLiveInstallerPreviewPaneShowsTheSelectedEntry and the community.selected.* cases in TestEverySignedScalarBindTheFoldComputesReachesTheFrame",
+	"community.selected.preview": "resolves community.selected against community.matches (selectedCommunityMatch); varies by TestLiveInstallerPreviewPaneShowsTheSelectedEntry and the community.selected.* cases in TestEverySignedScalarBindTheFoldComputesReachesTheFrame",
+}
+
 // perturbScalar sets f to a value distinct from its zero value and reports
 // whether it knew how. It handles the scalar kinds only: composite fields
 // (slices, maps) reach the frame through their own rendering paths — a list
@@ -127,9 +156,13 @@ func TestEverySignedBindProjectionVariesWithItsFoldField(t *testing.T) {
 	for _, bind := range scene.SignedBinds() {
 		idx, ok := fieldForBind[bind]
 		if !ok {
-			if _, excused := pulseBindsWithoutFoldFields[bind]; !excused {
-				unmapped = append(unmapped, bind)
+			if _, excused := pulseBindsWithoutFoldFields[bind]; excused {
+				continue
 			}
+			if _, derived := derivedBindsWithoutScalarField[bind]; derived {
+				continue
+			}
+			unmapped = append(unmapped, bind)
 			continue
 		}
 
