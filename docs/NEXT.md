@@ -1127,13 +1127,37 @@ counterfactual test).
     doc, and shutdown closing every held supervisor. Counterfactuals run: making an
     undecided key fall through fails the standing-prompt test; the bridge test proves
     a real `ConsentScene` reaches the loop and a rejection is reported with the
-    package laid out and nothing spawned. **Remaining for I6:** the store→render
-    wiring so a mounted plugin's frames (I3 `PluginStore`) are drawn in the per-frame
-    fold — install spawns, holds and drains today, but the binds are not yet read
-    back into the walk — and the tool-door half (the agent-facing side of Gate B).
-    (`-race` could not run in the sandbox: no C toolchain; the bridge has no shared
-    mutable state, the consent doc is built on the worker then only read by the loop
-    after the channel handoff.)
+    package laid out and nothing spawned. (`-race` could not run in the sandbox: no
+    C toolchain; the bridge has no shared mutable state, the consent doc is built on
+    the worker then only read by the loop after the channel handoff.)
+- **I6-store-render — LANDED (2026-09-28).** The store→render half: a mounted
+    plugin's frames, drained into the host-owned `PluginStore` by the pump goroutine
+    (I3 `DrainInto`), now reach the render walk and trigger a repaint. Two pieces,
+    the pure part pinned first. (1) `PluginStore.Changed()` (`internal/ext/store.go`)
+    is the store's analogue of the animation tick: the pump writes the store from its
+    own goroutine, so without a wake-up a pushed value sits unseen until an unrelated
+    event repaints. It is a coalesced, buffered-at-1, non-blocking wake-up posted
+    behind every committed write (Ingest / SetLiveness / DropPlugin) — a hung loop
+    cannot back-pressure the pump, and under last-value-wins a dropped signal names a
+    repaint already scheduled. It sits after the validation gate, so a refused frame
+    (which changed nothing) posts nothing. It carries no value and dispatches no
+    gesture, so selecting on it cannot capture the escape hatch (invariant 6), and it
+    is a reason to repaint, never a fold event (invariant 2). Counterfactuals run:
+    removing the Ingest signal fails the value-wake test; widening the buffer past 1
+    fails the coalescing test; signalling before the validation gate fails the
+    refused-frame test. (2) The loop wiring (`cmd/arxi-tui/main.go`): the repaint
+    closure sets `r.PluginValues = pluginStore.Snapshot()` so the renderer resolves
+    `<plugin-id>.*` and `ui.plugin.<id>` binds from the live store (the resolver
+    support landed in I3), fed as a SEPARATE input from `fold.State` (ADR-0003, so a
+    stranger's process is never an authority over the run log); and a new select case
+    `case <-pluginStore.Changed(): repaint()` wakes the loop when a frame arrives. A
+    nil snapshot (no plugin mounted) resolves every plugin bind to the placeholder,
+    so no non-plugin scene moves — the full suite including goldens stays green. The
+    loop-wiring lines rest on tested constituents (store `Changed()`/`Snapshot()`,
+    the I3 renderer `PluginValues` resolution); `run` owns a real tty with no
+    fake-tty harness, so the glue is verified by build + the pieces it composes, as
+    with the earlier I6 loop-wiring commit. **Remaining for I6:** the tool-door half
+    (the agent-facing side of Gate B).
 
 ### Block J — Phase 3: the community installer as a scene (Scene 7) [H]
 
