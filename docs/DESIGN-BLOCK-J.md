@@ -425,6 +425,50 @@ and swapping this document onto the display, at which point the Scene 7 golden
 moves to `LiveInstallerScene` and the static `InstallerScene` retires.
 
 
+**Follow-up increment (2026-09-28) — the keystroke-loop core (`installerBrowse`).**
+The last deferred piece is the host loop, and it has a pure core and an impure
+wiring the way every prior loop concern in this project does; the core lands
+first. `cmd/arxi-tui/installerBrowse` is the browse analogue of `installModal`
+(`install_modal.go`): loop-side host state the loop keeps while a mode owns the
+screen, with transitions kept pure — `term`-free and display-free — so they are
+proven without the tty, exactly as `consentAnswerForKey` is the pure, pinned core
+of the consent modal. It holds the fetched `*ext.Registry`, the typed query and
+the selection cursor, and exposes: `matches()` (the query filtered through
+`Registry.FilterEntries` and converted to `fold.CommunityMatch`), `typeRune` /
+`backspace` (rune-aware query edits that re-clamp the cursor), `moveUp` /
+`moveDown` (wrap at both ends), and `publish` (the `community.*` triple written
+as one snapshot).
+
+Why it is host state and not an `ext` or a `fold` type is the load-bearing
+decision. `fold.CommunityMatch` mirrors `ext.RegistryEntry` field-for-field
+precisely so the fold — pure host-owned state (ADR-0002) — never imports the
+registry's HTTP and parse surface, and `ext` never imports the fold. The one
+place that copies one struct into the other is therefore the host, and
+`installerBrowse.matches()` is that place. It is covered by a field-fidelity test
+rather than trusted, because a dropped field is a silent blank in the browse (a
+missing version, an empty preview) that compiles and renders without error — the
+same class the signed-bind audits exist for, one layer out.
+
+The signed behaviour it implements is all BINDS.md §4.3: an empty query lists
+every entry (unfiltered browse), a filter keystroke clamps the cursor into the
+shrunk list (never a selection past its own matches), ↑/↓ wrap at both ends, and
+a fresh open resets the query and the cursor to 0. Eight tests prove it over a
+three-entry fixture whose names and descriptions let a query select a known
+subset; the counterfactuals, run by hand: a clamp instead of a wrap fails the
+wrap test on both ends, skipping the clamp after a query edit leaves the cursor
+past a one-row list (a blank preview and no highlight while Enter would still
+act), and dropping a field from the conversion fails the fidelity test.
+
+**Deferred after this — the impure half, the next increment.** A command to open
+the installer, the scene swap that puts `LiveInstallerScene` on the display (the
+`activeDoc` swap `modal.capturing()` already models), `term.Key` routing into
+`installerBrowse`'s transitions, and Enter dispatching the selected entry's
+`manifest_url` through the existing consent gate (`startInstall`, the same path
+`/ui plugin install` uses). When that lands the Scene 7 golden moves from the
+static build to `LiveInstallerScene` in its own mutation family and the static
+`InstallerScene` retires.
+
+
 **PROPOSAL, under ADR-0003, copying the `Diff.Scene` construction pattern.** The
 installer is a document the host **generates from the fetched index** — built as
 `map[string]any`, marshalled, re-parsed through `scene.ParseNamed`, exactly as the

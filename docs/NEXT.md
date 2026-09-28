@@ -1465,6 +1465,33 @@ counterfactual test).
   moves from the static build to `LiveInstallerScene` in its own mutation family
   and the static `InstallerScene` retires.
 
+- **J3 follow-up — keystroke-loop core (`installerBrowse`) BUILT (2026-09-28).**
+  The pure core of the one remaining piece, landed ahead of its tty wiring the
+  way `FilterEntries` landed the filter core ahead of the loop that calls it.
+  `cmd/arxi-tui/installerBrowse` is the browse analogue of `installModal`:
+  loop-side host state (the fetched `*ext.Registry`, the typed query, the
+  selection cursor) with pure, `term`-free transitions. `matches()` runs
+  `Registry.FilterEntries` over the query and converts each `ext.RegistryEntry`
+  into a `fold.CommunityMatch` — the ext→fold boundary `fold.go` names as the
+  host's job, which is why the browse is package `main` and not an `ext` or
+  `fold` type (the fold never imports the registry's fetch/parse surface per
+  ADR-0002, and `ext` never imports the fold). `typeRune`/`backspace` edit the
+  query (rune-aware) and re-clamp the cursor; `moveUp`/`moveDown` wrap at both
+  ends; `publish` sets the `community.*` triple together so a repaint cannot show
+  a query without its matches or a selection past the list — all the signed
+  behaviour of BINDS.md §4.3 (empty query lists everything, clamp on filter, wrap
+  on ↑/↓, reset to 0 on open). Eight tests over a three-entry fixture prove it,
+  each with a named consequence; counterfactuals run and reported (never
+  committed): a clamp instead of a wrap fails the wrap test both directions,
+  skipping `clampSelection` in `typeRune` leaves the cursor past a shrunk list,
+  and dropping a field from the conversion fails the field-fidelity test. **Still
+  deferred (the next increment):** the impure half — a command to open the
+  installer, the scene swap that puts `LiveInstallerScene` on the display,
+  `term.Key` routing into these transitions, and Enter dispatching the selected
+  entry's `manifest_url` through the existing consent gate (`startInstall`). When
+  that lands the Scene 7 golden moves from the static build to `LiveInstallerScene`
+  and the static `InstallerScene` retires.
+
 - **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent
   screen).
 - **J5** [J3] Freeze the Scene 7 golden.
