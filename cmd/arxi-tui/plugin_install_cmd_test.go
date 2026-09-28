@@ -45,6 +45,7 @@ func TestParsePluginInstallLeavesOtherLinesToThePatchSurface(t *testing.T) {
 	lines := []string{
 		"/ui plugin add https://example.com/m.json",
 		"/ui plugin remove weather",
+		"/ui plugin browse https://example.com/reg.json",
 		"/ui plugin",
 		"/ui style status dim",
 		"/ui hide status",
@@ -109,6 +110,73 @@ func TestParsePluginRemoveIDLeavesOtherLinesAlone(t *testing.T) {
 	for _, line := range lines {
 		if _, matched := parsePluginRemoveID(line); matched {
 			t.Errorf("parsePluginRemoveID claimed %q, which it does not own as a well-formed single-id remove.", line)
+		}
+	}
+}
+
+func TestParsePluginBrowseExtractsTheURL(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want string
+	}{
+		{"with the /ui prefix", "/ui plugin browse https://example.com/reg.json", "https://example.com/reg.json"},
+		{"without the /ui prefix", "plugin browse https://example.com/reg.json", "https://example.com/reg.json"},
+		{"extra surrounding spaces", "  /ui   plugin   browse   https://x/reg.json  ", "https://x/reg.json"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			url, matched, err := parsePluginBrowse(c.line)
+			if !matched {
+				t.Fatalf("%q was not recognized as a plugin browse command.\nConsequence: the line falls through to the patch surface, which knows only add/remove and refuses browse as an unknown subcommand — the user sees the wrong error.\nRemedy: parsePluginBrowse must claim every `plugin browse` line.", c.line)
+			}
+			if err != nil {
+				t.Fatalf("%q is a well-formed browse command but was refused: %v", c.line, err)
+			}
+			if url != c.want {
+				t.Fatalf("browse URL mismatch for %q: got %q, want %q.\nConsequence: the installer fetches the wrong index, or none.\nRemedy: return the single argument token verbatim.", c.line, url, c.want)
+			}
+		})
+	}
+}
+
+func TestParsePluginBrowseLeavesOtherLinesToTheOtherSurfaces(t *testing.T) {
+	// Every line another surface owns, or not a /ui line at all. None may be
+	// claimed here: matched=true would route it into the browse orchestration (a
+	// registry fetch and a scene swap) instead of the install/add/patch path it
+	// belongs to.
+	lines := []string{
+		"/ui plugin install https://example.com/p.tgz",
+		"/ui plugin add https://example.com/m.json",
+		"/ui plugin remove weather",
+		"/ui plugin",
+		"/ui style status dim",
+		"/ui hide status",
+		"/uize the thing",
+		"just some chat text",
+		"",
+	}
+	for _, line := range lines {
+		if _, matched, _ := parsePluginBrowse(line); matched {
+			t.Errorf("parsePluginBrowse claimed %q, which it does not own.\nConsequence: a non-browse line is routed into the registry fetch + scene swap.\nRemedy: claim a line only when its verb is `plugin` and its subcommand is `browse`.", line)
+		}
+	}
+}
+
+func TestParsePluginBrowseRefusesAMissingURLItself(t *testing.T) {
+	// `plugin browse` with no URL (or two) is unmistakably a browse attempt, so it
+	// is claimed and refused HERE naming the missing URL, not left to fall through
+	// to patch whose "unknown subcommand" names the wrong problem.
+	for _, line := range []string{
+		"/ui plugin browse",
+		"/ui plugin browse https://x/a.json https://x/b.json",
+	} {
+		url, matched, err := parsePluginBrowse(line)
+		if !matched {
+			t.Errorf("%q is a malformed browse command but was not claimed; it would fall through to the patch surface and be refused as an unknown subcommand, naming the wrong problem.", line)
+		}
+		if err == nil {
+			t.Errorf("%q is malformed (wrong argument count) but was accepted with url=%q.\nConsequence: the installer is handed no URL or a silently-dropped one.\nRemedy: refuse any argument count other than one.", line, url)
 		}
 	}
 }
