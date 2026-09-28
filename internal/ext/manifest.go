@@ -80,6 +80,7 @@ type Manifest struct {
 	Capabilities    []string            `json:"capabilities,omitempty"`
 	ConsentRequired *bool               `json:"consent_required,omitempty"`
 	Binds           map[string]BindDecl `json:"binds,omitempty"`
+	Tools           []ToolDecl          `json:"tools,omitempty"`
 
 	// The address book, kept so a refusal names a position instead of only a
 	// reason (the same contract scene.Document keeps). Set by the parser; a
@@ -105,6 +106,28 @@ type Mount struct {
 type BindDecl struct {
 	Kind string          `json:"kind"`
 	Mock json.RawMessage `json:"mock,omitempty"`
+}
+
+// ToolDecl declares one tool a behavioral plugin exposes to the agent (Gate B,
+// DESIGN-BLOCK-I §I-J). It mirrors BindDecl: a small, declared shape inside the
+// digested tree, because a tool is power the agent can invoke on its own and so
+// must be part of the bytes the consent screen showed and the digest covered —
+// a tool that appeared over the wire after mount would be authority the grant
+// never bound to, the identical failure PackageDigest exists to prevent, one
+// level up.
+//
+// Parameters is an opaque json.RawMessage the host forwards to the agent
+// verbatim and never interprets: the argument schema is the agent's contract
+// with the plugin, and the host is a broker of the call, not a validator of the
+// agent's argument semantics. Keeping it raw is the same decision BindDecl.Mock
+// made — the host stores the bytes the author wrote and hands them on. The
+// agent-visible name is composed host-side as `<plugin-id>.<Name>` (§I-J
+// Decision 2), so Name here is only the plugin's relative tool name and can
+// never shadow a core tool.
+type ToolDecl struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Parameters  json.RawMessage `json:"parameters,omitempty"`
 }
 
 // Parse parses a manifest from bytes with no origin name. Syntax and type errors
@@ -270,6 +293,9 @@ func (m *Manifest) checkBehavioral() error {
 	}
 	if m.Binds != nil {
 		return m.contradiction("binds")
+	}
+	if m.Tools != nil {
+		return m.contradiction("tools")
 	}
 	if m.ConsentRequired != nil {
 		return m.contradiction("consent_required")
