@@ -14,12 +14,21 @@ import (
 // This file pins the LiveInstallerScene increment (DESIGN-BLOCK-J.md J3
 // follow-up): the community installer as a live document that binds to the
 // community.* view state, rather than the static-card InstallerScene J5 froze as
-// the Scene 7 golden. Two things are pinned. First, that the live document is
-// what the ext builder produces (byte-for-byte, the not-hand-authored guarantee
-// COMMUNITY.json carries for the static one). Second — and this is the coverage
-// the increment exists for — that a non-empty community.matches actually reaches
-// the frame through the row_template, so the projection PR #108 landed is
-// exercised end-to-end at the composed-frame level, which no test did before.
+// the Scene 7 golden. The coverage the increment exists for is that a non-empty
+// community.matches actually reaches the frame through the row_template, so the
+// projection PR #108 landed is exercised end-to-end at the composed-frame level,
+// which no test did before.
+//
+// The live installer is NOT a twelfth scene: it is the in-progress variant of
+// Scene 7 that will replace the static one when the keystroke loop mounts it, at
+// which point COMMUNITY.json moves to this builder in its own mutation family.
+// So it is rendered straight from ext.LiveInstallerScene() rather than pinned as
+// a top-level testdata/*.json fixture — the same choice previewScene makes for
+// the preview chrome, and for the same reason: a top-level .json is enumerated as
+// a shipped scene by the progress audit (it would report a phantom Scene 12) and
+// by the nested-node sweep. Rendering from the builder still catches drift — the
+// .frame/.styled goldens ARE the builder output, so a builder change is a golden
+// diff — without inventing a scene the documents do not describe.
 //
 // The fold state here is NON-empty on purpose, unlike communityFrame's empty
 // fold for the static scene: the static installer bakes its content, so its
@@ -58,20 +67,23 @@ func liveInstallerState() fold.State {
 	}
 }
 
-// liveInstallerDoc reads the pinned live-installer document and validates it
-// structurally and against both shipped themes, the same shippability premise
-// communityDoc checks for the static scene: a token neither SOBRIA nor Factory
-// signs would refuse the one screen whose job is to let the user extend the
-// interface, and that must fail here as a named premise, not as an unstyled span
-// in a frame diff.
+// liveInstallerDoc builds the live installer straight from ext.LiveInstallerScene
+// and validates it structurally and against both shipped themes. It renders the
+// builder output rather than a pinned file so the .frame/.styled goldens cannot
+// drift from the builder that produces them — the not-hand-authored guarantee,
+// held here without a top-level .json fixture the progress audit would count as a
+// scene. The token check is the same shippability premise communityDoc makes: a
+// token neither SOBRIA nor Factory signs would refuse the one screen whose job is
+// to let the user extend the interface, and that must fail here as a named
+// premise, not as an unstyled span in a frame diff.
 func liveInstallerDoc(t *testing.T) *scene.Document {
 	t.Helper()
-	doc, err := scene.ParseFile("../../testdata/COMMUNITY-LIVE.json")
+	doc, err := ext.LiveInstallerScene()
 	if err != nil {
-		t.Fatalf("parse COMMUNITY-LIVE.json: %v", err)
+		t.Fatalf("LiveInstallerScene: %v; the increment's premise is that the builder produces a live installer document", err)
 	}
 	if err := doc.Validate(); err != nil {
-		t.Fatalf("the live installer golden must validate structurally; got %v", err)
+		t.Fatalf("the live installer document must validate structurally; got %v", err)
 	}
 	for _, th := range []struct {
 		name string
@@ -94,37 +106,6 @@ func liveInstallerFrame(t *testing.T) string {
 	return r.RenderFrame(liveInstallerDoc(t), liveInstallerState()).Plain()
 }
 
-// TestLiveInstallerJSONIsTheBuilderOutput proves testdata/COMMUNITY-LIVE.json is
-// byte-for-byte what ext.LiveInstallerScene() builds — the same not-authored-by-
-// hand guarantee TestCommunityJSONIsTheInstallerSceneOutput carries for the
-// static Scene 7. UPDATE_GOLDEN=1 regenerates it from the builder, the only way
-// it is ever written, so the fixture cannot drift from the builder that produces
-// it.
-func TestLiveInstallerJSONIsTheBuilderOutput(t *testing.T) {
-	doc, err := ext.LiveInstallerScene()
-	if err != nil {
-		t.Fatalf("LiveInstallerScene: %v; the increment's premise is that the builder produces a live installer document", err)
-	}
-	got := doc.Source()
-
-	goldenPath := "../../testdata/COMMUNITY-LIVE.json"
-	if os.Getenv("UPDATE_GOLDEN") == "1" {
-		if err := os.WriteFile(goldenPath, got, 0644); err != nil {
-			t.Fatalf("write COMMUNITY-LIVE.json: %v", err)
-		}
-		return
-	}
-	want, err := os.ReadFile(goldenPath)
-	if err != nil {
-		t.Fatalf("read %s: %v", goldenPath, err)
-	}
-	if string(got) != string(want) {
-		t.Errorf("COMMUNITY-LIVE.json is not the LiveInstallerScene output; the pinned live installer document\n"+
-			"has drifted from what ext.LiveInstallerScene builds.\n--- builder produced ---\n%s\n--- COMMUNITY-LIVE.json ---\n%s",
-			got, string(want))
-	}
-}
-
 // TestLiveInstallerDrawsEveryMatch is the reason this increment has a test at
 // all: it asserts that each folded community.matches entry reached the frame
 // through the row_template, so the community.matches projection (rowScopesFor,
@@ -134,8 +115,8 @@ func TestLiveInstallerJSONIsTheBuilderOutput(t *testing.T) {
 // opaque byte golden.
 //
 // Counterfactual (run by hand, reported in the commit): reverting rowScopesFor's
-// community.matches case to return nil empties the list, and this fails on the
-// first entry — the drop the whole increment guards against.
+// community.matches case to range an empty slice empties the list, and this fails
+// on the first entry — the drop the whole increment guards against.
 func TestLiveInstallerDrawsEveryMatch(t *testing.T) {
 	got := liveInstallerFrame(t)
 
@@ -194,8 +175,11 @@ func TestLiveInstallerFrameMatchesGolden(t *testing.T) {
 
 // TestLiveInstallerStyledGolden freezes the styled frame, so a dropped or changed
 // style token on the live installer (the header on row.name, the dim on
-// row.version) is a golden diff rather than a silent regression. UPDATE_GOLDEN=1
-// regenerates it.
+// row.version) is a golden diff rather than a silent regression. It also carries
+// the nested-node token coverage for this document: the row_template's header and
+// dim spans are exercised here with the matches folded, which is why the
+// package-wide nested sweep (which folds an empty state) does not need to reach
+// this variant. UPDATE_GOLDEN=1 regenerates it.
 func TestLiveInstallerStyledGolden(t *testing.T) {
 	r := Renderer{Width: 80, Height: 30}
 	got := r.RenderFrame(liveInstallerDoc(t), liveInstallerState()).Styled()
