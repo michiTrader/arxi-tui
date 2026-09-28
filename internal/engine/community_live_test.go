@@ -198,6 +198,63 @@ func TestLiveInstallerSearchInputShowsTheQuery(t *testing.T) {
 	}
 }
 
+// TestLiveInstallerHighlightsTheSelectedRow proves the row-selection highlight:
+// the row whose index equals community.selected wears the leading marker and no
+// other row does. It drives community.selected across both entries so the marker
+// must MOVE — a one-position check would pass on an engine that marked a fixed
+// row (e.g. always the first) regardless of the cursor, which is the exact defect
+// a synthesized-per-row boolean has to avoid. The marker glyph is asserted to
+// appear on the selected name line and to be absent from the unselected one, so
+// the test fails both if no row is marked and if every row is marked.
+//
+// Counterfactual (run by hand, reported in the commit): neutering rowScopesFor
+// to synthesize row.selected as boolField(false) for every row drops the marker
+// entirely, and this fails on the "selected row is not marked" assertion — the
+// highlight the increment adds. Pinning it to boolField(true) marks every row and
+// fails the "unselected row is marked" assertion. Both directions are guarded.
+func TestLiveInstallerHighlightsTheSelectedRow(t *testing.T) {
+	const marker = "> "
+
+	base := liveInstallerState()
+	names := []string{base.CommunityMatches[0].Name, base.CommunityMatches[1].Name}
+
+	for selected := 0; selected < len(names); selected++ {
+		state := liveInstallerState()
+		state.CommunitySelected = selected
+		frame := liveInstallerFrameWith(t, state)
+
+		selectedLine := lineContaining(frame, names[selected])
+		if !strings.Contains(selectedLine, marker+names[selected]) {
+			t.Errorf("with community.selected=%d the selected row %q was not marked; its line was %q\n"+
+				"consequence: the user cannot see which entry Enter will install, so the cursor the loop moves is invisible.\n"+
+				"remedy: rowScopesFor must set row.selected true on the row whose index equals community.selected, and\n"+
+				"liveInstallerList must gate the marker on when:\"row.selected\".", selected, names[selected], selectedLine)
+		}
+
+		other := 1 - selected
+		otherLine := lineContaining(frame, names[other])
+		if strings.Contains(otherLine, marker+names[other]) {
+			t.Errorf("with community.selected=%d the unselected row %q was also marked; its line was %q\n"+
+				"consequence: every row is highlighted, so the highlight distinguishes nothing — a menu with no single\n"+
+				"bright row while Enter still acts is a menu that lies about what it will do.\n"+
+				"remedy: rowScopesFor must set row.selected true on exactly one row (index == community.selected).", selected, names[other], otherLine)
+		}
+	}
+}
+
+// lineContaining returns the first line of frame that contains want, or "" if
+// none does. It exists so the highlight test can assert the marker sits on the
+// selected row's own line and not merely somewhere in the frame — a whole-frame
+// Contains would pass whether the marker landed on the right row or the wrong one.
+func lineContaining(frame, want string) string {
+	for _, line := range strings.Split(frame, "\n") {
+		if strings.Contains(line, want) {
+			return line
+		}
+	}
+	return ""
+}
+
 // TestLiveInstallerFrameMatchesGolden freezes the plain frame over the folded
 // browse state. UPDATE_GOLDEN=1 regenerates it. This is the durable pin: a change
 // to the live builder, the row template, or the engine's rendering of
