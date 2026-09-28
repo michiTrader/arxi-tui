@@ -253,3 +253,42 @@ func legalRegistryVersionList() string {
 	sort.Strings(out)
 	return strings.Join(out, ", ")
 }
+
+// FilterEntries returns the index entries whose name or description contains the
+// query as a case-insensitive substring; an empty query returns every entry (the
+// browse view is open but unfiltered). It is the pure computational core of the
+// J3 search-filter follow-up — the function the host loop will call on every
+// keystroke to recompute the community browse list — kept here, over the parsed
+// index, exactly as fold.FilterSlashMatches is kept over the command registry it
+// filters. Signing the `community.*` view-state bind, the fold field that
+// carries the result, and the keystroke loop that calls this stay the deferred
+// live half (DESIGN-BLOCK-J.md J3 follow-up); this half is pure and testable
+// without any of it, which is why it lands first.
+//
+// It is a faithful port of FilterSlashMatches (empty→all, case-insensitive
+// substring, a nil slice when nothing matches so an empty result and "not yet
+// filtered" never collapse) with one domain adaptation recorded here: the slash
+// menu matches on the command Name alone because a command is chosen by name,
+// but a registry browse is a search over the two human-readable fields the
+// installer card actually renders — the plugin's name and its one-line
+// description — so a user who recalls "streams prices" but not the id "tick"
+// still finds the row. The id is intentionally not matched: it is an internal
+// namespace token, not text the user reads off the card, so matching it would
+// surface rows on a substring the browse view never shows them.
+func (r *Registry) FilterEntries(query string) []RegistryEntry {
+	if r == nil {
+		return nil
+	}
+	if query == "" {
+		return r.Entries
+	}
+	q := strings.ToLower(query)
+	var out []RegistryEntry
+	for _, e := range r.Entries {
+		if strings.Contains(strings.ToLower(e.Name), q) ||
+			strings.Contains(strings.ToLower(e.Description), q) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
