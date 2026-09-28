@@ -80,3 +80,36 @@ func TestParsePluginInstallRefusesAMissingURLItself(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePluginRemoveIDReadsTheID(t *testing.T) {
+	for _, line := range []string{"/ui plugin remove weather", "plugin remove weather"} {
+		id, matched := parsePluginRemoveID(line)
+		if !matched {
+			t.Fatalf("%q was not recognized as a plugin remove; the host could not stop a behavioral plugin's process before the patch surface refuses it", line)
+		}
+		if id != "weather" {
+			t.Fatalf("remove id mismatch for %q: got %q, want %q", line, id, "weather")
+		}
+	}
+}
+
+func TestParsePluginRemoveIDLeavesOtherLinesAlone(t *testing.T) {
+	// A malformed remove (no id, or extra args) returns matched=false on purpose:
+	// the host does not own that refusal, the patch surface already refuses it with
+	// the right message, and a second grammar here would be one to drift. Other
+	// verbs and non-remove lines are likewise not claimed.
+	lines := []string{
+		"/ui plugin remove",
+		"/ui plugin remove a b",
+		"/ui plugin add https://x/m.json",
+		"/ui plugin install https://x/p.tgz",
+		"/ui style status dim",
+		"chat text",
+	}
+	for _, line := range lines {
+		if _, matched := parsePluginRemoveID(line); matched {
+			t.Errorf("parsePluginRemoveID claimed %q, which it does not own as a well-formed single-id remove.", line)
+		}
+	}
+}
+
