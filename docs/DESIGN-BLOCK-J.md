@@ -71,7 +71,17 @@ The load-bearing contracts J1 consumes unchanged:
   (`internal/patch/diff.go`) is the concrete template for a host-generated scene:
   build `map[string]any` nodes, marshal, re-parse through `scene.ParseNamed`.
 
-## J1 — preview mode
+## J1 — preview mode (BUILT PR #101)
+
+**BUILT at the recommended defaults (forks 1 and 3 below).** The engine half is a
+`Renderer.PreviewMocks map[string]string` input consulted in `resolveBindRow`
+after the live plugin snapshot and before the fold, threaded through
+`evalWhenRow`/`hiddenByWhenRow` and propagated by `child()`; the ext half is
+`Manifest.PreviewMocks()`, the projection over the parsed manifest's `binds` mocks
+that builds the table. Both landed with the counterfactuals named at the end of
+this section. The overall Block J signature remains the owner's to record; J1 is
+purely additive (a nil table is byte-identical to today), so it lands ahead of
+that signature the way the §I-I installer did.
 
 **PROPOSAL: preview mode is a new render input on the Renderer, mirroring
 `AnimPhase`/`ChatScroll`, not a `fold.State` field.** The mock table is

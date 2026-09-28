@@ -1204,6 +1204,34 @@ counterfactual test).
 
 - **J1** Preview mode: render unsatisfied binds as placeholders from
   `community.*` manifest mocks (engine contract, Q16).
+- **J1 — BUILT (2026-09-28, PR #101).** Preview mode: the engine renders a
+  not-yet-installed plugin's `<plugin-id>.*` binds as the manifest's declared
+  mocks instead of the placeholder (Q16). Two halves, each with counterfactuals.
+  (1) Engine: `Renderer.PreviewMocks map[string]string`, a resolver input fed per
+  repaint like `PluginValues`/`AnimPhase` (never a `fold.State` field — the mocks
+  come from a parsed manifest the host holds while browsing, not the run log, so
+  putting them on the fold would make a not-yet-installed stranger an authority
+  over it, invariant 2 / fork 3's recommended default). Consulted in
+  `resolveBindRow` after the live snapshot and before the fold, so a mounted
+  plugin's real frame wins over a mock (§I-G) and an un-mocked bind still degrades
+  to the placeholder (the counter-field rule). Because `resolveBindRow` is the one
+  resolver both display and `evalWhenRow` flow through, a mock is a truthy string
+  for a `when` while a true miss stays the falsy placeholder — one chokepoint, no
+  per-node-type/position gap. `child()` propagates it. A nil table reads as empty:
+  byte-identical to before J1. (2) ext: `Manifest.PreviewMocks()`, the sibling of
+  `pluginScope()` — a projection over the manifest's own `binds` map keyed by the
+  same fully-qualified `<id>.<field>` paths the fragment and store use (fork 1's
+  recommended default: `community.*` is the conceptual label, the concrete keys
+  are the previewed plugin's own binds). A field with no mock is omitted so it
+  falls through to the placeholder; `renderValue` is reused so a mock renders
+  byte-for-byte as a live frame of the same shape would. Counterfactuals run:
+  neutering the resolver's preview lookup fails the substitution and the `when`
+  halves; reversing the plugins/preview order fails the live-wins ordering guard;
+  removing the empty-mock skip fails the omit guard; the nil/unrelated-table guard
+  pins the no-op on a non-previewed bind (the SOBRIA-zero-row trap). **Remaining
+  for J:** J2 (registry loader), J3 (installer scene, its interactivity on H8 —
+  now DONE — plus J1/J2), J4 (bundle), J5 (Scene 7 golden). J1's Scene 7 preview
+  golden is pinned as part of J5.
 - **J2** Registry as a JSON index in a repo (no servers) — Q17.
 - **J3** [J1,J2] Installer scene: entry list + markdown preview panel + search
   input + `i` to install.
