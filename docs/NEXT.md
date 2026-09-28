@@ -1300,11 +1300,27 @@ counterfactual test).
   the command name alone, a registry browse searches the two card-rendered fields
   (name + description); the `id`/`manifest_url` are deliberately excluded as text
   the user never reads off the card. Five counterfactuals run by hand (description
-  clause, both `ToLower`s, empty→all, nil-not-all). **Still deferred:** signing
-  the `community.*` view-state bind (it must then be wired or justified in
-  `acceptedUnprojectedBinds`, per `TestEverySignedBindIsHandledOrJustified`), the
-  fold field that carries the filtered list, the keystroke loop that calls this,
-  and the selection→preview pane — all gated on the live-loop surface I5 uses.
+  clause, both `ToLower`s, empty→all, nil-not-all).
+- **J3 follow-up — `community.*` view state SIGNED (2026-09-28, PR #107).** The
+  vocabulary the live search box and entry list will read is now committed on
+  paper the way Blocks D/G/H/I signed theirs, before any fold field or loop
+  depends on it: `community.query` (search substring), `community.matches` (the
+  filtered entries, an array-of-objects row schema
+  `row.id/name/version/manifest_url/description/preview`), and
+  `community.selected` (the highlighted card), all in the `slash.*` mould
+  (BINDS.md §4.3, §4.7). They are host view state written by the installer
+  keystroke loop, never an arxi-core event; `community.matches` is the previewed
+  plugin's own entries, **not** the `<plugin-id>.*` preview namespace (J1).
+  `validate.go` carries them in `signedBinds`/`rowSchemas` so the `InstallerScene`
+  builder and the validator agree. **Still deferred (the live half):** the fold
+  fields that carry the query/matches/selection, the installer keystroke loop
+  that writes them via `FilterEntries`, and the selection→preview pane — all
+  gated on the same live-loop surface the I5 modal mount uses. Recorded as
+  signed-but-not-projected in `acceptedUnprojectedBinds` (no engine case) and
+  `pulseBindsWithoutFoldFields` (no fold field to perturb), the way `ui.hidden`
+  was before F3 gave it `State.UIHidden`; every empty-state is a no-op, so no
+  golden moved. `TestEverySignedBindIsHandledOrJustified`, the projection-varies
+  guards and `TestSignedInventoryMatchesDocument` all stay green on the signing.
 - **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent
   screen).
 - **J5** [J3] Freeze the Scene 7 golden.

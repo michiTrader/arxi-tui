@@ -145,6 +145,21 @@ var acceptedUnprojectedBinds = map[string]string{
 	// something a scene displays. It is signed to stop the name being taken
 	// by something else, which is a reservation working exactly as intended.
 	"user.input.submitted": "a reserved name for the host's enter-key pulse; signed so it cannot be reused, never displayed",
+
+	// The community installer's live view state (Scene 7, J3 follow-up, signed
+	// in BINDS.md §4.3). The vocabulary is committed so the InstallerScene
+	// builder and the validator agree on it, but the fold fields that carry the
+	// query/matches/selection and the installer keystroke loop that writes them
+	// are the deferred live half (BINDS.md §4.6, DESIGN-BLOCK-J.md J3 follow-up),
+	// gated on the same live-loop surface the I5 modal mount uses. With no fold
+	// field there is nothing for resolveBind (or renderList, for the collection)
+	// to project, so each draws the placeholder — the honest empty state — and
+	// the empty state of each is a no-op that moves no golden. When the fold
+	// fields land, these entries are deleted the way team.members' was once the
+	// row_template projected it.
+	"community.query":    "installer search query; no fold field until the J3 follow-up live loop (BINDS.md §4.6)",
+	"community.matches":  "installer filtered entries; no fold field until the J3 follow-up live loop (BINDS.md §4.6)",
+	"community.selected": "installer selection cursor; no fold field until the J3 follow-up live loop (BINDS.md §4.6)",
 }
 
 // walkConsumedBinds are signed binds the engine consumes structurally in the

@@ -247,6 +247,27 @@ signing the `community.*` view-state bind, the fold field that carries the
 filtered result, and the host keystroke loop that feeds it remain the deferred
 live half below.
 
+**Follow-up increment (2026-09-28, PR #107) — the `community.*` view state
+signed.** The vocabulary the live `list`/search-input pair reads is now committed
+on paper before any fold field or loop depends on it, the way this block signed
+J1/J2 before wiring them: `community.query` (the search substring), `community.matches`
+(the filtered entries, an array-of-objects with a signed row schema
+`row.id/name/version/manifest_url/description/preview`), and `community.selected`
+(the highlighted card the preview pane renders), all in the `slash.*` mould
+(BINDS.md §4.3 and the §4.7 row schema). They are host view state written by the
+installer keystroke loop, never an arxi-core event, so a stranger's registry can
+never author them; and `community.matches` is the previewed plugin's own entries,
+**not** the `<plugin-id>.*` preview namespace J1 defines (that namespace carries a
+previewed manifest's mocked binds, not the browse list). `validate.go` carries
+them in `signedBinds`/`rowSchemas` so the `InstallerScene` builder and the
+validator agree. They are signed-but-not-projected on the record
+(`acceptedUnprojectedBinds`, `pulseBindsWithoutFoldFields`, and BINDS.md §4.6),
+the way `ui.hidden` was before F3 gave it `State.UIHidden`; every empty-state is a
+no-op, so no golden moved. **The deferred live half below is now exactly:** the
+fold fields, the keystroke loop that recomputes `community.matches` from
+`community.query` via `FilterEntries`, and the selection→preview pane — all gated
+on the same live-loop surface the I5 modal mount uses.
+
 **PROPOSAL, under ADR-0003, copying the `Diff.Scene` construction pattern.** The
 installer is a document the host **generates from the fetched index** — built as
 `map[string]any`, marshalled, re-parsed through `scene.ParseNamed`, exactly as the
