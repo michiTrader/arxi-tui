@@ -55,6 +55,18 @@ func TestEverySignedScalarBindTheFoldComputesReachesTheFrame(t *testing.T) {
 		{"ui.focus", fold.State{UIFocus: "prompt"}, "prompt"},
 		{"ui.max", fold.State{UIMax: "tasks"}, "tasks"},
 		{"ui.surface", fold.State{UISurface: "config"}, "config"},
+		// The community.selected.* binds are derived, not a single fold field:
+		// each resolves community.selected against community.matches to the
+		// selected entry's field. They belong here for the same reason as the
+		// scalars above — the fold maintains the value (the match list and the
+		// cursor), validate.go signs the bind, and the engine must reach the
+		// frame with it — with the wrinkle that the state needs a match under the
+		// cursor for the value to be non-empty. Selecting index 1 (not 0) makes
+		// each case fail on an engine that ignored community.selected and always
+		// returned the first entry's field.
+		{"community.selected.name", fold.State{CommunityMatches: []fold.CommunityMatch{{Name: "first"}, {Name: "second"}}, CommunitySelected: 1}, "second"},
+		{"community.selected.version", fold.State{CommunityMatches: []fold.CommunityMatch{{Version: "1.0.0"}, {Version: "9.9.9"}}, CommunitySelected: 1}, "9.9.9"},
+		{"community.selected.preview", fold.State{CommunityMatches: []fold.CommunityMatch{{Preview: "first blurb"}, {Preview: "second blurb"}}, CommunitySelected: 1}, "second blurb"},
 	} {
 		t.Run(tc.bind, func(t *testing.T) {
 			doc, err := scene.ParseDocument([]byte(fmt.Sprintf(
