@@ -24,15 +24,13 @@ package ext
 // live installer, and the static InstallerScene retires the way ui.hidden's
 // exemption did once its consumer existed.
 //
-// Two live affordances the design names are deliberately NOT here yet, each
-// because the engine capability it needs is its own increment, and each is the
-// honest placeholder rather than a broken half:
+// The search input shows the typed query: renderInput now resolves any
+// view-state bind, so community.query appears in the box as the loop writes it
+// (this was the first deferred affordance, landed in its own engine increment
+// with a both-directions counterfactual). What remains deferred are the two
+// affordances that still need vocabulary or scope the engine does not carry,
+// each the honest placeholder rather than a broken half:
 //
-//   - The search input shows its placeholder, not the typed query. renderInput
-//     draws a bound field's value only for user.input today; teaching it to draw
-//     any resolved view-state bind (so community.query appears as the user types)
-//     is a separate engine change with its own counterfactual, not smuggled in
-//     under a scene builder.
 //   - The right column stays the static help pane, not the selected entry's
 //     preview. A selection-driven preview needs the selected entry's fields as
 //     absolute binds (community.selected.preview and friends) — new signed
@@ -40,13 +38,12 @@ package ext
 //     preview inline instead would just be the static cards again, not a preview
 //     pane, so the honest placeholder is the fixed explanation InstallerScene
 //     already carries.
-//
-// The list has no selection highlight either: highlighting the community.selected
-// row needs the row's index inside its own scope, which row_template does not
-// carry today (no list does — team.members and slash.matches draw every row the
-// same). That, too, is a later increment; drawing one row bright is not required
-// for the loop to move the selection, only for the user to see which row it is
-// on, and the loop increment is where that becomes observable.
+//   - The list has no selection highlight. Highlighting the community.selected
+//     row needs the row's index inside its own scope, which row_template does not
+//     carry today (no list does — team.members and slash.matches draw every row
+//     the same). That, too, is a later increment; drawing one row bright is not
+//     required for the loop to move the selection, only for the user to see which
+//     row it is on, and the loop increment is where that becomes observable.
 
 import (
 	"encoding/json"

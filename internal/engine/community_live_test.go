@@ -102,8 +102,17 @@ func liveInstallerDoc(t *testing.T) *scene.Document {
 // frame is asserted.
 func liveInstallerFrame(t *testing.T) string {
 	t.Helper()
+	return liveInstallerFrameWith(t, liveInstallerState())
+}
+
+// liveInstallerFrameWith renders the live installer over an arbitrary view state.
+// It exists so the search-input witness can drive community.query directly —
+// with a distinctive query and with an empty one — without disturbing the shared
+// golden state the sibling tests pin.
+func liveInstallerFrameWith(t *testing.T, state fold.State) string {
+	t.Helper()
 	r := Renderer{Width: 80, Height: 30}
-	return r.RenderFrame(liveInstallerDoc(t), liveInstallerState()).Plain()
+	return r.RenderFrame(liveInstallerDoc(t), state).Plain()
 }
 
 // TestLiveInstallerDrawsEveryMatch is the reason this increment has a test at
@@ -124,14 +133,16 @@ func TestLiveInstallerDrawsEveryMatch(t *testing.T) {
 		t.Fatalf("the live installer rendered an unknown node type — the builder emitted a node the engine\n"+
 			"cannot draw:\n%s", got)
 	}
-	// The search input's placeholder heads the left column. It draws regardless of
-	// the folded query today, because renderInput shows a bound value only for
-	// user.input (documented in LiveInstallerScene as a deferred increment); when
-	// that lands, this assertion changes to the query text and the golden moves.
-	if !strings.Contains(got, "search community plugins") {
-		t.Errorf("the live installer did not draw its search input; got:\n%s\n"+
-			"consequence: the browse affordance is gone, so the user cannot tell the installer is working.\n"+
-			"remedy: LiveInstallerScene must head the left column with the community.query input.", got)
+	// The search input now shows the folded community.query, not its placeholder:
+	// renderInput resolves any view-state bind, so with a query folded the hint is
+	// replaced by the query text. The absence of the placeholder is the composed-
+	// frame witness of that change; the query text itself is asserted with a
+	// distinctive value in TestLiveInstallerSearchInputShowsTheQuery, because "tick"
+	// is a substring of a description below and would pass here by coincidence.
+	if strings.Contains(got, "search community plugins") {
+		t.Errorf("the live installer still drew its search placeholder while community.query was folded; got:\n%s\n"+
+			"consequence: the typed query does not reach the box, so the search reads as dead the moment the user types.\n"+
+			"remedy: renderInput must draw the placeholder only when the resolved bind value is empty.", got)
 	}
 	for _, m := range liveInstallerState().CommunityMatches {
 		if !strings.Contains(got, m.Name) {
@@ -147,6 +158,43 @@ func TestLiveInstallerDrawsEveryMatch(t *testing.T) {
 				"indistinguishable in the live list.\n"+
 				"remedy: liveInstallerList must bind row.description.", m.ID, word, got)
 		}
+	}
+}
+
+// TestLiveInstallerSearchInputShowsTheQuery proves the increment the sibling
+// goldens moved for: renderInput now projects community.query, so the search box
+// shows what the keystroke loop wrote instead of the frozen placeholder. The
+// query used here appears in no match name or description, so a plain-frame
+// witness cannot pass on a coincidental substring of the list below it.
+//
+// Both directions are asserted, because a one-directional check would pass on the
+// old engine too. A non-empty query must replace the placeholder — the behavior
+// added — and an empty query must restore it: renderInput collapses a resolved-
+// empty bind back to the hint, and that half is the guard against a change that
+// draws the query but forgets community.query starts empty, which would strand
+// the user with no hint at all. On the old engine (bound value drawn only for
+// user.input) the first assertion fails, so this test is armed on exactly the
+// state it exists to certify.
+func TestLiveInstallerSearchInputShowsTheQuery(t *testing.T) {
+	const distinctive = "quux-not-in-any-row"
+
+	withQuery := liveInstallerFrameWith(t, fold.State{CommunityQuery: distinctive})
+	if !strings.Contains(withQuery, distinctive) {
+		t.Errorf("the search input did not show the folded community.query %q; got:\n%s\n"+
+			"consequence: the user types into the installer and the box never changes, so the search reads as dead.\n"+
+			"remedy: renderInput must resolve n.Bind through resolveBind, not render a value only for user.input.", distinctive, withQuery)
+	}
+	if strings.Contains(withQuery, "search community plugins") {
+		t.Errorf("the search input still drew its placeholder while a query was folded; got:\n%s\n"+
+			"consequence: the placeholder and the typed query cannot both be the line — the hint welds onto the query.\n"+
+			"remedy: renderInput must draw the placeholder only when the resolved value is empty.", withQuery)
+	}
+
+	empty := liveInstallerFrameWith(t, fold.State{CommunityQuery: ""})
+	if !strings.Contains(empty, "search community plugins") {
+		t.Errorf("the search input did not draw its placeholder for an empty community.query; got:\n%s\n"+
+			"consequence: the installer opens with no hint, so the user cannot tell the box is a search field.\n"+
+			"remedy: renderInput must fall back to the placeholder when the resolved bind is empty.", empty)
 	}
 }
 

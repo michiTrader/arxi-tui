@@ -1377,6 +1377,29 @@ counterfactual test).
   document onto the display (at which point the Scene 7 golden moves to this
   builder in its own mutation family and the static `InstallerScene` retires).
 
+- **J3 follow-up — search input shows the typed query BUILT (2026-09-28).** The
+  first of the three affordances the live installer deferred: `renderInput` drew
+  a bound field's value only when `n.Bind == "user.input"`, so the installer's
+  search box — bound to `community.query` — showed its placeholder even after a
+  query was folded. It now resolves whatever bind the input carries through
+  `resolveBind`; `user.input` keeps its live `UserInputCaret`, and every other
+  view-state bind rests the caret at the end of the resolved text, since the fold
+  carries no caret index for it yet (the keystroke loop is where a per-bind caret
+  would land). A resolved `placeholderValue` collapses to the empty line, so an
+  unresolved bind still shows its hint and never draws `[…]`. The `COMMUNITY-LIVE`
+  `.frame`/`.styled` goldens move from `search community plugins` to the folded
+  query `tick` — the frame the increment produces. `TestLiveInstallerSearchInput-
+  ShowsTheQuery` drives `community.query` with a value present in no row and
+  asserts both directions (the query shows; an empty query restores the
+  placeholder), so it fails on the pre-change engine; counterfactual run:
+  neutering the view-state branch to draw no value returns the placeholder and
+  fails both the query witness and `TestLiveInstallerDrawsEveryMatch`'s
+  placeholder-absence check. **Still deferred:** the two remaining live affordances
+  (the `community.selected.preview` pane, which needs new signed absolute binds,
+  and the row-selection highlight, which needs the row index inside its scope),
+  plus the keystroke loop that writes the fold fields via `FilterEntries` and
+  swaps this document onto the display.
+
 - **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent
   screen).
 - **J5** [J3] Freeze the Scene 7 golden.
