@@ -1400,6 +1400,32 @@ counterfactual test).
   plus the keystroke loop that writes the fold fields via `FilterEntries` and
   swaps this document onto the display.
 
+- **J3 follow-up — row-selection highlight BUILT (2026-09-28).** The second of
+  the three deferred affordances: the live installer now draws the
+  `community.selected` row bright. The blocker recorded above was "the row index
+  inside its scope," and the resolution is to answer the comparison instead of
+  exposing the index: this engine's `when` is a bare truthiness test with no
+  operator, so a scene cannot write `row.index == community.selected` itself.
+  `rowScopesFor` synthesizes a per-row `row.selected` boolean
+  (`boolField(i == state.CommunitySelected)`) — the one `row.*` field on
+  `community.matches` with no `CommunityMatch` column behind it, signed in
+  BINDS.md §4.7 and `rowSchemas` with the argument for why it is a boolean and
+  not an integer — and `liveInstallerList` wraps the name in a `row` of a
+  `when: "row.selected"` caret glyph and the name text, exactly the shape Scene 9
+  uses for `when: "row.busy"`. A marker rather than a brightened token because
+  `when` shows or hides a node, it does not switch one node's token between two
+  values. The `COMMUNITY-LIVE` goldens move (Scene 7 variant, its own mutation
+  family): the default `community.selected=0` marks the first entry.
+  `TestLiveInstallerHighlightsTheSelectedRow` drives the cursor across both rows
+  so the marker must *move*, and asserts it on the selected row's own line and
+  absent from the other — failing both when no row is marked and when every row
+  is. Counterfactual run: `boolField(...&&false)` drops the marker and fails
+  "not marked"; `boolField(...||true)` marks every row and fails "also marked";
+  render.go restored, probe never committed. **Still deferred:** the
+  `community.selected.preview` pane (new signed absolute binds) and the keystroke
+  loop that writes the fold fields via `FilterEntries` and swaps this document
+  onto the display.
+
 - **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent
   screen).
 - **J5** [J3] Freeze the Scene 7 golden.
