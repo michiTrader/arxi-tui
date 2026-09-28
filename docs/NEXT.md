@@ -1255,10 +1255,42 @@ counterfactual test).
   existing H6/I5 pipeline (fetch `manifest_url`, full manifest `Validate`, Q15
   consent gate, `patch.Mount`); the registry grants nothing. **Remaining for J:**
   J3 (installer scene — needs J1+J2 **and** H8 action routing for its `i`/search
-  interactivity, still refused today), J4 (bundle, needs I5), J5 (Scene 7 golden,
-  including J1's preview frame and the nil no-op frame).
+  interactivity, now DONE — built as PR #103), J4 (bundle, needs I5), J5 (Scene 7
+  golden, including J1's preview frame and the nil no-op frame).
 - **J3** [J1,J2] Installer scene: entry list + markdown preview panel + search
   input + `i` to install.
+- **J3 — BUILT (2026-09-28, PR #103), pure scene function; live interactivity a
+  follow-up.** `Registry.InstallerScene() (*scene.Document, error)` in
+  `internal/ext/registry_scene.go` is the pure `index -> *scene.Document` J3's
+  design names as its testable core, mirroring `patch.Diff.Scene`: a
+  `map[string]any` assembled, marshalled and re-parsed through
+  `scene.ParseNamed`, so the host authors the installer through the same
+  parse+validate path a user's scene takes (ADR-0003). Layout is the two-column
+  diff-view shape — left stack: a search `input` then one pressable card per
+  entry; right stack: a `markdown` help pane. **Install is H8's `cmd:` action,
+  not a new mechanism** (H8 is DONE): each card carries `on_press`
+  `cmd:/ui plugin add <manifest_url>` with the `id` `press.go` requires to ring
+  it, so Tab-focus + Enter installs through the existing H6 pipeline (fetch,
+  Validate, Q15 consent gate); the registry discovers a URL and grants nothing.
+  **Three guards, each proven load-bearing by a counterfactual run by hand:** the
+  scene validates under SOBRIA and Factory; every entry becomes a node with both
+  `id` and the exact `cmd:/ui plugin add <manifest_url>` (dropping either key, or
+  the URL, fails it — a card drawn but unreachable, or one installing the wrong
+  plugin); every entry's name, description and preview reach the screen (dropping
+  any child fails it — the preview markdown especially, which a text-only walker
+  would silently miss). The empty index still produces a valid, browsable scene
+  (search input, zero cards), pinned so "no plugins yet" and "the build failed"
+  cannot look the same. **One deliberate deviation, recorded in the file:** the
+  design's recommended default is a live `list` bind + a query-bound search
+  input, which needs a new signed `community.*` array bind, a row schema, a fold
+  field and host-loop filtering — the interactive half the design defers. This
+  follows the design's *primary* testability requirement (pure function + golden
+  like `Diff.Scene`, which bakes), so entries are baked as static cards; live
+  search filtering and a selection-driven preview pane are the follow-up
+  increment that adds the view-state bind. **Remaining for J:** the J3 follow-up
+  (live filter + selection→preview, needs a signed view-state bind), J4 (bundle,
+  needs I5), J5 (freeze the Scene 7 golden, including this installer scene, J1's
+  preview frame and the nil no-op frame).
 - **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent
   screen).
 - **J5** [J3] Freeze the Scene 7 golden.

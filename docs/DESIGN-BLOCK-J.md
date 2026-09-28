@@ -209,6 +209,27 @@ hostile previewed scene.
 
 ## J3 — the installer authored from existing node types only
 
+**BUILT (2026-09-28, PR #103) — the pure scene function; live interactivity is a
+follow-up.** `Registry.InstallerScene() (*scene.Document, error)` in
+`internal/ext/registry_scene.go` builds the installer as a `map[string]any`,
+marshals it, and re-parses through `scene.ParseNamed`, exactly as `Diff.Scene`
+does. It is the pure `index -> *scene.Document` this section names as J3's
+testable core, held by three guards each proven load-bearing by a counterfactual
+run by hand: it validates under both themes; every entry becomes a node carrying
+both an `id` (`install:<id>`) and `on_press` `cmd:/ui plugin add <manifest_url>`
+(the pair `press.go` requires to ring a node, so a card is installable, not just
+drawn); and every entry's name, description and preview reach the screen. Install
+is H8's `cmd:` action through the existing H6 path — the registry discovers a URL
+and grants nothing new. **One deviation from the recommended default below is
+deliberate and recorded in the file:** the default wants a live `list` bind + a
+query-bound search `input`, which needs a new signed `community.*` array bind, a
+row schema, a fold field and host-loop filtering — the interactive half this
+section itself flags as H8-and-beyond. The build follows the *primary*
+testability requirement instead ("a pure `index -> *scene.Document`, testable by
+a golden the way `Diff.Scene` is", and `Diff.Scene` bakes), so entries are baked
+as static pressable cards; the search input is laid out but not yet wired, and a
+selection-driven preview pane is the follow-up. Baking forecloses neither.
+
 **PROPOSAL, under ADR-0003, copying the `Diff.Scene` construction pattern.** The
 installer is a document the host **generates from the fetched index** — built as
 `map[string]any`, marshalled, re-parsed through `scene.ParseNamed`, exactly as the
