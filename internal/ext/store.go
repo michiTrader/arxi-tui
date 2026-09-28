@@ -37,6 +37,18 @@ type PluginStore struct {
 	// liveness maps a plugin id to its ui.plugin.<id> status string. Absent means
 	// no behavioral plugin with that id is mounted, so the bind is falsy for when.
 	liveness map[string]string
+	// changed carries a coalesced "a value moved, repaint" wake-up to the render
+	// loop. The pump writes this store from its own goroutine (DrainInto), so
+	// without a wake-up a pushed value would sit here unseen until some unrelated
+	// event — a keystroke, an animation tick — happened to repaint. This is the
+	// store's analogue of that animation tick: a reason to repaint, never a fold
+	// event (invariant 2), so a plugin's I/O can never wedge the fold or the
+	// escape hatch. It is buffered at 1 and sent non-blocking (signalChanged), so
+	// a burst of frames between two repaints collapses to one wake-up rather than
+	// a backlog the loop must drain — under last-value-wins one repaint after any
+	// number of writes reads the latest of each, so the dropped signals name a
+	// repaint already scheduled, not a value lost.
+	changed chan struct{}
 }
 
 // The four ui.plugin.<id> liveness statuses (BINDS.md §4.3). They are named
@@ -65,6 +77,33 @@ func NewPluginStore() *PluginStore {
 	return &PluginStore{
 		values:   map[string]string{},
 		liveness: map[string]string{},
+		// Buffered at 1: the loop's Changed() case reads one wake-up and repaints
+		// once for any burst that landed since. An empty channel simply blocks that
+		// case, so a session that mounts no plugin never fires it.
+		changed: make(chan struct{}, 1),
+	}
+}
+
+// Changed is the render loop's wake-up channel: a receive means at least one
+// value or liveness bind moved since the last repaint, so the loop should
+// Snapshot and redraw. It is read-only to the caller — only the store's own
+// mutators send on it — and, like the animation tick, it only ever asks for a
+// repaint: it carries no value and dispatches no gesture, so selecting on it
+// cannot capture the escape hatch (invariant 6). A nil-safe zero-value store
+// (one built without NewPluginStore) returns a nil channel here, which blocks
+// forever — the same "never fires" behaviour as an empty one.
+func (s *PluginStore) Changed() <-chan struct{} { return s.changed }
+
+// signalChanged posts one coalesced repaint wake-up. It is a non-blocking send,
+// so a mutator never waits on the loop draining the channel: if a wake-up is
+// already buffered the send is dropped, which is correct under last-value-wins —
+// the buffered signal already names a repaint that will read this write too. A
+// send on a nil channel is never ready, so the select falls to default and this
+// is a harmless no-op on a store built without NewPluginStore.
+func (s *PluginStore) signalChanged() {
+	select {
+	case s.changed <- struct{}{}:
+	default:
 	}
 }
 
@@ -111,6 +150,11 @@ func (s *PluginStore) Ingest(pluginID string, binds map[string]BindDecl, raw jso
 	for path, rendered := range pending {
 		s.values[path] = rendered
 	}
+	// A published value moved: wake the loop so the next repaint reads it. The
+	// non-blocking send is safe under the lock — it touches only s.changed, never
+	// s.mu — and the loop's Snapshot re-takes s.mu, so the wake-up and the read it
+	// triggers stay ordered behind this write.
+	s.signalChanged()
 	return nil
 }
 
@@ -157,6 +201,10 @@ func (s *PluginStore) SetLiveness(pluginID, status string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.liveness[pluginID] = status
+	// A liveness transition (starting→live, →dead) is a visible change a scene
+	// may gate on with `when: ui.plugin.<id>`, so it wakes the loop like a value
+	// write does — a plugin going dead must repaint the report of its death.
+	s.signalChanged()
 }
 
 // DropPlugin removes a plugin's values and its liveness bind — the store half of
@@ -174,6 +222,10 @@ func (s *PluginStore) DropPlugin(pluginID string) {
 		}
 	}
 	delete(s.liveness, pluginID)
+	// An unmount removes nodes from the composed scene, so it wakes the loop to
+	// redraw without them — the same wake-up a value write posts, so `/ui plugin
+	// remove` takes effect on screen without waiting for the next keystroke.
+	s.signalChanged()
 }
 
 // Snapshot returns a fresh copy of every resolvable plugin bind for one repaint:

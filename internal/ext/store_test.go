@@ -193,3 +193,112 @@ func TestDropPluginErasesTheNamespace(t *testing.T) {
 			"consequence: a dotted-prefix membership test that matched \"ticker\" would unmount one plugin and blank another sharing a name prefix.", snap["ticker.rate"])
 	}
 }
+
+// drainChanged reports whether a repaint wake-up is currently buffered on the
+// store's Changed() channel, consuming it if so. A non-blocking receive reads the
+// store's coalescing seam from the test side: the mutators post at most one
+// buffered signal, so this returns true exactly once per burst and false when the
+// buffer is empty.
+func drainChanged(s *PluginStore) bool {
+	select {
+	case <-s.Changed():
+		return true
+	default:
+		return false
+	}
+}
+
+// TestAFreshStoreSignalsNoRepaint pins the quiet start: a store nobody has written
+// to has no wake-up buffered, so a session that mounts no plugin never fires the
+// loop's Changed() case. Without this the loop could spin-repaint on a phantom
+// signal the instant it starts.
+func TestAFreshStoreSignalsNoRepaint(t *testing.T) {
+	s := NewPluginStore()
+	if drainChanged(s) {
+		t.Error("a freshly constructed store already has a repaint wake-up buffered\n" +
+			"consequence: the loop's Changed() case fires once with no plugin mounted and nothing changed, a repaint asked for by nobody.")
+	}
+}
+
+// TestIngestSignalsARepaint is the core of the store→render wiring: a published
+// value that lands in the store wakes the loop so the next repaint reads it.
+// Without the wake-up a mounted plugin's frame sits in the store unseen until an
+// unrelated event happens to repaint, which is indistinguishable from the plugin
+// never having spoken.
+func TestIngestSignalsARepaint(t *testing.T) {
+	s := NewPluginStore()
+	if err := s.Ingest("tick", tickBinds(), json.RawMessage(`{"type":"bind","field":"price","value":"$1.23"}`)); err != nil {
+		t.Fatalf("Ingest refused a well-formed frame: %v", err)
+	}
+	if !drainChanged(s) {
+		t.Error("an accepted Ingest posted no repaint wake-up on Changed()\n" +
+			"consequence: a plugin's pushed value never triggers a redraw, so a mounted plugin renders as the empty placeholder until a keystroke or animation tick happens to repaint.\n" +
+			"remedy: signalChanged after committing the write in Ingest.")
+	}
+}
+
+// TestARefusedIngestSignalsNoRepaint is the direction that proves the signal names
+// a real write, not merely an attempt: a frame refused for an undeclared field
+// changed nothing, so it must not wake the loop. A signal posted before the
+// validation gate would repaint on every malformed frame a broken plugin sends.
+func TestARefusedIngestSignalsNoRepaint(t *testing.T) {
+	s := NewPluginStore()
+	err := s.Ingest("tick", tickBinds(), json.RawMessage(`{"type":"bind","field":"undeclared","value":"x"}`))
+	if err == nil {
+		t.Fatal("Ingest accepted an undeclared field; this test needs a refusal to measure")
+	}
+	if drainChanged(s) {
+		t.Error("a refused Ingest still posted a repaint wake-up\n" +
+			"consequence: a plugin spraying malformed frames would repaint the host on every one though the store never changed — the signal must sit behind the write, not before the validation gate.")
+	}
+}
+
+// TestSetLivenessSignalsARepaint covers the liveness axis: a plugin going live or
+// dead is a visible transition a scene may gate on with `when: ui.plugin.<id>`,
+// so it wakes the loop like a value write. A dead plugin especially must repaint
+// the report of its own death rather than freeze on its last live frame.
+func TestSetLivenessSignalsARepaint(t *testing.T) {
+	s := NewPluginStore()
+	s.SetLiveness("tick", PluginDead)
+	if !drainChanged(s) {
+		t.Error("SetLiveness posted no repaint wake-up on Changed()\n" +
+			"consequence: a plugin's death (or its promotion to live) never triggers a redraw, so ui.plugin.<id> gates and the death report update only on the next unrelated repaint.")
+	}
+}
+
+// TestDropPluginSignalsARepaint is the /ui plugin remove half: an unmount removes
+// the plugin's nodes from the composed scene, so it must wake the loop to redraw
+// without them rather than leave them on screen until the next keystroke.
+func TestDropPluginSignalsARepaint(t *testing.T) {
+	s := NewPluginStore()
+	_ = s.Ingest("tick", tickBinds(), json.RawMessage(`{"type":"bind","field":"price","value":"$1"}`))
+	// Drain the Ingest's own signal so the receive below can only be the drop's.
+	drainChanged(s)
+	s.DropPlugin("tick")
+	if !drainChanged(s) {
+		t.Error("DropPlugin posted no repaint wake-up on Changed()\n" +
+			"consequence: an unmounted plugin's nodes stay drawn until an unrelated event repaints, so `/ui plugin remove` appears to do nothing.")
+	}
+}
+
+// TestChangeSignalsCoalesce proves the buffered-at-1, non-blocking contract: a
+// burst of writes between two repaints collapses to a SINGLE wake-up. The writer
+// never blocks on the loop draining (a hung loop cannot back-pressure the pump),
+// and the loop wakes once and reads the latest of each value under last-value-wins
+// — a per-write-guaranteed channel would instead hand the loop a backlog of N
+// wake-ups to drain for one meaningful repaint.
+func TestChangeSignalsCoalesce(t *testing.T) {
+	s := NewPluginStore()
+	for i := 0; i < 3; i++ {
+		if err := s.Ingest("tick", tickBinds(), json.RawMessage(`{"type":"bind","field":"price","value":"$1"}`)); err != nil {
+			t.Fatalf("Ingest refused a well-formed frame on write %d: %v", i, err)
+		}
+	}
+	if !drainChanged(s) {
+		t.Fatal("three writes posted no wake-up at all; the burst must leave exactly one")
+	}
+	if drainChanged(s) {
+		t.Error("three writes left more than one wake-up buffered\n" +
+			"consequence: the loop drains a backlog of signals for one meaningful repaint, and under a fast plugin the buffer would grow without bound — the send must coalesce, not queue.")
+	}
+}
