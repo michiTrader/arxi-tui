@@ -126,6 +126,24 @@ type Renderer struct {
 	// behavioral plugin is actually mounted.
 	PluginValues map[string]string
 
+	// PreviewMocks, when non-nil, is the preview-mode substitution table: a map
+	// from a fully-qualified `<plugin-id>.<field>` bind to the string the
+	// previewed manifest's `binds[<field>].mock` declares (J1 / Q16). It is fed
+	// in per repaint exactly like PluginValues and AnimPhase, and for the same
+	// reason it can never be a fold field: the mocks come from a parsed manifest
+	// the host holds while browsing the installer, not from the run log, so
+	// putting them on fold.State would make a not-yet-installed stranger an
+	// authority over the fold (invariant 2 / ADR-0003). It differs from
+	// PluginValues only in provenance — PluginValues is a *mounted* plugin's live
+	// frames, PreviewMocks is an *un-mounted* one's declared placeholders — so the
+	// resolver checks it after the live snapshot and before the fold, and a bind
+	// with no mock still falls through to the placeholder rather than crashing
+	// (the counter-field rule, PLAN.md:319-321). A nil map (every golden not about
+	// preview, every installed/live scene, the pure path) skips the check
+	// entirely and resolves byte-identically to today — the same nil-is-a-no-op
+	// discipline AnimPhase keeps, and the trap SOBRIA's zero-row golden records.
+	PreviewMocks map[string]string
+
 	// AnimTicks is per-node animation phase, host-computed view state fed in
 	// per repaint (ADR-0005). For a scroll marquee it is the tick count the
 	// node's clock has reached; renderMarquee turns `ticks * speed` into a
@@ -229,6 +247,7 @@ func (r *Renderer) child(width, height int) Renderer {
 		Height:       height,
 		curRow:       r.curRow,
 		PluginValues: r.PluginValues,
+		PreviewMocks: r.PreviewMocks,
 		AnimTicks:    r.AnimTicks,
 		AnimPhase:    r.AnimPhase,
 		active:       r.active,
@@ -270,7 +289,7 @@ func (r *Renderer) RenderFrameActive(doc *scene.Document, state fold.State) (ui.
 // unconditionally anywhere else, and the axis was the parent rather than the
 // node: the same `text` hid under a `row` and drew under a `stack`.
 func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Frame {
-	if hiddenByWhenRow(n, state, r.curRow, r.PluginValues) {
+	if hiddenByWhenRow(n, state, r.curRow, r.PluginValues, r.PreviewMocks) {
 		return ui.Frame{Width: r.Width, Height: 0}
 	}
 	n = withFocusGlow(n, state)
@@ -417,7 +436,7 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		// either way; a *grow* child would otherwise still take its share of
 		// the remaining space and paint that share as blank rows — hiding the
 		// content while keeping the hole it sat in.
-		if hiddenByWhenRow(c, state, r.curRow, r.PluginValues) {
+		if hiddenByWhenRow(c, state, r.curRow, r.PluginValues, r.PreviewMocks) {
 			continue
 		}
 		if c.Type == "overlay" {
@@ -589,7 +608,7 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 	// and leave its share as padding.
 	visible := make([]*scene.Node, 0, len(children))
 	for _, c := range children {
-		if hiddenByWhenRow(c, state, r.curRow, r.PluginValues) {
+		if hiddenByWhenRow(c, state, r.curRow, r.PluginValues, r.PreviewMocks) {
 			continue
 		}
 		visible = append(visible, c)
@@ -1030,7 +1049,7 @@ func (r *Renderer) renderText(n *scene.Node, state fold.State) ui.Frame {
 	style := styleName(n.Style)
 	text := n.Text
 	if n.Bind != "" {
-		text = resolveBindRow(n.Bind, state, r.curRow, r.PluginValues)
+		text = resolveBindRow(n.Bind, state, r.curRow, r.PluginValues, r.PreviewMocks)
 	}
 	if n.Reveal != nil {
 		text = r.revealPrefix(n, text)
@@ -1296,7 +1315,7 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 func (r *Renderer) renderSpinner(n *scene.Node, state fold.State) ui.Frame {
 	active := false
 	if n.Bind != "" {
-		active = evalWhenRow(n.Bind, state, r.curRow, r.PluginValues)
+		active = evalWhenRow(n.Bind, state, r.curRow, r.PluginValues, r.PreviewMocks)
 	}
 	var glyph string
 	if active {
@@ -1356,18 +1375,18 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 	// validator accepted both.
 	var prefixSpan, suffixSpan *ui.Span
 	prefix := n.PrefixNode()
-	if prefix != nil && !hiddenByWhenRow(prefix, state, r.curRow, r.PluginValues) {
+	if prefix != nil && !hiddenByWhenRow(prefix, state, r.curRow, r.PluginValues, r.PreviewMocks) {
 		// A prefix is a text-bearing node: either Type=="text" or an
 		// untyped node with Text set (the sobria prefix omits the type).
 		if prefix.Bind != "" {
-			prefixSpan = &ui.Span{Text: resolveBindRow(prefix.Bind, state, r.curRow, r.PluginValues), Style: styleName(prefix.Style)}
+			prefixSpan = &ui.Span{Text: resolveBindRow(prefix.Bind, state, r.curRow, r.PluginValues, r.PreviewMocks), Style: styleName(prefix.Style)}
 		} else {
 			prefixSpan = &ui.Span{Text: prefix.Text, Style: styleName(prefix.Style)}
 		}
 	}
-	if n.Suffix != nil && !hiddenByWhenRow(n.Suffix, state, r.curRow, r.PluginValues) {
+	if n.Suffix != nil && !hiddenByWhenRow(n.Suffix, state, r.curRow, r.PluginValues, r.PreviewMocks) {
 		if n.Suffix.Bind != "" {
-			suffixSpan = &ui.Span{Text: resolveBindRow(n.Suffix.Bind, state, r.curRow, r.PluginValues), Style: styleName(n.Suffix.Style)}
+			suffixSpan = &ui.Span{Text: resolveBindRow(n.Suffix.Bind, state, r.curRow, r.PluginValues, r.PreviewMocks), Style: styleName(n.Suffix.Style)}
 		} else if n.Suffix.Text != "" {
 			suffixSpan = &ui.Span{Text: n.Suffix.Text, Style: styleName(n.Suffix.Style)}
 		}
@@ -1406,7 +1425,7 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 			if r.active != nil {
 				*r.active = append(*r.active, AnimActivity{
 					NodeID: n.ID,
-					Paused: n.Scroll.PauseWhen != "" && evalWhenRow(n.Scroll.PauseWhen, state, r.curRow, r.PluginValues),
+					Paused: n.Scroll.PauseWhen != "" && evalWhenRow(n.Scroll.PauseWhen, state, r.curRow, r.PluginValues, r.PreviewMocks),
 				})
 			}
 		}
@@ -1814,7 +1833,20 @@ func slashRow(m fold.SlashMatch, nameW, width int, style string) ui.Line {
 // to the placeholder, the §I-G "a live mount shows the placeholder, not mock,
 // before the first frame" rule. Every other bind is absolute and delegates to
 // resolveBind unchanged.
-func resolveBindRow(bind string, state fold.State, row map[string]string, plugins map[string]string) string {
+//
+// preview is the J1 preview-mode table (Renderer.PreviewMocks): a not-yet-mounted
+// plugin's declared `mock`s, keyed by the same full `<plugin-id>.<field>` path.
+// It is consulted AFTER the live plugin snapshot and before the fold on purpose —
+// a mounted plugin's real frame must always win over a mock, so previewing an
+// entry that happens to already be live shows the live value, not the placeholder
+// text. A nil map (every non-preview path) is read as an empty map: the lookup
+// misses and resolution is byte-identical to before J1 existed. A bind with no
+// mock is simply absent from the table, so it falls through to resolveBind and
+// draws the placeholder — never empty, never a crash. Because this is the single
+// resolver both display and `when` flow through (evalWhenRow calls it), a mock is
+// automatically a real string for a gate while a true miss stays the falsy
+// placeholder: preview cannot silently flip a `when` for a bind it has no mock for.
+func resolveBindRow(bind string, state fold.State, row map[string]string, plugins map[string]string, preview map[string]string) string {
 	if strings.HasPrefix(bind, "row.") {
 		if row == nil {
 			return placeholderValue
@@ -1825,6 +1857,9 @@ func resolveBindRow(bind string, state fold.State, row map[string]string, plugin
 		return placeholderValue
 	}
 	if v, ok := plugins[bind]; ok {
+		return v
+	}
+	if v, ok := preview[bind]; ok {
 		return v
 	}
 	return resolveBind(bind, state)
@@ -1969,14 +2004,14 @@ const placeholderValue = "[…]"
 // hides the content and keeps the blank rows it occupied — and two spellings
 // of the same predicate is how they drift apart.
 func hiddenByWhen(n *scene.Node, state fold.State) bool {
-	return hiddenByWhenRow(n, state, nil, nil)
+	return hiddenByWhenRow(n, state, nil, nil, nil)
 }
 
 // hiddenByWhenRow is hiddenByWhen with a template row in scope, so a per-row
 // `when: "row.busy"` gates that row's node against its own element (Scene 9),
 // and with the plugin snapshot in scope so a `when: ui.plugin.<id>` gates on a
 // plugin's liveness (I3 / §4.3).
-func hiddenByWhenRow(n *scene.Node, state fold.State, row map[string]string, plugins map[string]string) bool {
+func hiddenByWhenRow(n *scene.Node, state fold.State, row map[string]string, plugins map[string]string, preview map[string]string) bool {
 	if n == nil {
 		return false
 	}
@@ -1999,7 +2034,7 @@ func hiddenByWhenRow(n *scene.Node, state fold.State, row map[string]string, plu
 	if n.When == "" {
 		return false
 	}
-	return !evalWhenRow(n.When, state, row, plugins)
+	return !evalWhenRow(n.When, state, row, plugins, preview)
 }
 
 // withFocusGlow returns the node the rest of the render path should draw: the
@@ -2259,7 +2294,7 @@ func (r *Renderer) enterRowFrames(n *scene.Node, state fold.State, budget int) [
 		return out
 	}
 	for _, c := range n.Children {
-		if hiddenByWhenRow(c, state, r.curRow, r.PluginValues) {
+		if hiddenByWhenRow(c, state, r.curRow, r.PluginValues, r.PreviewMocks) {
 			continue
 		}
 		out = append(out, r.renderNode(c, state, budget))
@@ -2312,13 +2347,13 @@ func dimFrame(f ui.Frame) ui.Frame {
 }
 
 func evalWhen(bind string, state fold.State) bool {
-	return evalWhenRow(bind, state, nil, nil)
+	return evalWhenRow(bind, state, nil, nil, nil)
 }
 
 // evalWhenRow is evalWhen with a template row and the plugin snapshot in scope;
 // see resolveBindRow.
-func evalWhenRow(bind string, state fold.State, row map[string]string, plugins map[string]string) bool {
-	return bindTruthy(resolveBindRow(bind, state, row, plugins))
+func evalWhenRow(bind string, state fold.State, row map[string]string, plugins map[string]string, preview map[string]string) bool {
+	return bindTruthy(resolveBindRow(bind, state, row, plugins, preview))
 }
 
 // bindTruthy is the single spelling of the `when` truthiness rule: a non-empty
