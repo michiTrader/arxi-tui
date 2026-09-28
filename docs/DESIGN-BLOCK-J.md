@@ -289,6 +289,33 @@ live half is now just:** the keystroke loop that writes these fields via
 `FilterEntries` and rebuilds `InstallerScene` to the live `list`/search pair
 below, and the selection→preview pane — the parts that touch the real-tty loop.
 
+**Follow-up increment (2026-09-28) — the live installer document.** The next
+increment after the projection landed, and the pure/golden-testable half of
+"rebuilds `InstallerScene` to the live `list`/search pair below": `ext.Live­In­staller­Scene()`
+builds the installer as a *live* document — the search `input` binds to
+`community.query`, the entry `list` is a `row_template` over `community.matches`
+(`row.name`/`row.version`/`row.description` drawn, the URL and preview carried by
+the scope for the loop and the preview pane) — instead of baking static cards.
+It takes no index because the entries now live in the fold, written by the
+keystroke loop from `FilterEntries`; the structure is therefore a pure constant
+and the folded matches are the content (ADR-0002). It is pinned before the loop
+mounts it, the `TICKER.json`/`COMMUNITY.json` order: `testdata/COMMUNITY-LIVE.json`
+is byte-for-byte the builder output, and `.frame`/`.styled` pin the frame over a
+**non-empty** folded state — the coverage this increment adds, since nothing
+rendered `community.matches` into a frame before. Both directions measured: a
+`rowScopesFor` that ranges an empty slice empties the list and
+`TestLiveInstallerDrawsEveryMatch` fails on the first entry. Three affordances
+are deliberately deferred, each named for the engine capability it needs: the
+search input shows its placeholder rather than the query (`renderInput` draws a
+bound value only for `user.input`), the right column stays the static help pane
+(a selection-driven preview needs new signed `community.selected.*` absolute
+binds), and there is no selection highlight (a `row_template` carries no row
+index today). When the keystroke loop lands and mounts this document, the Scene 7
+golden moves from the static build to this one in its own mutation family, and
+the static `InstallerScene` retires the way `ui.hidden`'s exemption did once its
+consumer existed.
+
+
 **PROPOSAL, under ADR-0003, copying the `Diff.Scene` construction pattern.** The
 installer is a document the host **generates from the fetched index** — built as
 `map[string]any`, marshalled, re-parsed through `scene.ParseNamed`, exactly as the
