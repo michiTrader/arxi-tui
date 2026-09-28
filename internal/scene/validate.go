@@ -233,11 +233,12 @@ var rowSchemas = map[string]map[string]bool{
 	// renders row.name + row.description and its on_press is
 	// `cmd:/ui plugin add {row.manifest_url}` (H8 interpolation), so every
 	// human-readable and install-driving field the card touches is addressable.
-	// The engine's rowScopesFor has no case yet — a row_template over
-	// community.matches draws nothing until the fold field lands (BINDS.md §4.6,
-	// DESIGN-BLOCK-J.md J3 follow-up) — but the schema is signed now so the
-	// validator accepts the installer scene the builder produces.
-	"community.matches": {"row.id": true, "row.name": true, "row.version": true, "row.manifest_url": true, "row.description": true, "row.preview": true},
+	// row.selected is the one field here with no CommunityMatch column behind it:
+	// the engine synthesizes it per row from community.selected so the template
+	// can gate a highlight on `when: "row.selected"` (the row.busy idiom), and it
+	// is signed alongside the element fields so that gate validates like any other
+	// row bind rather than being refused as an unsigned row.* name.
+	"community.matches": {"row.id": true, "row.name": true, "row.version": true, "row.manifest_url": true, "row.description": true, "row.preview": true, "row.selected": true},
 }
 
 // RowSchema returns the signed `row.<field>` names for a list bind, or nil if
