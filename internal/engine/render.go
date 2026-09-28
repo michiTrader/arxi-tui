@@ -807,7 +807,22 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 	case "thinking.text":
 		lines = append(lines, ui.WrapText(state.ThinkingText, token, r.Width, nil)...)
 	default:
-		lines = append(lines, ui.WrapText(n.Text, token, r.Width, nil)...)
+		// A markdown pane with a bind draws that bind's resolved value, wrapped
+		// to the pane; without one it draws its literal text. Until the installer
+		// preview pane needed it, the only bound markdown panes were chat.history
+		// and thinking.text (handled above), so the default drew n.Text alone and
+		// a bind here was silently ignored — the same checked-but-never-drawn drop
+		// the scalar-bind audit exists to catch, one node type over. Resolving
+		// through resolveBindRow (not resolveBind) keeps markdown consistent with
+		// renderText: the same bind draws the same value in either node, and a
+		// markdown pane inside a row_template would read row.* rather than a
+		// placeholder. n.Text is the fallback for the unbound pane, so no existing
+		// literal-text markdown moves.
+		text := n.Text
+		if n.Bind != "" {
+			text = resolveBindRow(n.Bind, state, r.curRow, r.PluginValues, r.PreviewMocks)
+		}
+		lines = append(lines, ui.WrapText(text, token, r.Width, nil)...)
 	}
 	if budget >= 0 && len(lines) > budget {
 		if n.Bind == "chat.history" {
@@ -1913,6 +1928,24 @@ func resolveBindRow(bind string, state fold.State, row map[string]string, plugin
 	return resolveBind(bind, state)
 }
 
+// selectedCommunityMatch returns the community.matches entry community.selected
+// points at, or the zero CommunityMatch when the selection is out of range. Out
+// of range is not a bug to guard against loudly: the host clamps
+// community.selected into the match list on every filter keystroke (fold.go), so
+// the only way the renderer sees an out-of-range index is the genuine empty
+// state — no matches at all, or a frame rendered before the first clamp. The
+// zero value maps every community.selected.* field to "", which is exactly what
+// the preview pane should draw when nothing is selected, so the out-of-range
+// path is the empty state expressed as data rather than a special case the
+// caller must remember to check.
+func selectedCommunityMatch(state fold.State) fold.CommunityMatch {
+	i := state.CommunitySelected
+	if i < 0 || i >= len(state.CommunityMatches) {
+		return fold.CommunityMatch{}
+	}
+	return state.CommunityMatches[i]
+}
+
 func resolveBind(bind string, state fold.State) string {
 	switch bind {
 	case "chat.history":
@@ -2011,6 +2044,22 @@ func resolveBind(bind string, state fold.State) string {
 		// to draw one row bright (BINDS.md §4.3); the host clamps it to the match
 		// list, so a value the renderer receives is always in range.
 		return fmt.Sprintf("%d", state.CommunitySelected)
+	case "community.selected.name":
+		return selectedCommunityMatch(state).Name
+	case "community.selected.version":
+		return selectedCommunityMatch(state).Version
+	case "community.selected.preview":
+		// The scalar projection of the selected entry, read by the installer's
+		// right pane so community.selected drives a preview, not just the list
+		// highlight (BINDS.md §4.3). These mirror the row.* schema (§4.7) that a
+		// row_template over community.matches reads per element, but resolve to
+		// the *one* selected entry rather than the current row: the pane lives
+		// outside the list, so it has no row scope and must name the selection
+		// absolutely. The empty selection (no matches, or a cursor the host has
+		// not yet clamped into range) yields "" for every field, which collapses
+		// the pane to blank — the honest empty state, the same no-op an empty
+		// community.matches gives the list, never a placeholder or a crash.
+		return selectedCommunityMatch(state).Preview
 	case "ui.focus":
 		return state.UIFocus
 	case "ui.max":

@@ -1426,6 +1426,45 @@ counterfactual test).
   loop that writes the fold fields via `FilterEntries` and swaps this document
   onto the display.
 
+- **J3 follow-up — selected-entry preview pane BUILT (2026-09-28).** The third
+  and last deferred affordance: the live installer's right column now previews
+  the entry `community.selected` points at, replacing the static help paragraph
+  (`installerHelp`) that stood in for it. The blocker recorded above was "new
+  signed absolute binds," and this signs them: `community.selected.{name,version,
+  preview}` (BINDS.md §4.3, `signedBinds`). `community.selected` is an *index*, so
+  `resolveBind` resolves it against `community.matches` through a
+  `selectedCommunityMatch` helper that returns the zero match when the selection
+  is out of range — the empty browse or a frame before the host's first clamp —
+  which maps every field to `""` and collapses the pane to blank, the same no-op
+  an empty match list gives the list. They are the absolute-bind analogue of the
+  `row.*` schema (§4.7): the same entry fields, addressed by the selection rather
+  than per row, because a pane outside the `list` has no row scope. Signed as the
+  pane consumes them, not the whole namespace ahead of a consumer (`id`,
+  `manifest_url`, `description` are resolvable the same way but unrendered, so
+  unsigned — the §4.6 rule in the small). `renderMarkdown`'s default case now
+  resolves `n.Bind` through `resolveBindRow` instead of drawing `n.Text` alone, so
+  the multi-line preview blurb wraps in a markdown pane; a bound markdown node
+  previously dropped its bind silently — the checked-but-never-drawn class one
+  node type over — and an unbound pane still draws `n.Text`, so no literal-text
+  markdown moves. `liveInstallerPreview` stacks the name (header), version (dim)
+  and preview (markdown); the `COMMUNITY-LIVE` goldens move (Scene 7 variant, its
+  own mutation family): the right column becomes `Community Ticker` / `0.1.0` /
+  its blurb (`community.selected=0`). `TestLiveInstallerPreviewPaneShowsTheSelected-
+  Entry` drives the cursor across two entries and asserts the selected entry's
+  preview blurb is on screen and the other's is not — the preview field is the one
+  entry field the list does not draw, so a sentinel there witnesses the *pane*,
+  not the list. Counterfactuals run: reverting `renderMarkdown` to `n.Text` drops
+  the blurb and fails "did not show the selected preview"; pinning
+  `selectedCommunityMatch` to index 0 fails both directions at `selected=1`. The
+  highlight test was hardened in the same commit (marker+name frame-wide, since
+  the name now appears twice), and the three new scalar binds were added to
+  `TestEverySignedScalarBindTheFoldComputesReachesTheFrame`. **Still deferred:**
+  only the host keystroke loop remains — it writes the `community.*` fold fields
+  via `Registry.FilterEntries` on every keystroke, moves `community.selected` on
+  ↑/↓, and swaps this document onto the display; when it lands the Scene 7 golden
+  moves from the static build to `LiveInstallerScene` in its own mutation family
+  and the static `InstallerScene` retires.
+
 - **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent
   screen).
 - **J5** [J3] Freeze the Scene 7 golden.

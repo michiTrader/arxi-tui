@@ -27,20 +27,23 @@ package ext
 // The search input shows the typed query: renderInput now resolves any
 // view-state bind, so community.query appears in the box as the loop writes it
 // (this was the first deferred affordance, landed in its own engine increment
-// with a both-directions counterfactual). The selected row now wears a leading
+// with a both-directions counterfactual). The selected row wears a leading
 // marker too: the engine synthesizes a per-row row.selected boolean from
 // community.selected and the row_template gates a caret glyph on
 // `when: "row.selected"` (see liveInstallerList) — the second deferred
-// affordance, landed here. One affordance still needs vocabulary the engine does
-// not carry, and it is the honest placeholder rather than a broken half:
+// affordance. The right column is now the selected entry's preview, not a static
+// help pane: it binds community.selected.{name,version,preview}, which the engine
+// resolves by indexing community.matches with community.selected (see
+// selectedCommunityMatch and renderMarkdown's bind resolution) — the third and
+// last deferred affordance, landed here.
 //
-//   - The right column stays the static help pane, not the selected entry's
-//     preview. A selection-driven preview needs the selected entry's fields as
-//     absolute binds (community.selected.preview and friends) — new signed
-//     vocabulary — which is the increment after this one. Rendering every match's
-//     preview inline instead would just be the static cards again, not a preview
-//     pane, so the honest placeholder is the fixed explanation InstallerScene
-//     already carries.
+// What remains is not an affordance of this document but the host loop that
+// drives it: the keystroke loop that writes the community.* fold fields via
+// Registry.FilterEntries on every keystroke, moves community.selected on ↑/↓, and
+// swaps this document onto the display. When it lands, the Scene 7 golden moves
+// from the static build to this one, in its own mutation family named for the
+// live installer, and the static InstallerScene retires the way ui.hidden's
+// exemption did once its consumer existed.
 
 import (
 	"encoding/json"
@@ -78,7 +81,7 @@ func LiveInstallerScene() (*scene.Document, error) {
 							liveInstallerList(),
 						}},
 						map[string]any{"type": "stack", "weight": 1, "children": []any{
-							installerHelp(),
+							liveInstallerPreview(),
 						}},
 					},
 				},
@@ -132,6 +135,35 @@ func liveInstallerList() map[string]any {
 				map[string]any{"type": "text", "bind": "row.version", "style": map[string]any{"style": "dim"}},
 				map[string]any{"type": "text", "bind": "row.description"},
 			},
+		},
+	}
+}
+
+// liveInstallerPreview is the right column: the selected entry's preview, driven
+// by community.selected. Where the static InstallerScene right pane was fixed
+// help text — the honest placeholder while there was no selection view state to
+// bind — this stacks the selected entry's name, version and preview blurb,
+// resolved through the community.selected.* binds the engine projects by indexing
+// community.matches with community.selected (BINDS.md §4.3). It reads the
+// selection absolutely rather than through row.*, because a pane outside the list
+// has no row scope: the row_template's row.name is the entry under the cursor
+// *within the list*, and this pane is a sibling of the list, not a row of it.
+//
+// The name and version are single-line text; the preview is a markdown node so
+// the entry's multi-line blurb wraps to the narrow column rather than welding
+// onto one line as a text node would. When nothing is selected — an empty browse,
+// or a frame before the host's first clamp — every community.selected.* bind
+// resolves to "", so the pane draws blank, the same no-op the empty match list
+// gives the browse. This is the third deferred live affordance; the help text it
+// replaces is not lost, it was always a stand-in for exactly this pane, as its
+// own comment in registry_scene.go said.
+func liveInstallerPreview() map[string]any {
+	return map[string]any{
+		"type": "stack",
+		"children": []any{
+			map[string]any{"type": "text", "bind": "community.selected.name", "style": map[string]any{"style": "header"}},
+			map[string]any{"type": "text", "bind": "community.selected.version", "style": map[string]any{"style": "dim"}},
+			map[string]any{"type": "markdown", "bind": "community.selected.preview"},
 		},
 	}
 }

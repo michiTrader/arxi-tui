@@ -175,6 +175,18 @@ var signedBinds = map[string]bool{
 	"community.matches":  true,
 	"community.selected": true,
 
+	// §4.3 view state — the selected community entry's scalar projection (Scene
+	// 7, J3 follow-up). community.selected is an index; these resolve it against
+	// community.matches to the selected entry's own fields, so the installer's
+	// right pane can preview what the cursor is on. They are the absolute-bind
+	// analogue of the row.* schema §4.7 signs for community.matches — the same
+	// entry fields, addressed by the selection rather than per row — signed as
+	// the pane consumes them (name/version/preview), not the whole namespace
+	// ahead of a consumer.
+	"community.selected.name":    true,
+	"community.selected.version": true,
+	"community.selected.preview": true,
+
 	// §2 bootstrap set — host survival state the raw scene may display
 	"user.input":           true,
 	"user.input.submitted": true,

@@ -203,9 +203,18 @@ func TestLiveInstallerSearchInputShowsTheQuery(t *testing.T) {
 // other row does. It drives community.selected across both entries so the marker
 // must MOVE — a one-position check would pass on an engine that marked a fixed
 // row (e.g. always the first) regardless of the cursor, which is the exact defect
-// a synthesized-per-row boolean has to avoid. The marker glyph is asserted to
-// appear on the selected name line and to be absent from the unselected one, so
-// the test fails both if no row is marked and if every row is marked.
+// a synthesized-per-row boolean has to avoid.
+//
+// The assertion is on marker+name glued together, searched frame-wide, rather
+// than on the line the name sits on. That changed when the preview pane landed:
+// the selected entry's name now appears twice in the frame — once in its list
+// row and once as the preview heading — so "the first line containing the name"
+// became ambiguous and could pick the preview occurrence, which never carries the
+// marker. The marker is only ever emitted by the list row_template, so marker+name
+// identifies the marked list row uniquely wherever it lands, and its absence for
+// the other entry proves exactly one row is marked. This is strictly stronger than
+// the old line lookup: gluing the marker to a specific name proves the marker is
+// on THAT row, which is the property the line lookup was approximating.
 //
 // Counterfactual (run by hand, reported in the commit): neutering rowScopesFor
 // to synthesize row.selected as boolField(false) for every row drops the marker
@@ -223,36 +232,79 @@ func TestLiveInstallerHighlightsTheSelectedRow(t *testing.T) {
 		state.CommunitySelected = selected
 		frame := liveInstallerFrameWith(t, state)
 
-		selectedLine := lineContaining(frame, names[selected])
-		if !strings.Contains(selectedLine, marker+names[selected]) {
-			t.Errorf("with community.selected=%d the selected row %q was not marked; its line was %q\n"+
+		if !strings.Contains(frame, marker+names[selected]) {
+			t.Errorf("with community.selected=%d the selected row %q was not marked (no %q in the frame); got:\n%s\n"+
 				"consequence: the user cannot see which entry Enter will install, so the cursor the loop moves is invisible.\n"+
 				"remedy: rowScopesFor must set row.selected true on the row whose index equals community.selected, and\n"+
-				"liveInstallerList must gate the marker on when:\"row.selected\".", selected, names[selected], selectedLine)
+				"liveInstallerList must gate the marker on when:\"row.selected\".", selected, names[selected], marker+names[selected], frame)
 		}
 
 		other := 1 - selected
-		otherLine := lineContaining(frame, names[other])
-		if strings.Contains(otherLine, marker+names[other]) {
-			t.Errorf("with community.selected=%d the unselected row %q was also marked; its line was %q\n"+
+		if strings.Contains(frame, marker+names[other]) {
+			t.Errorf("with community.selected=%d the unselected row %q was also marked (%q present); got:\n%s\n"+
 				"consequence: every row is highlighted, so the highlight distinguishes nothing — a menu with no single\n"+
 				"bright row while Enter still acts is a menu that lies about what it will do.\n"+
-				"remedy: rowScopesFor must set row.selected true on exactly one row (index == community.selected).", selected, names[other], otherLine)
+				"remedy: rowScopesFor must set row.selected true on exactly one row (index == community.selected).", selected, names[other], marker+names[other], frame)
 		}
 	}
 }
 
-// lineContaining returns the first line of frame that contains want, or "" if
-// none does. It exists so the highlight test can assert the marker sits on the
-// selected row's own line and not merely somewhere in the frame — a whole-frame
-// Contains would pass whether the marker landed on the right row or the wrong one.
-func lineContaining(frame, want string) string {
-	for _, line := range strings.Split(frame, "\n") {
-		if strings.Contains(line, want) {
-			return line
+// TestLiveInstallerPreviewPaneShowsTheSelectedEntry proves the third live
+// affordance: the right pane previews the entry community.selected points at, and
+// the preview MOVES with the selection. It drives community.selected across two
+// entries and asserts the selected entry's preview blurb is on screen and the
+// other's is not.
+//
+// The witness is the preview *blurb*, not the name or version, and that choice is
+// load-bearing. A name or version appears in every list row already, so "the
+// selected name is on screen" is true no matter what the pane draws — it would
+// pass on a pane that showed nothing. The preview field is the one entry field
+// the list does not render, so a sentinel placed in it can only reach the frame
+// through community.selected.preview and the pane that binds it. Each blurb is a
+// distinct sentinel present nowhere else — not in the name, version or
+// description — so a plain-frame Contains cannot pass on a coincidental substring,
+// the same discipline TestLiveInstallerSearchInputShowsTheQuery uses for the
+// query.
+//
+// Both directions are asserted: the selected blurb present proves the pane draws
+// the selection, and the other blurb absent proves it draws only the selection —
+// a pane that dumped every entry's preview, or one pinned to the first entry,
+// fails the second assertion. On an engine that dropped the markdown bind (the
+// pre-change default that drew n.Text alone) neither blurb appears and the first
+// assertion fails, so the test is armed on the state it certifies.
+func TestLiveInstallerPreviewPaneShowsTheSelectedEntry(t *testing.T) {
+	// Sentinels with no spaces or hyphens so WrapText keeps each on one line in
+	// the narrow pane, and a "zqx" prefix no name/version/description carries.
+	blurbs := []string{"zqxPreviewOfAlpha", "zqxPreviewOfBeta"}
+	state := fold.State{
+		CommunityMatches: []fold.CommunityMatch{
+			{Name: "Alpha", Version: "1.0.0", Description: "the first entry", Preview: blurbs[0]},
+			{Name: "Beta", Version: "2.0.0", Description: "the second entry", Preview: blurbs[1]},
+		},
+	}
+
+	for selected := 0; selected < len(blurbs); selected++ {
+		s := state
+		s.CommunitySelected = selected
+		frame := liveInstallerFrameWith(t, s)
+
+		if !strings.Contains(frame, blurbs[selected]) {
+			t.Errorf("with community.selected=%d the preview pane did not show the selected entry's preview %q; got:\n%s\n"+
+				"consequence: the right pane does not follow the selection, so moving the cursor previews nothing — the\n"+
+				"selection-driven preview the increment adds is dead.\n"+
+				"remedy: liveInstallerPreview must bind community.selected.preview, resolveBind must project it from\n"+
+				"selectedCommunityMatch, and renderMarkdown must resolve the bind rather than draw its literal text.", selected, blurbs[selected], frame)
+		}
+
+		other := 1 - selected
+		if strings.Contains(frame, blurbs[other]) {
+			t.Errorf("with community.selected=%d the preview pane also showed the unselected entry's preview %q; got:\n%s\n"+
+				"consequence: the pane shows more than the selection, so it is the static card list again, not a preview of\n"+
+				"the one entry the cursor is on.\n"+
+				"remedy: community.selected.preview must resolve the single selected entry (selectedCommunityMatch), not\n"+
+				"every match.", selected, blurbs[other], frame)
 		}
 	}
-	return ""
 }
 
 // TestLiveInstallerFrameMatchesGolden freezes the plain frame over the folded

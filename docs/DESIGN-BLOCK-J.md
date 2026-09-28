@@ -369,6 +369,62 @@ signed absolute binds) and the keystroke loop that writes the fold fields via
 `FilterEntries`.
 
 
+**Follow-up increment (2026-09-28) — the selected-entry preview pane.** The third
+and last deferred affordance: the live installer's right column previews the
+entry `community.selected` points at, replacing the static `installerHelp`
+paragraph that stood in for it. The deferral above named the blocker as "new
+signed absolute binds," and this signs them. `community.selected` is an *index*,
+and the preview pane needs the selected entry's *fields*; a pane outside the
+`list` has no `row.*` scope to read them through, so it must name the selection
+absolutely. `community.selected.{name,version,preview}` do exactly that:
+`resolveBind` resolves each against `community.matches` to the selected entry's
+field. They are the absolute-bind analogue of the `row.*` schema (§4.7) — the same
+entry fields, addressed by the selection rather than per row — and they are signed
+as the pane consumes them, not the whole namespace ahead of a consumer, the way
+`community.*` itself was signed only when a projection depended on it (§4.6 in the
+small): `id`, `manifest_url` and `description` resolve the same way but nothing
+renders them, so they stay unsigned until one does.
+
+The out-of-range selection is the empty state expressed as data, not a special
+case: `selectedCommunityMatch` returns the zero `CommunityMatch` when the index is
+outside `community.matches` (an empty browse, or a frame before the host's first
+clamp), which maps every `community.selected.*` field to `""` and collapses the
+pane to blank — the same no-op an empty match array gives the list. The host
+clamps `community.selected` into range on every filter keystroke, so out-of-range
+here is genuinely "nothing selected," never a bug to guard against loudly.
+
+One engine change was needed and is narrow: `renderMarkdown`'s default case now
+resolves `n.Bind` through `resolveBindRow` (the same resolver `renderText` uses)
+instead of drawing `n.Text` alone. The preview blurb is multi-line, so it needs a
+wrapping pane, and until this the only bound markdown panes were `chat.history`
+and `thinking.text` (both handled by name) — a markdown node carrying any other
+bind dropped it silently, the checked-but-never-drawn class one node type over
+from the scalar-bind audit. An unbound markdown pane still draws `n.Text`, so no
+literal-text pane in any existing golden moves; measured against the tree, the
+only bound markdown nodes are the two special cases, so the change is
+behaviour-preserving everywhere except the new pane.
+
+`liveInstallerPreview` stacks the name (header), version (dim) and preview
+(markdown). The `COMMUNITY-LIVE` goldens move (Scene 7 variant, its own mutation
+family): the right column becomes `Community Ticker` / `0.1.0` / its blurb at the
+default `community.selected=0`. `TestLiveInstallerPreviewPaneShowsTheSelectedEntry`
+drives the cursor across two entries and asserts the selected entry's preview
+blurb is on screen and the other's is not — the witness is the preview *field*, the
+one entry field the `list` does not render, so a sentinel there proves the *pane*
+drew the selection rather than the description the list already shows, and a
+name/version witness (present in every list row) could not. The counterfactuals,
+run by hand: reverting `renderMarkdown` to `n.Text` drops the blurb and fails "did
+not show the selected preview"; pinning `selectedCommunityMatch` to index 0 fails
+both directions at `selected=1` (selected absent, other present). The highlight
+test was hardened in the same commit — it now matches marker+name glued together,
+frame-wide, because the selected name appears twice once the pane draws it (list
+row and preview heading), and both `row.selected` counterfactuals still fail it.
+**Deferred after this:** only the host keystroke loop remains — writing the
+`community.*` fold fields via `FilterEntries`, moving `community.selected` on ↑/↓,
+and swapping this document onto the display, at which point the Scene 7 golden
+moves to `LiveInstallerScene` and the static `InstallerScene` retires.
+
+
 **PROPOSAL, under ADR-0003, copying the `Diff.Scene` construction pattern.** The
 installer is a document the host **generates from the fetched index** — built as
 `map[string]any`, marshalled, re-parsed through `scene.ParseNamed`, exactly as the
