@@ -732,6 +732,16 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		w, h := tty.Size()
 		r.Width, r.Height = w, h
 
+		// A mounted behavioral plugin's frames drain into pluginStore from the pump
+		// goroutine (I3 DrainInto); this is where they reach the walk. The snapshot
+		// is a fresh copy taken under the store's lock, so the render reads a stable
+		// frame while the pump keeps writing, and it is fed as r.PluginValues — a
+		// SEPARATE input from fold.State (invariant 2 / ADR-0003), because a
+		// stranger's process value entering the fold would make it an authority over
+		// the run log. A nil snapshot (no plugin ever mounted) resolves every plugin
+		// bind to the placeholder, so no non-plugin scene is touched.
+		r.PluginValues = pluginStore.Snapshot()
+
 		// The animation clock advances by wall time, hands the renderer the
 		// phase, and reads back which nodes are still animating; then the
 		// ticker is armed or stopped to match. The frame goes through the same
@@ -794,6 +804,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// repaints — it reads no input and dispatches no gesture, so the escape
 			// hatch (invariant 6) is untouched. blinkCh is nil while no caret is on
 			// screen, so a receive on it blocks forever and this case never fires.
+			repaint()
+
+		case <-pluginStore.Changed():
+			// A mounted plugin pushed a value (or its liveness moved) into the store
+			// from the pump goroutine, and the store posted a wake-up. Like an
+			// animation tick this case ONLY repaints — it reads no input and
+			// dispatches no gesture, so the escape hatch stays uncapturable
+			// (invariant 6) even under a plugin flooding frames. The signal is
+			// coalesced (buffered at 1), so a burst collapses to one repaint and the
+			// next Snapshot reads the latest of each value. An empty channel (no
+			// plugin has ever written) blocks this case, so a plain session never
+			// fires it.
 			repaint()
 
 		case ev, ok := <-termEvents:
