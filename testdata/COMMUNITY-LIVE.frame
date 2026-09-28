@@ -1,9 +1,9 @@
 ┌ Community — browse and install ────────────────────────────────────────────┐
-│tick                                   Focus an entry with Tab and press Enter│
-│> Community Ticker                     to install it. Each entry installs from│
-│0.1.0                                  its signed manifest_url through the    │
-│A streaming price ticker for the statussame consent gate as /ui plugin add —  │
-│Focus Timer                            the registry only points at the        │
-│1.2.0                                  manifest, it grants nothing on its own.│
+│tick                                   Community Ticker                       │
+│> Community Ticker                     0.1.0                                  │
+│0.1.0                                  # Ticker                               │
+│A streaming price ticker for the statusStreams a price into the status row.   │
+│Focus Timer                                                                   │
+│1.2.0                                                                         │
 │A pomodoro countdown mounted as an over                                       │
 └──────────────────────────────────────────────────────────────────────────────┘
