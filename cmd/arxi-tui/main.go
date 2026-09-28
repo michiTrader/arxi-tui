@@ -581,6 +581,24 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	consentReqCh := make(chan consentRequest)
 	installDoneCh := make(chan installOutcome, 1)
 	mountedPlugins := map[string]*supervisor.Supervisor{}
+
+	// The community installer's loop-visible state (J3 follow-up). `browse` is
+	// non-nil exactly while the installer is open: it holds the fetched index, the
+	// typed query and the selection cursor (installerBrowse's pure core), and the
+	// repaint swaps LiveInstallerScene onto the display and publishes its
+	// community.* triple while it is set — the browse analogue of modal.capturing()
+	// owning the frame. `/ui plugin browse <url>` fetches the index on a worker
+	// (startBrowseFetch) so a hung registry never freezes the loop or the panic
+	// gesture (invariant 6); browseBusy refuses a second fetch while one is in
+	// flight, and browseDoneCh carries the worker's outcome back to the select.
+	// liveInstaller is the installer document, a pure constant built once here: if
+	// it fails to build the browse command refuses rather than opening a broken
+	// screen.
+	var browse *installerBrowse
+	var browseBusy bool
+	browseDoneCh := make(chan browseOutcome, 1)
+	registryFetchClient := newRegistryFetchClient()
+	liveInstaller, liveInstallerErr := ext.LiveInstallerScene()
 	// Every spawned plugin process is stopped when the loop ends, so a normal quit
 	// does not leak a subprocess. Close is idempotent and the pump's DrainInto
 	// already exits on process death, so closing one already reaped is harmless.
@@ -758,8 +776,19 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// text and binds to none of it — so the swap is purely which document is
 		// walked.
 		activeDoc := doc
-		if modal.capturing() {
+		switch {
+		case modal.capturing():
 			activeDoc = modal.consent.doc
+		case browse != nil:
+			// The installer is open: it replaces the scene on display and its
+			// community.* triple is published onto the fold the renderer reads, the
+			// single place a query, its matches and the selection are set together
+			// (installerBrowse.publish) so a repaint cannot show a query without its
+			// matches or a selection past the list. The consent modal takes priority
+			// above: pressing Enter on an entry starts an install whose consent screen
+			// must own the frame, and when it closes the installer returns.
+			activeDoc = liveInstaller
+			browse.publish(&state)
 		}
 		frame, active := r.RenderFrameActive(activeDoc, state)
 		// Pin the scroll offset to what the renderer could actually honour: it
@@ -864,6 +893,40 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// the screen on y/r/n/Esc and leaving it standing otherwise.
 						panicGesture.Reset()
 						modal.handleKey(ev.Key)
+					} else if browse != nil {
+						// The installer is open and owns the keyboard, like the consent
+						// modal above. This sits after the Ctrl-C branch so the escape
+						// hatch still reaches HandleCtrlC (invariant 6) and cannot be
+						// captured by the installer, and after modal.capturing so an
+						// install started from a card lets its consent screen take the
+						// keys. An installer keystroke is intentional input, so it disarms
+						// the panic gesture like any other. routeBrowseKey maps the key to
+						// a pure browse transition and reports the two loop-visible
+						// outcomes: Esc closes the installer, and Enter on a highlighted
+						// entry yields its manifest_url — dispatched through the exact
+						// startInstall path a typed `/ui plugin install` takes, so a
+						// pressed card and a typed line cannot install different bytes. The
+						// browse stays open across an install: the consent modal draws over
+						// it and the installer returns when the modal closes.
+						panicGesture.Reset()
+						switch res := routeBrowseKey(browse, ev.Key); {
+						case res.close:
+							browse = nil
+						case res.installURL != "":
+							switch {
+							case modal.busy:
+								sceneNotice = "/ui plugin install: an install is already in progress; finish it or answer the consent screen before starting another"
+							default:
+								root, rerr := pluginsRootPath()
+								if rerr != nil {
+									sceneNotice = "/ui plugin install: " + rerr.Error()
+								} else {
+									modal.busy = true
+									sceneNotice = "/ui plugin install: fetching " + res.installURL + " …"
+									startInstall(ctx, res.installURL, archiveFetch, root, pluginGate, pluginStore, pluginActions, consentReqCh, installDoneCh)
+								}
+							}
+						}
 					} else if ev.Key.Type == term.KeyWheelUp || ev.Key.Type == term.KeyWheelDown {
 						// The mouse wheel scrolls the chat pane and nothing else: it
 						// does not type, and it does not disarm the panic gesture (a
@@ -899,7 +962,33 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// nothing, with the menu showing an empty list. Asking
 						// the command surface first means a line it recognises is
 						// never the menu's to swallow.
-						if url, matched, perr := parsePluginInstall(input); ev.Key.Type == term.KeyEnter && matched {
+						if regURL, matched, perr := parsePluginBrowse(input); ev.Key.Type == term.KeyEnter && matched {
+							// `/ui plugin browse <url>` opens the community installer over a
+							// fetched registry index. Like install it is host-owned, not a
+							// patch: it fetches over the network, swaps a document onto the
+							// display and drives a keystroke loop, none of which the pure
+							// patch surface can do. The fetch runs on a worker
+							// (startBrowseFetch) so a hung registry never freezes the loop or
+							// the panic gesture; the loop records browseBusy and opens the
+							// browse when the outcome arrives (browseDoneCh below).
+							switch {
+							case perr != nil:
+								sceneNotice = perr.Error()
+							case liveInstallerErr != nil:
+								// The installer document itself failed to build (a programming
+								// error, not user input); refuse to open rather than swap a
+								// broken screen onto the display.
+								sceneNotice = "/ui plugin browse: " + liveInstallerErr.Error()
+							case browseBusy:
+								sceneNotice = "/ui plugin browse: a registry fetch is already in progress; wait for it to finish before starting another"
+							default:
+								browseBusy = true
+								sceneNotice = "/ui plugin browse: fetching " + regURL + " …"
+								startBrowseFetch(regURL, registryFetchClient, browseDoneCh)
+							}
+							input = ""
+							caret = 0
+						} else if url, matched, perr := parsePluginInstall(input); ev.Key.Type == term.KeyEnter && matched {
 							// `/ui plugin install <url>` is host-owned, not a patch:
 							// it fetches a bundle, spawns a process and holds it, none
 							// of which the patch surface (a pure document transform)
@@ -1064,6 +1153,24 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				sceneNotice = "/ui plugin install: you rejected " + out.url + "; nothing was spawned"
 			default:
 				sceneNotice = "/ui plugin install: " + out.err.Error()
+			}
+			repaint()
+
+		case out := <-browseDoneCh:
+			// The registry fetch worker finished. Clear busy so a next browse may
+			// start. On success open the installer over the fetched index — browse
+			// becomes non-nil, so the repaint above swaps LiveInstallerScene onto the
+			// display and the key branch routes keys through routeBrowseKey — and clear
+			// the notice so the installer opens on a clean frame (its notice node is
+			// gated on host.scene.error). On failure report err and stay on the normal
+			// scene: a malformed or unreachable index leaves the user where they were,
+			// named rather than dropped.
+			browseBusy = false
+			if out.err != nil {
+				sceneNotice = "/ui plugin browse: " + out.err.Error()
+			} else {
+				browse = newInstallerBrowse(out.reg)
+				sceneNotice = ""
 			}
 			repaint()
 		}
