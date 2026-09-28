@@ -1043,6 +1043,27 @@ counterfactual test).
   as its own process, under the consent contract. Its package-delivery half is
   the §I-I installer above (drafted; extraction+lay-out core landed); the
   tool-door half remains.
+  - **I6-behavioral-validate — LANDED (2026-09-27).** §I-I step 3, now that the
+    design is signed (§I-I merged): `Manifest.ValidateBehavioral` (`behavioral.go`)
+    is the installer's gated door — the one validation path that accepts a manifest
+    with an `executable`, the exact manifest `Validate` refuses under H2. It is a
+    second entry point rather than a flag on `Validate` because lifting the H2
+    refusal is a capability owned by a named caller (the installer, which owns the
+    consent gate and supervisor), not a boolean anyone can pass. It reuses the
+    identity, token-block and mount validators unchanged; the two deliberate
+    differences are that the executable is required (a package with nothing to run
+    belongs on the H6 `/ui plugin add` path) and `checkEmpty` is skipped (a
+    behavioral plugin whose whole contribution is its process mounts nothing).
+    `validateExecutablePath` finally enforces the in-package rule `identity.go`
+    promised — an `executable` at `../x` or `/usr/bin/x` names bytes `PackageDigest`
+    never read — reusing the same `filepath.IsLocal` predicate `Extract` applies to
+    every tar entry, so the two cannot drift on what "inside the package" means.
+    Counterfactuals run: the door lifts exactly the executable refusal (both halves
+    over one manifest), the in-package and require-executable guards each proven
+    load-bearing by reverting them. Remaining for the I5 modal mount: the HTTP
+    archive fetch at the `cmd/` edge (§I-I step 1), then wiring `supervisor.Mount`
+    with a real digest.
+
 
 ### Block J — Phase 3: the community installer as a scene (Scene 7) [H]
 
