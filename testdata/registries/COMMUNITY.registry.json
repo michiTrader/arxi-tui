@@ -1,0 +1,21 @@
+{
+  "version": "reg/v1",
+  "entries": [
+    {
+      "id": "tick",
+      "name": "Community Ticker",
+      "version": "1.0.0",
+      "manifest_url": "https://plugins.arxi.dev/tick/manifest.json",
+      "description": "A top-right price ticker with a live sparkline.",
+      "preview": "# Community Ticker\n\nStreams the latest price into a top-right overlay and\nkeeps a short sparkline of recent moves. Behavioral: runs a small\nsubprocess and asks for the events.emit capability."
+    },
+    {
+      "id": "clock",
+      "name": "Header Clock",
+      "version": "0.3.1",
+      "manifest_url": "https://plugins.arxi.dev/clock/manifest.json",
+      "description": "A wall-clock in the header, updated once a second.",
+      "preview": "# Header Clock\n\nAdds the current time to the header. Declarative: mounts a\nsingle text node and ships its own dim token, no subprocess."
+    }
+  ]
+}
