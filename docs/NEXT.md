@@ -1294,6 +1294,33 @@ counterfactual test).
 - **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent
   screen).
 - **J5** [J3] Freeze the Scene 7 golden.
+- **J5 — DONE (2026-09-28, PR #104).** The Scene 7 golden is frozen as the
+  host-generated community installer, pinned the way Scene 6 (TICKER) and Scene 9
+  (SUBAGENTS) are, plus the two J1 preview frames the J1/J3 notes defer here.
+  `testdata/registries/COMMUNITY.registry.json` is a fixed, well-formed `reg/v1`
+  index (two entries, HTTPS manifest URLs, inline preview markdown), kept in a
+  subdirectory so it is not counted on the progress audit's scene axis.
+  `testdata/COMMUNITY.json`/`.frame`/`.styled` are the installer scene and its
+  plain/styled goldens; `TestCommunityJSONIsTheInstallerSceneOutput` proves
+  `COMMUNITY.json` is byte-for-byte `Registry.InstallerScene().Source()` — the
+  same not-hand-authored guarantee `TestTickerJSONIsTheMountOutput` carries — so a
+  drift in the builder is a golden diff, not a silent divergence. This is the
+  fixture the audit matches to `## Scene 7 — COMMUNITY`, and it now reads **7 of
+  11 scenes pinned** (CONFIG, BUTTONS, DASHBOARD, ANIMATED remain). J1's preview
+  mode is pinned at the composed-frame level:
+  `testdata/plugins/COMMUNITY-PREVIEW.manifest.json` declares a `tick.price` text
+  mock and a mock-less `tick.status`, and `testdata/COMMUNITY-PREVIEW.frame` /
+  `COMMUNITY-PREVIEW-NIL.frame` are the previewed-with-mocks frame (the mocked
+  bind draws `$1.23 ▲`, the un-mocked one stays the honest `[…]`) and the nil
+  no-op frame (every bind `[…]`, byte-identical to a pre-J1 render). The two
+  differ on exactly the mocked field, which is the built-in counterfactual: a
+  regression in the preview resolver collapses them and the witness fails on the
+  missing `$1.23`. **One J3 gap surfaced and fixed here:** the installer is a
+  shipped scene, so `InstallerScene` now emits the gated `host.scene.error` notice
+  node every shipped scene must carry (`TestEveryShippedSceneBindsTheNotice`); the
+  `when` gate keeps it costless, so only `COMMUNITY.json` moved and the frame
+  goldens did not. **Remaining for J:** the J3 follow-up (live filter +
+  selection→preview, needs a signed view-state bind) and J4 (bundle, needs I5).
 
 ### Block K — Phase 4: behavior + wasm [I]
 

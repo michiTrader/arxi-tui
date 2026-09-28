@@ -1,0 +1,12 @@
+{
+  "id": "tick",
+  "name": "Community Ticker",
+  "version": "1.0.0",
+  "protocol": "ext/v1",
+  "executable": "./tick",
+  "capabilities": ["events.emit"],
+  "binds": {
+    "tick.price":  { "kind": "text", "mock": "$1.23 \u25b2" },
+    "tick.status": { "kind": "text" }
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "root": {
+    "border": "single",
+    "children": [
+      {
+        "bind": "host.scene.error",
+        "id": "notice",
+        "style": {
+          "style": "banner"
+        },
+        "type": "text",
+        "when": "host.scene.error"
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "id": "installer.search",
+                "placeholder": "search community plugins",
+                "type": "input"
+              },
+              {
+                "children": [
+                  {
+                    "text": "Community Ticker",
+                    "type": "text"
+                  },
+                  {
+                    "text": "A top-right price ticker with a live sparkline.",
+                    "type": "text"
+                  },
+                  {
+                    "text": "# Community Ticker\n\nStreams the latest price into a top-right overlay and\nkeeps a short sparkline of recent moves. Behavioral: runs a small\nsubprocess and asks for the events.emit capability.",
+                    "type": "markdown"
+                  }
+                ],
+                "id": "install:tick",
+                "on_press": "cmd:/ui plugin add https://plugins.arxi.dev/tick/manifest.json",
+                "type": "stack"
+              },
+              {
+                "children": [
+                  {
+                    "text": "Header Clock",
+                    "type": "text"
+                  },
+                  {
+                    "text": "A wall-clock in the header, updated once a second.",
+                    "type": "text"
+                  },
+                  {
+                    "text": "# Header Clock\n\nAdds the current time to the header. Declarative: mounts a\nsingle text node and ships its own dim token, no subprocess.",
+                    "type": "markdown"
+                  }
+                ],
+                "id": "install:clock",
+                "on_press": "cmd:/ui plugin add https://plugins.arxi.dev/clock/manifest.json",
+                "type": "stack"
+              }
+            ],
+            "type": "stack",
+            "weight": 1
+          },
+          {
+            "children": [
+              {
+                "text": "Focus an entry with Tab and press Enter to install it. Each entry installs from its signed manifest_url through the same consent gate as /ui plugin add — the registry only points at the manifest, it grants nothing on its own.",
+                "type": "markdown"
+              }
+            ],
+            "type": "stack",
+            "weight": 1
+          }
+        ],
+        "type": "row"
+      }
+    ],
+    "title": "Community — browse and install",
+    "type": "box"
+  }
+}

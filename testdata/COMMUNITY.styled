@@ -1,0 +1,21 @@
+«border:┌ Community — browse and install ────────────────────────────────────────────┐»
+«border:│»«input.placeholder:search community plugins»               «text:Focus»«text: »«text:an»«text: »«text:entry»«text: »«text:with»«text: »«text:Tab»«text: »«text:and»«text: »«text:press»«text: »«text:Enter»«border:│»
+«border:│»Community Ticker                       «text:to»«text: »«text:install»«text: »«text:it.»«text: »«text:Each»«text: »«text:entry»«text: »«text:installs»«text: »«text:from»«border:│»
+«border:│»A top-right price ticker with a live sp«text:its»«text: »«text:signed»«text: »«text:manifest_url»«text: »«text:through»«text: »«text:the»    «border:│»
+«border:│»«text:#»«text: »«text:Community»«text: »«text:Ticker»                     «text:same»«text: »«text:consent»«text: »«text:gate»«text: »«text:as»«text: »«text:/ui»«text: »«text:plugin»«text: »«text:add»«text: »«text:—»  «border:│»
+«border:│»                                       «text:the»«text: »«text:registry»«text: »«text:only»«text: »«text:points»«text: »«text:at»«text: »«text:the»        «border:│»
+«border:│»«text:Streams»«text: »«text:the»«text: »«text:latest»«text: »«text:price»«text: »«text:into»«text: »«text:a»        «text:manifest,»«text: »«text:it»«text: »«text:grants»«text: »«text:nothing»«text: »«text:on»«text: »«text:its»«text: »«text:own.»«border:│»
+«border:│»«text:top-right»«text: »«text:overlay»«text: »«text:and»                                                         «border:│»
+«border:│»«text:keeps»«text: »«text:a»«text: »«text:short»«text: »«text:sparkline»«text: »«text:of»«text: »«text:recent»                                             «border:│»
+«border:│»«text:moves.»«text: »«text:Behavioral:»«text: »«text:runs»«text: »«text:a»«text: »«text:small»                                               «border:│»
+«border:│»«text:subprocess»«text: »«text:and»«text: »«text:asks»«text: »«text:for»«text: »«text:the»«text: »«text:events.emit»                                       «border:│»
+«border:│»«text:capability.»                                                                   «border:│»
+«border:│»Header Clock                                                                  «border:│»
+«border:│»A wall-clock in the header, updated onc                                       «border:│»
+«border:│»«text:#»«text: »«text:Header»«text: »«text:Clock»                                                                «border:│»
+«border:│»                                                                              «border:│»
+«border:│»«text:Adds»«text: »«text:the»«text: »«text:current»«text: »«text:time»«text: »«text:to»«text: »«text:the»«text: »«text:header.»                                          «border:│»
+«border:│»«text:Declarative:»«text: »«text:mounts»«text: »«text:a»                                                         «border:│»
+«border:│»«text:single»«text: »«text:text»«text: »«text:node»«text: »«text:and»«text: »«text:ships»«text: »«text:its»«text: »«text:own»«text: »«text:dim»                                        «border:│»
+«border:│»«text:token,»«text: »«text:no»«text: »«text:subprocess.»                                                         «border:│»
+«border:└──────────────────────────────────────────────────────────────────────────────┘»

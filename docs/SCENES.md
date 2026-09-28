@@ -356,6 +356,17 @@ preview mode is part of the engine contract; Q17 the registry is a JSON index
 in a repo — no servers. Full bundle sharing (scene + theme + plugins in one
 manifest, one consent screen) rides on the same gate.
 
+Golden status (J5, 2026-09-28): frozen as `testdata/COMMUNITY.json` — the
+byte-for-byte output of `Registry.InstallerScene()` over a fixed `reg/v1` index,
+rendered through the ordinary engine path (`COMMUNITY.frame`/`.styled`). This
+increment bakes each entry as a pressable card carrying H8's `cmd:/ui plugin add
+<manifest_url>` install action; the live `list` bind, the query-bound search
+`input` and the selection-driven preview pane are the follow-up increment (they
+need a signed `community.*` view-state bind). Q16 preview mode is pinned at the
+frame level by `COMMUNITY-PREVIEW.frame` (a stranger's binds drawn from the
+manifest's declared mocks) and `COMMUNITY-PREVIEW-NIL.frame` (the byte-identical
+no-op with no preview table).
+
 ## Scene 8 — BUTTONS
 
 `button` with `on_press: "answer:approve"` and friends. Decided: Q18 the
