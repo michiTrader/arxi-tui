@@ -177,8 +177,6 @@ func firstDistinctiveWord(s string) string {
 	return ""
 }
 
-
-
 // TestCommunitySceneMatchesGolden freezes the plain frame. UPDATE_GOLDEN=1
 // regenerates it. This is the durable pin: a change to the installer builder, the
 // card shape, or the engine's rendering of it shows up here as a reviewable golden
@@ -366,5 +364,3 @@ func TestCommunityPreviewNilFrameMatchesGolden(t *testing.T) {
 		t.Errorf("Scene 7 nil-preview frame does not match golden:\n--- got ---\n%s\n--- want ---\n%s", got, string(want))
 	}
 }
-
-
