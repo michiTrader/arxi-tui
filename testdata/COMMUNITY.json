@@ -3,6 +3,15 @@
     "border": "single",
     "children": [
       {
+        "bind": "host.scene.error",
+        "id": "notice",
+        "style": {
+          "style": "banner"
+        },
+        "type": "text",
+        "when": "host.scene.error"
+      },
+      {
         "children": [
           {
             "children": [

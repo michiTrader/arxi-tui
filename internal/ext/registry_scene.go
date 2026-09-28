@@ -78,6 +78,7 @@ func (r *Registry) InstallerScene() (*scene.Document, error) {
 			"border": "single",
 			"title":  "Community — browse and install",
 			"children": []any{
+				installerNotice(),
 				map[string]any{
 					"type": "row",
 					"children": []any{
@@ -96,6 +97,26 @@ func (r *Registry) InstallerScene() (*scene.Document, error) {
 		return nil, fmt.Errorf("could not serialise the installer scene: %w", err)
 	}
 	return scene.ParseNamed("installer", out)
+}
+
+// installerNotice is the gated diagnostic row every scene this product ships must
+// carry (BINDS.md §2, PLAN.md invariant 3): the one node bound to host.scene.error,
+// the field through which the host delivers every diagnostic it computes. The
+// installer is a shipped, host-generated scene, so it is under the same obligation
+// as SOBRIA or the mounted TICKER host — without it, a refusal or an engine
+// diagnosis raised while the installer is on screen would be computed in full and
+// discarded one function short of a pixel, indistinguishable from a crash. The
+// `when` gate on the same field keeps it costless: host.scene.error is signed
+// "text | null", so a clean browse renders zero rows for it and the golden does
+// not move; it appears only when there is something to say.
+func installerNotice() map[string]any {
+	return map[string]any{
+		"id":    "notice",
+		"type":  "text",
+		"bind":  "host.scene.error",
+		"when":  "host.scene.error",
+		"style": map[string]any{"style": "banner"},
+	}
 }
 
 // installerCard is one registry entry as a pressable card: its name, description
