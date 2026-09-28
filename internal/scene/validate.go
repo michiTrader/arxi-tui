@@ -165,6 +165,16 @@ var signedBinds = map[string]bool{
 	"ui.surface":     true,
 	"ui.hidden":      true,
 
+	// §4.3 view state — the community installer (Scene 7, J3 follow-up). The
+	// live half of the installer scene: a search query, its filtered matches,
+	// and a selection cursor, in the slash.* mould. Signed so the InstallerScene
+	// builder and the validator agree on the vocabulary; the fold fields and the
+	// keystroke loop that populate them are the deferred live half (BINDS.md
+	// §4.6, DESIGN-BLOCK-J.md J3 follow-up).
+	"community.query":    true,
+	"community.matches":  true,
+	"community.selected": true,
+
 	// §2 bootstrap set — host survival state the raw scene may display
 	"user.input":           true,
 	"user.input.submitted": true,
@@ -219,6 +229,15 @@ var rowSchemas = map[string]map[string]bool{
 	"team.members":  {"row.id": true, "row.state": true, "row.role": true, "row.busy": true, "row.turns": true, "row.spent_usd": true},
 	"agent.todos":   {"row.task": true, "row.blocked_on": true, "row.actor": true},
 	"slash.matches": {"row.name": true, "row.category": true, "row.description": true},
+	// The community installer's entry cards (Scene 7, J3 follow-up). A card
+	// renders row.name + row.description and its on_press is
+	// `cmd:/ui plugin add {row.manifest_url}` (H8 interpolation), so every
+	// human-readable and install-driving field the card touches is addressable.
+	// The engine's rowScopesFor has no case yet — a row_template over
+	// community.matches draws nothing until the fold field lands (BINDS.md §4.6,
+	// DESIGN-BLOCK-J.md J3 follow-up) — but the schema is signed now so the
+	// validator accepts the installer scene the builder produces.
+	"community.matches": {"row.id": true, "row.name": true, "row.version": true, "row.manifest_url": true, "row.description": true, "row.preview": true},
 }
 
 // RowSchema returns the signed `row.<field>` names for a list bind, or nil if

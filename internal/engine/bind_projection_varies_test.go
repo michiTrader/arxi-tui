@@ -63,6 +63,17 @@ import (
 var pulseBindsWithoutFoldFields = map[string]string{
 	"user.input.submitted":  "enter-key pulse consumed by the host submit path; name reserved (BINDS.md §4.3)",
 	"session.new_milestone": "pulse with no fold field and an undecided lifetime, pending Scene 11 (BINDS.md §4.1)",
+	// The community installer's live view state (Scene 7, J3 follow-up). Signed
+	// in BINDS.md §4.3 so the InstallerScene builder and the validator agree on
+	// the vocabulary, but the fold fields that carry the query, the filtered
+	// matches and the selection are the deferred live half (BINDS.md §4.6,
+	// DESIGN-BLOCK-J.md J3 follow-up): there is nothing to perturb yet. These sit
+	// here for the same reason ui.hidden did before F3 gave it State.UIHidden —
+	// "no fold field yet, not a defect" — and are deleted the same way the moment
+	// the fold fields land.
+	"community.query":    "installer search query; no fold field until the J3 follow-up live loop (BINDS.md §4.6)",
+	"community.matches":  "installer filtered entries; no fold field until the J3 follow-up live loop (BINDS.md §4.6)",
+	"community.selected": "installer selection cursor; no fold field until the J3 follow-up live loop (BINDS.md §4.6)",
 	// ui.hidden was here while it had no fold field. F3 added State.UIHidden and
 	// the walk filter that consumes it, so it now maps to a field and is owned by
 	// the composite guard (perturbScalar skips the map, walkConsumedBinds proves

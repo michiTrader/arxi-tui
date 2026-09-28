@@ -164,6 +164,11 @@ written only through registered commands (`cmd:/slash`, `cmd:/max`,
 | `ui.surface` | text | the active surface/page identifier (e.g. `"chat"`, `"config"`, `"plugins"`) | on `cmd:/surface <name>` | `"chat"` — the default surface |
 | `ui.hidden` | set of node ids | the ids the user has hidden via `cmd:/ui hide <id>`; `cmd:/ui show <id>` removes one, `cmd:/ui show *` clears the set | on `cmd:/ui hide`/`show` | empty set — every node's visibility is decided by its `when` alone |
 | `ui.plugin.<id>` | text | the process lifecycle status of a mounted behavioral plugin, written by the host supervisor: `"starting"` (spawned, pre-handshake), `"live"` (handshake acked, streaming), `"error"` (repeated malformed frames or restart backoff), `"dead"` (process exited, frozen at last values) | on spawn, handshake ack, restart, and death (Block I supervisor) | empty string — no behavioral plugin with that id is mounted, so the bind is falsy for `when` |
+| `community.query` | text | the substring typed into the community installer's search `input` (Scene 7); the host recomputes `community.matches` from it via `Registry.FilterEntries` on every keystroke, the installer analogue of `slash.typed` over the command registry | on every keystroke while the installer scene is open | empty string — the browse view is open but unfiltered, so every registry entry is listed |
+| `community.matches` | array of `{id, name, version, manifest_url, description, preview}` | the registry index entries filtered by `community.query` (case-insensitive substring over name/description, `Registry.FilterEntries`); the installer's `list` binds to it and its `row_template` renders one pressable card per entry, the installer analogue of `slash.matches` | on every keystroke that changes `community.query`, and once when the index is fetched | empty array — no entry matches the query; distinct from a never-fetched index, which the scene reads through a separate liveness gate rather than by collapsing the two |
+| `community.selected` | int | the index into `community.matches` of the highlighted card; the list draws that row bright and the markdown preview pane renders its `preview`. The host owns it (↑/↓ while the installer is open and **wraps** at both ends), clamps it to the match list on every filter keystroke, and resets it to 0 when the installer reopens — the installer analogue of `slash.selected` | on ↑/↓ while the installer is open, and on any keystroke that changes `community.query` | `0` — the first match is highlighted |
+
+**The `community.*` installer view state (signed 2026-09-28, J3 follow-up; argued in `docs/DESIGN-BLOCK-J.md` J3).** These three rows are the live half of the community installer (Scene 7): `Registry.InstallerScene` (J3, PR #103) currently bakes the entries as static cards because the live `list`/search-input pair needs exactly this signed vocabulary. They are host view state in the `slash.*` mould — a `query`, its filtered `matches`, and a `selected` cursor — written by the installer's own keystroke loop, never by an arxi-core event, so a stranger's registry can never author them. `community.matches` is the previewed plugin's own entries; it is not the `<plugin-id>.*` preview namespace (J1, §4.4), which carries a *previewed manifest's* mocked binds, not the browse list. The empty-state of each is a no-op — an empty query lists everything, an empty match array draws no cards, a zero cursor highlights the first — so signing these rows moves no golden until the installer loop populates them (the deferred live half, §4.6).
 
 **Consumption of `ui.hidden` (signed 2026-09-22, D3).** Unlike every other row
 in this table, `ui.hidden` is consumed by the **engine walk**, not by a scene
@@ -288,6 +293,18 @@ print), `session.new_milestone` (a pulse with no fold field and an undecided
 lifetime — Scene 11), and `user.input.submitted` (signed only to reserve the
 name, as §4.3 states).
 
+The three `community.*` installer binds (§4.3) are signed-but-not-projected for
+a fifth reason, recorded the same way: the vocabulary is committed so the
+`InstallerScene` builder and the validator agree on it now, but the fold fields
+that carry the query, the filtered matches and the selection — and the installer
+keystroke loop that writes them — are the deferred live half (`DESIGN-BLOCK-J.md`
+J3 follow-up), gated on the same live-loop surface the I5 modal mount uses. Until
+those land, each resolves to the placeholder and its empty-state is a no-op, so
+signing them moves no golden. They are listed in `acceptedUnprojectedBinds` (the
+engine has no case) and in `pulseBindsWithoutFoldFields` (no fold field to
+perturb yet) with that blocker in writing; when the fold fields land, both
+entries are deleted the way `ui.hidden`'s were once F3 gave it `State.UIHidden`.
+
 **An unresolved bind is falsy.** It still *displays* as `"[…]"` so a scene from
 a newer build draws rather than crashes (ADR-0003), but display and visibility
 are different questions. Until this was fixed, `when` treated the placeholder
@@ -314,6 +331,7 @@ misspelled absolute bind is.
 | `team.members` | `row.id`, `row.state`, `row.role`, `row.busy`, `row.turns`, `row.spent_usd` |
 | `agent.todos` | `row.task`, `row.blocked_on`, `row.actor` |
 | `slash.matches` | `row.name`, `row.category`, `row.description` |
+| `community.matches` | `row.id`, `row.name`, `row.version`, `row.manifest_url`, `row.description`, `row.preview` |
 
 Interpolation (Q20): in an `on_press` argument, `{row.<field>}` is replaced by
 the element's field. Scene 9's row is `on_press: "cmd:/agent {row.id}"`. The
