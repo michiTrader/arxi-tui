@@ -104,7 +104,7 @@ func TestPerRowWhenGatesAgainstTheRowsField(t *testing.T) {
 // value, and it fails the moment resolveBindRow stops treating a nil row as
 // falsy.
 func TestRelativeBindOutsideATemplateIsFalsy(t *testing.T) {
-	got := resolveBindRow("row.role", twoMemberState(), nil, nil)
+	got := resolveBindRow("row.role", twoMemberState(), nil, nil, nil)
 	if got != placeholderValue {
 		t.Errorf("row.role with no row in scope resolved to %q; want the placeholder %q\n"+
 			"consequence: a relative bind outside a template would render an ambient value, which is a\n"+
