@@ -1233,6 +1233,30 @@ counterfactual test).
   now DONE — plus J1/J2), J4 (bundle), J5 (Scene 7 golden). J1's Scene 7 preview
   golden is pinned as part of J5.
 - **J2** Registry as a JSON index in a repo (no servers) — Q17.
+- **J2 — BUILT (2026-09-28, PR #102).** The server-less registry as
+  `internal/ext/registry.go`, mirroring `manifest.go`: `ParseRegistry`/
+  `ParseRegistryNamed` + `Registry.Validate()` with the same addressed `*Error`
+  and offset addressing, and a closed-set `version` (`legalRegistryVersions`, the
+  index analogue of `legalProtocols`) — an unknown version is refused, not
+  negotiated. `Validate` **never fetches**: it is a pure function over the index
+  bytes, refusing an unknown version and, per entry, a missing identity
+  (`id`/`name`/`version`/`description`, `id` matching `idPattern`) or a
+  `manifest_url` that is absent or **not HTTPS**. HTTPS-only is a security refusal
+  (a plaintext or `file://` URL from a public index would let it redirect the
+  install to swapped code or a local path — the design's security note).
+  `FetchRegistry` is the one network seam, HTTPS-only at the index URL too, with
+  the HTTP client injected (`fetchRegistry`) so the fetch path is tested against
+  `httptest.NewTLSServer` without the real network. **Counterfactuals run** (each
+  disabled and re-run per AGENTS.md): the closed-set version check, the HTTPS
+  check on `manifest_url` (both `http://` and `file://`), and the `Validate` call
+  inside the fetch path all go silent when reverted; the positive controls and the
+  intentional preview-optional/description-required split are pinned too. **What
+  J2 does NOT do:** it discovers URLs only — install still flows through the
+  existing H6/I5 pipeline (fetch `manifest_url`, full manifest `Validate`, Q15
+  consent gate, `patch.Mount`); the registry grants nothing. **Remaining for J:**
+  J3 (installer scene — needs J1+J2 **and** H8 action routing for its `i`/search
+  interactivity, still refused today), J4 (bundle, needs I5), J5 (Scene 7 golden,
+  including J1's preview frame and the nil no-op frame).
 - **J3** [J1,J2] Installer scene: entry list + markdown preview panel + search
   input + `i` to install.
 - **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent

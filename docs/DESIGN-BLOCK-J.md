@@ -141,7 +141,19 @@ bind draws its manifest mock, plus a second frame with `PreviewMocks == nil`
 proving the byte-identical no-op — the SOBRIA-zero-row trap in AGENTS.md is the
 reason both directions are pinned.
 
-## J2 — the server-less registry
+## J2 — the server-less registry (BUILT PR #102)
+
+**BUILT as `internal/ext/registry.go`.** The loader mirrors `manifest.go`:
+`ParseRegistry`/`ParseRegistryNamed` + `Registry.Validate()` with the same
+addressed `*Error`, and a closed-set `version` (`legalRegistryVersions`, the index
+analogue of `legalProtocols`). `Validate` never fetches — it is a pure function
+over the index bytes, refusing an unknown version and, per entry, a missing
+identity or a `manifest_url` that is absent or not HTTPS. `FetchRegistry` is the
+one network seam, HTTPS-only at the index URL too, with the HTTP client injectable
+so the fetch path is tested against `httptest.NewTLSServer` without the real
+network. Forks 2 (inline `preview`) and the security note below landed at their
+recommended defaults; the overall Block J signature remains the owner's, so J2
+lands ahead of it the way J1 and the §I-I installer did.
 
 **PROPOSAL: a single JSON file committed to a git repo, fetched over HTTPS (a raw
 file URL), no server.** Shape:
