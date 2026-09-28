@@ -337,6 +337,38 @@ the row-selection highlight (a `row_template` carries no row index today), plus
 the keystroke loop that writes the fold fields via `FilterEntries`.
 
 
+**Follow-up increment (2026-09-28) — the row-selection highlight.** The second
+of the three deferred affordances: the live installer draws the
+`community.selected` row bright. The deferral above named the blocker as "a
+`row_template` carries no row index today"; the resolution is not to expose the
+index but to answer the comparison the highlight needs, once, per row. This
+engine's `when` is a bare truthiness test with no comparison operator (LESSONS.md
+records that no `!`/`==`/`!=` operator exists), so a scene cannot write
+`row.index == community.selected` itself. `rowScopesFor` therefore synthesizes a
+per-row `row.selected` boolean — `boolField(i == state.CommunitySelected)` — the
+one `row.*` field on `community.matches` with no `CommunityMatch` column behind
+it. It is signed in BINDS.md §4.7 and `rowSchemas` alongside the element fields,
+with the argument for why it is a boolean and not a `row.index` integer: an
+integer would be dead without an operator to compare it. `liveInstallerList`
+wraps the name in a `row` of a `when: "row.selected"` caret glyph and the name
+text — exactly the shape Scene 9 uses for `when: "row.busy"` — so the selected
+row wears a leading marker and every other row sits at column zero. It is a
+marker rather than a brightened token because `when` shows or hides a node, it
+does not switch one node's token between two values, and a second negated node to
+draw the unselected state dim is not expressible without the operator the engine
+lacks. The `COMMUNITY-LIVE` goldens move (Scene 7 variant, its own mutation
+family): the default `community.selected=0` marks the first entry.
+`TestLiveInstallerHighlightsTheSelectedRow` drives the cursor across both rows so
+the marker must *move* — a fixed-row check would pass on an engine that marked
+row 0 regardless — and asserts the marker on the selected row's own line and
+absent from the other, so it fails both when no row is marked and when every row
+is. The counterfactual, run by hand: `boolField(...&&false)` drops the marker and
+fails "not marked"; `boolField(...||true)` marks every row and fails "also
+marked". **Deferred after this:** the `community.selected.*` preview pane (new
+signed absolute binds) and the keystroke loop that writes the fold fields via
+`FilterEntries`.
+
+
 **PROPOSAL, under ADR-0003, copying the `Diff.Scene` construction pattern.** The
 installer is a document the host **generates from the fetched index** — built as
 `map[string]any`, marshalled, re-parsed through `scene.ParseNamed`, exactly as the
