@@ -1,7 +1,11 @@
 package main
 
 import (
+	"context"
+
+	"github.com/michiTrader/arxi_tui/internal/ext"
 	"github.com/michiTrader/arxi_tui/internal/ext/supervisor"
+	"github.com/michiTrader/arxi_tui/internal/patch"
 	"github.com/michiTrader/arxi_tui/internal/scene"
 	"github.com/michiTrader/arxi_tui/internal/term"
 )
@@ -85,4 +89,70 @@ func (im *installModal) handleKey(k term.Key) (consumed bool) {
 	im.consent.reply <- answer
 	im.consent = nil
 	return true
+}
+
+// consentRequest is the worker→loop message asking the loop to show a consent
+// screen and reply with the user's answer. doc is the ext.ConsentScene the worker
+// built with the real digest; declared is the capability set the manifest asked
+// for; reply carries the answer back to the Prompt the worker is blocked in. It
+// crosses goroutines, but doc is built and then never touched again by the worker
+// (it parks on the reply receive), so the loop reads it without a race.
+type consentRequest struct {
+	doc      *scene.Document
+	declared []string
+	reply    chan supervisor.ConsentAnswer
+}
+
+// installOutcome is the worker→loop message carrying an install's final result.
+// url is echoed so a message can name what the user typed; sup is the live
+// supervisor to hold for `/ui plugin remove` (nil on any failure); installed is
+// the laid-out package (non-nil even on a rejection, so a refusal can name what
+// was on disk); err distinguishes a rejection (supervisor.ErrConsentRejected)
+// from a fetch/install/spawn failure.
+type installOutcome struct {
+	url       string
+	sup       *supervisor.Supervisor
+	installed *ext.Installed
+	err       error
+}
+
+// startInstall launches the install worker for one `/ui plugin install <url>`.
+// The whole fetch→install→mount thread runs on the goroutine so the loop is never
+// blocked on the network (invariant 6: the panic gesture must stay live through a
+// hung download). The consent step bridges back to the loop: the Prompt the thread
+// hands supervisor.Mount builds the consent screen with the real digest — the one
+// place that digest can reach the screen (installBehavioralPlugin's promptFor doc)
+// — sends it to the loop over consentReq, and blocks on a per-request reply channel
+// the loop answers through the modal. A remembered plugin never reaches the Prompt,
+// so no screen is shown and the thread runs to a silent remount. The final result,
+// success or failure, always lands on done exactly once so the loop can clear busy.
+func startInstall(
+	ctx context.Context,
+	url string,
+	fetch patch.Fetcher,
+	pluginsRoot string,
+	gate *ext.Gate,
+	store *ext.PluginStore,
+	reg *supervisor.Registry,
+	consentReq chan<- consentRequest,
+	done chan<- installOutcome,
+) {
+	promptFor := func(digest string) supervisor.Prompt {
+		return func(m *ext.Manifest, declared []string) (supervisor.ConsentAnswer, error) {
+			doc, err := ext.ConsentScene(m, digest)
+			if err != nil {
+				// The screen could not be built, so the user cannot be asked. Mount
+				// treats a Prompt error as an abort with no spawn — the safe default,
+				// "no answer is not a yes" — which is exactly right here.
+				return supervisor.ConsentAnswer{}, err
+			}
+			reply := make(chan supervisor.ConsentAnswer, 1)
+			consentReq <- consentRequest{doc: doc, declared: declared, reply: reply}
+			return <-reply, nil
+		}
+	}
+	go func() {
+		s, installed, err := installBehavioralPlugin(ctx, url, fetch, pluginsRoot, gate, store, reg, promptFor)
+		done <- installOutcome{url: url, sup: s, installed: installed, err: err}
+	}()
 }

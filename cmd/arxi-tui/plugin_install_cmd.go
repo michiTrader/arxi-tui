@@ -72,3 +72,35 @@ func parsePluginInstall(line string) (rawURL string, matched bool, err error) {
 	}
 	return args[0], true, nil
 }
+
+// parsePluginRemoveID reads the plugin id from a `/ui plugin remove <id>` line, so
+// the host can Close a behavioral plugin's supervisor before the patch surface
+// handles the document/token half of the same command.
+//
+// matched reports only that the line IS a `plugin remove` invocation with one id;
+// it is a peek, not a takeover. A behavioral plugin (one this host spawned and
+// holds a supervisor for) must have that process stopped, which the patch
+// surface — a pure document transform — cannot do. So the host peeks the id here,
+// stops the process if it is one it holds, and still lets the command flow to the
+// patch surface for the declarative half (a plugin that also mounted fragments).
+// A malformed remove (wrong id count) returns matched=false: the host does not own
+// the refusal, the patch surface already refuses it with the right message, and
+// duplicating that here would be a second grammar to drift.
+func parsePluginRemoveID(line string) (id string, matched bool) {
+	body := strings.TrimSpace(line)
+	for _, p := range []string{"/ui", "ui"} {
+		if body == p {
+			body = ""
+			break
+		}
+		if strings.HasPrefix(body, p+" ") {
+			body = strings.TrimSpace(body[len(p):])
+			break
+		}
+	}
+	fields := strings.Fields(body)
+	if len(fields) != 3 || fields[0] != "plugin" || fields[1] != "remove" {
+		return "", false
+	}
+	return fields[2], true
+}

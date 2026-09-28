@@ -11,6 +11,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 	"github.com/michiTrader/arxi_tui/internal/driver"
 	"github.com/michiTrader/arxi_tui/internal/engine"
+	"github.com/michiTrader/arxi_tui/internal/ext"
 	"github.com/michiTrader/arxi_tui/internal/ext/supervisor"
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/patch"
@@ -542,6 +544,52 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// is I5's to do.
 	pluginActions := supervisor.NewRegistry()
 
+	// The behavioral-plugin install surface (I6). These sit beside pluginActions
+	// as host view-side state the loop owns across frames:
+	//
+	//   - pluginGate decides consent by a plugin's identity; a warning (empty when
+	//     clean) is surfaced as the scene notice so a consent-store problem is
+	//     visible without bricking the interface (openConsentGate's contract).
+	//   - pluginStore is where a mounted plugin's frames drain (I3). It is created
+	//     here so supervisor.Mount has somewhere to pump into; reading its binds
+	//     back into the per-frame fold is a separate wiring (still to land), so a
+	//     mounted plugin runs and is held, but its binds are not yet drawn.
+	//   - archiveFetch is the one network client the install path uses, built once
+	//     so its cap and timeout are the loop's, like pluginFetch above.
+	//   - modal holds the in-progress install's loop-visible state (busy + the
+	//     consent screen); consentReqCh/installDoneCh bridge the worker goroutine
+	//     back to this select.
+	//   - mountedPlugins holds each live behavioral plugin's supervisor by id, so
+	//     `/ui plugin remove <id>` can Close the process it spawned and shutdown can
+	//     Close them all.
+	pluginGate, gateWarn := openConsentGate()
+	if gateWarn != "" {
+		// Surface the consent-store warning without clobbering an invariant-3 scene
+		// notice: if the requested scene was refused, that reason stays on screen
+		// and the gate warning rides after it, because both are load-bearing — the
+		// first says why this scene is showing, the second why grants will not
+		// persist this session.
+		if sceneNotice == "" {
+			sceneNotice = gateWarn
+		} else {
+			sceneNotice = sceneNotice + " · " + gateWarn
+		}
+	}
+	pluginStore := ext.NewPluginStore()
+	archiveFetch := newHTTPArchiveFetcher()
+	var modal installModal
+	consentReqCh := make(chan consentRequest)
+	installDoneCh := make(chan installOutcome, 1)
+	mountedPlugins := map[string]*supervisor.Supervisor{}
+	// Every spawned plugin process is stopped when the loop ends, so a normal quit
+	// does not leak a subprocess. Close is idempotent and the pump's DrainInto
+	// already exits on process death, so closing one already reaped is harmless.
+	defer func() {
+		for _, s := range mountedPlugins {
+			s.Close()
+		}
+	}()
+
 	// The host animation clock (ADR-0005). It holds per-node elapsed time
 	// across frames like uiHidden above, feeds the renderer a phase, and reads
 	// back which nodes are animating so the ticker below runs only while one
@@ -693,7 +741,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		r.AnimTicks = clock.ticks()
 		r.AnimPhase = clock.phases()
 		r.ChatScroll = chatScroll
-		frame, active := r.RenderFrameActive(doc, state)
+		// While a consent screen is up it replaces the scene on display: the modal
+		// owns the whole frame so the identity the user is judging is the only thing
+		// they see, and a keypress cannot be split between the prompt and the scene
+		// behind it. The fold state is passed unchanged — ext.ConsentScene is static
+		// text and binds to none of it — so the swap is purely which document is
+		// walked.
+		activeDoc := doc
+		if modal.capturing() {
+			activeDoc = modal.consent.doc
+		}
+		frame, active := r.RenderFrameActive(activeDoc, state)
 		// Pin the scroll offset to what the renderer could actually honour: it
 		// alone knows the wrapped line count and the pane budget, so a wheel spun
 		// past the top settles here instead of banking dead scroll that a later
@@ -772,6 +830,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						input = ""
 						caret = 0
 						escapeTimer = time.After(driver.ArmTimeout)
+					} else if modal.capturing() {
+						// A consent screen is up: it owns every non-panic key. This
+						// sits immediately after the Ctrl-C branch so the escape hatch
+						// still reaches HandleCtrlC (invariant 6) and cannot be captured
+						// by the prompt, and before every other handler so a 'y' meant
+						// for the prompt cannot reach the chat buffer or the slash menu.
+						// The keypress is an intentional answer, so it disarms the panic
+						// gesture like any other input; handleKey routes it through
+						// consentAnswerForKey, answering the blocked worker and closing
+						// the screen on y/r/n/Esc and leaving it standing otherwise.
+						panicGesture.Reset()
+						modal.handleKey(ev.Key)
 					} else if ev.Key.Type == term.KeyWheelUp || ev.Key.Type == term.KeyWheelDown {
 						// The mouse wheel scrolls the chat pane and nothing else: it
 						// does not type, and it does not disarm the panic gesture (a
@@ -807,7 +877,50 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// nothing, with the menu showing an empty list. Asking
 						// the command surface first means a line it recognises is
 						// never the menu's to swallow.
-						if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens); handled {
+						if url, matched, perr := parsePluginInstall(input); ev.Key.Type == term.KeyEnter && matched {
+							// `/ui plugin install <url>` is host-owned, not a patch:
+							// it fetches a bundle, spawns a process and holds it, none
+							// of which the patch surface (a pure document transform)
+							// can do, so it is intercepted here before uiCommandKey.
+							// The work runs on a worker goroutine (startInstall) so a
+							// hung fetch never freezes the loop or the panic gesture;
+							// the loop only records that one is in flight (modal.busy)
+							// and reacts to the worker's messages in the select cases
+							// below.
+							switch {
+							case perr != nil:
+								sceneNotice = perr.Error()
+							case modal.busy:
+								sceneNotice = "/ui plugin install: an install is already in progress; finish it or answer the consent screen before starting another"
+							default:
+								root, rerr := pluginsRootPath()
+								if rerr != nil {
+									sceneNotice = "/ui plugin install: " + rerr.Error()
+								} else {
+									modal.busy = true
+									sceneNotice = "/ui plugin install: fetching " + url + " …"
+									startInstall(ctx, url, archiveFetch, root, pluginGate, pluginStore, pluginActions, consentReqCh, installDoneCh)
+								}
+							}
+							input = ""
+							caret = 0
+						} else if id, matched := parsePluginRemoveID(input); ev.Key.Type == term.KeyEnter && matched && mountedPlugins[id] != nil {
+							// A behavioral plugin's remove stops the process this host
+							// spawned. Such a plugin (mounted by install) has no
+							// document subtree — install spawns and registers actions,
+							// it does not place fragments — so the patch surface would
+							// refuse "not mounted here"; the host owns this remove. Close
+							// reaps the process, the pump's DrainInto then drops the
+							// store namespace, and the Mount goroutine removes it from
+							// the routing table on exit. A declarative plugin (no held
+							// supervisor) is not matched here and falls through to the
+							// patch unmount below.
+							mountedPlugins[id].Close()
+							delete(mountedPlugins, id)
+							sceneNotice = "/ui plugin remove: stopped and unmounted plugin " + id
+							input = ""
+							caret = 0
+						} else if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens); handled {
 							input = next
 							caret = clampCaret(input, caret)
 						} else if strings.HasPrefix(input, "/") {
@@ -900,6 +1013,37 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				collected = append(collected, e)
 				repaint()
 			}
+
+		case req := <-consentReqCh:
+			// The install worker reached supervisor.Mount's prompt for an unseen
+			// plugin and is blocked awaiting the user's answer. Put its consent
+			// screen up: repaint now swaps to modal.consent.doc and the key branch
+			// above routes every non-panic key through modal.handleKey, which sends
+			// the answer back on req.reply. A remembered plugin never lands here
+			// (Mount does not prompt), so a silent remount shows no screen.
+			modal.beginConsent(req.doc, req.declared, req.reply)
+			repaint()
+
+		case out := <-installDoneCh:
+			// The worker finished — granted-and-spawned, rejected, or failed. Clear
+			// busy so a next install may start, and report the outcome. On success
+			// the live supervisor is held by id so `/ui plugin remove` can Close it;
+			// a rejection is named distinctly from a failure (ErrConsentRejected) so
+			// the user learns their own "no" was honoured rather than something
+			// broke. The consent screen, if it was up, was already closed by the
+			// key that answered; nothing to tear down here.
+			modal.busy = false
+			switch {
+			case out.err == nil:
+				id := out.installed.Manifest.ID
+				mountedPlugins[id] = out.sup
+				sceneNotice = "/ui plugin install: mounted plugin " + id
+			case errors.Is(out.err, supervisor.ErrConsentRejected):
+				sceneNotice = "/ui plugin install: you rejected " + out.url + "; nothing was spawned"
+			default:
+				sceneNotice = "/ui plugin install: " + out.err.Error()
+			}
+			repaint()
 		}
 	}
 }
