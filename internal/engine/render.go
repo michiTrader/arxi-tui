@@ -1781,6 +1781,24 @@ func rowScopesFor(bind string, state fold.State) []map[string]string {
 			})
 		}
 		return rows
+	case "community.matches":
+		// One scope per filtered registry entry (BINDS.md §4.7). The keys are the
+		// full row.<field> strings rowSchemas signs for community.matches; a
+		// row_template over any other field is refused at load time, so drawing
+		// every signed field here and no other keeps the builder and the
+		// validator agreeing on the row's vocabulary.
+		rows := make([]map[string]string, 0, len(state.CommunityMatches))
+		for _, m := range state.CommunityMatches {
+			rows = append(rows, map[string]string{
+				"row.id":           m.ID,
+				"row.name":         m.Name,
+				"row.version":      m.Version,
+				"row.manifest_url": m.ManifestURL,
+				"row.description":  m.Description,
+				"row.preview":      m.Preview,
+			})
+		}
+		return rows
 	default:
 		return nil
 	}
@@ -1955,6 +1973,14 @@ func resolveBind(bind string, state fold.State) string {
 		return state.SlashTyped
 	case "slash.selected":
 		return fmt.Sprintf("%d", state.SlashSelected)
+	case "community.query":
+		return state.CommunityQuery
+	case "community.selected":
+		// The highlighted card's index into community.matches, the direct
+		// analogue of slash.selected. A list bound to community.matches reads it
+		// to draw one row bright (BINDS.md §4.3); the host clamps it to the match
+		// list, so a value the renderer receives is always in range.
+		return fmt.Sprintf("%d", state.CommunitySelected)
 	case "ui.focus":
 		return state.UIFocus
 	case "ui.max":
