@@ -1,0 +1,73 @@
+{
+  "root": {
+    "border": "single",
+    "children": [
+      {
+        "bind": "host.scene.error",
+        "id": "notice",
+        "style": {
+          "style": "banner"
+        },
+        "type": "text",
+        "when": "host.scene.error"
+      },
+      {
+        "children": [
+          {
+            "children": [
+              {
+                "bind": "community.query",
+                "id": "installer.search",
+                "placeholder": "search community plugins",
+                "type": "input"
+              },
+              {
+                "bind": "community.matches",
+                "id": "installer.list",
+                "row_template": {
+                  "children": [
+                    {
+                      "bind": "row.name",
+                      "style": {
+                        "style": "header"
+                      },
+                      "type": "text"
+                    },
+                    {
+                      "bind": "row.version",
+                      "style": {
+                        "style": "dim"
+                      },
+                      "type": "text"
+                    },
+                    {
+                      "bind": "row.description",
+                      "type": "text"
+                    }
+                  ],
+                  "type": "stack"
+                },
+                "type": "list"
+              }
+            ],
+            "type": "stack",
+            "weight": 1
+          },
+          {
+            "children": [
+              {
+                "text": "Focus an entry with Tab and press Enter to install it. Each entry installs from its signed manifest_url through the same consent gate as /ui plugin add — the registry only points at the manifest, it grants nothing on its own.",
+                "type": "markdown"
+              }
+            ],
+            "type": "stack",
+            "weight": 1
+          }
+        ],
+        "type": "row"
+      }
+    ],
+    "title": "Community — browse and install",
+    "type": "box"
+  }
+}
