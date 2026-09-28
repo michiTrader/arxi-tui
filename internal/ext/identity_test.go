@@ -49,6 +49,9 @@ func TestIdentityBindsEveryTupleField(t *testing.T) {
 		{"executable", func(m *Manifest) { m.Executable = "./other" }},
 		{"args", func(m *Manifest) { m.Args = []string{"--interval", "10s"} }},
 		{"capability membership", func(m *Manifest) { m.Capabilities = []string{"actions.register"} }},
+		{"capability membership widened with tools.register", func(m *Manifest) {
+			m.Capabilities = []string{"actions.register", "events.emit", "tools.register"}
+		}},
 	}
 	for _, tc := range mutate {
 		m := behavioralManifest()
