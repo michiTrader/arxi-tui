@@ -54,6 +54,20 @@ func pluginsRootPath() (string, error) {
 // make every mount look like a different plugin and break the remembered-grant
 // contract the gate rests on — the exact reason the loop could not wire this until
 // InstallFromBundle computed a real digest.
+//
+// # Why the prompt arrives as a factory of the digest
+//
+// The consent screen the modal loop draws (ext.ConsentScene) renders the digest
+// as half the identity the grant binds to, but that digest is not known until
+// InstallFromBundle has laid the tree out — after this function has begun and
+// before Mount is reached. supervisor.Prompt's own signature carries only the
+// manifest and the declared set (I5's seam, left unchanged), so the one place the
+// real digest can reach the screen is here, where it was just computed. Taking a
+// factory promptFor(digest) rather than a bare Prompt is what lets the loop build
+// a screen showing the exact bytes consent is checked against, without duplicating
+// this fetch→install→mount order at the call site — the order is one decision and
+// belongs in one function (AGENTS.md: two statements of one fact are a defect). A
+// caller with no use for the digest (a test with a fixed answer) ignores it.
 func installBehavioralPlugin(
 	ctx context.Context,
 	rawURL string,
@@ -62,7 +76,7 @@ func installBehavioralPlugin(
 	gate *ext.Gate,
 	store *ext.PluginStore,
 	reg *supervisor.Registry,
-	prompt supervisor.Prompt,
+	promptFor func(digest string) supervisor.Prompt,
 ) (*supervisor.Supervisor, *ext.Installed, error) {
 	_, data, err := fetch.Fetch(rawURL)
 	if err != nil {
@@ -80,7 +94,7 @@ func installBehavioralPlugin(
 	// from the gate, and pre-filling it here could not smuggle power past the gate
 	// (invariant 7), but leaving it empty says so plainly.
 	cfg := supervisor.Config{Manifest: *installed.Manifest, Root: installed.Root}
-	s, err := supervisor.Mount(ctx, gate, cfg, installed.Digest, store, reg, prompt)
+	s, err := supervisor.Mount(ctx, gate, cfg, installed.Digest, store, reg, promptFor(installed.Digest))
 	if err != nil {
 		return nil, installed, err
 	}

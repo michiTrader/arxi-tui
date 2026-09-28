@@ -83,6 +83,16 @@ func (s stubFetcher) Fetch(rawURL string) (string, []byte, error) {
 	return rawURL, s.data, nil
 }
 
+// fixedPrompt adapts a plain supervisor.Prompt to the promptFor(digest) factory
+// installBehavioralPlugin now takes. These tests answer without reading the
+// digest — they reject, or never reach the prompt at all — so the factory ignores
+// its argument and hands back the same prompt for every digest. The real modal
+// loop is the caller that uses the digest (to render ext.ConsentScene); pinning
+// that belongs with the loop wiring, not this seam test.
+func fixedPrompt(p supervisor.Prompt) func(string) supervisor.Prompt {
+	return func(string) supervisor.Prompt { return p }
+}
+
 // TestInstallBehavioralPluginRejectionSpawnsNothing walks the whole thread with a
 // prompt that rejects: the bundle is fetched, laid out on disk (installed is
 // returned so a rejection can name the package), the gate is consulted, and the
@@ -100,7 +110,7 @@ func TestInstallBehavioralPluginRejectionSpawnsNothing(t *testing.T) {
 	}
 	fetch := stubFetcher{data: buildInstallBundle(t, behavioralBundleJSON, false)}
 
-	s, installed, err := installBehavioralPlugin(context.Background(), "https://example/tick.tar.gz", fetch, root, gate, store, reg, reject)
+	s, installed, err := installBehavioralPlugin(context.Background(), "https://example/tick.tar.gz", fetch, root, gate, store, reg, fixedPrompt(reject))
 	if !errors.Is(err, supervisor.ErrConsentRejected) {
 		t.Fatalf("a rejected install returned err=%v, want ErrConsentRejected; a plugin the user refused must not spawn and the refusal must be reportable distinctly from a failure", err)
 	}
@@ -133,7 +143,7 @@ func TestInstallBehavioralPluginPropagatesAFetchError(t *testing.T) {
 		return supervisor.ConsentAnswer{}, nil
 	}
 
-	s, installed, err := installBehavioralPlugin(context.Background(), "https://example/tick.tar.gz", stubFetcher{err: sentinel}, root, gate, store, reg, grant)
+	s, installed, err := installBehavioralPlugin(context.Background(), "https://example/tick.tar.gz", stubFetcher{err: sentinel}, root, gate, store, reg, fixedPrompt(grant))
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("a fetch error must propagate; got %v", err)
 	}
@@ -171,7 +181,7 @@ func TestInstallBehavioralPluginRefusesABadBundle(t *testing.T) {
 		return supervisor.ConsentAnswer{}, nil
 	}
 
-	s, installed, err := installBehavioralPlugin(context.Background(), "https://example/bad.tar.gz", stubFetcher{data: buf.Bytes()}, root, gate, store, reg, grant)
+	s, installed, err := installBehavioralPlugin(context.Background(), "https://example/bad.tar.gz", stubFetcher{data: buf.Bytes()}, root, gate, store, reg, fixedPrompt(grant))
 	if err == nil {
 		t.Fatal("a bundle with no manifest must be refused before mount")
 	}
