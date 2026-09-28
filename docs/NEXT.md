@@ -1347,6 +1347,36 @@ counterfactual test).
   **Still deferred:** the installer keystroke loop that writes these fields via
   `Registry.FilterEntries` and rebuilds `InstallerScene` to a live `list`/search
   pair, and the selection→preview pane — the parts that touch the real-tty loop.
+- **J3 follow-up — live installer document BUILT (2026-09-28).** The next
+  increment after the projection landed: `ext.LiveInstallerScene()`, the
+  community installer as a *live* document that binds the search `input` to
+  `community.query` and the entry `list` to a `row_template` over
+  `community.matches`, rather than baking static cards the way the frozen
+  `InstallerScene` (Scene 7) does. It takes no index — the entries now live in
+  the fold, written by the keystroke loop from `Registry.FilterEntries` — so the
+  structure is a pure constant and the folded matches are the content (ADR-0002:
+  scene says form, fold says content). It is pinned before the loop mounts it,
+  the same order `TICKER.json`/`COMMUNITY.json` pin a build output ahead of its
+  consumer: `testdata/COMMUNITY-LIVE.json` is byte-for-byte the builder output
+  (`TestLiveInstallerJSONIsTheBuilderOutput`), and `.frame`/`.styled` pin the
+  frame rendered over a **non-empty** folded `community.*` state — the coverage
+  the increment exists for, since no test rendered `community.matches` into a
+  frame before, leaving the PR #108 projection proven only at the unit resolver.
+  `TestLiveInstallerDrawsEveryMatch` witnesses each folded entry reaching the
+  frame through the template; counterfactual run: neutering `rowScopesFor`'s
+  `community.matches` case empties the list and it fails on the first entry.
+  **Three affordances are deliberately deferred, each the engine capability it
+  needs:** (1) the search input shows its placeholder, not the typed query —
+  `renderInput` draws a bound value only for `user.input` today, so displaying
+  `community.query` is its own engine change; (2) the right column stays the
+  static help pane — a selection-driven preview needs the selected entry's fields
+  as new signed absolute binds (`community.selected.preview` and friends); (3) no
+  selection highlight — the row's index inside its own scope is not carried by
+  any `row_template` today. **Still deferred after this:** those three, plus the
+  keystroke loop that writes the fold fields via `FilterEntries` and swaps this
+  document onto the display (at which point the Scene 7 golden moves to this
+  builder in its own mutation family and the static `InstallerScene` retires).
+
 - **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent
   screen).
 - **J5** [J3] Freeze the Scene 7 golden.
