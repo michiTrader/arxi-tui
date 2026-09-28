@@ -1092,6 +1092,48 @@ counterfactual test).
     parse the verb, drive the consent scene through `consentAnswerForKey` to build
     the `Prompt`, and hold the returned supervisor for `/ui plugin remove` — plus the
     tool-door half (the agent-facing side of Gate B).
+  - **I6-install-modal — LANDED (2026-09-28).** The interactive
+    `/ui plugin install <url>` command, wired into the loop. Five pieces, each pure
+    part pinned before the glue:
+    (1) `parsePluginInstall` (`plugin_install_cmd.go`) is the host-level grammar.
+    Install is not a source-to-source patch — it fetches a bundle, spawns a held
+    process — so it is intercepted in the host before `patch.ApplyWithFetch`, not
+    added to the patch surface's closed verb set (which owns the manifest-only
+    add/remove). It claims exactly the install lines and refuses a missing/extra URL
+    itself so the user sees the real problem, not patch's "unknown subcommand".
+    `parsePluginRemoveID` is its sibling: a peek, so the host can `Close` a
+    behavioral plugin's process (which the pure patch surface cannot) while a
+    declarative remove still flows to `patch.Unmount`.
+    (2) `installBehavioralPlugin` now takes a prompt factory `promptFor(digest)`
+    rather than a bare `Prompt`: `ext.ConsentScene` renders the digest as half the
+    identity a grant binds to, but the digest is known only after `InstallFromBundle`
+    — inside the thread — so the factory is the one place it can reach the screen
+    without duplicating the fetch→install→mount order at the call site.
+    (3) `installModal` (`install_modal.go`) is the loop-side consent state: `busy`
+    (an install is in flight) and `consent` (a screen is up capturing keys).
+    `handleKey` routes every non-panic key through `consentAnswerForKey` and ALWAYS
+    consumes it while a screen is up, so a `y` meant for the prompt cannot leak into
+    chat; it answers the blocked worker on y/r/n/Esc and leaves the prompt standing
+    otherwise.
+    (4) `startInstall` runs the whole thread on a worker goroutine (a hung fetch must
+    never freeze the loop or the panic gesture, invariant 6) and bridges consent back
+    over channels: the `Prompt` sends its digest-built screen on `consentReqCh` and
+    blocks on a per-request reply the loop answers through the modal; the final result
+    lands on `installDoneCh`.
+    (5) The loop wiring: two select cases (show the screen; clear `busy` and hold the
+    supervisor by id / name a rejection distinctly from a failure), the modal key
+    branch placed right after the Ctrl-C check (escape hatch uncapturable) and before
+    every other handler (no answer leaks to chat), `repaint` swapping to the consent
+    doc, and shutdown closing every held supervisor. Counterfactuals run: making an
+    undecided key fall through fails the standing-prompt test; the bridge test proves
+    a real `ConsentScene` reaches the loop and a rejection is reported with the
+    package laid out and nothing spawned. **Remaining for I6:** the store→render
+    wiring so a mounted plugin's frames (I3 `PluginStore`) are drawn in the per-frame
+    fold — install spawns, holds and drains today, but the binds are not yet read
+    back into the walk — and the tool-door half (the agent-facing side of Gate B).
+    (`-race` could not run in the sandbox: no C toolchain; the bridge has no shared
+    mutable state, the consent doc is built on the worker then only read by the loop
+    after the channel handoff.)
 
 ### Block J — Phase 3: the community installer as a scene (Scene 7) [H]
 

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/michiTrader/arxi_tui/internal/ext"
 	"github.com/michiTrader/arxi_tui/internal/ext/supervisor"
@@ -83,6 +84,16 @@ func (s stubFetcher) Fetch(rawURL string) (string, []byte, error) {
 	return rawURL, s.data, nil
 }
 
+// fixedPrompt adapts a plain supervisor.Prompt to the promptFor(digest) factory
+// installBehavioralPlugin now takes. These tests answer without reading the
+// digest — they reject, or never reach the prompt at all — so the factory ignores
+// its argument and hands back the same prompt for every digest. The real modal
+// loop is the caller that uses the digest (to render ext.ConsentScene); pinning
+// that belongs with the loop wiring, not this seam test.
+func fixedPrompt(p supervisor.Prompt) func(string) supervisor.Prompt {
+	return func(string) supervisor.Prompt { return p }
+}
+
 // TestInstallBehavioralPluginRejectionSpawnsNothing walks the whole thread with a
 // prompt that rejects: the bundle is fetched, laid out on disk (installed is
 // returned so a rejection can name the package), the gate is consulted, and the
@@ -100,7 +111,7 @@ func TestInstallBehavioralPluginRejectionSpawnsNothing(t *testing.T) {
 	}
 	fetch := stubFetcher{data: buildInstallBundle(t, behavioralBundleJSON, false)}
 
-	s, installed, err := installBehavioralPlugin(context.Background(), "https://example/tick.tar.gz", fetch, root, gate, store, reg, reject)
+	s, installed, err := installBehavioralPlugin(context.Background(), "https://example/tick.tar.gz", fetch, root, gate, store, reg, fixedPrompt(reject))
 	if !errors.Is(err, supervisor.ErrConsentRejected) {
 		t.Fatalf("a rejected install returned err=%v, want ErrConsentRejected; a plugin the user refused must not spawn and the refusal must be reportable distinctly from a failure", err)
 	}
@@ -133,7 +144,7 @@ func TestInstallBehavioralPluginPropagatesAFetchError(t *testing.T) {
 		return supervisor.ConsentAnswer{}, nil
 	}
 
-	s, installed, err := installBehavioralPlugin(context.Background(), "https://example/tick.tar.gz", stubFetcher{err: sentinel}, root, gate, store, reg, grant)
+	s, installed, err := installBehavioralPlugin(context.Background(), "https://example/tick.tar.gz", stubFetcher{err: sentinel}, root, gate, store, reg, fixedPrompt(grant))
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("a fetch error must propagate; got %v", err)
 	}
@@ -171,7 +182,7 @@ func TestInstallBehavioralPluginRefusesABadBundle(t *testing.T) {
 		return supervisor.ConsentAnswer{}, nil
 	}
 
-	s, installed, err := installBehavioralPlugin(context.Background(), "https://example/bad.tar.gz", stubFetcher{data: buf.Bytes()}, root, gate, store, reg, grant)
+	s, installed, err := installBehavioralPlugin(context.Background(), "https://example/bad.tar.gz", stubFetcher{data: buf.Bytes()}, root, gate, store, reg, fixedPrompt(grant))
 	if err == nil {
 		t.Fatal("a bundle with no manifest must be refused before mount")
 	}
@@ -204,5 +215,56 @@ func TestPluginsRootPathHonorsOverride(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, filepath.Join(".arxi", "plugins")) {
 		t.Errorf("the default must live under the ~/.arxi tree; got %q", got)
+	}
+}
+
+// TestStartInstallBridgesConsentToTheLoop drives the worker goroutine end to end
+// on the no-spawn path: fetch a real bundle, install it, build the consent screen
+// with the digest, hand it to the loop over consentReq, answer with a rejection,
+// and read the outcome. This is the concurrency bridge the modal rests on — the
+// Prompt supervisor.Mount calls is on the worker, blocked on a reply the loop
+// sends — proven without a terminal and without spawning (a rejection returns
+// before Mount reaches Start, so the bundle's non-executable stub is never run,
+// which also keeps the test portable to Windows).
+func TestStartInstallBridgesConsentToTheLoop(t *testing.T) {
+	root := t.TempDir()
+	gate := ext.NewGate(ext.NewMemoryConsentStore())
+	store := ext.NewPluginStore()
+	reg := supervisor.NewRegistry()
+	consentReq := make(chan consentRequest)
+	done := make(chan installOutcome, 1)
+	fetch := stubFetcher{data: buildInstallBundle(t, behavioralBundleJSON, false)}
+
+	startInstall(context.Background(), "https://example/tick.tar.gz", fetch, root, gate, store, reg, consentReq, done)
+
+	select {
+	case req := <-consentReq:
+		if req.doc == nil {
+			t.Fatal("the consent request carried no screen; the modal would have nothing to show — the digest-carrying prompt built no ext.ConsentScene")
+		}
+		if len(req.declared) != 1 || req.declared[0] != "events.emit" {
+			t.Fatalf("the request must carry the manifest's declared capabilities (what the answer grants); got %v", req.declared)
+		}
+		req.reply <- supervisor.ConsentAnswer{Rejected: true}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no consent request reached the loop; the bridge from the worker's blocked Prompt to the select is broken")
+	}
+
+	select {
+	case out := <-done:
+		if !errors.Is(out.err, supervisor.ErrConsentRejected) {
+			t.Fatalf("a rejected install must report ErrConsentRejected so the loop can name the user's own 'no' distinctly from a failure; got %v", out.err)
+		}
+		if out.sup != nil {
+			t.Error("a rejected install must hold no supervisor; nothing was spawned")
+		}
+		if out.installed == nil {
+			t.Error("a rejection must still report the laid-out package so the loop can name what was refused")
+		}
+		if out.url != "https://example/tick.tar.gz" {
+			t.Errorf("the outcome must echo the URL the user typed; got %q", out.url)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the worker never reported an outcome after the rejection; the goroutine is wedged")
 	}
 }
