@@ -293,17 +293,23 @@ print), `session.new_milestone` (a pulse with no fold field and an undecided
 lifetime — Scene 11), and `user.input.submitted` (signed only to reserve the
 name, as §4.3 states).
 
-The three `community.*` installer binds (§4.3) are signed-but-not-projected for
-a fifth reason, recorded the same way: the vocabulary is committed so the
-`InstallerScene` builder and the validator agree on it now, but the fold fields
-that carry the query, the filtered matches and the selection — and the installer
-keystroke loop that writes them — are the deferred live half (`DESIGN-BLOCK-J.md`
-J3 follow-up), gated on the same live-loop surface the I5 modal mount uses. Until
-those land, each resolves to the placeholder and its empty-state is a no-op, so
-signing them moves no golden. They are listed in `acceptedUnprojectedBinds` (the
-engine has no case) and in `pulseBindsWithoutFoldFields` (no fold field to
-perturb yet) with that blocker in writing; when the fold fields land, both
-entries are deleted the way `ui.hidden`'s were once F3 gave it `State.UIHidden`.
+The three `community.*` installer binds (§4.3) were signed-but-not-projected for
+a fifth reason, recorded the same way and now retired: the vocabulary was
+committed on paper first so the `InstallerScene` builder and the validator agreed
+on it before any projection depended on it. The fold fields now exist —
+`State.CommunityQuery`, `State.CommunityMatches` (a `[]CommunityMatch` whose
+row schema §4.7 signs) and `State.CommunitySelected` — so `resolveBind` projects
+`community.query`/`community.selected` and `rowScopesFor` instantiates the
+`row_template` over `community.matches`, exactly as `slash.*` and `team.members`
+are drawn. They are therefore removed from `acceptedUnprojectedBinds` and
+`pulseBindsWithoutFoldFields`, the way `ui.hidden`'s entries were once F3 gave it
+`State.UIHidden`; keeping them would be the stale exemption those maps' own
+guards refuse. The empty-state of each is still a no-op — an empty query lists
+everything, an empty match array draws no cards, a zero cursor highlights the
+first — so the projection moves no golden until the installer keystroke loop
+populates the fields (the remaining live half: the loop that writes them via
+`Registry.FilterEntries`, and the selection→preview pane, `DESIGN-BLOCK-J.md`
+J3 follow-up).
 
 **An unresolved bind is falsy.** It still *displays* as `"[…]"` so a scene from
 a newer build draws rather than crashes (ADR-0003), but display and visibility
