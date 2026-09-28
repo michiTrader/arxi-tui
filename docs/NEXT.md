@@ -1063,6 +1063,35 @@ counterfactual test).
     load-bearing by reverting them. Remaining for the I5 modal mount: the HTTP
     archive fetch at the `cmd/` edge (§I-I step 1), then wiring `supervisor.Mount`
     with a real digest.
+  - **I6-install-orchestration — LANDED (2026-09-28).** The rest of §I-I's flow,
+    threaded and testable without a terminal, on an integration branch that stacks
+    the still-unmerged installer-core, behavioral-validate and archive-fetch PRs so
+    the whole path builds and tests together while each dependency PR stays
+    independently reviewable. Four pieces:
+    (1) `Installer.InstallFromBundle` (`installer.go`) is the offline half — Extract
+    (write-time refusals) → read `plugin.json` from inside the tree → ValidateBehavioral
+    → confirm the executable actually ships as a regular file (the gap validation
+    cannot close: it proves the path is in-package, not that the file exists) →
+    LayoutByDigest — with one deferred staging cleanup covering the refusal,
+    idempotent-skip and moved-away exits.
+    (2) `supervisor.Config.Root` resolves a manifest's *relative* executable against
+    the installed tree at spawn, as an absolute path rather than chdir-plus-relative
+    because Windows `CreateProcess` resolves a relative program name against the
+    parent's directory, not the child's; the manifest keeps the relative path so the
+    consent identity stays machine-independent (empty Root leaves every existing
+    caller untouched).
+    (3) `installBehavioralPlugin` (`plugin_install.go`) is the cmd-edge thread —
+    archive fetch → InstallFromBundle → consent-gated `supervisor.Mount` with the
+    real `PackageDigest` — with the consent `Prompt` injected so it is testable
+    headless; `pluginsRootPath` resolves `~/.arxi/plugins` (ARXI_PLUGINS_DIR
+    override) so the staging rename stays on one filesystem.
+    (4) Counterfactuals run: the executable-exists guard reverted fails its test, the
+    Root join reverted fails the relative-exec spawn, and the cmd thread's rejection
+    path is proven to lay the package out yet spawn and register nothing. **Remaining
+    for I6:** the interactive `/ui plugin install <url>` command in the modal loop —
+    parse the verb, drive the consent scene through `consentAnswerForKey` to build
+    the `Prompt`, and hold the returned supervisor for `/ui plugin remove` — plus the
+    tool-door half (the agent-facing side of Gate B).
 
 ### Block J — Phase 3: the community installer as a scene (Scene 7) [H]
 
