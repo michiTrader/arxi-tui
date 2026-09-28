@@ -82,21 +82,37 @@ func TestHelperProcess(t *testing.T) {
 	// `action` frame is echoed back verbatim as an "actionecho" frame, so the
 	// SendAction round-trip is observable on the host's Frames() channel — the
 	// only way a subprocess test can prove the action landed intact.
+	//
+	// The tool-door modes (§I-J) answer an `action` frame with an id-correlated
+	// reply, which is how CallTool's await path is exercised by a real
+	// subprocess: "replytool" answers `{type:ok, id, result}` (the result echoes
+	// the tool name and args so the round-trip is provable); "errortool" answers
+	// an `error` frame so the ErrToolFailed mapping is provable; and "silenttool"
+	// reads the frame and never replies, so CallTool's timeout is provable. A
+	// plugin that never replies is exactly the case the bounded wait exists for.
 	for {
 		line, err := in.read()
 		if err != nil {
 			os.Exit(0)
 		}
-		if os.Getenv("ARXI_MODE") == "echoaction" {
-			var a struct {
-				Type   string            `json:"type"`
-				ID     string            `json:"id"`
-				Action string            `json:"action"`
-				Args   map[string]string `json:"args"`
-			}
-			if json.Unmarshal([]byte(line), &a) == nil && a.Type == "action" {
-				_ = enc.Encode(map[string]any{"type": "actionecho", "id": a.ID, "action": a.Action, "args": a.Args})
-			}
+		var a struct {
+			Type   string            `json:"type"`
+			ID     string            `json:"id"`
+			Action string            `json:"action"`
+			Args   map[string]string `json:"args"`
+		}
+		if json.Unmarshal([]byte(line), &a) != nil || a.Type != "action" {
+			continue
+		}
+		switch os.Getenv("ARXI_MODE") {
+		case "echoaction":
+			_ = enc.Encode(map[string]any{"type": "actionecho", "id": a.ID, "action": a.Action, "args": a.Args})
+		case "replytool":
+			_ = enc.Encode(map[string]any{"type": "ok", "id": a.ID, "result": map[string]any{"tool": a.Action, "args": a.Args}})
+		case "errortool":
+			_ = enc.Encode(map[string]any{"type": "error", "id": a.ID, "error": map[string]any{"code": "bad_params", "message": "no such symbol"}})
+		case "silenttool":
+			// Read and drop: the host must surface ErrToolTimeout, not hang.
 		}
 	}
 }

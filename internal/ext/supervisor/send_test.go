@@ -166,3 +166,116 @@ routed:
 			"unmount must route nowhere, not to a torn-down supervisor", err)
 	}
 }
+
+// TestSupervisorCallToolRoundTrips proves the agent-call path (§I-J Decision 4):
+// CallTool writes the id-correlated action frame, the "replytool" helper answers
+// `{type:ok, id, result}`, and CallTool returns that result — the value the agent
+// reasons over. The helper echoes the tool name and args into the result, so
+// finding them proves the request crossed the wire whole AND the reply was routed
+// back to this exact caller by its correlation id. Counterfactual: dropping the
+// reader's `s.calls.deliver` diversion (never routing the ok frame to the waiter)
+// makes this time out — the round-trip is what the pending-call correlation buys.
+func TestSupervisorCallToolRoundTrips(t *testing.T) {
+	s := Start(context.Background(), helperConfig("replytool", "tick", []string{capToolsRegister}))
+	defer s.Close()
+	waitFirstFrame(t, s)
+
+	result, err := s.CallTool("quote", map[string]string{"symbol": "AAPL"})
+	if err != nil {
+		t.Fatalf("CallTool on a live, granted plugin failed: %v\n"+
+			"consequence: the agent cannot call a plugin tool, so a mounted plugin teaches the agent nothing it can use.\n"+
+			"remedy: CallTool must write the action frame and return the plugin's id-correlated reply.", err)
+	}
+	raw := string(result)
+	if !strings.Contains(raw, `"tool":"quote"`) {
+		t.Errorf("tool result %s does not carry the tool name; the action name was lost or the wrong reply was routed back", raw)
+	}
+	if !strings.Contains(raw, `"symbol":"AAPL"`) {
+		t.Errorf("tool result %s does not carry the resolved arg symbol=AAPL; args must cross the wire as concrete values (§I-J)", raw)
+	}
+}
+
+// TestSupervisorCallToolRefusesUngranted proves the capability gate is
+// load-bearing on the agent-call path exactly as it is on the press path: a
+// plugin the user did not grant tools.register cannot have its tools called even
+// while it is live, and the refusal is the same whether or not the process is up
+// (the grant is the boundary, not the process state). Counterfactual: removing the
+// isGranted check makes this CallTool reach a plugin the user never consented to
+// call autonomously (invariant 7).
+func TestSupervisorCallToolRefusesUngranted(t *testing.T) {
+	// Granted the empty set: the plugin is live but was consented no capabilities.
+	s := Start(context.Background(), helperConfig("replytool", "tick", nil))
+	defer s.Close()
+	waitFirstFrame(t, s)
+
+	_, err := s.CallTool("quote", map[string]string{"symbol": "AAPL"})
+	if !errors.Is(err, ErrCapabilityNotGranted) {
+		t.Fatalf("CallTool on an ungranted plugin err = %v, want ErrCapabilityNotGranted\n"+
+			"consequence: the agent could call tools on a plugin the user never granted tools.register —\n"+
+			"power taken, not granted at the gate (invariant 7).\n"+
+			"remedy: CallTool refuses when tools.register is absent from the granted set.", err)
+	}
+}
+
+// TestSupervisorCallToolTimesOut proves the wait is bounded: the "silenttool"
+// helper reads the action frame and never replies, and CallTool must return
+// ErrToolTimeout rather than block forever. The deadline is asserted in the test
+// harness (a select on the result against a generous ceiling), so a CallTool that
+// truly hung would fail here as a test timeout, not pass. Counterfactual: removing
+// the timer arm of CallTool's select makes this hang past the ceiling.
+func TestSupervisorCallToolTimesOut(t *testing.T) {
+	cfg := helperConfig("silenttool", "tick", []string{capToolsRegister})
+	cfg.CallTimeout = 300 * time.Millisecond
+	s := Start(context.Background(), cfg)
+	defer s.Close()
+	waitFirstFrame(t, s)
+
+	type outcome struct {
+		result []byte
+		err    error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		r, err := s.CallTool("quote", map[string]string{"symbol": "AAPL"})
+		done <- outcome{r, err}
+	}()
+	select {
+	case o := <-done:
+		if !errors.Is(o.err, ErrToolTimeout) {
+			t.Fatalf("CallTool against a silent plugin err = %v, want ErrToolTimeout\n"+
+				"consequence: the agent-facing layer cannot tell a quiet plugin from a working one, and a hung\n"+
+				"call would block whatever awaits it.\n"+
+				"remedy: CallTool bounds the wait with CallTimeout and returns ErrToolTimeout.", o.err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("CallTool did not return within 5s against a silent plugin; the wait is not bounded and a hung " +
+			"plugin freezes the caller — the exact thing the timeout exists to prevent (invariant 6)")
+	}
+}
+
+// TestSupervisorCallToolMapsErrorReply proves an `error` reply is a DISTINCT
+// outcome from a timeout: the "errortool" helper answers an error frame, and
+// CallTool must return ErrToolFailed carrying the plugin's own message — not
+// ErrToolTimeout, and not a nil error with an empty result. Distinguishing the two
+// is what lets the agent tell "the plugin went quiet" from "the plugin answered
+// that it could not." Counterfactual: mapping an error frame to ErrToolTimeout (or
+// treating any reply as ok) makes this fail on the errors.Is check.
+func TestSupervisorCallToolMapsErrorReply(t *testing.T) {
+	s := Start(context.Background(), helperConfig("errortool", "tick", []string{capToolsRegister}))
+	defer s.Close()
+	waitFirstFrame(t, s)
+
+	_, err := s.CallTool("quote", map[string]string{"symbol": "AAPL"})
+	if !errors.Is(err, ErrToolFailed) {
+		t.Fatalf("CallTool against an error-replying plugin err = %v, want ErrToolFailed\n"+
+			"consequence: a plugin's explicit failure is reported as a timeout or as success, so the agent\n"+
+			"acts on a result the plugin never produced.\n"+
+			"remedy: an `error` reply maps to ErrToolFailed, distinct from ErrToolTimeout.", err)
+	}
+	if errors.Is(err, ErrToolTimeout) {
+		t.Fatalf("CallTool error %v is also ErrToolTimeout; a reported failure and a timeout must be distinct so the agent can tell them apart (§I-J Decision 4)", err)
+	}
+	if !strings.Contains(err.Error(), "no such symbol") {
+		t.Errorf("CallTool error %v does not carry the plugin's own message; the agent needs the plugin's diagnosis, not a generic failure", err)
+	}
+}

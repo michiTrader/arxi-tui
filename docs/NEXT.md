@@ -1158,25 +1158,47 @@ counterfactual test).
     fake-tty harness, so the glue is verified by build + the pieces it composes, as
     with the earlier I6 loop-wiring commit. **Remaining for I6:** the tool-door half
     (the agent-facing side of Gate B).
-  - **I6-tooldoor-design — DRAFTED (2026-09-28), awaiting signature.** DESIGN-BLOCK-I.md
-    §I-J drafts the last unbuilt piece of Gate B: how a mounted plugin teaches the
-    **agent** a tool it can call, as distinct from an I3 `bind` (a scene projection
-    the agent never reads) and an I4 `action` (user-originated, plugin need not reply).
-    A tool is an agent-originated request/response that crosses the two-channel
-    boundary, so the host is the broker. The draft names the hard dependency first —
-    the agent-facing half is blocked on Block M (no real agent wired yet) and a
-    coordinated `arxi` core surface-version bump for a tool-injection verb, neither of
-    which this host can invent — and splits out a **plugin-facing half buildable and
-    testable headless today**, exactly as I4 built action routing before I5 mounted a
-    live plugin: a manifest `tools` array + `ToolDecl`, a new `tools.register`
-    capability gated at I5, and `Supervisor.CallTool` (the await-a-reply sibling of
-    I4's fire-and-forget `SendAction`, reusing the id-correlated `action`/`ok` channel).
-    Five decisions with forks resolved to recommended defaults; new vocabulary
-    (manifest `tools`, `ToolDecl`, `tools.register`) named for signing; the core
-    surface verb named as a dependency, not signed here (the fabricated-core mistake
-    §I-I refused with a fabricated digest). **Remaining for I6:** owner signature on
-    §I-J, then the buildable plugin-facing half with its counterfactuals; the
-    agent-facing half stays blocked on Block M + the surface bump.
+  - **I6-tooldoor-design — SIGNED (PR #99, merged) and plugin-facing half BUILT
+    (PR #100).** DESIGN-BLOCK-I.md §I-J signed the last piece of Gate B: how a
+    mounted plugin teaches the **agent** a tool it can call, as distinct from an
+    I3 `bind` (a scene projection the agent never reads) and an I4 `action`
+    (user-originated, plugin need not reply). A tool is an agent-originated
+    request/response that crosses the two-channel boundary, so the host is the
+    broker. The design named the hard dependency first — the agent-facing half is
+    blocked on Block M (no real agent wired yet) and a coordinated `arxi` core
+    surface-version bump for a tool-injection verb, neither of which this host can
+    invent — and split out the **plugin-facing half, now built and tested headless**
+    exactly as I4 built action routing before I5 mounted a live plugin:
+      - `ToolDecl` + the manifest `tools` array (`internal/ext`), validated by
+        `ValidateBehavioral`: a tool with no name, no parameters, or a duplicate
+        relative name is refused, and `tools` without the `tools.register`
+        capability is a contradiction refusal (the `consent_required`-with-
+        `executable` precedent); `checkBehavioral` refuses `tools` on a declarative
+        manifest. `Parameters` stays an opaque `json.RawMessage` the host forwards
+        verbatim.
+      - `tools.register` in the closed capability set (`consent.go`), a distinct
+        power from `actions.register`; it joins the I5 identity tuple automatically
+        via the existing exact-set-equality, so a plugin gaining it re-asks.
+      - `Supervisor.CallTool(tool, args) (result, error)` — the await-a-reply
+        sibling of the fire-and-forget `SendAction`: it writes the id-correlated
+        `action` frame under the `tools.register` grant, and the reader routes the
+        `{type:ok,id,result}` / `error` reply to the awaiting caller (never
+        forwarded on Frames()). The wait is bounded by the reply, `CallTimeout`
+        (`ErrToolTimeout`), and Close (`ErrPluginNotLive`), never on the loop
+        (invariant 6). A timeout and an `error` reply map to distinct Go errors so
+        the agent-facing layer can tell them apart. This is the §I-E `ok`/error ack
+        graduating to load-bearing.
+    Each beat landed with counterfactuals built and run (AGENTS.md): neutering
+    `validateTools` fails all four refusals; removing `tools.register` from the
+    closed set fails the grant while the identity test stays green; breaking the
+    reader's reply diversion makes the round-trip time out; removing the timer arm
+    hangs past the harness ceiling; mapping an `error` reply to `ok` reports a
+    failure as success. **Remaining for I6:** the agent-facing half stays blocked
+    on Block M (a real agent) + a coordinated `arxi` core surface-version bump —
+    the host→core advertisement of granted tools, the core→host tool-call frame,
+    and the fold events for a tool call/result — none of which is built against a
+    fabricated core (the fabricated-core mistake §I-I refused with a fabricated
+    digest).
 
 ### Block J — Phase 3: the community installer as a scene (Scene 7) [H]
 

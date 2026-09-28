@@ -110,6 +110,31 @@ func TestGrantRefusesUndeclaredAndUnknownCapabilities(t *testing.T) {
 	}
 }
 
+// TestToolsRegisterIsInTheClosedSet proves tools.register (§I-J Decision 3) is a
+// known capability the gate can grant when a manifest declares it — the closed-set
+// half of adding the tool door's power. KnownCapability must recognise it, and a
+// manifest declaring it must be able to grant it. Counterfactual: removing
+// tools.register from knownCapabilities makes KnownCapability report false and the
+// Grant below fail as an unknown capability, so a plugin the user consented to
+// could never carry the power the tool door needs.
+func TestToolsRegisterIsInTheClosedSet(t *testing.T) {
+	if !KnownCapability("tools.register") {
+		t.Fatal("KnownCapability(\"tools.register\") = false; the tool door's capability is not in the closed set, so the gate would refuse to grant it even when a manifest declares it (§I-J Decision 3)")
+	}
+	g := NewGate(NewMemoryConsentStore())
+	m := behavioralManifest()
+	m.Capabilities = append(m.Capabilities, "tools.register")
+	granted, err := g.Grant(m, "digest-a", []string{"tools.register"}, false)
+	if err != nil {
+		t.Fatalf("Grant refused a declared tools.register: %v\n"+
+			"consequence: a user consents to a plugin's tool power and the gate rejects it, so no tool the agent can call is ever granted.\n"+
+			"remedy: tools.register must belong to the closed capability set.", err)
+	}
+	if len(granted) != 1 || granted[0] != "tools.register" {
+		t.Fatalf("granted set = %v; want [tools.register]", granted)
+	}
+}
+
 // TestClassifyDistinguishesNotDeclaredFromNotGranted is §I-H's "the user can
 // tell 'it never asked' from 'you said no'." The three states must be distinct:
 // a capability in the granted set is Granted, one the manifest declared but the

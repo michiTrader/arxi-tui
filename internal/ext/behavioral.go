@@ -49,6 +49,9 @@ func (m *Manifest) ValidateBehavioral() error {
 	if err := m.validateExecutablePath(); err != nil {
 		return err
 	}
+	if err := m.validateTools(); err != nil {
+		return err
+	}
 	if err := m.validateTokensBlock(); err != nil {
 		return err
 	}
@@ -95,6 +98,63 @@ func (m *Manifest) validateExecutablePath() error {
 	local := filepath.FromSlash(cleaned)
 	if !filepath.IsLocal(local) {
 		return &Error{Loc: m.locAt("executable"), Msg: fmt.Sprintf("executable %q resolves outside the package; a `..`, absolute, or Windows drive-relative or reserved path names code the package digest never covered, so a consent grant bound to the tree's digest would authorise a program the user never saw (DESIGN-BLOCK-I §I-H) — the executable must be a path inside the package tree", m.Executable)}
+	}
+	return nil
+}
+
+// validateTools refuses a malformed `tools` block (Gate B, DESIGN-BLOCK-I §I-J
+// "What is buildable now", Decisions 1 and 3). A tool is a declared, digested
+// field like `binds`, so the well-formedness net runs here in the behavioral
+// validator, beside the executable checks, rather than at the gate — a package
+// whose tool declarations are broken should be refused at install, not spawned
+// and then discovered wrong when the agent first calls one.
+//
+// Three refusals, each with its counterfactual (reverting it accepts a malformed
+// block):
+//
+//   - a tool with no name, because the name is the relative half of the
+//     host-composed `<plugin-id>.<name>` the agent sees (§I-J Decision 2); a
+//     nameless tool is one the agent could never address.
+//   - a tool with no parameters, because the schema is the tool's contract with
+//     the agent and the host forwards it verbatim (§I-J Decision 1); a tool with
+//     no schema tells the agent nothing about how to call it.
+//   - two tools sharing a relative name, because the composed name would collide
+//     and the second would shadow the first — the same reason a bind namespace
+//     is one-value-per-field.
+//
+// And one contradiction, mirroring checkBehavioral's own field contradictions
+// (the `consent_required:false`-with-`executable` precedent): declaring `tools`
+// without declaring the `tools.register` capability is a manifest asking the
+// agent to call powers the consent screen would never have shown, because the
+// capability is what puts "your agent may call this plugin on its own" in front
+// of the user. The two must agree, so the author is told to add the capability
+// or drop the tools rather than shipping tools no grant can ever cover.
+func (m *Manifest) validateTools() error {
+	if len(m.Tools) == 0 {
+		return nil
+	}
+	declared := false
+	for _, c := range m.Capabilities {
+		if c == capToolsRegister {
+			declared = true
+			break
+		}
+	}
+	if !declared {
+		return &Error{Loc: m.locAt("tools"), Msg: fmt.Sprintf("manifest %q declares tools but not the %q capability; a tool is power the agent invokes on its own, and %q is the grant the consent screen shows the user for exactly that (DESIGN-BLOCK-I §I-J) — add %q to \"capabilities\", or drop \"tools\"", m.ID, capToolsRegister, capToolsRegister, capToolsRegister)}
+	}
+	seen := map[string]bool{}
+	for i, tool := range m.Tools {
+		if tool.Name == "" {
+			return &Error{Loc: m.locAt("tools"), Msg: fmt.Sprintf("tool %d has no name; the name is the relative half of the agent-visible <plugin-id>.<name> (DESIGN-BLOCK-I §I-J Decision 2), so a nameless tool is one the agent can never address — add a \"name\"", i)}
+		}
+		if !hasTokens(tool.Parameters) {
+			return &Error{Loc: m.locAt("tools"), Msg: fmt.Sprintf("tool %q has no parameters; the parameters are the JSON-Schema the host forwards to the agent verbatim (DESIGN-BLOCK-I §I-J Decision 1), and a tool with no schema tells the agent nothing about how to call it — add a \"parameters\" object", tool.Name)}
+		}
+		if seen[tool.Name] {
+			return &Error{Loc: m.locAt("tools"), Msg: fmt.Sprintf("tool %q is declared twice; the relative name composes into the agent-visible <plugin-id>.<name>, so a duplicate would shadow the first and one of the two could never be called (DESIGN-BLOCK-I §I-J) — give each tool a distinct name", tool.Name)}
+		}
+		seen[tool.Name] = true
 	}
 	return nil
 }

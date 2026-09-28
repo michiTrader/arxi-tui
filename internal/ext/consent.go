@@ -18,18 +18,30 @@ import (
 // capability set is closed, and installation trust is never capability trust —
 // downloading a plugin does not grant it anything, the gate does.
 
+// capToolsRegister is the capability a plugin needs to expose tools the agent
+// may call on its own (Gate B, §I-J Decision 3). It is a distinct capability
+// rather than a reuse of actions.register because the two are different powers
+// the consent screen must let the user weigh apart: actions.register is "may
+// receive button presses the user initiated," while this is "your agent may
+// call this plugin on its own, with no user in the loop at call time." Named
+// once here so the closed set, the manifest validator (validateTools) and the
+// send gate cannot drift on the spelling.
+const capToolsRegister = "tools.register"
+
 // knownCapabilities is the closed vocabulary of powers a behavioral plugin may
 // request. Closed because each capability is a door the host opens in its own
 // code (DESIGN-BLOCK-H.md §capabilities): a manifest cannot mint a new power by
 // naming it, so an unknown capability is a refusal at the gate, not a silent
 // grant of something the host does not implement. The set matches the wire
 // (DESIGN-BLOCK-I §I-A) and arxi-sim's capability.go; `actions.register` is the
-// one the ext: press path already gates on (supervisor/send.go).
+// one the ext: press path already gates on (supervisor/send.go), and
+// `tools.register` (§I-J) is the one the agent-call path gates on.
 var knownCapabilities = map[string]bool{
 	"events.subscribe": true,
 	"events.emit":      true,
 	"inbox.answer":     true,
 	"actions.register": true,
+	capToolsRegister:   true,
 }
 
 // KnownCapability reports whether a capability name belongs to the closed set.

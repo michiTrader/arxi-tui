@@ -513,7 +513,7 @@ and observing the gate return `DecisionNeedsConsent` rather than the remembered
 grant. That last is the grant-transfer safety the whole gate exists for, and it is
 the reason a fabricated digest was never an option.
 
-## I-J — the tool door (Gate B, agent-facing) (PROPOSAL, awaiting signature)
+## I-J — the tool door (Gate B, agent-facing) (SIGNED PR #99; plugin-facing half BUILT PR #100)
 
 This section drafts the second half of I6 and the last unbuilt piece of Gate B.
 The §I-I installer is the *package-delivery* half — how a plugin's bytes reach
@@ -672,7 +672,9 @@ happened* stays host-owned.
 
 ### What is buildable now (plugin-facing half), with counterfactuals
 
-Independent of M and the surface bump, and testable headless exactly as I4 was:
+Independent of M and the surface bump, and testable headless exactly as I4 was.
+**All three beats below are built and tested (PR #100); the counterfactuals named
+are constructed and run, not argued:**
 
 1. **`ToolDecl` + manifest `tools`** in `internal/ext` — parsed by the same
    `ext.Parse` the installer already uses, validated by `ValidateBehavioral`

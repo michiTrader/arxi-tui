@@ -115,6 +115,12 @@ type Config struct {
 	MaxBackoff       time.Duration
 	// FrameBuffer sizes the Frames() channel; defaulted, overridable in tests.
 	FrameBuffer int
+	// CallTimeout bounds how long CallTool awaits a plugin's tool reply before
+	// giving up with ErrToolTimeout (§I-J Decision 4). A tool call must never
+	// hang the caller indefinitely on a plugin that read the request and went
+	// quiet, so the wait is always bounded; the agent-facing layer decides what a
+	// timeout means to the agent. Defaulted, overridable in tests.
+	CallTimeout time.Duration
 }
 
 func (c *Config) applyDefaults() {
@@ -136,6 +142,9 @@ func (c *Config) applyDefaults() {
 	if c.FrameBuffer <= 0 {
 		c.FrameBuffer = 64
 	}
+	if c.CallTimeout <= 0 {
+		c.CallTimeout = 30 * time.Second
+	}
 }
 
 // Supervisor owns one plugin process across its restarts. Its public surface is
@@ -154,6 +163,13 @@ type Supervisor struct {
 	// so a SendAction blocked writing a frame cannot block run()'s reads and
 	// writes of err.
 	send sender
+
+	// calls correlates an awaited tool reply with the CallTool that is waiting
+	// for it (§I-J Decision 4). The reader routes an `ok`/`error` frame whose id
+	// matches a pending call to that call's channel instead of forwarding it on
+	// Frames(); it carries its own lock so a CallTool registering or a reader
+	// delivering never contends on mu with run()'s error bookkeeping.
+	calls pendingCalls
 
 	mu  sync.Mutex
 	err error
@@ -381,6 +397,7 @@ func (s *Supervisor) readLoop(c *child) error {
 		}
 		var head struct {
 			Type string `json:"type"`
+			ID   string `json:"id"`
 		}
 		if err := json.Unmarshal([]byte(line), &head); err != nil {
 			// I2 drops a single malformed frame and continues. The
@@ -388,6 +405,18 @@ func (s *Supervisor) readLoop(c *child) error {
 			// refinement; it is noted here so a bare `continue` is not mistaken
 			// for the whole policy.
 			continue
+		}
+		// A tool reply (§I-J Decision 4) is an `ok`/`error` frame whose id
+		// matches a CallTool still awaiting it. It is routed to that caller and
+		// NOT forwarded on Frames(): the reply is a return value for one call,
+		// not a broadcast the store consumes, and DrainInto ignores it anyway.
+		// Only a frame with a live waiter is diverted, so a bare `action` ok/error
+		// with no awaiting call (a fire-and-forget SendAction the §I-E refinement
+		// may one day ack) still forwards verbatim as every other type does.
+		if head.Type == "ok" || head.Type == "error" {
+			if s.calls.deliver(head.ID, line) {
+				continue
+			}
 		}
 		f := Frame{Type: head.Type, Raw: json.RawMessage(append([]byte(nil), line...))}
 		select {
