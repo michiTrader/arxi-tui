@@ -437,6 +437,36 @@ func (m *Manifest) pluginScope() *scene.PluginScope {
 	return &scene.PluginScope{ID: m.ID, Binds: binds}
 }
 
+// PreviewMocks builds the J1 preview-mode substitution table for this manifest:
+// the map the installer's preview pane hands the renderer as Renderer.PreviewMocks
+// (Q16). It mirrors pluginScope — a projection over the manifest's own `binds`
+// map, never a second inventory — but projects each declared `mock` to the string
+// the resolver renders rather than the kind the validator checks. The keys are the
+// binds map's own fully-qualified `<plugin-id>.<field>` paths (the same keys the
+// mounted fragment binds and the store publishes under), so a previewed bind and
+// its live counterpart resolve under one path and the live value can win when both
+// exist (render.go resolveBindRow).
+//
+// A field with no declared mock is omitted, not stored as "": preview substitutes
+// only where the author supplied a placeholder, and an omitted field falls through
+// to the engine's own placeholder ("[…]") — the honest "no value" state, not a
+// spurious empty string that a `when` would then read as falsy for a different
+// reason. renderValue is reused verbatim so a mock renders byte-for-byte as a live
+// frame of the same shape would (a JSON string unquoted, a series array as its
+// compact form), which is what makes the preview a faithful stand-in for the
+// stream. A manifest with no binds (every declarative plugin) yields an empty
+// table, and an empty table is the renderer's no-op.
+func (m *Manifest) PreviewMocks() map[string]string {
+	out := make(map[string]string, len(m.Binds))
+	for path, decl := range m.Binds {
+		if len(decl.Mock) == 0 {
+			continue
+		}
+		out[path] = renderValue(decl.Mock)
+	}
+	return out
+}
+
 // rebaseFragment builds a scene document wrapping one fragment such that the
 // fragment sits at its true manifest byte position, so scene's own addressing
 // reports manifest-absolute file:line for free (the larger half of H1's "address
