@@ -1288,9 +1288,11 @@ counterfactual test).
   like `Diff.Scene`, which bakes), so entries are baked as static cards; live
   search filtering and a selection-driven preview pane are the follow-up
   increment that adds the view-state bind. **Remaining for J:** the J3 follow-up
-  (live filter + selection→preview, needs a signed view-state bind), J4 (bundle,
-  needs I5), J5 (freeze the Scene 7 golden, including this installer scene, J1's
-  preview frame and the nil no-op frame).
+  live loop (the keystroke loop that writes the now-built `community.*` fold
+  fields via `FilterEntries` and rebuilds `InstallerScene` to a live `list`/search
+  pair, plus the selection→preview pane — the signed bind and its engine
+  projection are done), J4 (bundle, needs I5), J5 (freeze the Scene 7 golden,
+  including this installer scene, J1's preview frame and the nil no-op frame).
 - **J3 follow-up — filter core BUILT (2026-09-28, PR #106).**
   `Registry.FilterEntries(query)` is the pure query-filter the live search box
   will call per keystroke: empty→all entries, otherwise a case-insensitive
@@ -1321,6 +1323,30 @@ counterfactual test).
   was before F3 gave it `State.UIHidden`; every empty-state is a no-op, so no
   golden moved. `TestEverySignedBindIsHandledOrJustified`, the projection-varies
   guards and `TestSignedInventoryMatchesDocument` all stay green on the signing.
+- **J3 follow-up — fold fields + engine projection BUILT (2026-09-28).** The
+  first live-half increment, now that the I6 modal loop (I6-install-modal /
+  I6-store-render) has landed the live-loop surface the signing was gated on.
+  `fold.State` gains `CommunityQuery` (string), `CommunityMatches`
+  (`[]CommunityMatch` — a new fold-local row struct mirroring
+  `ext.RegistryEntry` field-for-field, declared in `fold` rather than imported so
+  the fold stays the pure host-owned state ADR-0002 requires) and
+  `CommunitySelected` (int), all host view state in the `slash.*` mould the host
+  loop will own. `resolveBind` projects `community.query`/`community.selected`
+  and `rowScopesFor` instantiates a `row_template` over `community.matches`
+  (`row.id/name/version/manifest_url/description/preview`), exactly as
+  `slash.*`/`team.members` are drawn. The three binds are therefore removed from
+  `acceptedUnprojectedBinds` and `pulseBindsWithoutFoldFields` and
+  `community.matches` joins `templateProjectedBinds` — the stale-exemption move
+  each guard's own remedy demands, the way `ui.hidden` graduated at F3. Two
+  counterfactuals run: `community.query` returning a constant fails
+  `TestEverySignedBindProjectionVariesWithItsFoldField`; a `rowScopesFor` that
+  ignores `state.CommunityMatches` fails
+  `TestEverySignedCompositeBindIsDrawnOrRecordedUnprojected`. Every field
+  defaults empty and no shipped scene binds `community.*` (the `InstallerScene`
+  still bakes static cards), so the full suite including goldens stays green.
+  **Still deferred:** the installer keystroke loop that writes these fields via
+  `Registry.FilterEntries` and rebuilds `InstallerScene` to a live `list`/search
+  pair, and the selection→preview pane — the parts that touch the real-tty loop.
 - **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent
   screen).
 - **J5** [J3] Freeze the Scene 7 golden.
@@ -1349,8 +1375,10 @@ counterfactual test).
   shipped scene, so `InstallerScene` now emits the gated `host.scene.error` notice
   node every shipped scene must carry (`TestEveryShippedSceneBindsTheNotice`); the
   `when` gate keeps it costless, so only `COMMUNITY.json` moved and the frame
-  goldens did not. **Remaining for J:** the J3 follow-up (live filter +
-  selection→preview, needs a signed view-state bind) and J4 (bundle, needs I5).
+  goldens did not. **Remaining for J:** the J3 follow-up live loop (keystroke
+  loop writing the `community.*` fold fields via `FilterEntries` + a live
+  `list`/search `InstallerScene` + selection→preview; the signed bind and its
+  engine projection are done) and J4 (bundle, needs I5).
 
 ### Block K — Phase 4: behavior + wasm [I]
 

@@ -268,6 +268,27 @@ fold fields, the keystroke loop that recomputes `community.matches` from
 `community.query` via `FilterEntries`, and the selection→preview pane — all gated
 on the same live-loop surface the I5 modal mount uses.
 
+**Follow-up increment (2026-09-28) — the fold fields and engine projection.**
+The first live-half increment, unblocked now that the I6 modal loop
+(I6-install-modal / I6-store-render) has landed the live-loop surface the signing
+was gated on. `fold.State` gains `CommunityQuery`, `CommunityMatches`
+(`[]CommunityMatch`, a fold-local row struct mirroring `ext.RegistryEntry`
+field-for-field but declared in `fold` so the pure host-owned fold ADR-0002
+requires never imports the registry's HTTP/parse surface — the host converts an
+`ext.RegistryEntry` into a `CommunityMatch` at the boundary, the same seam
+`SlashMatch` keeps from the command registry) and `CommunitySelected`.
+`resolveBind` projects the two scalars and `rowScopesFor` instantiates the
+`row_template` over `community.matches`, so the three binds graduate out of
+`acceptedUnprojectedBinds`/`pulseBindsWithoutFoldFields` (and `community.matches`
+into `templateProjectedBinds`) exactly as `ui.hidden` did at F3. Both directions
+were measured, not argued: a constant `community.query` fails the scalar
+projection-varies guard, and a `rowScopesFor` that ignores `state.CommunityMatches`
+fails the composite one. No shipped scene binds `community.*` — `InstallerScene`
+still bakes static cards — so the empty fields move no golden. **The deferred
+live half is now just:** the keystroke loop that writes these fields via
+`FilterEntries` and rebuilds `InstallerScene` to the live `list`/search pair
+below, and the selection→preview pane — the parts that touch the real-tty loop.
+
 **PROPOSAL, under ADR-0003, copying the `Diff.Scene` construction pattern.** The
 installer is a document the host **generates from the fetched index** — built as
 `map[string]any`, marshalled, re-parsed through `scene.ParseNamed`, exactly as the
