@@ -211,3 +211,95 @@ func (in *Installer) LayoutByDigest(src, root, id string) (finalPath, digest str
 	}
 	return finalPath, digest, nil
 }
+
+// pluginManifestName is the fixed name the manifest carries at the root of a
+// behavioral package. It lives *inside* the digested tree (§I-I) so editing the
+// terms a user consents to moves the package digest, which re-asks consent — a
+// manifest kept beside the tree instead could be swapped after the grant.
+const pluginManifestName = "plugin.json"
+
+// Installed is the product of a successful behavioral install: the validated
+// manifest, the digest a consent grant binds to, and the laid-out package root.
+// It carries exactly what supervisor.Mount needs — the manifest names the
+// process and the digest is half its identity — and nothing about the transport
+// that delivered the bytes, because the fetch is the caller's concern and the
+// install must be identical whether the bundle came off the network or a fixture.
+type Installed struct {
+	Manifest *Manifest
+	Digest   string
+	Root     string
+}
+
+// InstallFromBundle is the offline half of §I-I: it turns the bytes of a
+// `.tar.gz` bundle into an installed, digest-keyed package tree ready to mount,
+// performing every step that needs no network and no consent gate. The fetch
+// that supplies r and the supervisor.Mount that consumes the result live at the
+// edges, the same separation Extract and LayoutByDigest already keep, so the
+// whole security-bearing sequence is testable from a fixture with no server and
+// no live process.
+//
+// The order is the design's and each step gates the next:
+//
+//   - Extract enforces the write-time refusals (traversal, entry kind, bomb) so
+//     nothing hostile lands on disk before the manifest is even read;
+//   - the manifest is read from inside the extracted tree and validated on the
+//     behavioral path — the one door that accepts an executable — so a bundle
+//     whose terms do not validate never reaches the digest;
+//   - the executable is confirmed to actually exist as a regular file in the
+//     tree, closing the gap ValidateBehavioral cannot: it proves the path is
+//     inside the package, not that the file shipped;
+//   - only then is the tree digested and atomically laid out, so the digest a
+//     grant binds to is computed over bytes that already passed every refusal.
+//
+// pluginsRoot is created if absent and is where the staging tree is built, so the
+// atomic rename in LayoutByDigest stays within one filesystem (Decision 4). The
+// staging tree is always removed on the way out: on a refusal, and on the
+// idempotent skip where LayoutByDigest kept bytes already on record; on a
+// successful move it no longer exists and the cleanup is a harmless no-op, so one
+// deferred RemoveAll covers all three exits without a success flag to track.
+func (in *Installer) InstallFromBundle(r io.Reader, pluginsRoot string) (*Installed, error) {
+	if err := os.MkdirAll(pluginsRoot, 0o755); err != nil {
+		return nil, fmt.Errorf("preparing plugin cache root %q: %w", pluginsRoot, err)
+	}
+	staging, err := os.MkdirTemp(pluginsRoot, "install-")
+	if err != nil {
+		return nil, fmt.Errorf("creating staging directory for plugin install under %q: %w", pluginsRoot, err)
+	}
+	defer os.RemoveAll(staging)
+
+	if err := in.Extract(r, staging); err != nil {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(filepath.Join(staging, pluginManifestName))
+	if err != nil {
+		return nil, fmt.Errorf("plugin bundle carries no %s at its root; a behavioral package keeps its manifest inside the digested tree so editing the terms moves the digest (DESIGN-BLOCK-I §I-I): %w", pluginManifestName, err)
+	}
+	m, err := ParseNamed(pluginManifestName, data)
+	if err != nil {
+		return nil, err
+	}
+	if err := m.ValidateBehavioral(); err != nil {
+		return nil, err
+	}
+
+	// ValidateBehavioral proves the executable path is inside the package; it
+	// cannot prove the file shipped, because it reads the manifest, not the tree.
+	// A bundle naming ./tick with no tick file validates and then never spawns, so
+	// the miss is caught here — at install, with the bytes in hand and the digest
+	// not yet computed — rather than as a spawn failure after a grant.
+	execRel := filepath.FromSlash(path.Clean(m.Executable))
+	info, err := os.Stat(filepath.Join(staging, execRel))
+	if err != nil {
+		return nil, &Error{Loc: m.locAt("executable"), Msg: fmt.Sprintf("executable %q is named by the manifest but no such file is in the package; the bundle must ship the program it declares, or the consent grant binds to a tree that cannot run (DESIGN-BLOCK-I §I-I): %v", m.Executable, err)}
+	}
+	if !info.Mode().IsRegular() {
+		return nil, &Error{Loc: m.locAt("executable"), Msg: fmt.Sprintf("executable %q is not a regular file; only a regular file can be spawned, and a directory or device at the executable path is a package that validates and then cannot run (DESIGN-BLOCK-I §I-I)", m.Executable)}
+	}
+
+	finalPath, digest, err := in.LayoutByDigest(staging, pluginsRoot, m.ID)
+	if err != nil {
+		return nil, err
+	}
+	return &Installed{Manifest: m, Digest: digest, Root: finalPath}, nil
+}
