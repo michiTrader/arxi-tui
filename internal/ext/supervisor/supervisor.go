@@ -30,6 +30,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -83,6 +84,20 @@ type Config struct {
 	// Args name the process; its Protocol is the wire version the handshake
 	// gates on; its ID is the plugin_id the ack hands the child.
 	Manifest ext.Manifest
+	// Root is the installed package tree the manifest's relative Executable
+	// resolves against (DESIGN-BLOCK-I §I-I). It is kept out of the Manifest on
+	// purpose: the manifest's Executable is half the consent identity and must
+	// stay the author's declared relative path (`./tick`), because rewriting it to
+	// the absolute, digest-bearing install path would make the identity vary by
+	// machine and by digest and no remembered grant would ever match. So the
+	// relative path is what is hashed, and Root is where it is resolved at spawn.
+	// A resolved absolute path is used rather than chdir-plus-relative because
+	// Windows CreateProcess resolves a relative program name against the parent's
+	// current directory, not the child's — so a relative executable that works on
+	// Unix via cmd.Dir would silently fail to launch on the Windows leg of CI.
+	// Empty Root leaves an absolute or PATH-resolvable Executable untouched, which
+	// is the shape every existing caller and test already uses.
+	Root string
 	// Granted is the capability subset the user consented to at the I5 gate,
 	// carried to the child in the ack. I2 does not decide it — it carries it —
 	// so a plugin acting on ungranted power is impossible: the ack precedes any
@@ -269,7 +284,19 @@ func (s *Supervisor) runOnce() error {
 // println therefore cannot corrupt the frame stream.
 func (s *Supervisor) spawn() (*child, error) {
 	m := s.cfg.Manifest
-	cmd := exec.Command(m.Executable, m.Args...)
+	// Resolve a relative executable against the installed package Root to an
+	// absolute path before spawning (see Config.Root): the manifest keeps the
+	// author's `./tick` for identity, and the process is launched by the
+	// digest-keyed path it actually lives at. An absolute or PATH executable, and
+	// the empty-Root case every current caller uses, pass through unchanged.
+	execPath := m.Executable
+	if s.cfg.Root != "" && !filepath.IsAbs(execPath) {
+		execPath = filepath.Join(s.cfg.Root, filepath.FromSlash(execPath))
+	}
+	cmd := exec.Command(execPath, m.Args...)
+	if s.cfg.Root != "" {
+		cmd.Dir = s.cfg.Root
+	}
 	cmd.Env = append(os.Environ(), s.cfg.Environment...)
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
