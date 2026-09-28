@@ -199,7 +199,26 @@ type State struct {
 	// reopens. A list bound to slash.matches renders this row bright and every
 	// other row dim (docs/BINDS.md §4.3).
 	SlashSelected int    `json:"slash.selected"`
-	UIFocus       string `json:"ui.focus"`
+	// CommunityQuery, CommunityMatches and CommunitySelected are the community
+	// installer's live view state (Scene 7, BINDS.md §4.3, signed in the J3
+	// follow-up). They are the slash.* triple's analogue for a registry browse:
+	// host view state the installer keystroke loop owns, never an arxi-core
+	// event — the loop recomputes CommunityMatches from CommunityQuery through
+	// ext.Registry.FilterEntries on every keystroke, clamps CommunitySelected to
+	// the match list, and resets it to 0 when the browse reopens, exactly as it
+	// does for the slash menu. They are carried here rather than derived from a
+	// log because no event produces them; the empty triple is the default and a
+	// no-op, so a fold that never opens the installer moves no golden.
+	//
+	// CommunityMatches is the previewed registry's own filtered entries, not the
+	// <plugin-id>.* preview namespace (J1): a browse lists what is installable,
+	// a preview renders one installed-but-sandboxed plugin's frames. A list bound
+	// to community.matches renders one row_template instance per entry (§4.7), the
+	// same machinery team.members and slash.matches use.
+	CommunityQuery    string           `json:"community.query"`
+	CommunityMatches  []CommunityMatch `json:"community.matches"`
+	CommunitySelected int              `json:"community.selected"`
+	UIFocus           string           `json:"ui.focus"`
 	UIMax         string `json:"ui.max"`
 	UISurface     string `json:"ui.surface"`
 	// UIHidden is the set of node ids the user has hidden through `/ui hide <id>`
@@ -1232,6 +1251,26 @@ type SlashMatch struct {
 	Name        string `json:"name"`
 	Category    string `json:"category"`
 	Description string `json:"description"`
+}
+
+// CommunityMatch is one row in community.matches: a registry entry the installer
+// browse can install. Its json tags are the bare field names rowScopesFor maps
+// to the `row.<field>` schema signed for community.matches (BINDS.md §4.7) —
+// id/name/version/manifest_url/description/preview — so a row_template over the
+// list addresses each field the schema signs and no other. It mirrors
+// ext.RegistryEntry field-for-field but is declared here rather than imported:
+// the fold is the pure host-owned state ADR-0002 requires, and importing the
+// registry package would make it depend on the installer's HTTP and parse
+// surface. The host converts an ext.RegistryEntry into a CommunityMatch when it
+// writes the fold field, the same boundary SlashMatch keeps from the command
+// registry.
+type CommunityMatch struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	ManifestURL string `json:"manifest_url"`
+	Description string `json:"description"`
+	Preview     string `json:"preview"`
 }
 
 // Commands is the host's command registry, the source for slash.matches.
