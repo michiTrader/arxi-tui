@@ -1291,6 +1291,20 @@ counterfactual test).
   (live filter + selection→preview, needs a signed view-state bind), J4 (bundle,
   needs I5), J5 (freeze the Scene 7 golden, including this installer scene, J1's
   preview frame and the nil no-op frame).
+- **J3 follow-up — filter core BUILT (2026-09-28, PR #106).**
+  `Registry.FilterEntries(query)` is the pure query-filter the live search box
+  will call per keystroke: empty→all entries, otherwise a case-insensitive
+  substring match on name or description, nil slice on a true miss (so "no
+  results" and "not yet filtered" stay distinct). A faithful port of
+  `fold.FilterSlashMatches` with one recorded adaptation — the slash menu matches
+  the command name alone, a registry browse searches the two card-rendered fields
+  (name + description); the `id`/`manifest_url` are deliberately excluded as text
+  the user never reads off the card. Five counterfactuals run by hand (description
+  clause, both `ToLower`s, empty→all, nil-not-all). **Still deferred:** signing
+  the `community.*` view-state bind (it must then be wired or justified in
+  `acceptedUnprojectedBinds`, per `TestEverySignedBindIsHandledOrJustified`), the
+  fold field that carries the filtered list, the keystroke loop that calls this,
+  and the selection→preview pane — all gated on the live-loop surface I5 uses.
 - **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent
   screen).
 - **J5** [J3] Freeze the Scene 7 golden.

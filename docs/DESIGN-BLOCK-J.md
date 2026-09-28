@@ -230,6 +230,23 @@ a golden the way `Diff.Scene` is", and `Diff.Scene` bakes), so entries are baked
 as static pressable cards; the search input is laid out but not yet wired, and a
 selection-driven preview pane is the follow-up. Baking forecloses neither.
 
+**Follow-up increment (2026-09-28, PR #106) — the filter core.**
+`Registry.FilterEntries(query)` (`internal/ext/registry.go`) is the pure
+query-filter the live search box will call on every keystroke: empty query
+returns every entry (browse open, unfiltered), a non-empty query keeps entries
+whose name or description contains it as a case-insensitive substring, and a true
+miss returns a nil slice so "no results" and "not yet filtered" never collapse.
+It is a faithful port of `fold.FilterSlashMatches` (port, do not invent) with one
+recorded domain adaptation: the slash menu matches the command name alone, while
+a registry browse searches the two human-readable fields the card renders (name
+and description); the `id` and `manifest_url` are deliberately not matched, since
+they are not text the user reads off the card. Five counterfactuals were run by
+hand (the description clause, both `ToLower`s, empty→all, and nil-not-all each
+reverted and re-run to confirm the guarding test fails). This is the pure half;
+signing the `community.*` view-state bind, the fold field that carries the
+filtered result, and the host keystroke loop that feeds it remain the deferred
+live half below.
+
 **PROPOSAL, under ADR-0003, copying the `Diff.Scene` construction pattern.** The
 installer is a document the host **generates from the fetched index** — built as
 `map[string]any`, marshalled, re-parsed through `scene.ParseNamed`, exactly as the
