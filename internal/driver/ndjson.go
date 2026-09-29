@@ -673,6 +673,158 @@ func (d *NDJSONDriver) SubmitRunShow(ctx context.Context, p RunShowParams) (*Run
 	return &result, nil
 }
 
+// InboxApproveParams are the wire parameters of an inbox.approve request, the
+// verb that approves one pending approval item on a run. RunID is sent as the
+// wire param `run` (the same name every run-addressing verb uses) and ItemID as
+// `item` -- the two identities the core's decisionIdentity guard requires
+// (arxi/cmd/arxi/serve.go), because host authorization is job-scoped and an
+// approval names the one item it answers.
+type InboxApproveParams struct {
+	// RunID is the run the approval item belongs to. The core reads it from the
+	// wire param `run`; an empty one addresses no run and decisionIdentity
+	// refuses it, so SubmitInboxApprove refuses locally rather than round-trip a
+	// request that cannot be authorized.
+	RunID string
+	// ItemID is the approval item being answered. The core reads it from `item`
+	// (falling back to `id`); an empty one answers no item, so it is refused
+	// locally for the same reason the run id is.
+	ItemID string
+}
+
+// InboxRejectParams are the wire parameters of an inbox.reject request, the
+// verb that rejects one pending approval item. It carries the same run+item
+// identity inbox.approve does, plus an optional Reason recorded with the
+// rejection -- omitted when empty so the wire carries no operator text the
+// caller never supplied, exactly as run.cancel omits its unset reason.
+type InboxRejectParams struct {
+	// RunID is the run the rejected item belongs to, sent as `run`; refused
+	// locally when empty for the reason InboxApproveParams.RunID gives.
+	RunID string
+	// ItemID is the approval item being rejected, sent as `item`; refused
+	// locally when empty for the same reason.
+	ItemID string
+	// Reason is optional operator-supplied text recorded with the rejection;
+	// sent only when non-empty so an unset reason is an omission, not "".
+	Reason string
+}
+
+// DecisionResult is the core's Job snapshot returned by an inbox decision:
+// approve and reject both call through to host.Approve/host.Reject, each
+// returning a hostv1.Job (arxi/host/v1/host.go). It projects only what an
+// acknowledgement needs -- which run was addressed (id) and the run's lifecycle
+// state once the decision was recorded (status/terminal), so the caller can see
+// the run resume or finish. It is deliberately NARROW like RunCancelResult and
+// not wide like RunShowResult: answering a decision is a mutation whose ack
+// confirms the run moved, and a caller wanting the full budget/turns projection
+// asks run.show. Under-projecting here does not make this a worse status query,
+// because it was never the status query.
+type DecisionResult struct {
+	JobID    string `json:"id"`
+	Status   string `json:"status"`
+	Terminal bool   `json:"terminal"`
+}
+
+// SubmitInboxApprove sends an inbox.approve for one pending approval item and
+// returns the core's Job snapshot.
+//
+// It is the driver half of the already-signed scene action `answer:approve`
+// (docs/BINDS.md: the closed answer-kind vocabulary approve/reject/reply
+// mirrors the core's inbox.approve/reject/reply verbs, so Scene 8's approve
+// button and this method name the same act). The consumer -- routing an
+// on_press `answer:approve` to this call -- is deferred like every other verb's
+// wiring; the network-testable method lands first per the block pattern. It
+// keeps the same ok:false-is-a-refusal contract every verb keeps.
+func (d *NDJSONDriver) SubmitInboxApprove(ctx context.Context, p InboxApproveParams) (*DecisionResult, error) {
+	// A decision addresses both a run and an item, and the core's
+	// decisionIdentity refuses a request missing either. Refuse locally so the
+	// failure names the missing identity at the call site rather than borrowing
+	// the core's message for a request that never should have left the client.
+	if p.RunID == "" {
+		return nil, fmt.Errorf("ndjson: inbox.approve with an empty run id; " +
+			"a decision is authorized against the run it belongs to, so an empty " +
+			"run addresses nothing and the core would refuse it unaddressed")
+	}
+	if p.ItemID == "" {
+		return nil, fmt.Errorf("ndjson: inbox.approve with an empty item id; " +
+			"an approval answers one item, so an empty item id answers nothing")
+	}
+
+	return d.submitDecision(ctx, "approve", "inbox.approve", map[string]any{
+		"run": p.RunID, "item": p.ItemID,
+	})
+}
+
+// SubmitInboxReject sends an inbox.reject for one pending approval item,
+// optionally with a reason, and returns the core's Job snapshot. It is the
+// driver half of the signed `answer:reject` scene action, the rejection
+// counterpart to SubmitInboxApprove; the reason is omitted when unset for the
+// same reason run.cancel omits its unset reason -- an omission records nothing,
+// while "" is operator text the caller never wrote.
+func (d *NDJSONDriver) SubmitInboxReject(ctx context.Context, p InboxRejectParams) (*DecisionResult, error) {
+	if p.RunID == "" {
+		return nil, fmt.Errorf("ndjson: inbox.reject with an empty run id; " +
+			"a decision is authorized against the run it belongs to, so an empty " +
+			"run addresses nothing and the core would refuse it unaddressed")
+	}
+	if p.ItemID == "" {
+		return nil, fmt.Errorf("ndjson: inbox.reject with an empty item id; " +
+			"a rejection answers one item, so an empty item id answers nothing")
+	}
+
+	params := map[string]any{"run": p.RunID, "item": p.ItemID}
+	if p.Reason != "" {
+		params["reason"] = p.Reason
+	}
+	return d.submitDecision(ctx, "reject", "inbox.reject", params)
+}
+
+// submitDecision encodes one inbox decision request, reads the answer and
+// returns the Job snapshot. It is shared by inbox.approve and inbox.reject
+// because their transport contract is identical -- an ok:false is a *Refusal,
+// and an ok naming no run is failed loud. The per-verb guards (which identities
+// are required, which optionals are sent) live in the callers, so this helper
+// never has to know which verb it is beyond the id and type it echoes back.
+func (d *NDJSONDriver) submitDecision(ctx context.Context, id, verb string, params map[string]any) (*DecisionResult, error) {
+	req := protoRequest{ID: id, Type: verb, Params: params}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if err := d.enc.Encode(req); err != nil {
+		return nil, fmt.Errorf("ndjson: send %s: %w", verb, err)
+	}
+
+	resp, err := d.readResponse(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// ok:false is an answer, not a transport success -- a decision on a missing
+	// run or item answers not_found/invalid_argument, and that must reach the
+	// caller as a *Refusal rather than a zero-valued result that reads as an
+	// accepted decision which moved a run it never touched.
+	if !resp.OK {
+		return nil, resp.refusal(verb)
+	}
+
+	var result DecisionResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, fmt.Errorf("ndjson: decode %s result: %w", verb, err)
+	}
+
+	// A decision answered ok but naming no run is unconfirmable, the same way a
+	// cancel or a show is: the host answered one run's item and got back a
+	// snapshot that identifies none, so it cannot confirm the decision landed on
+	// the intended run. Fail loud -- an unverifiable decision is worse than a
+	// refusal, which at least says so.
+	if result.JobID == "" {
+		return nil, fmt.Errorf("ndjson: %s returned ok with no job id; an "+
+			"acknowledgement that names no run cannot confirm the decision was "+
+			"recorded against the intended run", verb)
+	}
+	return &result, nil
+}
+
 // refusal converts an ok:false response into a *Refusal, preserving the code,
 // the core's sentence and its remedy. A response with ok:false and no error
 // object still becomes a refusal: `ok` is the field of record, and inventing a
