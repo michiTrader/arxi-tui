@@ -164,6 +164,7 @@ written only through registered commands (`cmd:/slash`, `cmd:/max`,
 | `ui.surface` | text | the active surface/page identifier (e.g. `"chat"`, `"config"`, `"plugins"`) | on `cmd:/surface <name>` | `"chat"` — the default surface |
 | `ui.hidden` | set of node ids | the ids the user has hidden via `cmd:/ui hide <id>`; `cmd:/ui show <id>` removes one, `cmd:/ui show *` clears the set | on `cmd:/ui hide`/`show` | empty set — every node's visibility is decided by its `when` alone |
 | `ui.plugin.<id>` | text | the process lifecycle status of a mounted behavioral plugin, written by the host supervisor: `"starting"` (spawned, pre-handshake), `"live"` (handshake acked, streaming), `"error"` (repeated malformed frames or restart backoff), `"dead"` (process exited, frozen at last values) | on spawn, handshake ack, restart, and death (Block I supervisor) | empty string — no behavioral plugin with that id is mounted, so the bind is falsy for `when` |
+| `host.run.actor` | text | the resolved actor blueprint name of the run the TUI is currently following, captured by the host from the `run.start` config it resolved (`resolveRunStartParams`, M1c), not from any arxi-core event; the driver holds it and the loop publishes it into the fold each frame | set on the first `SubmitPrompt` that begins a run (M2), and blanked while the slash menu is open so the status row stays a clean either/or with the menu hint | empty string — no run has been started (boot) or the menu is open, so the `when`-gated actor label does not render |
 | `community.query` | text | the substring typed into the community installer's search `input` (Scene 7); the host recomputes `community.matches` from it via `Registry.FilterEntries` on every keystroke, the installer analogue of `slash.typed` over the command registry | on every keystroke while the installer scene is open | empty string — the browse view is open but unfiltered, so every registry entry is listed |
 | `community.matches` | array of `{id, name, version, manifest_url, description, preview}` | the registry index entries filtered by `community.query` (case-insensitive substring over name/description, `Registry.FilterEntries`); the installer's `list` binds to it and its `row_template` renders one pressable card per entry, the installer analogue of `slash.matches` | on every keystroke that changes `community.query`, and once when the index is fetched | empty array — no entry matches the query; distinct from a never-fetched index, which the scene reads through a separate liveness gate rather than by collapsing the two |
 | `community.selected` | int | the index into `community.matches` of the highlighted card; the list draws that row bright and the markdown preview pane renders its `preview`. The host owns it (↑/↓ while the installer is open and **wraps** at both ends), clamps it to the match list on every filter keystroke, and resets it to 0 when the installer reopens — the installer analogue of `slash.selected` | on ↑/↓ while the installer is open, and on any keystroke that changes `community.query` | `0` — the first match is highlighted |
@@ -216,6 +217,27 @@ of its own death. The empty-string default is falsy, so signing this row moves
 no golden until a behavioral plugin is actually mounted (Block I), and no
 declarative plugin (Block H) ever sets it — a stream-less plugin has no process
 to be live.
+
+**The `host.run.actor` label (signed 2026-09-29, M2 follow-up).** It is host
+view state, not a run-state projection, and the distinction is exactly the one
+that decides where the value comes from. The actor blueprint of a run is the
+one field the host chooses rather than reads: `run.start` takes it as a
+parameter (`resolveRunStartParams` resolves it from `ARXI_ACTOR` or the
+`defaultActor`, M1c), so the host already knows the actor at the moment it
+begins a run, one wire round-trip before any `run.started` event could echo it
+back. Binding the status label to that resolved value rather than to an event
+means the actor shows the instant the run is requested, and it does not depend
+on the core emitting an `actor` field the fold would otherwise have to project.
+The driver captures it on the `SubmitPrompt` that starts the run (it is held on
+`serveDriver.actorLabel`) and the loop publishes it into the fold each frame,
+the same host-owned re-attachment `user.input`, `ui.focus` and `host.scene.error`
+get. It is blanked while the slash menu is open so the bottom bar stays the
+either/or the `status.active`/`slash.hint` pair already enforces — the actor is
+one more `when: status.active`-class field, but gated on its own presence so it
+also stays absent at boot. The empty-string default is falsy, so signing this
+row and adding its `when`-gated node to a shipped scene moves no default golden:
+the golden folds start no run, so the label is empty and its node does not draw.
+
 
 ### 4.4 Plugin namespace contract
 
