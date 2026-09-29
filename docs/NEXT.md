@@ -1543,6 +1543,25 @@ counterfactual test).
   the live wiring is now unblocked: `BundleConsentScene` (presentation) and the
   loop's one-answer→N-`Grant` fan-out (sequencing) are the only new artifacts,
   both over the unchanged gate.
+  **Presentation half BUILT (2026-09-29, PR #118).** `BundleConsentScene`
+  (`internal/ext/bundle_consent_scene.go`) is the first of those two artifacts,
+  landed the way `ConsentScene`'s view landed before its loop: a pure
+  `(name, description, []BundlePluginConsent) -> *scene.Document` authored through
+  the same map→`ParseNamed` path and the same tokens both themes sign. It stacks
+  the bundle identity above one full identity+capability block per plugin needing
+  a fresh grant (the same tuple `ConsentScene` shows), lists already-remembered
+  plugins by name only as trusted-no-new-power (the whole cost of the install, not
+  just its new part), names a plugin-less scene/theme bundle as a confirm that
+  "runs no plugin code", and always draws the `y`/`n`/`r` keys the loop will bind.
+  Pinned by `bundle_consent_scene_test.go` (5 tests over two distinct manifests),
+  with both counterfactuals run by hand: rendering only `needsConsent[0]` fails on
+  the second plugin's missing fields, and re-detailing the remembered half
+  surfaces its capability and fails the trusted-no-new-power assertion.
+  **Remaining (the impure loop half):** fetch each `manifest_url`, `Decide` per
+  plugin, drive `BundleConsentScene` on the live modal surface, fan the single
+  `y`/`r`/`n` answer out to N `Gate.Grant` calls, then grant-then-compose
+  (`theme.Merge` + `patch.Mount`) — gated on `cmd/arxi-tui/install_modal.go`'s
+  `startInstall`, exactly the surface a single behavioral install already uses.
 - **J5** [J3] Freeze the Scene 7 golden.
 - **J5 — DONE (2026-09-28, PR #104).** The Scene 7 golden is frozen as the
   host-generated community installer, pinned the way Scene 6 (TICKER) and Scene 9
