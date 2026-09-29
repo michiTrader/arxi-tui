@@ -312,6 +312,29 @@ Consequences for the plan:
     `resolveRunStartParams` → `SubmitRunStart` → `runLogPathForJob` follow
     sequence, surfacing the actor label in the status bar, and confirming the
     `defaultActor` name and the log-path layout against a live kernel.
+  - **M2 join — BUILT (2026-09-29, PR #127).** The fifth network-free piece
+    joins the four that landed alone: `startRun` (`cmd/arxi-tui/run_start.go`)
+    sequences `requireRunStart` → `resolveRunStartParams` → `SubmitRunStart` →
+    `runLogPathForJob` in the one order that is both correct and testable without
+    a subprocess — gate on the hello *first* (a declared-but-unimplemented
+    `run.start` is refused before a prompt is ever spent), resolve session config
+    (a malformed `ARXI_BUDGET`/`ARXI_SIM` refuses by name), create the run, then
+    derive the follow path from the returned `job_id` so the TUI follows the run
+    it just created. It takes the session's first prompt as the run's first
+    prompt (the one-`run.start`-per-turn mapping M1c established, since
+    `run.prompt`/`run.steer` have no executor on this build) and returns the log
+    path plus the actor label for the status bar. This is the join analogous to
+    J4's `planBundleCompose` (#121): the pieces were proven alone, this proves
+    their composition. Pinned by `run_start_test.go` (5 tests over a fake
+    `runStarter`) with the ordering counterfactual run by hand: submitting before
+    the gate/config fails exactly the gating-before-submit, config-before-submit
+    and param-forwarding tests, and nothing else. **Still deferred (the impure
+    live half):** calling `startRun` from a restructured `openServeDriver`/
+    `serveDriver.SubmitPrompt` (the run.start round-trip moves off boot and onto
+    the first user line, since it needs a prompt), re-pointing `LogFollow` at the
+    returned path, surfacing the actor label in the status-bar scene, and
+    confirming the `defaultActor` name and the `<runsRoot>/<job_id>/events.ndjson`
+    layout against a live `arxi serve` — the one thing only a real kernel confirms.
 - **M3** [M2] Evaluate adopting the `run.attach`/`event.subscribe` path (a
   positive end-of-run marker) — deferred per ADR-0002
   (`docs/PLAN.md:230-280`); the trigger is needing that positive signal.
