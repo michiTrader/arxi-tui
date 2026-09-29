@@ -1,9 +1,0 @@
-«border:┌ Community — browse and install ────────────────────────────────────────────┐»
-«border:│»«input:tick»                                   «header:Community Ticker»                       «border:│»
-«border:│»«header:> »«header:Community Ticker»                     «dim:0.1.0»                                  «border:│»
-«border:│»«dim:0.1.0»                                  «text:#»«text: »«text:Ticker»                               «border:│»
-«border:│»A streaming price ticker for the status«text:Streams»«text: »«text:a»«text: »«text:price»«text: »«text:into»«text: »«text:the»«text: »«text:status»«text: »«text:row.»   «border:│»
-«border:│»«header:Focus Timer»                                                                   «border:│»
-«border:│»«dim:1.2.0»                                                                         «border:│»
-«border:│»A pomodoro countdown mounted as an over                                       «border:│»
-«border:└──────────────────────────────────────────────────────────────────────────────┘»

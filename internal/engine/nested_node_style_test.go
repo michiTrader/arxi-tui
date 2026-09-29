@@ -138,6 +138,16 @@ func nestedStyleState() fold.State {
 		{Task: "read the plan"},
 		{Task: "freeze the golden"},
 	}
+	// COMMUNITY's live installer reaches its row_template through community.matches,
+	// the same shape team.members and agent.todos have: an empty match list renders
+	// zero rows and the template candidate would be reported undrawn — the false
+	// alarm this state exists to prevent — instead of swept. A selection is set so
+	// the row-selected marker span (gated on row.selected) is drawn on one row too.
+	s.CommunityMatches = []fold.CommunityMatch{
+		{ID: "ticker", Name: "Price Ticker", Version: "0.1.0", ManifestURL: "https://example.com/t/m.json", Description: "Streams a price into the status row.", Preview: "# Ticker"},
+		{ID: "timer", Name: "Focus Timer", Version: "1.2.0", ManifestURL: "https://example.com/f/m.json", Description: "A pomodoro countdown overlay.", Preview: "# Timer"},
+	}
+	s.CommunitySelected = 0
 	return s
 }
 
@@ -172,6 +182,24 @@ func withNestedStyle(t *testing.T, owner *scene.Node, branch string) (*scene.Nod
 	// honour.
 	var nested map[string]json.RawMessage
 	if err := json.Unmarshal(nestedRaw, &nested); err != nil {
+		return nil, false
+	}
+
+	// A pure layout container (stack/row) carries no own-style span: renderStack
+	// and renderHorizontal lay their children out and never read n.Style (unlike
+	// box/overlay, whose border chrome does), so its styling is entirely its
+	// children's. Stamping a token on it changes no pixel, which is not a dropped
+	// style but the absence of a surface to drop — the same "not a candidate"
+	// verdict a bare-string prefix gets above. Reported so, not as a failure: the
+	// children's tokens are swept where they are declared (COMMUNITY's row_template
+	// header/dim spans are pinned by COMMUNITY.styled with the matches folded), and
+	// treating the container as a candidate would assert a property the engine does
+	// not have. This is why E4 gave SUBAGENTS a single text-node template; the live
+	// installer's row needs a multi-line stack, so the exemption is made explicit
+	// here. Counterfactual (run by hand): dropping this skip reports COMMUNITY's
+	// stack row_template as a silent drop even though renderStack applies no style,
+	// and no engine change could make that candidate pass.
+	if t := containerType(nested["type"]); t == "stack" || t == "row" {
 		return nil, false
 	}
 
@@ -213,6 +241,20 @@ func collectNestedCandidates(t *testing.T, sceneName, path string, n *scene.Node
 	collectNestedCandidates(t, sceneName, path+".prefix", n.PrefixNode(), out)
 	collectNestedCandidates(t, sceneName, path+".suffix", n.Suffix, out)
 	collectNestedCandidates(t, sceneName, path+".row_template", n.RowTemplate, out)
+}
+
+// containerType decodes a nested node's "type" field to a string, or "" when it
+// is absent or not a string. It lets withNestedStyle recognise a pure layout
+// container (stack/row) that carries no own-style span.
+func containerType(raw json.RawMessage) string {
+	if raw == nil {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return s
 }
 
 func itoa(i int) string {

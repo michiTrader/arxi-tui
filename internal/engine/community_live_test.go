@@ -11,31 +11,24 @@ import (
 	"github.com/michiTrader/arxi_tui/internal/theme"
 )
 
-// This file pins the LiveInstallerScene increment (DESIGN-BLOCK-J.md J3
-// follow-up): the community installer as a live document that binds to the
-// community.* view state, rather than the static-card InstallerScene J5 froze as
-// the Scene 7 golden. The coverage the increment exists for is that a non-empty
-// community.matches actually reaches the frame through the row_template, so the
-// projection PR #108 landed is exercised end-to-end at the composed-frame level,
-// which no test did before.
+// This file pins the Scene 7 golden (SCENES.md — COMMUNITY): the community
+// installer authored as a scene, rendered through the ordinary engine path. Since
+// the keystroke loop landed (DESIGN-BLOCK-J.md J3 follow-up), the installer is the
+// LIVE builder — it binds its entry list to the community.* view state the loop
+// writes rather than baking cards from an index — and the static-card
+// InstallerScene it replaced retired. testdata/COMMUNITY.json is now
+// LiveInstallerScene's output, pinned the way TICKER.json and the static build
+// were: TestCommunityJSONIsTheLiveInstallerSceneOutput proves it is byte-for-byte
+// what the builder produces, so a drift in the builder is a golden diff rather than
+// a divergence nobody sees.
 //
-// The live installer is NOT a twelfth scene: it is the in-progress variant of
-// Scene 7 that will replace the static one when the keystroke loop mounts it, at
-// which point COMMUNITY.json moves to this builder in its own mutation family.
-// So it is rendered straight from ext.LiveInstallerScene() rather than pinned as
-// a top-level testdata/*.json fixture — the same choice previewScene makes for
-// the preview chrome, and for the same reason: a top-level .json is enumerated as
-// a shipped scene by the progress audit (it would report a phantom Scene 12) and
-// by the nested-node sweep. Rendering from the builder still catches drift — the
-// .frame/.styled goldens ARE the builder output, so a builder change is a golden
-// diff — without inventing a scene the documents do not describe.
-//
-// The fold state here is NON-empty on purpose, unlike communityFrame's empty
-// fold for the static scene: the static installer bakes its content, so its
-// deterministic frame needs no host activity, but the live installer's whole
-// point is that its content is the folded matches. An empty fold would render a
-// bare browse and witness nothing about the binding, so the golden that proves
-// the wiring must fold the matches the loop will later write.
+// The fold state the frame/styled goldens render is NON-empty on purpose: the live
+// installer's whole point is that its content is the folded matches, so an empty
+// fold would render a bare browse and witness nothing about the binding. The
+// goldens fold the matches the loop writes, and pin the row-selection marker and
+// the selection-driven preview at a chosen non-empty selection — the same "pin at
+// a state that witnesses the behaviour, not the empty one that covers none of it"
+// discipline ANIMATION.json follows for motion.
 
 // liveInstallerMatches is the folded browse state the live-frame goldens render:
 // two filtered entries with a query, the shape Registry.FilterEntries produces
@@ -113,6 +106,41 @@ func liveInstallerFrameWith(t *testing.T, state fold.State) string {
 	t.Helper()
 	r := Renderer{Width: 80, Height: 30}
 	return r.RenderFrame(liveInstallerDoc(t), state).Plain()
+}
+
+// TestCommunityJSONIsTheLiveInstallerSceneOutput proves testdata/COMMUNITY.json is
+// exactly what ext.LiveInstallerScene() builds — so the pinned Scene 7 contract is
+// the real host-generated installer, not a hand-authored lookalike. LiveInstallerScene
+// parses its assembled JSON through scene.ParseNamed, so doc.Source() is the
+// marshalled bytes the way patch.Mount's res.Source is for TICKER.json. UPDATE_GOLDEN=1
+// regenerates COMMUNITY.json from the builder, the only way it is ever written: the
+// fixture cannot drift from LiveInstallerScene, because LiveInstallerScene is what
+// produces it. LiveInstallerScene takes no index — its content is the fold — so this
+// pins the document's shape, and the frame/styled goldens below pin what the engine
+// draws from a folded browse state.
+func TestCommunityJSONIsTheLiveInstallerSceneOutput(t *testing.T) {
+	doc, err := ext.LiveInstallerScene()
+	if err != nil {
+		t.Fatalf("LiveInstallerScene: %v; the Scene 7 premise is that the builder produces an installer scene", err)
+	}
+	got := doc.Source()
+
+	goldenPath := "../../testdata/COMMUNITY.json"
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile(goldenPath, got, 0644); err != nil {
+			t.Fatalf("write COMMUNITY.json: %v", err)
+		}
+		return
+	}
+	want, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", goldenPath, err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("COMMUNITY.json is not the LiveInstallerScene output; the pinned Scene 7 scene has drifted\n"+
+			"from what ext.LiveInstallerScene builds.\n--- builder produced ---\n%s\n--- COMMUNITY.json ---\n%s",
+			got, string(want))
+	}
 }
 
 // TestLiveInstallerDrawsEveryMatch is the reason this increment has a test at
@@ -314,7 +342,7 @@ func TestLiveInstallerPreviewPaneShowsTheSelectedEntry(t *testing.T) {
 func TestLiveInstallerFrameMatchesGolden(t *testing.T) {
 	got := liveInstallerFrame(t)
 
-	goldenPath := "../../testdata/COMMUNITY-LIVE.frame"
+	goldenPath := "../../testdata/COMMUNITY.frame"
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
 		if err := os.WriteFile(goldenPath, []byte(got), 0644); err != nil {
 			t.Fatalf("write golden: %v", err)
@@ -341,7 +369,7 @@ func TestLiveInstallerStyledGolden(t *testing.T) {
 	r := Renderer{Width: 80, Height: 30}
 	got := r.RenderFrame(liveInstallerDoc(t), liveInstallerState()).Styled()
 
-	goldenPath := "../../testdata/COMMUNITY-LIVE.styled"
+	goldenPath := "../../testdata/COMMUNITY.styled"
 	if os.Getenv("UPDATE_GOLDEN") == "1" {
 		if err := os.WriteFile(goldenPath, []byte(got), 0644); err != nil {
 			t.Fatalf("write golden: %v", err)

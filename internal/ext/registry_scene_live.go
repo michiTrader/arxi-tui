@@ -1,28 +1,22 @@
 package ext
 
-// LiveInstallerScene is the next J3 follow-up increment (DESIGN-BLOCK-J.md): the
-// community installer as a *live* document, the form the keystroke loop will
-// drive. Where InstallerScene bakes each index entry as a static card — the
-// deliberate deferral J3 shipped and J5 froze as the Scene 7 golden — this
-// builder binds the browse list to the community.* view state instead: the
-// search input reads community.query, and the entry list is a row_template over
-// community.matches (the filtered entries the loop recomputes through
-// Registry.FilterEntries on every keystroke). The entries therefore live in the
-// fold, not in the builder, which is why this takes no index: the same registry
-// that produced the static cards now produces nothing here, because the content
-// is host state the loop writes, not chrome baked once. Scene says form, fold
-// says content (ADR-0002) — the static builder had to bake because there was no
-// signed view state to bind to, and that is exactly what PR #107 signed and
-// PR #108 projected.
+// LiveInstallerScene is the community installer as a *live* document — the Scene 7
+// golden the keystroke loop drives (DESIGN-BLOCK-J.md J3 follow-up). Where the
+// retired static InstallerScene baked each index entry as a card, this builder
+// binds the browse list to the community.* view state: the search input reads
+// community.query, and the entry list is a row_template over community.matches
+// (the filtered entries the loop recomputes through Registry.FilterEntries on
+// every keystroke). The entries therefore live in the fold, not in the builder,
+// which is why this takes no index: the content is host state the loop writes, not
+// chrome baked once. Scene says form, fold says content (ADR-0002) — the static
+// builder had to bake because there was no signed view state to bind to, and that
+// is exactly what PR #107 signed and PR #108 projected.
 //
-// It is built and pinned before the loop mounts it, the same order TICKER.json
-// and COMMUNITY.json pin a mount/build output ahead of the code that consumes
-// it: freezing the target document now means the loop increment that swaps this
-// onto the display cannot silently change its shape — a drift is a golden diff,
-// not an invisible divergence. When that loop lands, the Scene 7 golden moves
-// from the static build to this one, in its own mutation family named for the
-// live installer, and the static InstallerScene retires the way ui.hidden's
-// exemption did once its consumer existed.
+// It became the Scene 7 golden when the loop increment that opens the installer
+// (`/ui plugin browse <url>`), swaps this document onto the display and routes
+// keys into installerBrowse landed: COMMUNITY.json is now this builder's output,
+// pinned the way TICKER.json and the static build were, so a drift in the builder
+// is a golden diff, not an invisible divergence.
 //
 // The search input shows the typed query: renderInput now resolves any
 // view-state bind, so community.query appears in the box as the loop writes it
@@ -35,15 +29,16 @@ package ext
 // help pane: it binds community.selected.{name,version,preview}, which the engine
 // resolves by indexing community.matches with community.selected (see
 // selectedCommunityMatch and renderMarkdown's bind resolution) — the third and
-// last deferred affordance, landed here.
+// last deferred affordance.
 //
-// What remains is not an affordance of this document but the host loop that
-// drives it: the keystroke loop that writes the community.* fold fields via
-// Registry.FilterEntries on every keystroke, moves community.selected on ↑/↓, and
-// swaps this document onto the display. When it lands, the Scene 7 golden moves
-// from the static build to this one, in its own mutation family named for the
-// live installer, and the static InstallerScene retires the way ui.hidden's
-// exemption did once its consumer existed.
+// The host loop that drives it has landed (cmd/arxi-tui): `/ui plugin browse
+// <url>` fetches a registry index, opens an installerBrowse over it, and the loop
+// writes the community.* fold fields via Registry.FilterEntries on every
+// keystroke, moves community.selected on ↑/↓, swaps this document onto the display
+// and dispatches the selected entry's manifest_url through the consent gate on
+// Enter. With the consumer live, this builder is the Scene 7 golden and the static
+// InstallerScene retired the way ui.hidden's exemption did once its consumer
+// existed.
 
 import (
 	"encoding/json"

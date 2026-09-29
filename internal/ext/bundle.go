@@ -3,7 +3,7 @@ package ext
 // A bundle is J4 of Block J (DESIGN-BLOCK-J.md): scene + theme + plugins under
 // one manifest, shared as a single document and installed behind one consent
 // screen. This file is the pure, network-free core — the parser and validator —
-// landed first the way J2's ParseRegistry and J3's InstallerScene were, with the
+// landed first the way J2's ParseRegistry and J3's LiveInstallerScene were, with the
 // live wiring (fetch each referenced manifest, aggregate the Q15 identity, show
 // the one consent screen, then theme.Merge + patch.Mount on a single grant) the
 // follow-up increment.
