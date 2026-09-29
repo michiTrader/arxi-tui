@@ -244,9 +244,32 @@ Consequences for the plan:
     territory.
 - **M2** [M1c] Verify a real round-trip against a live `arxi serve`, re-reading
   the hello's `implemented` list at connect and gating on it.
+  - **M1c config resolver — BUILT (2026-09-29, PR #124).** The three product
+    decisions M1b flagged are now answered by the user and encoded in
+    `resolveRunStartParams` (`cmd/arxi-tui/run_config.go`), the second
+    network-free half after the pure `SubmitRunStart` (#123): **actor** is
+    plug-and-play — a baked `defaultActor` so a session starts with no config,
+    overridable by `ARXI_ACTOR`, and returned as a status-bar label so the
+    connected agent is never invisible; **budget** defaults to a conservative
+    `1.0`, overridable by `ARXI_BUDGET`; **sim** is off by default (a live
+    model), opt-in via `ARXI_SIM`. Malformed `ARXI_BUDGET` (unparseable or
+    non-positive) and unrecognised `ARXI_SIM` are refused **by name** rather
+    than silently defaulted — with a live model as the default, guessing past a
+    bad value spends against a number the user never wrote. Pinned by nine tests
+    (`run_config_test.go`) with `getenv` injected (no `os.Setenv`, parallel-safe)
+    and all three refusals' counterfactuals run by hand; the malformed-budget
+    test was strengthened after measuring that the non-positive guard downstream
+    silently covered it. **Still deferred (the live half of M2):** calling the
+    resolver from `serveDriver`, re-pointing `LogFollow` at the new run's log dir
+    from the returned `job_id` (the run.start→job_id→log-path convention is a
+    wire fact only a live `arxi serve` can confirm), surfacing the actor label in
+    the status-bar scene, and confirming the `defaultActor` name against a kernel
+    that actually ships it — a wrong default is rejected at the core's agent
+    store, so plug-and-play's default *name* is provisional until this check.
 - **M3** [M2] Evaluate adopting the `run.attach`/`event.subscribe` path (a
   positive end-of-run marker) — deferred per ADR-0002
   (`docs/PLAN.md:230-280`); the trigger is needing that positive signal.
+
 
   Superseded note (kept for the record, per the "record the wrong premise rather
   than delete it" rule): the original M1b read *"the only such verb this build
