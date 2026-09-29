@@ -1607,6 +1607,31 @@ counterfactual test).
   `patch.Mount` the scene and plugins, `supervisor.Start` the behavioral ones) —
   the modal-loop half that owns the keyboard and the live scene/theme/supervisor
   state, gated on `startInstall`'s surface.
+
+  **Plan half BUILT (2026-09-29, PR #121).** `planBundleCompose`
+  (`cmd/arxi-tui/bundle_compose.go`) is the second increment: the join between the
+  two pure artifacts. It calls `GrantBundle` to fan the single answer out to N
+  per-plugin grants (all-or-nothing, each against the plugin's own identity), then
+  pairs each returned `BundleGrant` back — by plugin ID, not slice position, so a
+  drift between the resolution and the fan-out is a named refusal rather than a
+  process spawned at the wrong tree with another plugin's grant — to the `Installed`
+  package `resolveBundle` laid it out into, producing the `supervisor.Config` the
+  loop will `Start` (each carrying only the gate's granted set, invariant 7). The
+  bundle's embedded scene and theme are carried through verbatim as the raw bytes
+  the loop parses and mounts. It grants (in-memory gate) and plans but spawns and
+  mounts nothing: the whole compose plan is one value the loop gets in full or not
+  at all, carrying `GrantBundle`'s workspace atomicity into the loop (a rejected or
+  partially-granted bundle never reaches the mount calls). A rejection returns
+  `ErrBundleRejected` and a nil plan, so the loop cannot compose a "rejected" plan by
+  forgetting to check. Pinned by `bundle_compose_test.go` (4 tests) with all four
+  counterfactuals run by hand: nulling `Granted`, swallowing the rejection into an
+  empty plan, dropping the scene, and skipping carried grants each fail exactly their
+  test. **Remaining (the loop-execution half):** the bundle modal that drives
+  `BundleConsentScene` on the live surface and answers `GrantBundle`, plus executing
+  a `bundleComposePlan` — `theme.Merge` the theme layer, `patch.Mount` the parsed
+  scene, `supervisor.Start` each config + register + pump — into the loop's live
+  scene/theme/supervisor state, gated on the same worker+channel surface `startInstall`
+  and `startBundleInstall` use.
 - **J5** [J3] Freeze the Scene 7 golden.
 - **J5 — DONE (2026-09-28, PR #104).** The Scene 7 golden is frozen as the
   host-generated community installer, pinned the way Scene 6 (TICKER) and Scene 9
