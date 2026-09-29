@@ -1530,13 +1530,19 @@ counterfactual test).
   aggregated Q15 identity, shows the *one* consent screen (`ext.ConsentScene`'s
   bundle sibling), then `theme.Merge` + `patch.Mount`s the scene and plugins on a
   single grant — gated on the same live-loop surface the I5 modal mount uses
-  (`cmd/arxi-tui/install_modal.go`, `startInstall`). **One design point is signed
-  only as a sketch and should be pinned before that code:** DESIGN-BLOCK-J.md calls
-  the one screen "a UX aggregation over the existing Q15 gate (one identity grant
-  covering all the bundle's components)", but the identity tuple in
-  `internal/ext/identity.go` is per-manifest, so how N plugin identities compose
-  into one grant (one aggregate identity vs. N remembered grants decided on one
-  screen) is the decision that beat needs.
+  (`cmd/arxi-tui/install_modal.go`, `startInstall`). **The design point that beat
+  needed is now pinned (2026-09-29, PR #116):** DESIGN-BLOCK-J.md's new section
+  "How 'one consent screen' aggregates N grants" resolves it — the screen is
+  **one**, the grants are **N per-plugin** against each plugin's own unchanged Q15
+  identity (`internal/ext/identity.go` stays per-manifest), and one `y`/`r`/`n`
+  answer fans out to N `Gate.Grant` calls. The aggregate-identity reading is
+  rejected there as a new authority that breaks grant transfer in both directions.
+  The wiring's two recorded consequences: the embedded scene/theme request no
+  powers (H2 declarative split — zero code, no capability block), and mount order
+  is grant-then-compose (atomicity from `checkEmpty` carried to install time). So
+  the live wiring is now unblocked: `BundleConsentScene` (presentation) and the
+  loop's one-answer→N-`Grant` fan-out (sequencing) are the only new artifacts,
+  both over the unchanged gate.
 - **J5** [J3] Freeze the Scene 7 golden.
 - **J5 — DONE (2026-09-28, PR #104).** The Scene 7 golden is frozen as the
   host-generated community installer, pinned the way Scene 6 (TICKER) and Scene 9
