@@ -27,8 +27,8 @@ func TestRunCancelReturnsTheJobSnapshot(t *testing.T) {
 			"run and must confirm the acknowledgement names it", res.JobID, "run-2f")
 	}
 	if !res.CancellationRequested {
-		t.Fatalf("SubmitRunCancel dropped cancellation_requested; the core reports "+
-			"cancel as a request the run has yet to honour, and losing that flag "+
+		t.Fatalf("SubmitRunCancel dropped cancellation_requested; the core reports " +
+			"cancel as a request the run has yet to honour, and losing that flag " +
 			"makes a pending cancel read as no cancel at all")
 	}
 	if res.Status != "running" || res.Terminal {
