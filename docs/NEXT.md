@@ -266,6 +266,28 @@ Consequences for the plan:
     the status-bar scene, and confirming the `defaultActor` name against a kernel
     that actually ships it — a wrong default is rejected at the core's agent
     store, so plug-and-play's default *name* is provisional until this check.
+  - **M2 log-path piece — BUILT (2026-09-29, PR #125).** The third pure piece
+    after #123's wire method and #124's config resolver: `runLogPathForJob`
+    (`cmd/arxi-tui/run_log_path.go`) builds the event-log path a `run.start`
+    `job_id`'s log follows — `<runsRoot>/<job_id>/events.ndjson` — as the exact
+    inverse of `serveDriver.runID`, so `runID(runLogPathForJob(root, id)) == id`
+    and the run the TUI creates is *followed* and *addressed* under one id, not
+    two. The `<runsRoot>/<id>/events.ndjson` layout is the wire fact only a live
+    `arxi serve` can confirm; it lives in one function so that confirmation
+    touches a single site, the way `runID` keeps the forward derivation to one.
+    An empty `job_id` is refused rather than yielding `<runsRoot>/events.ndjson`
+    (the runs root itself, no run's log) — the second line behind
+    `SubmitRunStart`'s empty-`job_id` guard. `defaultRunsRoot` is `~/.arxi/runs`,
+    the parent of `openServeDriver`'s existing `~/.arxi/runs/last` default, so the
+    two derivations agree on where runs live. Pinned by `run_log_path_test.go`
+    (round-trip against `runID`, the per-job-dir layout, the empty-`job_id`
+    refusal) with the derivation counterfactual run by hand: dropping the
+    `job_id` directory fails both the round-trip and the layout tests. **Still
+    deferred (the impure live half):** restructuring `openServeDriver` to spawn
+    serve → handshake → `resolveRunStartParams` → `SubmitRunStart` → follow *this*
+    run's log via `runLogPathForJob`, surfacing the actor label in the status
+    bar, gating on the hello's `implemented` list, and confirming the
+    `defaultActor` name and the log-path layout against a live kernel.
 - **M3** [M2] Evaluate adopting the `run.attach`/`event.subscribe` path (a
   positive end-of-run marker) — deferred per ADR-0002
   (`docs/PLAN.md:230-280`); the trigger is needing that positive signal.
