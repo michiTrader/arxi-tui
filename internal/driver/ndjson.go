@@ -337,6 +337,117 @@ func (d *NDJSONDriver) SubmitPrompt(ctx context.Context, runID, text string) (*p
 	return resp, nil
 }
 
+// RunStartParams are the wire parameters of a run.start request, the verb that
+// CREATES a run (as opposed to run.prompt, which sends text into an
+// already-running one). The three fields the core's dispatch reads
+// unconditionally -- actor, prompt, budget -- are always sent; the optional
+// ones are omitted from the request when unset so the core applies its own
+// documented defaults rather than the client guessing them.
+//
+// workspace is deliberately absent from this struct. The core defaults it to
+// `auto` when the parameter is omitted, and its legal values are a closed enum
+// (auto|shared|worktree|copy|none); an empty string is a fourth, illegal
+// member, so sending one would turn a valid omission into a bad_params refusal.
+// The field lands here only when a real enum value is chosen (M1c).
+type RunStartParams struct {
+	// Actor is the agent blueprint the run executes, resolved by the core
+	// through its agent store / a blueprint file -- not inline blueprint text.
+	Actor string
+	// Prompt is the run's first prompt. run.start takes it positionally
+	// alongside actor.
+	Prompt string
+	// Budget is the run's USD budget. The core requires it (there is no
+	// default) and refuses a non-positive value, so it is always sent even
+	// when zero: letting the core raise its own budget refusal is more honest
+	// than the client inventing a floor.
+	Budget float64
+	// MaxTurns caps the run's turns; the core default is 0 (uncapped), so it
+	// is sent only when set to a positive value.
+	MaxTurns int
+	// Model overrides the actor's model; sent only when non-empty.
+	Model string
+	// Sim runs the actor against the simulator rather than a live model; sent
+	// only when true so the core's default (a live run) applies on omission.
+	Sim bool
+}
+
+// RunStartResult is the core's SubmitResult: the job_id every later verb
+// (run.attach/run.show/run.result/run.cancel) addresses, plus the sequence the
+// core accepted the submission at and the run's initial status.
+type RunStartResult struct {
+	JobID       string `json:"job_id"`
+	AcceptedSeq int    `json:"accepted_seq"`
+	Status      string `json:"status"`
+}
+
+// SubmitRunStart sends a run.start request and returns the parsed SubmitResult.
+//
+// This is the only protocol path that can begin a run from the TUI. run.prompt
+// and run.steer are declared in surface v1 but have no executor in this build
+// (M1b: both answer not_implemented), so a host that wants to start a run must
+// use run.start; the job_id it returns is the run id every later verb
+// addresses. The optional parameters are omitted rather than sent as zero
+// values so the wire carries only what the caller actually chose (see
+// RunStartParams).
+func (d *NDJSONDriver) SubmitRunStart(ctx context.Context, p RunStartParams) (*RunStartResult, error) {
+	params := map[string]any{
+		"actor":  p.Actor,
+		"prompt": p.Prompt,
+		"budget": p.Budget,
+	}
+	if p.MaxTurns > 0 {
+		params["max_turns"] = p.MaxTurns
+	}
+	if p.Model != "" {
+		params["model"] = p.Model
+	}
+	if p.Sim {
+		params["sim"] = true
+	}
+
+	req := protoRequest{
+		ID:     "start",
+		Type:   "run.start",
+		Params: params,
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if err := d.enc.Encode(req); err != nil {
+		return nil, fmt.Errorf("ndjson: send run.start: %w", err)
+	}
+
+	resp, err := d.readResponse(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// ok:false is an answer, not a transport success -- the same contract
+	// SubmitPrompt keeps. A budget refusal (bad_params) and a missing-actor
+	// refusal both arrive this way, and both must reach the caller as an error
+	// rather than a zero-valued result that reads as a started run.
+	if !resp.OK {
+		return nil, resp.refusal("run.start")
+	}
+
+	var result RunStartResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, fmt.Errorf("ndjson: decode run.start result: %w", err)
+	}
+
+	// A run.start that answered ok but named no job_id is unusable: the id is
+	// how every later verb (attach/show/result/cancel) reaches the run, so an
+	// empty one is a silent dead end rather than a run the host can drive. Fail
+	// loud here instead of returning a result whose JobID is "".
+	if result.JobID == "" {
+		return nil, fmt.Errorf("ndjson: run.start returned ok with no job_id; " +
+			"the job_id is the run id every later verb addresses, so an empty " +
+			"one leaves the run unreachable")
+	}
+	return &result, nil
+}
+
 // refusal converts an ok:false response into a *Refusal, preserving the code,
 // the core's sentence and its remedy. A response with ok:false and no error
 // object still becomes a refusal: `ok` is the field of record, and inventing a
