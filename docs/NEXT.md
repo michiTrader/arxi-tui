@@ -395,6 +395,39 @@ Consequences for the plan:
     live `arxi serve` (the one thing only a real kernel confirms; the sandbox has
     none), and the same label on the richer MAXIMUM status bar (its own golden
     mutation when a scene there wants it).
+- **M3** [M2] The run-addressing verbs after `run.start`
+  (`run.attach`/`run.show`/`run.result`/`run.cancel`), each addressing the run
+  by the `job_id` `run.start` returned. The serveDriver already keeps that id
+  through its log path (`runIDFromLogPath`), so these verbs have a run to reach.
+  - **M3 run.cancel pure core — BUILT (2026-09-29, PR #130).** The first
+    run-addressing verb, landed network-free ahead of any loop wiring per the
+    block pattern. `NDJSONDriver.SubmitRunCancel` (`internal/driver/ndjson.go`)
+    is the `run.cancel` wire method, the sibling of `SubmitRunStart`. Its schema
+    was read from the arxi source, not guessed: the server dispatch reads
+    `stringParam(params, "run")` and `stringParam(params, "reason")`
+    (`arxi/cmd/arxi/serve.go` run.cancel entry) onto `hostv1.CancelRequest`
+    (`arxi/host/v1/types.go`), and the `result` is a `hostv1.Job` snapshot. So
+    `RunCancelParams{RunID, Reason}` sends the run id as the wire param `run`
+    (the same name `run.prompt` addresses a run by) and omits `reason` when
+    empty; `RunCancelResult` carries the Job's `id`/`status`/`terminal`/
+    `cancellation_requested`, because cancel is a **request** (a running job
+    answers non-terminal with `cancellation_requested=true`; a finished one
+    answers `terminal=true` without it), so the host reads state rather than
+    assuming the run stopped. It keeps the same `ok:false`→`*Refusal` contract
+    (a cancel of a missing run answers `not_found`), refuses an empty run id
+    locally so the failure names the real cause instead of borrowing the core's
+    `not_found`, and fails loud on `ok:true` with no job id (an unverifiable
+    cancel is worse than a refusal). Pinned by `run_cancel_test.go` (6 tests)
+    with counterfactuals run by hand: neutering each of the three guards fails
+    its test, and the reason-omission test is the counterfactual of the
+    set-reason one. **Deferred (the impure half) — and it is a product decision,
+    not just wiring:** `serveDriver.Close` currently cancels only the *local*
+    follow goroutine, leaving the kernel run alive, so wiring `SubmitRunCancel`
+    into `Close` would make quitting the TUI terminate the run. Whether quit
+    means **cancel** the run or **detach** from it (leaving it running, the
+    `arxi run attach` + Ctrl-C semantics) is the user's call, the same class of
+    decision M1b flagged for actor/budget/sim — so the capability lands now and
+    the exit semantics wait for that decision.
   positive end-of-run marker) — deferred per ADR-0002
   (`docs/PLAN.md:230-280`); the trigger is needing that positive signal.
 
