@@ -88,6 +88,17 @@ func TestArxiBudgetMalformedIsRefusedNotDefaulted(t *testing.T) {
 		t.Errorf("the refusal does not name the variable and its bad value: %q. "+
 			"remedy: name ARXI_BUDGET and the offending value so the fix is obvious", err.Error())
 	}
+	// The diagnosis must be "not a number", not "not positive": a parse failure
+	// yields b=0, which the non-positive guard downstream would also reject, so
+	// without a dedicated malformed branch the user reads "not positive" for a
+	// value that was never a number at all -- a misdiagnosis that sends them to
+	// change the sign of a word. This assertion is what makes the malformed
+	// branch's removal observable; drop it and the counterfactual passes because
+	// the non-positive guard silently covers the same probe.
+	if !strings.Contains(err.Error(), "not a number") {
+		t.Errorf("the refusal does not diagnose the value as non-numeric: %q. "+
+			"remedy: a malformed budget must be reported as \"not a number\", distinct from the \"not positive\" refusal a parsed zero gets", err.Error())
+	}
 }
 
 // TestArxiBudgetNonPositiveIsRefused catches the value the core itself would
