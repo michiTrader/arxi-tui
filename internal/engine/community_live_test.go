@@ -335,11 +335,11 @@ func TestLiveInstallerPreviewPaneShowsTheSelectedEntry(t *testing.T) {
 	}
 }
 
-// TestLiveInstallerFrameMatchesGolden freezes the plain frame over the folded
-// browse state. UPDATE_GOLDEN=1 regenerates it. This is the durable pin: a change
-// to the live builder, the row template, or the engine's rendering of
+// TestCommunitySceneMatchesGolden freezes the plain frame over the folded browse
+// state. UPDATE_GOLDEN=1 regenerates it. This is the durable pin: a change to the
+// live builder, the row template, or the engine's rendering of
 // community.matches is a reviewable golden diff here.
-func TestLiveInstallerFrameMatchesGolden(t *testing.T) {
+func TestCommunitySceneMatchesGolden(t *testing.T) {
 	got := liveInstallerFrame(t)
 
 	goldenPath := "../../testdata/COMMUNITY.frame"
@@ -354,18 +354,15 @@ func TestLiveInstallerFrameMatchesGolden(t *testing.T) {
 		t.Fatalf("read golden %s: %v", goldenPath, err)
 	}
 	if got != string(want) {
-		t.Errorf("live installer frame does not match golden:\n--- got ---\n%s\n--- want ---\n%s", got, string(want))
+		t.Errorf("Scene 7 installer frame does not match golden:\n--- got ---\n%s\n--- want ---\n%s", got, string(want))
 	}
 }
 
-// TestLiveInstallerStyledGolden freezes the styled frame, so a dropped or changed
+// TestCommunitySceneStyledGolden freezes the styled frame, so a dropped or changed
 // style token on the live installer (the header on row.name, the dim on
-// row.version) is a golden diff rather than a silent regression. It also carries
-// the nested-node token coverage for this document: the row_template's header and
-// dim spans are exercised here with the matches folded, which is why the
-// package-wide nested sweep (which folds an empty state) does not need to reach
-// this variant. UPDATE_GOLDEN=1 regenerates it.
-func TestLiveInstallerStyledGolden(t *testing.T) {
+// row.version, the banner notice) is a golden diff rather than a silent regression.
+// UPDATE_GOLDEN=1 regenerates it.
+func TestCommunitySceneStyledGolden(t *testing.T) {
 	r := Renderer{Width: 80, Height: 30}
 	got := r.RenderFrame(liveInstallerDoc(t), liveInstallerState()).Styled()
 
@@ -381,6 +378,6 @@ func TestLiveInstallerStyledGolden(t *testing.T) {
 		t.Fatalf("read golden %s: %v", goldenPath, err)
 	}
 	if got != string(want) {
-		t.Errorf("live installer styled output does not match golden:\n--- got ---\n%s\n--- want ---\n%s", got, string(want))
+		t.Errorf("Scene 7 installer styled output does not match golden:\n--- got ---\n%s\n--- want ---\n%s", got, string(want))
 	}
 }
