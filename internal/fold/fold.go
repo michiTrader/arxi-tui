@@ -235,6 +235,18 @@ type State struct {
 	EscapeArmed bool            `json:"host.escape.armed"`
 	SceneError  string          `json:"host.scene.error"`
 
+	// RunActor is the resolved actor blueprint of the run the TUI is following
+	// (BINDS.md §4.3, M2 follow-up). It is host view state, not a projection of a
+	// run.started event: the host resolves the actor from the run.start config it
+	// sends (resolveRunStartParams), so it knows the label a round-trip before the
+	// core could echo it, and binding the status label to that resolved value
+	// shows the actor the instant the run is requested. It is carried here like
+	// UserInput -- re-attached by the loop each frame, since Fold rebuilds State
+	// from the log and no event produces it -- and the loop blanks it while the
+	// slash menu is open so the status row stays a clean either/or. Empty is the
+	// default and a no-op: the when-gated status node does not render at boot.
+	RunActor string `json:"host.run.actor"`
+
 	// BudgetMicrounits is run.started.budget_usd × 1000, captured when the run
 	// starts. Combined with CostMicrounits it produces session.tokens_used.
 	BudgetMicrounits uint64
