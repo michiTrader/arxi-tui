@@ -288,6 +288,30 @@ Consequences for the plan:
     run's log via `runLogPathForJob`, surfacing the actor label in the status
     bar, gating on the hello's `implemented` list, and confirming the
     `defaultActor` name and the log-path layout against a live kernel.
+  - **M2 hello gate — BUILT (2026-09-29, PR #126).** The fourth pure piece after
+    #123's wire method, #124's config resolver and #125's log-path derivation:
+    `requireRunStart` (`cmd/arxi-tui/run_start_gate.go`) reads the hello the core
+    sent at connect and decides whether this build can begin a run *at all*,
+    before `openServeDriver` commits to resolving params and following a log that
+    no run would ever write. The check is on the hello's `implemented` list, not
+    its `types` list — the distinction M1b paid for: `run.prompt` and `run.steer`
+    are both *declared* in surface v1 and both answer `not_implemented` on this
+    build, so a host that trusted `types` would send `run.start` into a kernel
+    that never executes it and hang forever on a log never created. Three refused
+    states kept distinct because their remedies differ — a **nil hello** (the
+    handshake has not run, a caller-ordering bug), an **undeclared** `run.start`
+    (the connected surface is not the v1 run vocabulary this host speaks, the
+    wrong kernel), and a **declared-but-unimplemented** `run.start` (the right
+    surface on a build that has not wired the executor, named as
+    `not_implemented` so it reads permanent not transient). Pinned by
+    `run_start_gate_test.go` (the accepting state + the three refusals) with the
+    counterfactual run by hand: gating on `types` instead of `implemented` (the
+    M1b bug) fails exactly the declared-but-unimplemented test and nothing else.
+    **Still deferred (the impure live half):** calling this gate from
+    `openServeDriver` between the handshake and `SubmitRunStart`, the
+    `resolveRunStartParams` → `SubmitRunStart` → `runLogPathForJob` follow
+    sequence, surfacing the actor label in the status bar, and confirming the
+    `defaultActor` name and the log-path layout against a live kernel.
 - **M3** [M2] Evaluate adopting the `run.attach`/`event.subscribe` path (a
   positive end-of-run marker) — deferred per ADR-0002
   (`docs/PLAN.md:230-280`); the trigger is needing that positive signal.
