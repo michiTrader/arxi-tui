@@ -491,6 +491,47 @@ Consequences for the plan:
   the prose of the hello's `types` list without checking the `implemented` list
   beside it; the correction above cites the handler tables that decide the
   question.
+- **M4** [M2] The inbox decision verbs (`inbox.approve`/`inbox.reject`/
+  `inbox.reply`), the operator's answer to an agent that has blocked on an
+  approval or a question. Unlike the run-addressing verbs these are not about a
+  run's lifecycle but about a pending *item* on it, so they address a run **and**
+  an item. The scene side is already signed: `docs/BINDS.md` freezes the closed
+  answer-kind vocabulary `answer:approve`/`answer:reject`/`answer:reply` for
+  Scene 8's decision buttons, mirroring these three core verbs, so a button and
+  the verb it fires name the same act — what was missing is the driver method
+  that sends the verb when such a button is pressed.
+  - **M4 approve/reject pure core — BUILT (2026-09-29, PR #132).** The first two
+    decision verbs, landed network-free ahead of any `on_press` wiring per the
+    block pattern. Both are in this build's hello `implemented` list (verified,
+    not guessed), and the schema was read from arxi source: the serve dispatch
+    reads `stringParam(params, "run")` and `itemParam(params)` (`item`, falling
+    back to `id`) through the `decisionIdentity` guard, `inbox.reject`
+    additionally reads `reason`, and `host.Approve`/`host.Reject` each return a
+    `hostv1.Job` snapshot (`arxi/host/v1/host.go`). So
+    `SubmitInboxApprove{RunID, ItemID}` and `SubmitInboxReject{RunID, ItemID,
+    Reason}` send the run and item as the wire params `run`/`item` and (reject)
+    omit `reason` when empty, exactly as run.cancel omits its unset reason.
+    `DecisionResult` projects `id`/`status`/`terminal` only — the **narrow** ack
+    like `RunCancelResult`, not the wide `RunShowResult`: answering a decision is
+    a mutation whose ack confirms which run was addressed and where it went (an
+    approved item unblocks the run, a rejection can end it), and a caller wanting
+    the full budget/turns projection asks run.show. Both refuse an empty run id
+    **and** an empty item id locally (the core's `decisionIdentity` requires
+    both) so the failure names the missing identity at the call site instead of
+    borrowing the core's unaddressed refusal; both keep the `ok:false`→`*Refusal`
+    contract and fail loud on `ok:true` with no job id. A shared `submitDecision`
+    helper holds the identical transport contract so the per-verb guards stay in
+    the callers. Pinned by `inbox_decision_test.go` (12 tests) with
+    counterfactuals run by hand: neutering approve's run-id guard fails its
+    empty-run test, neutering its item-id guard fails its empty-item test,
+    passing the wrong verb string to `submitDecision` fails the reject-refusal
+    type assertion (proving the shared helper echoes the caller's verb), and
+    dropping the reason-omit branch fails the set-reason test. **Deferred (the
+    consumer):** routing an `on_press` `answer:approve`/`answer:reject` to these
+    calls — that is the H8 action-routing seam meeting the driver, its own
+    increment. `inbox.reply` (the question-answer verb, which takes free `text`
+    and targets a question item rather than an approval) is the remaining
+    decision verb, deferred as its own pure-core increment.
 
 ### Block B — Agent patches + side-by-side diff (A6 said ship behind this gate)
 
