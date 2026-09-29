@@ -1626,12 +1626,44 @@ counterfactual test).
   forgetting to check. Pinned by `bundle_compose_test.go` (4 tests) with all four
   counterfactuals run by hand: nulling `Granted`, swallowing the rejection into an
   empty plan, dropping the scene, and skipping carried grants each fail exactly their
-  test. **Remaining (the loop-execution half):** the bundle modal that drives
-  `BundleConsentScene` on the live surface and answers `GrantBundle`, plus executing
-  a `bundleComposePlan` — `theme.Merge` the theme layer, `patch.Mount` the parsed
-  scene, `supervisor.Start` each config + register + pump — into the loop's live
-  scene/theme/supervisor state, gated on the same worker+channel surface `startInstall`
-  and `startBundleInstall` use.
+  test. The loop-execution half is the increment below.
+
+  **Loop-execution half BUILT (2026-09-29, PR #122).** The impure wiring the plan
+  half left to the loop, landed pure pieces first per the J-block pattern.
+  (1) `bundleAnswerForKey` (`cmd/arxi-tui/bundle_consent_prompt.go`) is the
+  keypress→`ext.BundleAnswer` mapping for the one bundle screen, the sibling of
+  `consentAnswerForKey`: y/r grant (r remembers), n/Esc reject, every other key
+  leaves the prompt standing. It carries NO capability subset — a bundle is
+  all-or-nothing, so the per-plugin declared sets live in `GrantBundle`'s decisions,
+  not the answer — which is why it is a separate function, not a remap of the
+  single-plugin answer. (2) `parsePluginBundle` (`plugin_install_cmd.go`) is the
+  `/ui plugin bundle <url>` grammar, a distinct verb from `install` because a bundle
+  URL is a `bundle/v1` JSON document naming N plugins plus a scene/theme, while
+  `install` fetches one behavioral `.tar.gz`; a shared verb would have to sniff the
+  payload. (3) `bundleModal` + `startBundleInstall` (`bundle_modal.go`) are the
+  loop-visible state and the resolve→consent→plan worker: unlike a single plugin the
+  bundle ALWAYS shows the screen (a named confirm even when every plugin is
+  remembered), so the worker always reaches the consent bridge and `planBundleCompose`
+  turns the one answer into a plan or `ErrBundleRejected`. (4)
+  `executeBundleComposePlan` (`bundle_execute.go`) is the grant-then-compose executor
+  the loop runs on a plan: it parses the embedded theme and scene FIRST (so a
+  malformed document aborts with nothing composed — workspace atomicity), then applies
+  the theme layer (keyed `bundle:<name>` so it cannot collide with a plugin id), then
+  replaces the live document, then `supervisor.Start`s each granted config + registers
+  + pumps — the same Start→Add→pump sequence `supervisor.Mount` runs, minus the
+  decide/grant the plan already did. (5) The loop wiring (`main.go`): `bundleMod`
+  beside `modal`, the two bridge channels, the `/ui plugin bundle` branch (refusing
+  while either install is busy — one consent screen at a time over the shared gate),
+  the `bundleMod.capturing()` cases in the key branch and the activeDoc switch, and
+  the two select cases that show the screen and execute the plan. Counterfactuals run
+  by hand: a granting default branch in `bundleAnswerForKey` fails the standing-prompt
+  test; over-claiming in `parsePluginBundle` fails the dispatch-boundary test;
+  applying the theme before parsing the scene fails the malformed-scene atomicity
+  test. **Block J is now complete** — J1–J3 (preview, registry, installer scene + live
+  loop), J4 (bundle, both pure artifacts and the loop wiring) and J5 (Scene 7 golden)
+  are all built. Note: the live spawn path (`supervisor.Start` over a real subprocess)
+  is verified by build + the pieces it composes, as with the I6 loop-wiring commits;
+  the sandbox has no fake-tty harness for the real loop.
 - **J5** [J3] Freeze the Scene 7 golden.
 - **J5 — DONE (2026-09-28, PR #104).** The Scene 7 golden is frozen as the
   host-generated community installer, pinned the way Scene 6 (TICKER) and Scene 9
