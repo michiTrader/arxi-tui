@@ -549,6 +549,130 @@ func (d *NDJSONDriver) SubmitRunCancel(ctx context.Context, p RunCancelParams) (
 	return &result, nil
 }
 
+// RunShowParams are the wire parameters of a run.show request, the verb that
+// asks the core for the current projection of an already-started run WITHOUT
+// mutating it -- the read complement to run.cancel. RunID is sent as the wire
+// param `run`, the same name run.cancel and run.prompt address a run by and the
+// name the core's inspect dispatch reads (arxi/cmd/arxi/serve.go run.show entry
+// -> host.Inspect(InspectRequest{JobID: stringParam(params, "run")})).
+type RunShowParams struct {
+	// RunID is the job_id run.start returned. The core reads it from the wire
+	// param `run`; an empty one addresses no run, so SubmitRunShow refuses to
+	// send it rather than let the core answer not_found for a request the client
+	// never meant to make -- the same local guard SubmitRunCancel keeps.
+	RunID string
+}
+
+// RunShowResult is the core's Job snapshot returned by run.show
+// (arxi/host/v1/types.go Job). It projects MORE of that Job than
+// RunCancelResult does, and the difference is the point: they read the same
+// wire object at different widths because they answer different questions. A
+// cancel-acknowledgement needs only to confirm the intended run was the one
+// addressed (id) and report whether the request took hold (status, terminal,
+// cancellation_requested); an inspect exists precisely to surface the run's
+// live state, so dropping turns/spend/budget here would make run.show a worse
+// run.cancel rather than the status query it is. Each field is a field a run
+// status line actually shows, so this is the projection a witness needs, not a
+// speculative copy of every Job field the core happens to carry.
+type RunShowResult struct {
+	// JobID is the inspected run's id (Job.id). It is always present on an ok
+	// answer; an empty one is rejected the same way SubmitRunStart rejects an
+	// ok:true with no job_id, because a snapshot that names no run cannot be
+	// trusted to describe the run that was asked about.
+	JobID string `json:"id"`
+	// Status is the run's public lifecycle state (queued|running|blocked|
+	// paused|succeeded|failed|cancelled|expired|unknown). Kept as a plain string
+	// rather than a typed enum for the same reason RunCancelResult does: the host
+	// branches on the closed refusal codes, not on this projection's status.
+	Status string `json:"status"`
+	// Terminal reports whether the run accepts no further lifecycle mutation, so
+	// a caller can tell a finished run from a live one without re-deriving it
+	// from Status (the core computes it from the same set Status.Terminal does).
+	Terminal bool `json:"terminal"`
+	// Turns and MaxTurns are the run's progress against its turn cap; MaxTurns is
+	// 0 when the run is uncapped, so a status line shows turns alone in that case.
+	Turns    int `json:"turns"`
+	MaxTurns int `json:"max_turns"`
+	// SpentUSD and BudgetUSD are the run's spend against its budget -- the pair a
+	// budget-aware status bar shows. BudgetUSD is the run's own budget (run.start
+	// requires it), SpentUSD is what it has cost so far.
+	SpentUSD  float64 `json:"spent_usd"`
+	BudgetUSD float64 `json:"budget_usd"`
+	// CancellationRequested reports whether a cancel is in flight but not yet
+	// terminal -- the same request-not-kill distinction run.cancel surfaces, seen
+	// here from the read side (an inspect after a cancel shows it before the run
+	// reaches a terminal status).
+	CancellationRequested bool `json:"cancellation_requested"`
+	// Result is the run's final text once it has one (Job.result, omitted by the
+	// core until then), so an inspect of a finished run can show its outcome
+	// without a separate run.result/Wait round-trip.
+	Result string `json:"result"`
+}
+
+// SubmitRunShow sends a run.show request for an already-started run and returns
+// the core's Job snapshot without mutating the run.
+//
+// It is the read verb among the run-addressing set (attach/show/result/cancel):
+// the id run.start returns is what it addresses, so the serveDriver -- which
+// keeps that id via its log path (runIDFromLogPath) -- can inspect the run it
+// started at any point in its lifecycle. Unlike run.cancel it takes no reason
+// and requests nothing: a run.show has no side effect on the run, so it is safe
+// to call repeatedly (e.g. to refresh a status line). It keeps the same
+// ok:false-is-a-refusal contract every other verb keeps.
+func (d *NDJSONDriver) SubmitRunShow(ctx context.Context, p RunShowParams) (*RunShowResult, error) {
+	// An empty run id addresses no run. The core would answer not_found, but that
+	// reads as "the run is gone" when the truth is "the client sent no run" --
+	// refuse locally so the failure names the real cause, exactly as
+	// SubmitRunCancel does for the same empty-id request.
+	if p.RunID == "" {
+		return nil, fmt.Errorf("ndjson: run.show with an empty run id; " +
+			"the id is how the verb reaches the run, so an empty one inspects " +
+			"nothing and the core's not_found would misname the cause")
+	}
+
+	req := protoRequest{
+		ID:     "show",
+		Type:   "run.show",
+		Params: map[string]any{"run": p.RunID},
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if err := d.enc.Encode(req); err != nil {
+		return nil, fmt.Errorf("ndjson: send run.show: %w", err)
+	}
+
+	resp, err := d.readResponse(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// ok:false is an answer, not a transport success -- the same contract every
+	// other verb keeps. run.show against a missing job answers not_found, and
+	// that must reach the caller as a *Refusal rather than a zero-valued snapshot
+	// that reads as a real (empty) run.
+	if !resp.OK {
+		return nil, resp.refusal("run.show")
+	}
+
+	var result RunShowResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, fmt.Errorf("ndjson: decode run.show result: %w", err)
+	}
+
+	// A snapshot answered ok but naming no run is untrustworthy: the host asked
+	// about one run and got a projection that identifies none, so it cannot tell
+	// the snapshot describes the run it asked about. Fail loud, the same way
+	// SubmitRunStart rejects an ok response with no job_id.
+	if result.JobID == "" {
+		return nil, fmt.Errorf("ndjson: run.show returned ok with no job id; " +
+			"a snapshot that names no run cannot be trusted to describe the run " +
+			"that was inspected")
+	}
+	return &result, nil
+}
+
 // refusal converts an ok:false response into a *Refusal, preserving the code,
 // the core's sentence and its remedy. A response with ok:false and no error
 // object still becomes a refusal: `ok` is the field of record, and inventing a
