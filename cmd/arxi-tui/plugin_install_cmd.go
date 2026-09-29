@@ -119,6 +119,59 @@ func parsePluginBrowse(line string) (rawURL string, matched bool, err error) {
 	return args[0], true, nil
 }
 
+// parsePluginBundle recognizes the `/ui plugin bundle <url>` command and returns
+// the bundle URL to hand the bundle installer.
+//
+// It is the bundle analogue of parsePluginInstall and lives here for the same
+// reason: a bundle install is not a source-to-source transform the patch surface
+// owns. It fetches a bundle document, fetches and lays out each referenced plugin,
+// drives one consent modal, and — on a grant — replaces the live scene, merges a
+// theme layer and spawns held subprocesses. None of that is a pure document
+// transform, so the line is intercepted in the host before patch.ApplyWithFetch,
+// exactly as install, browse and remove are.
+//
+// A separate verb rather than overloading `install`: `/ui plugin install <url>`
+// fetches ONE behavioral plugin `.tar.gz` and mounts it, while a bundle URL is a
+// `bundle/v1` JSON document naming N plugins plus an embedded scene and theme. The
+// two carry different bodies and compose different things, so a shared verb would
+// have to sniff the payload to decide which install it is — a guess the user should
+// not depend on. The distinct verb makes the choice explicit at the call site.
+//
+// matched reports whether the line IS a `plugin bundle` invocation; a malformed one
+// (no URL, or more than one token) returns matched=true with a located refusal so
+// the host names the missing URL rather than letting the line fall through to
+// patch.parsePlugin, which knows only `add`/`remove` and would bury the real problem
+// under "unknown subcommand bundle".
+func parsePluginBundle(line string) (rawURL string, matched bool, err error) {
+	body := strings.TrimSpace(line)
+	for _, p := range []string{"/ui", "ui"} {
+		if body == p {
+			body = ""
+			break
+		}
+		if strings.HasPrefix(body, p+" ") {
+			body = strings.TrimSpace(body[len(p):])
+			break
+		}
+	}
+
+	fields := strings.Fields(body)
+	if len(fields) < 2 || fields[0] != "plugin" || fields[1] != "bundle" {
+		return "", false, nil
+	}
+
+	args := fields[2:]
+	// The bundle URL is a single token, the same rule install/browse/add enforce: a
+	// URL with a space in it is not a URL, and splitting on spaces would let a
+	// fat-fingered second word be silently dropped rather than refused. Scheme and
+	// reachability are the fetcher's to check; this only guarantees the command
+	// carries exactly one argument to hand it.
+	if len(args) != 1 {
+		return "", true, fmt.Errorf("/ui plugin bundle needs exactly one bundle URL: /ui plugin bundle <url>")
+	}
+	return args[0], true, nil
+}
+
 // parsePluginRemoveID reads the plugin id from a `/ui plugin remove <id>` line, so
 // the host can Close a behavioral plugin's supervisor before the patch surface
 // handles the document/token half of the same command.

@@ -582,6 +582,20 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	installDoneCh := make(chan installOutcome, 1)
 	mountedPlugins := map[string]*supervisor.Supervisor{}
 
+	// The bundle install surface (J4): `/ui plugin bundle <url>` fetches a bundle
+	// document, lays out and decides each referenced plugin, shows ONE consent
+	// screen, and on a grant composes the bundle's scene, theme and plugins together.
+	// It sits beside the single-plugin modal above and shares its gate, store and
+	// registry — a bundle plugin flows through the same H6/I5 pipeline — so the loop
+	// refuses a bundle while a single install is busy and vice versa (two consent
+	// screens would race the one input focus, and the fan-out grants against the one
+	// gate one identity at a time). bundleMod holds the loop-visible bits (busy + the
+	// one screen); bundleConsentReqCh/bundleDoneCh bridge the worker back to this
+	// select, exactly as consentReqCh/installDoneCh do for a single plugin.
+	var bundleMod bundleModal
+	bundleConsentReqCh := make(chan bundleConsentRequest)
+	bundleDoneCh := make(chan bundleOutcome, 1)
+
 	// The community installer's loop-visible state (J3 follow-up). `browse` is
 	// non-nil exactly while the installer is open: it holds the fetched index, the
 	// typed query and the selection cursor (installerBrowse's pure core), and the
@@ -779,6 +793,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		switch {
 		case modal.capturing():
 			activeDoc = modal.consent.doc
+		case bundleMod.capturing():
+			// The one bundle consent screen is up: like the single-plugin modal it
+			// replaces the scene on display so the identity the user is judging (the
+			// bundle plus every plugin it installs) is the only thing they see, and a
+			// keypress cannot be split between the prompt and the scene behind it. It
+			// binds to none of the fold state, so the swap is purely which document is
+			// walked.
+			activeDoc = bundleMod.consent.doc
 		case browse != nil:
 			// The installer is open: it replaces the scene on display and its
 			// community.* triple is published onto the fold the renderer reads, the
@@ -893,6 +915,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// the screen on y/r/n/Esc and leaving it standing otherwise.
 						panicGesture.Reset()
 						modal.handleKey(ev.Key)
+					} else if bundleMod.capturing() {
+						// The one bundle consent screen is up: it owns every non-panic
+						// key exactly as the single-plugin modal above does. This sits
+						// after the Ctrl-C branch so the escape hatch still reaches
+						// HandleCtrlC (invariant 6) and cannot be captured by the prompt,
+						// and after modal.capturing so the two screens never both claim a
+						// key. The keypress is an intentional answer, so it disarms the
+						// panic gesture; bundleMod.handleKey routes it through
+						// bundleAnswerForKey, answering the blocked worker and closing the
+						// screen on y/r/n/Esc and leaving it standing otherwise.
+						panicGesture.Reset()
+						bundleMod.handleKey(ev.Key)
 					} else if browse != nil {
 						// The installer is open and owns the keyboard, like the consent
 						// modal above. This sits after the Ctrl-C branch so the escape
@@ -916,6 +950,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							switch {
 							case modal.busy:
 								sceneNotice = "/ui plugin install: an install is already in progress; finish it or answer the consent screen before starting another"
+							case bundleMod.busy:
+								sceneNotice = "/ui plugin install: a bundle install is in progress; finish it or answer its consent screen before starting another"
 							default:
 								root, rerr := pluginsRootPath()
 								if rerr != nil {
@@ -1003,6 +1039,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								sceneNotice = perr.Error()
 							case modal.busy:
 								sceneNotice = "/ui plugin install: an install is already in progress; finish it or answer the consent screen before starting another"
+							case bundleMod.busy:
+								sceneNotice = "/ui plugin install: a bundle install is in progress; finish it or answer its consent screen before starting another"
 							default:
 								root, rerr := pluginsRootPath()
 								if rerr != nil {
@@ -1011,6 +1049,38 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 									modal.busy = true
 									sceneNotice = "/ui plugin install: fetching " + url + " …"
 									startInstall(ctx, url, archiveFetch, root, pluginGate, pluginStore, pluginActions, consentReqCh, installDoneCh)
+								}
+							}
+							input = ""
+							caret = 0
+						} else if bundleURL, matched, perr := parsePluginBundle(input); ev.Key.Type == term.KeyEnter && matched {
+							// `/ui plugin bundle <url>` installs a whole bundle (scene +
+							// theme + N plugins) behind ONE consent screen (J4). Like
+							// install it is host-owned, not a patch: it fetches a bundle
+							// document and N plugin archives, swaps a scene onto the display,
+							// merges a theme layer and spawns held subprocesses, none of
+							// which the pure patch surface can do. The resolve→consent→plan
+							// thread runs on a worker (startBundleInstall) so a hung fetch of
+							// the bundle or any of its plugins never freezes the loop or the
+							// panic gesture; the loop records bundleMod.busy and reacts to
+							// the worker's messages in the select cases below. It shares the
+							// single-plugin gate/store/registry, so it refuses to start while
+							// either install is in flight — one consent screen at a time.
+							switch {
+							case perr != nil:
+								sceneNotice = perr.Error()
+							case bundleMod.busy:
+								sceneNotice = "/ui plugin bundle: a bundle install is already in progress; finish it or answer its consent screen before starting another"
+							case modal.busy:
+								sceneNotice = "/ui plugin bundle: a plugin install is in progress; finish it or answer its consent screen before starting another"
+							default:
+								root, rerr := pluginsRootPath()
+								if rerr != nil {
+									sceneNotice = "/ui plugin bundle: " + rerr.Error()
+								} else {
+									bundleMod.busy = true
+									sceneNotice = "/ui plugin bundle: fetching " + bundleURL + " …"
+									startBundleInstall(ctx, bundleURL, pluginFetch, archiveFetch, root, pluginGate, bundleConsentReqCh, bundleDoneCh)
 								}
 							}
 							input = ""
@@ -1153,6 +1223,40 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				sceneNotice = "/ui plugin install: you rejected " + out.url + "; nothing was spawned"
 			default:
 				sceneNotice = "/ui plugin install: " + out.err.Error()
+			}
+			repaint()
+
+		case req := <-bundleConsentReqCh:
+			// The bundle worker resolved the bundle and built the one consent screen;
+			// it is blocked awaiting the single y/r/n answer. Put the screen up:
+			// repaint now swaps to bundleMod.consent.doc and the key branch routes
+			// every non-panic key through bundleMod.handleKey, which sends the answer
+			// back on req.reply. Unlike a single plugin a bundle ALWAYS reaches here
+			// (the screen is a named confirm even when every plugin is remembered).
+			bundleMod.beginConsent(req.doc, req.reply)
+			repaint()
+
+		case out := <-bundleDoneCh:
+			// The bundle worker finished — granted-and-planned, rejected, or failed.
+			// Clear busy so a next install may start. On a plan, compose it here where
+			// the live scene/theme/supervisor state lives: executeBundleComposePlan
+			// merges the theme layer, replaces the document and Starts each granted
+			// plugin (the grants already happened in the worker's planBundleCompose, so
+			// this is pure composition). A rejection is named distinctly from a failure
+			// (ErrBundleRejected) so the user learns their own "no" was honoured. The
+			// consent screen, if it was up, was already closed by the key that answered.
+			bundleMod.busy = false
+			switch {
+			case out.err == nil:
+				if cerr := executeBundleComposePlan(ctx, out.name, out.plan, &doc, applyPluginTokens, pluginStore, pluginActions, mountedPlugins); cerr != nil {
+					sceneNotice = "/ui plugin bundle: " + cerr.Error()
+				} else {
+					sceneNotice = "/ui plugin bundle: installed " + out.name
+				}
+			case errors.Is(out.err, ext.ErrBundleRejected):
+				sceneNotice = "/ui plugin bundle: you rejected " + out.url + "; nothing was installed"
+			default:
+				sceneNotice = "/ui plugin bundle: " + out.err.Error()
 			}
 			repaint()
 

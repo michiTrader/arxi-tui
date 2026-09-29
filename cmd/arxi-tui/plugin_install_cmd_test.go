@@ -180,3 +180,71 @@ func TestParsePluginBrowseRefusesAMissingURLItself(t *testing.T) {
 		}
 	}
 }
+
+func TestParsePluginBundleExtractsTheURL(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want string
+	}{
+		{"with the /ui prefix", "/ui plugin bundle https://example.com/b.json", "https://example.com/b.json"},
+		{"without the /ui prefix", "plugin bundle https://example.com/b.json", "https://example.com/b.json"},
+		{"extra surrounding spaces", "  /ui   plugin   bundle   https://x/b.json  ", "https://x/b.json"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			url, matched, err := parsePluginBundle(c.line)
+			if !matched {
+				t.Fatalf("%q was not recognized as a plugin bundle command.\nConsequence: the line falls through to the patch surface, which knows only add/remove and refuses bundle as an unknown subcommand — the user sees the wrong error.\nRemedy: parsePluginBundle must claim every `plugin bundle` line.", c.line)
+			}
+			if err != nil {
+				t.Fatalf("%q is a well-formed bundle command but was refused: %v", c.line, err)
+			}
+			if url != c.want {
+				t.Fatalf("bundle URL mismatch for %q: got %q, want %q.\nConsequence: the installer fetches the wrong bundle, or none.\nRemedy: return the single argument token verbatim.", c.line, url, c.want)
+			}
+		})
+	}
+}
+
+func TestParsePluginBundleLeavesOtherLinesToTheOtherSurfaces(t *testing.T) {
+	// Every line another surface owns, or not a /ui line at all. None may be
+	// claimed here: matched=true would route it into the bundle orchestration (a
+	// bundle fetch, N plugin lay-outs, a scene swap and held subprocesses) instead
+	// of the install/add/browse/patch path it belongs to. In particular `plugin
+	// install` must NOT be claimed — a bundle carries a JSON document, a plugin
+	// install a `.tar.gz`, and confusing the two spawns the wrong installer.
+	lines := []string{
+		"/ui plugin install https://example.com/p.tgz",
+		"/ui plugin browse https://example.com/reg.json",
+		"/ui plugin add https://example.com/m.json",
+		"/ui plugin remove weather",
+		"/ui plugin",
+		"/ui style status dim",
+		"just some chat text",
+		"",
+	}
+	for _, line := range lines {
+		if _, matched, _ := parsePluginBundle(line); matched {
+			t.Errorf("parsePluginBundle claimed %q, which it does not own.\nConsequence: a non-bundle line is routed into the bundle fetch + compose path.\nRemedy: claim a line only when its verb is `plugin` and its subcommand is `bundle`.", line)
+		}
+	}
+}
+
+func TestParsePluginBundleRefusesAMissingURLItself(t *testing.T) {
+	// `plugin bundle` with no URL (or two) is unmistakably a bundle attempt, so it
+	// is claimed and refused HERE naming the missing URL, not left to fall through
+	// to patch whose "unknown subcommand" names the wrong problem.
+	for _, line := range []string{
+		"/ui plugin bundle",
+		"/ui plugin bundle https://x/a.json https://x/b.json",
+	} {
+		url, matched, err := parsePluginBundle(line)
+		if !matched {
+			t.Errorf("%q is a malformed bundle command but was not claimed; it would fall through to the patch surface and be refused as an unknown subcommand, naming the wrong problem.", line)
+		}
+		if err == nil {
+			t.Errorf("%q is malformed (wrong argument count) but was accepted with url=%q.\nConsequence: the installer is handed no URL or a silently-dropped one.\nRemedy: refuse any argument count other than one.", line, url)
+		}
+	}
+}
