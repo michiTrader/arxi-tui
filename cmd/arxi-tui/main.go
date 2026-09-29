@@ -282,6 +282,16 @@ type Driver interface {
 	Close() error
 }
 
+// actorLabeler is the optional capability a Driver has when it is following a
+// real run: it can name that run's actor blueprint for the status bar
+// (host.run.actor, BINDS.md §4.3). serveDriver implements it; the mock driver
+// does not, because a mock follows no run and has no actor to name. The loop
+// asserts for it rather than widening Driver, so a fake with no run is not
+// forced to return a meaningless label.
+type actorLabeler interface {
+	ActorLabel() string
+}
+
 // openDriver decides whether to spawn the arxi core subprocess or fall back to
 // the Phase 0 mock. The mock is used when ARXI_BIN is unset: the binary path
 // is optional, and the mock lets the engine run daily without the core present.
@@ -725,6 +735,21 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// A scene may show it (e.g. a dim "press Ctrl-C again to quit" hint),
 		// but no scene may capture the gesture (invariant 6).
 		state.EscapeArmed = panicGesture.Armed()
+
+		// host.run.actor: the actor of the run the driver is following, published
+		// into the fold like the input buffer above (Fold rebuilds State each
+		// frame and no event carries it). It is blanked while the slash menu is
+		// open so the status row stays the same either/or the mode/model fields
+		// already are (gated on status.active) -- the actor is one more field of
+		// that row, and letting it linger while the menu's hint owns the bottom
+		// line would put two kinds of content there at once. A driver that
+		// follows no run (the mock) does not implement actorLabeler, so the label
+		// stays empty and its when-gated node never draws.
+		if labeler, ok := drv.(actorLabeler); ok && !state.SlashActive {
+			state.RunActor = labeler.ActorLabel()
+		} else {
+			state.RunActor = ""
+		}
 
 		var r engine.Renderer
 		w, h := tty.Size()
