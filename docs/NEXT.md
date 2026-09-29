@@ -428,6 +428,39 @@ Consequences for the plan:
     `arxi run attach` + Ctrl-C semantics) is the user's call, the same class of
     decision M1b flagged for actor/budget/sim — so the capability lands now and
     the exit semantics wait for that decision.
+  - **M3 run.show pure core — BUILT (2026-09-29, PR #131).** The read verb of
+    the run-addressing set, landed network-free ahead of any loop wiring per the
+    block pattern. `NDJSONDriver.SubmitRunShow` (`internal/driver/ndjson.go`) is
+    the `run.show` wire method, the read complement to `SubmitRunCancel`. Its
+    schema was read from the arxi source, not guessed: the server dispatch reads
+    `stringParam(params, "run")` onto `hostv1.InspectRequest`
+    (`arxi/cmd/arxi/serve.go` run.show entry → `host.Inspect`), and the `result`
+    is a `hostv1.Job` snapshot (`arxi/host/v1/types.go`) — the same struct
+    run.cancel returns. So `RunShowParams{RunID}` sends the run id as the wire
+    param `run` and carries no optionals (an inspect mutates nothing and takes no
+    reason). `RunShowResult` projects a **wider** slice of that Job than
+    `RunCancelResult` does, and the difference is the point: they read the same
+    wire object at different widths because they answer different questions. A
+    cancel-acknowledgement needs only to confirm which run was addressed and
+    whether the request took hold; an inspect exists to surface run state, so it
+    carries `id`/`status`/`terminal`/`turns`/`max_turns`/`spent_usd`/
+    `budget_usd`/`cancellation_requested`/`result` — each a field a run status
+    line actually shows, not a speculative copy of every Job field. Under-
+    projecting here would make run.show a worse run.cancel rather than the status
+    query it is. It keeps the same `ok:false`→`*Refusal` contract (a show of a
+    missing run answers `not_found`), refuses an empty run id locally so the
+    failure names the real cause instead of borrowing the core's `not_found`, and
+    fails loud on `ok:true` with no job id (an unverifiable snapshot is worse than
+    a refusal). Pinned by `run_show_test.go` (6 tests) with counterfactuals run by
+    hand: neutering the wider field tags collapses turns/spend to zero (fails the
+    snapshot test), dropping the result tag empties it (fails the finished-run
+    test), and removing each of the two guards fails its test. Because run.show
+    is a **pure read**, it has no impure half of its own to defer — it is safe to
+    call repeatedly — but a *consumer* is deferred: nothing in the loop polls it
+    yet, since the status bar is fed by the event log (the fold), not by a
+    request-response snapshot. The trigger for wiring it is a surface that needs
+    state the event stream does not carry (an explicit `/show`-style command, or a
+    reconcile after a dropped follow).
   positive end-of-run marker) — deferred per ADR-0002
   (`docs/PLAN.md:230-280`); the trigger is needing that positive signal.
 
