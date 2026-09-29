@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"arxi-tui/internal/driver"
+	"github.com/michiTrader/arxi_tui/internal/driver"
 )
 
 // runStartType is the wire type SubmitRunStart sends. It is named once here so
