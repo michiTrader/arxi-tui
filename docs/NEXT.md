@@ -461,8 +461,24 @@ Consequences for the plan:
     request-response snapshot. The trigger for wiring it is a surface that needs
     state the event stream does not carry (an explicit `/show`-style command, or a
     reconcile after a dropped follow).
-  positive end-of-run marker) — deferred per ADR-0002
-  (`docs/PLAN.md:230-280`); the trigger is needing that positive signal.
+  - **M3 run.result / run.attach — DEFERRED per ADR-0002.** The other two
+    run-addressing verbs are deliberately not built, and the deferral is
+    architectural rather than "no consumer yet". `run.result` is the core's
+    `host.Wait` (a terminal projection: `arxi/cmd/arxi/serve.go` run.result →
+    `host.Wait`), and `run.attach`/`event.subscribe` is the streaming path
+    ADR-0002 (`docs/PLAN.md:230-280`) weighs against log-follow and keeps as a
+    "known, available capability this host has chosen not to use yet". Adopting
+    the subscribe path would give the host a second event-ingestion model beside
+    log-follow, and the failure mode of the two disagreeing is a wrong frame,
+    which this repo holds to be worse than an error; replay (the goldens, the
+    eval corpus, the fold's determinism) runs on log-follow and a socket stream
+    is not replayable from a file. The trigger for adopting either is the host
+    needing a positive end-of-run marker — which `run.result` cannot itself
+    provide, since it lands at seq 112 of 122 in the measured run and so is not
+    the last event — or reading a log whose directory the host does not own
+    (where `pending.commit` is not beside the file, and the server's confirmed
+    batches become the only correct source). Neither trigger has fired, so both
+    stay unbuilt.
 
 
   Superseded note (kept for the record, per the "record the wrong premise rather
