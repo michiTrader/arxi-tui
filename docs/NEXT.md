@@ -370,6 +370,31 @@ Consequences for the plan:
     increment; the label is captured on the driver at the moment it is known), and
     confirming the `defaultActor` name and the `<runsRoot>/<job_id>/events.ndjson`
     layout appearing on disk against a live `arxi serve`.
+  - **M2 actor-label — BUILT (2026-09-29, PR #129).** The first of the two
+    deferred pieces above: the run's actor now shows in the SOBRIA status bar.
+    `host.run.actor` is signed in `docs/BINDS.md` §4.3 as host view state (not a
+    run-state projection) and accepted by `signedBinds` — the host resolves the
+    actor from the `run.start` config it sends (`resolveRunStartParams`), so it
+    knows the label one round-trip before any `run.started` could echo it, and
+    binding to that resolved value shows the actor the instant the run is
+    requested. `fold.State.RunActor` carries it (default empty, pinned by
+    `TestViewStateBindsDefaultCorrectly`); `serveDriver.ActorLabel()` exposes the
+    label captured on `SubmitPrompt` (the mock driver does not implement the
+    optional `actorLabeler`, so a run-less session publishes nothing); the loop
+    re-attaches it each frame like `user.input` and blanks it while the slash
+    menu is open, so the status row stays the `status.active`/`slash.hint`
+    either/or. `resolveBind` projects it (the checked-but-never-drawn class: the
+    field existed one function short of the frame until this case was added).
+    SOBRIA.json gains a `when: host.run.actor`-gated label + separator, and
+    because the golden folds start no run the label is empty and the node does
+    not draw — **no default golden moved** (`TestSobriaScene*` pass unchanged).
+    `TestSobriaSceneShowsRunActor` renders with an actor and asserts the empty
+    counterfactual; `TestServeDriverActorLabelIsEmptyUntilARunStarts` pins the
+    getter both directions. **Still deferred:** confirming the `defaultActor`
+    name and the `<runsRoot>/<job_id>/events.ndjson` layout on disk against a
+    live `arxi serve` (the one thing only a real kernel confirms; the sandbox has
+    none), and the same label on the richer MAXIMUM status bar (its own golden
+    mutation when a scene there wants it).
   positive end-of-run marker) — deferred per ADR-0002
   (`docs/PLAN.md:230-280`); the trigger is needing that positive signal.
 

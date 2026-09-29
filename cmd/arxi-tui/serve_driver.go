@@ -170,6 +170,18 @@ func runIDFromLogPath(logPath string) string {
 	return dir
 }
 
+// ActorLabel returns the resolved actor blueprint of the run the driver is
+// currently following, for the status bar (host.run.actor, BINDS.md §4.3). It
+// is captured on the SubmitPrompt that started the run -- the host resolves the
+// actor from the run.start config it sends, so the label is known a round-trip
+// before any run.started could echo it. Empty until the first prompt begins a
+// run; read under the lock because SubmitPrompt writes it from its own path.
+func (d *serveDriver) ActorLabel() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.actorLabel
+}
+
 func (d *serveDriver) Close() error {
 	d.mu.Lock()
 	cancel := d.runCancel

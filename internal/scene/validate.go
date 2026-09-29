@@ -165,6 +165,14 @@ var signedBinds = map[string]bool{
 	"ui.surface":     true,
 	"ui.hidden":      true,
 
+	// §4.3 view state — the run's actor label (M2 follow-up). Host view state,
+	// not a run-state projection: the host resolves the actor from the run.start
+	// config it sends (resolveRunStartParams), so it knows the label a round-trip
+	// before any run.started could echo it. Signed so the shipped status row and
+	// the validator agree; the empty default is falsy, so the when-gated node
+	// moves no default golden until a run is being followed.
+	"host.run.actor": true,
+
 	// §4.3 view state — the community installer (Scene 7, J3 follow-up). The
 	// live half of the installer scene: a search query, its filtered matches,
 	// and a selection cursor, in the slash.* mould. Signed so the InstallerScene

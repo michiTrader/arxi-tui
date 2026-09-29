@@ -251,6 +251,12 @@ func TestViewStateBindsDefaultCorrectly(t *testing.T) {
 	if s.UIMax != "" {
 		t.Errorf("ui.max default: got %q, want empty (null)", s.UIMax)
 	}
+	// host.run.actor is host view state the loop re-attaches each frame; Fold
+	// must never invent one, or a golden fold would render the status actor label
+	// with a value no run set (M2 follow-up).
+	if s.RunActor != "" {
+		t.Errorf("host.run.actor default: got %q, want empty; a non-empty default would draw the status actor label before any run is followed", s.RunActor)
+	}
 }
 
 // TestSlashSelectedFromUIState verifies slash.selected round-trips through a

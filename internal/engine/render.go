@@ -1985,6 +1985,12 @@ func resolveBind(bind string, state fold.State) string {
 		return "false"
 	case "host.scene.error":
 		return state.SceneError
+	case "host.run.actor":
+		// Host view state, not a projection: the loop resolves the actor from the
+		// run.start config and re-attaches it each frame (BINDS.md §4.3, M2). It
+		// doubles as its own when gate, so an empty label draws neither the value
+		// nor its separator and the default golden stays still.
+		return state.RunActor
 	case "session.tokens_used":
 		// The fifth instance of the checked-but-never-drawn class, and the
 		// first where the case was already here. The four before it were
