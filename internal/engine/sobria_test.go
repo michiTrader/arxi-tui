@@ -115,6 +115,55 @@ func TestSobriaSceneMarqueeGolden(t *testing.T) {
 	}
 }
 
+// TestSobriaSceneShowsRunActor verifies the status row draws the run's actor
+// label when host.run.actor is set, and draws nothing for it when it is empty.
+// The two halves are one test on purpose: the empty half is the counterfactual
+// that proves the when gate, not the bind, is what keeps the default golden
+// still. Without the gate the label node would render an empty string and its
+// " · " separator would appear at boot, moving the frame the default golden
+// pins; with it, the actor is present only while a run is followed (M2).
+func TestSobriaSceneShowsRunActor(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/SOBRIA.json")
+	if err != nil {
+		t.Fatalf("read SOBRIA.json: %v", err)
+	}
+	doc, err := scene.ParseDocument(data)
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	if err := doc.Validate(); err != nil {
+		t.Fatalf("scene validation: %v", err)
+	}
+
+	// With an actor: the label and its separator render before the mode/model
+	// chain, so the bottom bar reads "<actor> · live · openai/gpt-4o · ⚡︎".
+	withActor := fold.State{
+		AgentMode:    "live",
+		ModelName:    "openai/gpt-4o",
+		StatusActive: "true",
+		RunActor:     "planner",
+	}
+	r := Renderer{Width: 80, Height: 24}
+	got := r.RenderFrame(doc, withActor).Plain()
+	if !strings.Contains(got, "planner · live · openai/gpt-4o · ⚡︎") {
+		t.Errorf("expected status bar to lead with the actor 'planner · live · openai/gpt-4o · ⚡︎'; got:\n%s", got)
+	}
+
+	// Counterfactual: the same state with no actor must not draw the label or its
+	// separator, so the row is byte-for-byte what it was before the actor node
+	// existed. A leading " · " here would mean the gate leaked and the default
+	// golden is unsafe.
+	noActor := withActor
+	noActor.RunActor = ""
+	gotNone := r.RenderFrame(doc, noActor).Plain()
+	if strings.Contains(gotNone, "planner") {
+		t.Errorf("actor label rendered with an empty host.run.actor; got:\n%s", gotNone)
+	}
+	if strings.Contains(gotNone, " · live") {
+		t.Errorf("the actor separator ' · ' rendered before 'live' with no actor set, so the when gate leaked; got:\n%s", gotNone)
+	}
+}
+
 // TestSobriaSceneStyledGolden compares the rendered frame with token annotations
 // against the golden file. UPDATE_GOLDEN=1 regenerates the fixture.
 func TestSobriaSceneStyledGolden(t *testing.T) {
