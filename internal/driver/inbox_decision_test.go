@@ -292,3 +292,134 @@ func TestInboxRejectSendsSetReason(t *testing.T) {
 			"the caller", sent)
 	}
 }
+
+// TestInboxReplyReturnsTheJobSnapshot pins the reply happy path: answering a
+// question item ok returns the same narrow Job snapshot approve and reject do.
+// Answering a question unblocks the run, so the ack shows it running again --
+// reply is the third caller of the shared submitDecision helper and must surface
+// status/terminal the same way its siblings do.
+func TestInboxReplyReturnsTheJobSnapshot(t *testing.T) {
+	resp := `{"id":"reply","ok":true,"result":{"id":"run-7","status":"running","terminal":false}}`
+	d := session(t, resp)
+
+	res, err := d.SubmitInboxReply(context.Background(), InboxReplyParams{RunID: "run-7", ItemID: "q1", Text: "use the staging bucket"})
+	if err != nil {
+		t.Fatalf("inbox.reply answered ok with a Job and SubmitInboxReply still "+
+			"reported an error: %v", err)
+	}
+	if res.JobID != "run-7" {
+		t.Fatalf("SubmitInboxReply returned id %q, want %q", res.JobID, "run-7")
+	}
+	if res.Status != "running" || res.Terminal {
+		t.Fatalf("SubmitInboxReply returned status=%q terminal=%v, want running and "+
+			"false; an answered question unblocks the run, and dropping that state "+
+			"makes a resumed run read as unchanged", res.Status, res.Terminal)
+	}
+}
+
+// TestInboxReplyRefusalIsReturnedAsAnError pins the one thing reply's own tests
+// must prove and the approve/reject ones cannot: the shared helper echoes
+// `inbox.reply` back on a refusal, not a sibling verb. Told the wrong verb
+// string, the helper would misfile every reply refusal -- this is the
+// counterfactual for reply's caller passing the right one.
+func TestInboxReplyRefusalIsReturnedAsAnError(t *testing.T) {
+	refusal := `{"id":"reply","ok":false,"error":{"code":"not_found","message":"no such item","fix":["arxi inbox"]}}`
+	d := session(t, refusal)
+
+	res, err := d.SubmitInboxReply(context.Background(), InboxReplyParams{RunID: "run-7", ItemID: "gone", Text: "hi"})
+	if err == nil {
+		t.Fatal("the core refused inbox.reply and SubmitInboxReply reported success")
+	}
+	if res != nil {
+		t.Fatalf("SubmitInboxReply returned a result alongside a refusal: %+v", res)
+	}
+	ref, ok := err.(*Refusal)
+	if !ok {
+		t.Fatalf("SubmitInboxReply returned a %T, want *Refusal", err)
+	}
+	if ref.Type != "inbox.reply" {
+		t.Fatalf("the refusal carried type=%q, want inbox.reply; the shared decision "+
+			"helper must echo the verb its caller sent, or a reply refusal is "+
+			"misfiled as an approve or reject", ref.Type)
+	}
+}
+
+// TestInboxReplyEmptyRunIDIsRefusedLocally and its item sibling pin that reply
+// carries its OWN copy of both identity guards, duplicated in the caller like
+// approve and reject: an approve or reject test proves nothing about reply.
+func TestInboxReplyEmptyRunIDIsRefusedLocally(t *testing.T) {
+	resp := `{"id":"reply","ok":true,"result":{"id":"run-1","status":"running","terminal":false}}`
+	rec := &recordingWriter{}
+	d := sessionWithWriter(t, rec, resp)
+
+	if _, err := d.SubmitInboxReply(context.Background(), InboxReplyParams{RunID: "", ItemID: "q1", Text: "hi"}); err == nil {
+		t.Fatal("SubmitInboxReply sent an inbox.reply with an empty run id")
+	}
+	if strings.Contains(rec.String(), "inbox.reply") {
+		t.Fatalf("SubmitInboxReply encoded a request %q despite the empty run id",
+			rec.String())
+	}
+}
+
+func TestInboxReplyEmptyItemIDIsRefusedLocally(t *testing.T) {
+	resp := `{"id":"reply","ok":true,"result":{"id":"run-1","status":"running","terminal":false}}`
+	rec := &recordingWriter{}
+	d := sessionWithWriter(t, rec, resp)
+
+	if _, err := d.SubmitInboxReply(context.Background(), InboxReplyParams{RunID: "run-1", ItemID: "", Text: "hi"}); err == nil {
+		t.Fatal("SubmitInboxReply sent an inbox.reply with an empty item id")
+	}
+	if strings.Contains(rec.String(), "inbox.reply") {
+		t.Fatalf("SubmitInboxReply encoded a request %q despite the empty item id",
+			rec.String())
+	}
+}
+
+// TestInboxReplySendsRunItemAndText pins the request wire: run as `run`, item as
+// `item`, and the answer as `text`, under type inbox.reply. The text is the
+// param that distinguishes reply from its siblings, so a dropped or misnamed
+// text sends an empty answer even though the caller supplied one.
+func TestInboxReplySendsRunItemAndText(t *testing.T) {
+	resp := `{"id":"reply","ok":true,"result":{"id":"run-1","status":"running","terminal":false}}`
+	rec := &recordingWriter{}
+	d := sessionWithWriter(t, rec, resp)
+
+	if _, err := d.SubmitInboxReply(context.Background(), InboxReplyParams{RunID: "run-1", ItemID: "q1", Text: "use the staging bucket"}); err != nil {
+		t.Fatalf("inbox.reply happy path errored: %v", err)
+	}
+
+	sent := rec.String()
+	for _, want := range []string{`"run":"run-1"`, `"item":"q1"`, `"text":"use the staging bucket"`, `"type":"inbox.reply"`} {
+		if !strings.Contains(sent, want) {
+			t.Fatalf("the inbox.reply request %q is missing required field %q; run and "+
+				"item address the item and text is the answer the core records", sent, want)
+		}
+	}
+}
+
+// TestInboxReplySendsEmptyTextUnconditionally is the load-bearing distinction
+// between reply's text and reject's reason: text is ALWAYS sent, even empty,
+// where reject omits an unset reason. The two look interchangeable until this
+// probe -- reason is metadata about the act of rejecting, so its absence records
+// nothing; text is the substance of the answer, so "the operator submitted an
+// empty reply" is a fact the wire must carry, not an omission the core reads as
+// no text field. Reusing reject's omit-when-empty logic here would silently drop
+// an empty answer, and the counterfactual is to send Text: "" and require
+// `"text":""` on the wire.
+func TestInboxReplySendsEmptyTextUnconditionally(t *testing.T) {
+	resp := `{"id":"reply","ok":true,"result":{"id":"run-1","status":"running","terminal":false}}`
+	rec := &recordingWriter{}
+	d := sessionWithWriter(t, rec, resp)
+
+	if _, err := d.SubmitInboxReply(context.Background(), InboxReplyParams{RunID: "run-1", ItemID: "q1", Text: ""}); err != nil {
+		t.Fatalf("inbox.reply with an empty text errored: %v; empty text is a valid "+
+			"answer the core accepts, so it must not be refused locally", err)
+	}
+
+	sent := rec.String()
+	if !strings.Contains(sent, `"text":""`) {
+		t.Fatalf("the inbox.reply request %q dropped an empty text; text is the answer, "+
+			"not optional metadata like reject's reason, so an empty reply must reach "+
+			"the wire as \"text\":\"\" rather than be omitted", sent)
+	}
+}

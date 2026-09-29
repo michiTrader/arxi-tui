@@ -708,9 +708,34 @@ type InboxRejectParams struct {
 	Reason string
 }
 
+// InboxReplyParams are the wire parameters of an inbox.reply request, the verb
+// that answers one pending question item with free text. It carries the same
+// run+item identity inbox.approve and inbox.reject do, plus the Text that IS the
+// answer. Unlike InboxRejectParams.Reason -- supplementary metadata on the act
+// of rejecting, omitted when empty -- Text is the substance of the reply, so it
+// is always sent: the core reads it with stringParam (arxi/cmd/arxi/serve.go),
+// which does not distinguish an absent `text` from an empty one, and sending it
+// unconditionally keeps "the operator submitted an empty answer" a fact the wire
+// records rather than an omission indistinguishable from "no text field".
+type InboxReplyParams struct {
+	// RunID is the run the question item belongs to, sent as `run`; refused
+	// locally when empty for the reason InboxApproveParams.RunID gives.
+	RunID string
+	// ItemID is the question item being answered, sent as `item`; refused
+	// locally when empty for the same reason.
+	ItemID string
+	// Text is the operator's answer to the question. It is not guarded locally:
+	// decisionIdentity checks only run and item, so the core accepts an empty
+	// text, and refusing it here would reject a request the core would honour --
+	// the opposite of the run/item guards, which refuse only what the core would
+	// refuse unaddressed.
+	Text string
+}
+
 // DecisionResult is the core's Job snapshot returned by an inbox decision:
-// approve and reject both call through to host.Approve/host.Reject, each
-// returning a hostv1.Job (arxi/host/v1/host.go). It projects only what an
+// approve, reject and reply all call through to host.Approve/host.Reject/
+// host.Answer, each returning a hostv1.Job (arxi/host/v1/host.go). It projects
+// only what an
 // acknowledgement needs -- which run was addressed (id) and the run's lifecycle
 // state once the decision was recorded (status/terminal), so the caller can see
 // the run resume or finish. It is deliberately NARROW like RunCancelResult and
@@ -776,6 +801,29 @@ func (d *NDJSONDriver) SubmitInboxReject(ctx context.Context, p InboxRejectParam
 		params["reason"] = p.Reason
 	}
 	return d.submitDecision(ctx, "reject", "inbox.reject", params)
+}
+
+// SubmitInboxReply sends an inbox.reply for one pending question item, answering
+// it with free text, and returns the core's Job snapshot. It is the driver half
+// of the signed `answer:reply` scene action, the third and last verb in the
+// closed answer-kind vocabulary (docs/BINDS.md) that Scene 8's reply button
+// names. It shares the run+item guards and the submitDecision transport with its
+// approve/reject siblings; unlike reject's optional reason, the text is sent
+// unconditionally because it is the answer itself, not metadata about the act.
+func (d *NDJSONDriver) SubmitInboxReply(ctx context.Context, p InboxReplyParams) (*DecisionResult, error) {
+	if p.RunID == "" {
+		return nil, fmt.Errorf("ndjson: inbox.reply with an empty run id; " +
+			"a decision is authorized against the run it belongs to, so an empty " +
+			"run addresses nothing and the core would refuse it unaddressed")
+	}
+	if p.ItemID == "" {
+		return nil, fmt.Errorf("ndjson: inbox.reply with an empty item id; " +
+			"a reply answers one item, so an empty item id answers nothing")
+	}
+
+	return d.submitDecision(ctx, "reply", "inbox.reply", map[string]any{
+		"run": p.RunID, "item": p.ItemID, "text": p.Text,
+	})
 }
 
 // submitDecision encodes one inbox decision request, reads the answer and

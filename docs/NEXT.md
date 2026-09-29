@@ -532,6 +532,30 @@ Consequences for the plan:
     increment. `inbox.reply` (the question-answer verb, which takes free `text`
     and targets a question item rather than an approval) is the remaining
     decision verb, deferred as its own pure-core increment.
+  - **M4 reply pure core — BUILT (2026-09-29, PR #133).** The third and last
+    decision verb, landed the same way its siblings were. Same schema source:
+    the serve dispatch reads `run`/`item` through `decisionIdentity` and the
+    answer as `stringParam(params, "text")`, calling `host.Answer` which returns
+    the same `hostv1.Job` snapshot (`arxi/cmd/arxi/serve.go`,
+    `arxi/host/v1/types.go` `AnswerRequest{JobID, ItemID, Text}`). So
+    `SubmitInboxReply{RunID, ItemID, Text}` sends `run`/`item`/`text` and reuses
+    `DecisionResult` and the shared `submitDecision` transport. **The one
+    distinction from reject:** `text` is sent **unconditionally**, where reject
+    omits an unset `reason`. `reason` is metadata about the act of rejecting, so
+    its absence records nothing; `text` is the *substance* of the answer, so "the
+    operator submitted an empty reply" is a fact the wire must carry rather than
+    an omission the core reads as no text field. For the same reason `text` is
+    **not** guarded locally — `decisionIdentity` checks only run and item, so the
+    core accepts an empty text, and refusing it here would reject a request the
+    core would honour (the opposite direction from the run/item guards, which
+    refuse only what the core refuses unaddressed). Pinned by six more tests in
+    `inbox_decision_test.go` with counterfactuals run by hand: reusing reject's
+    omit-when-empty branch for `text` fails `TestInboxReplySendsEmptyTextUnconditionally`
+    (the load-bearing guard), neutering reply's item-id guard fails its
+    empty-item test, and passing the wrong verb string to `submitDecision` fails
+    the reply-refusal type assertion. With this the full closed answer-kind
+    vocabulary has its driver half; the deferred consumer (routing `on_press`
+    `answer:*` to these three calls, the H8 seam) is unchanged.
 
 ### Block B — Agent patches + side-by-side diff (A6 said ship behind this gate)
 
