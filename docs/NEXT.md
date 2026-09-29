@@ -1586,6 +1586,27 @@ counterfactual test).
   behavioral ones) — gated on `cmd/arxi-tui/install_modal.go`'s `startInstall`,
   exactly the surface a single behavioral install already uses. Both pure artifacts
   the design named are now built; what is left is the loop that calls them.
+  **Resolve half BUILT (2026-09-29, PR #120).** `resolveBundle`
+  (`cmd/arxi-tui/bundle_install.go`) is the first increment of that loop half — the
+  bundle analogue of `installBehavioralPlugin` — landed with the same injected-fetcher
+  seam so it is testable without a network. It fetches the bundle JSON, `Validate`s
+  it, and runs the unchanged H6/I5 pipeline (fetch archive → `InstallFromBundle` →
+  `Gate.Decide`) once per referenced plugin against that plugin's OWN per-manifest
+  identity, returning the parsed bundle, one `BundlePluginDecision` per plugin
+  (index-aligned with the `Installed` tree each was decided over so a later
+  `BundleGrant` pairs back to its tree), and grants/spawns nothing — "download ≠
+  trust ≠ grant" (Q15) holds across a bundle. It stops at the decision on purpose:
+  the two fetchers are injected because they carry different bodies under different
+  caps (bundle JSON vs plugin `.tar.gz`), and a plugin that fails to fetch/lay out
+  fails the whole bundle (all-or-nothing), named by its URL. Pinned by
+  `bundle_install_test.go` (5 tests) with the counterfactuals run by hand: replacing
+  the all-or-nothing return with `continue`, skipping `Validate`, and deciding
+  against a flipped digest each fail exactly their test. **Remaining (the compose
+  half):** drive `BundleConsentScene` on the live modal surface, call `GrantBundle`
+  on the single `y`/`r`/`n` answer, then grant-then-compose (`theme.Merge` +
+  `patch.Mount` the scene and plugins, `supervisor.Start` the behavioral ones) —
+  the modal-loop half that owns the keyboard and the live scene/theme/supervisor
+  state, gated on `startInstall`'s surface.
 - **J5** [J3] Freeze the Scene 7 golden.
 - **J5 — DONE (2026-09-28, PR #104).** The Scene 7 golden is frozen as the
   host-generated community installer, pinned the way Scene 6 (TICKER) and Scene 9
