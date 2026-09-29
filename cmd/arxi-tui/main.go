@@ -17,7 +17,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
@@ -360,37 +359,26 @@ func (m *mockDriver) SubmitPrompt(ctx context.Context, text string) error {
 
 func (m *mockDriver) Close() error { return nil }
 
-// openServeDriver spawns `arxi serve` and performs the NDJSON handshake.
+// openServeDriver spawns `arxi serve`, performs the NDJSON handshake, and
+// builds the serveDriver that begins a run on the first user line.
 //
-// Phase 0.5 wiring: the subprocess communicates over stdin/stdout using
-// NDJSON (one JSON object per line). The first line from the server is a
-// hello; the client sends protoRequest objects (run.prompt); the server
-// answers each with a protoResponse.
+// Phase 0.5 / M2 wiring: the subprocess communicates over stdin/stdout using
+// NDJSON (one JSON object per line). The first line from the server is a hello;
+// the client begins a run with run.start (run.prompt/run.steer have no executor
+// on this build, M1b) and follows the run's event log.
 //
-// Log events are followed by reading the run's event log file (the same
-// mechanism as `arxi run attach`). The log path is resolved from ARXI_RUN_DIR
-// (or defaults to ~/.arxi/runs/last/events.ndjson). LogFollow polls the file
-// at 120ms and feeds events into the same channel the mock used in Phase 0.
-//
-// The subprocess lifecycle is managed by the procgroup supervisor from
-// arxi-sim (internal/ext/supervisor), which will be ported in Phase 2.
+// Log-follow is NOT armed here. A run's event log does not exist until the run
+// is created, and on this build run.start is the only way to create one -- and
+// it needs the prompt. So the run.start round-trip and its log-follow are
+// deferred to serveDriver.SubmitPrompt (the first user line); openServeDriver
+// only spawns, handshakes and hands the loop the relay channel every run's
+// events will arrive on. The <runsRoot>/<job_id>/events.ndjson layout and the
+// run.start wire round-trip are the facts only a live `arxi serve` confirms;
+// isolating the spawn/handshake here keeps that confirmation to serveDriver.
 func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.Event, error) {
-	// Resolve the event log path for log-follow. ARXI_RUN_DIR points at the
-	// directory for a specific run; if unset, default to ~/.arxi/runs/last.
-	logPath := filepath.Join(os.Getenv("ARXI_RUN_DIR"), "events.ndjson")
-	if os.Getenv("ARXI_RUN_DIR") == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return nil, nil, fmt.Errorf("phase 0.5: cannot resolve home dir for default log path: %w", err)
-		}
-		logPath = filepath.Join(home, ".arxi", "runs", "last", "events.ndjson")
-	}
-
-	// Start log-follow before spawning the subprocess, so events written by
-	// the core are caught from the very first line.
-	eventCh, err := driver.LogFollow(ctx, logPath)
+	runsRoot, err := defaultRunsRoot()
 	if err != nil {
-		return nil, nil, fmt.Errorf("phase 0.5: log-follow %s: %w", logPath, err)
+		return nil, nil, fmt.Errorf("phase 0.5: %w", err)
 	}
 
 	// Spawn `arxi serve` as a subprocess. Stdin/stdout are pipes for the
@@ -420,7 +408,9 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 		io.Writer
 	}{stdout, stdin})
 
-	// Handshake: read the hello, validate version.
+	// Handshake: read the hello, validate the surface version. requireRunStart
+	// (inside startRun, at the first prompt) then gates on the hello's
+	// implemented list -- the handshake here is what makes that hello available.
 	if err := nd.Handshake(ctx); err != nil {
 		stdin.Close()
 		stdout.Close()
@@ -429,42 +419,18 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 	}
 
 	sd := &serveDriver{
-		nd:      nd,
-		cmd:     cmd,
-		logPath: logPath,
+		rs:       nd,
+		getenv:   os.Getenv,
+		runsRoot: runsRoot,
+		follow:   driver.LogFollow,
+		relay:    make(chan fold.Event, 64),
+		closer: func() error {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+			return nil
+		},
 	}
-	return sd, eventCh, nil
-}
-
-// serveDriver adapts NDJSONDriver to the Driver interface the loop expects.
-// Prompts go over the NDJSON request/response protocol; the core's responses
-// arrive as log events on the LogFollow channel.
-type serveDriver struct {
-	nd      *driver.NDJSONDriver
-	cmd     *exec.Cmd
-	logPath string
-}
-
-// runID derives the run ID from the log path directory name. In Phase 0.5 the
-// run is identified by where its log lives; later phases may negotiate this
-// during handshake instead.
-func (d *serveDriver) runID() string {
-	dir := filepath.Base(filepath.Dir(d.logPath))
-	if dir == "" || dir == "." {
-		return "last"
-	}
-	return dir
-}
-
-func (d *serveDriver) SubmitPrompt(ctx context.Context, text string) error {
-	_, err := d.nd.SubmitPrompt(ctx, d.runID(), text)
-	return err
-}
-
-func (d *serveDriver) Close() error {
-	_ = d.cmd.Process.Kill()
-	_ = d.cmd.Wait()
-	return nil
+	return sd, sd.relay, nil
 }
 
 // Loop is the Phase 0 event loop: terminal events and core events on one select,

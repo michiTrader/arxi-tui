@@ -335,7 +335,41 @@ Consequences for the plan:
     returned path, surfacing the actor label in the status-bar scene, and
     confirming the `defaultActor` name and the `<runsRoot>/<job_id>/events.ndjson`
     layout against a live `arxi serve` — the one thing only a real kernel confirms.
-- **M3** [M2] Evaluate adopting the `run.attach`/`event.subscribe` path (a
+  - **M2 serve-driver live half — BUILT (2026-09-29, PR #128).** The impure
+    wiring the join left to the loop, landed the way the I6/J loop-wiring commits
+    were (verified by build + the pieces it composes; the sandbox has no live
+    `arxi serve`). `serveDriver` (`cmd/arxi-tui/serve_driver.go`) now calls
+    `startRun` against a real subprocess on the first user line instead of posting
+    `run.prompt` to a run identified by a fixed log directory. The structural fact
+    that forced the restructure: `run.start` **creates** a run, and a run's event
+    log does not exist until the run does, so log-follow cannot be armed at boot
+    the way the old fixed-path follow was (`ARXI_RUN_DIR`/`~/.arxi/runs/last`,
+    which only worked when a run had already been started *outside* the TUI). On
+    this build `run.start` is the only verb that can create a run
+    (`run.prompt`/`run.steer` are declared-but-unimplemented, M1b) and it needs the
+    prompt — so the round-trip and its log-follow move off boot and onto
+    `SubmitPrompt`. `openServeDriver` now only spawns, handshakes and hands the loop
+    a relay channel; each `SubmitPrompt` runs the M2 sequence via `startRun` (gate
+    on hello → resolve config → `run.start` → derive the follow path from the
+    returned `job_id`), arms `LogFollow` on that path, and relays the created run's
+    events onto the relay channel the loop reads. Each prompt starts a fresh run
+    (M1c option a: one `run.start` per turn, since this build cannot steer),
+    cancelling the previous run's follow first so two logs never relay at once; the
+    relay is never closed here because a closed `eventCh` tells the loop the session
+    ended and a session outlives any one run. `follow` and `rs` are seams
+    (`followFunc`, `runStarter`) so the sequencing is pinned without a subprocess:
+    `serve_driver_test.go` (5 tests) proves the run-it-created follow end to end,
+    that a refused `run.start` arms no follow, that a follow failure surfaces named
+    by the run, the per-turn follow swap, and Close's cancel+teardown — with two
+    counterfactuals run by hand (neutering the previous-run cancel fails the swap
+    test; neutering the relay copy fails the end-to-end relay test). `runID`/`logPath`
+    are kept (the round-trip with `runLogPathForJob` still holds, now via
+    `runIDFromLogPath`) so a later attach/show/cancel verb (M3) can address the run
+    the TUI is following. **Still deferred:** surfacing the actor label in the
+    status-bar scene (needs a signed host view-state bind and a scene row — its own
+    increment; the label is captured on the driver at the moment it is known), and
+    confirming the `defaultActor` name and the `<runsRoot>/<job_id>/events.ndjson`
+    layout appearing on disk against a live `arxi serve`.
   positive end-of-run marker) — deferred per ADR-0002
   (`docs/PLAN.md:230-280`); the trigger is needing that positive signal.
 
