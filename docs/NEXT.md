@@ -1557,11 +1557,35 @@ counterfactual test).
   with both counterfactuals run by hand: rendering only `needsConsent[0]` fails on
   the second plugin's missing fields, and re-detailing the remembered half
   surfaces its capability and fails the trusted-no-new-power assertion.
-  **Remaining (the impure loop half):** fetch each `manifest_url`, `Decide` per
-  plugin, drive `BundleConsentScene` on the live modal surface, fan the single
-  `y`/`r`/`n` answer out to N `Gate.Grant` calls, then grant-then-compose
-  (`theme.Merge` + `patch.Mount`) — gated on `cmd/arxi-tui/install_modal.go`'s
-  `startInstall`, exactly the surface a single behavioral install already uses.
+  **Fan-out sequencing BUILT (2026-09-29, PR #119).** `GrantBundle`
+  (`internal/ext/bundle_install.go`) is the second of the two artifacts the design
+  names, landed pure the way `ParseBundle` and `BundleConsentScene` were: a
+  `(*Gate, []BundlePluginDecision, BundleAnswer) -> ([]BundleGrant, error)` fan-out
+  of one bundle answer to N per-plugin `Gate.Grant` calls, each against the plugin's
+  own unchanged per-manifest `Identity(m, digest)`. It enforces the three properties
+  the design pins — all-or-nothing (`Rejected` grants and composes nothing, returns
+  `ErrBundleRejected`), one `Grant(m, digest, m.Capabilities, remember)` per
+  not-yet-remembered plugin with already-remembered plugins carried through without
+  a re-grant, and grant-then-compose atomicity (a `Grant` refusal aborts before the
+  caller composes; atomicity is over the workspace, deliberately not the remember
+  store, documented at the site). `ConsentsFor` projects the loop's per-plugin
+  decisions into the `[]BundlePluginConsent` `BundleConsentScene` renders so the
+  screen and the fan-out read one list. Pinned by `bundle_install_test.go` (6 tests)
+  with the counterfactuals run by hand: granting before the `Rejected` check, a
+  `break` after the first grant, and swallowing the `Grant` refusal each fail
+  exactly their test; a remembered-narrow-grant probe proves a remembered plugin is
+  carried without the widening a spurious re-grant would cause; and a
+  remember-then-standalone-`Decide` probe proves the N rows are keyed per-manifest,
+  the property the rejected aggregate-identity reading would have destroyed.
+  **Remaining (the impure loop half):** the cmd-edge orchestration that fetches the
+  bundle, runs the unchanged H6/I5 pipeline per `manifest_url` (fetch →
+  `InstallFromBundle` → `LayoutByDigest` → `Gate.Decide`) to build the
+  `[]BundlePluginDecision`, drives `BundleConsentScene` on the live modal surface,
+  calls `GrantBundle` on the single `y`/`r`/`n` answer, then grant-then-composes
+  (`theme.Merge` + `patch.Mount` the scene and plugins, `supervisor.Start` the
+  behavioral ones) — gated on `cmd/arxi-tui/install_modal.go`'s `startInstall`,
+  exactly the surface a single behavioral install already uses. Both pure artifacts
+  the design named are now built; what is left is the loop that calls them.
 - **J5** [J3] Freeze the Scene 7 golden.
 - **J5 — DONE (2026-09-28, PR #104).** The Scene 7 golden is frozen as the
   host-generated community installer, pinned the way Scene 6 (TICKER) and Scene 9
