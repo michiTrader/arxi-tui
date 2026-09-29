@@ -552,6 +552,85 @@ Fields:
 bought nothing — the user shared something and the workspace did not change,
 indistinguishable from a broken load.
 
+### How "one consent screen" aggregates N grants (the design point the live wiring needs)
+
+The section above calls the one screen "a UX aggregation over the existing Q15
+gate (one identity grant covering all the bundle's components), **not a new
+gate**." That phrase settles the *authority* question but leaves one mechanism
+undecided, and the mechanism is the thing the live wiring cannot write without a
+decision: the `Identity`/`Decide`/`Grant`/`ConsentScene` primitives in
+`internal/ext/identity.go` and `consent.go` are **per-manifest** — one tuple,
+one grant, one remembered row per plugin — and a bundle names N plugins. So "one
+grant covering all components" resolves two ways, and only one of them is
+consistent with the sentence that introduces it.
+
+**Rejected — one aggregate identity.** Hash a single identity over the whole
+bundle (all N plugin tuples plus the scene/theme bytes), grant once against it,
+remember one row. This reads like "one grant" literally, and it is the wrong
+one, for the exact reason the introducing sentence gives: an aggregate identity
+is **a new authority**. A power granted to `tick` inside this bundle would be
+recorded against the bundle's hash, not against `tick`'s own
+name+version+protocol+executable+args+caps+digest tuple — so `supervisor.Mount`,
+which decides and spawns **one plugin at a time** against that plugin's own
+identity (`Gate.Decide(m, digest)`, mount.go), could not find the grant and
+would re-prompt, or would have to be rewritten to consult a bundle-shaped store
+it does not have. It also destroys grant transfer in both directions: the same
+`tick` plugin installed standalone, or carried by a second bundle, computes a
+different aggregate identity and is treated as never-seen, so "remember" a user
+already gave means nothing; and a bundle that changes one unrelated component
+(a theme colour, a fourth plugin) changes the aggregate hash and silently
+revokes the grants on the three plugins that did not change. This is the
+grant-transfer safety I5 built, discarded to make one sentence literally true.
+
+**Chosen — N per-plugin grants, one screen, one keystroke.** The aggregation is
+of the **decision and its presentation**, never of the identity. The live wiring
+fetches and lays out each `manifest_url` through the unchanged H6/I5 pipeline
+(fetch → `InstallFromBundle` → `LayoutByDigest` → per-plugin `digest`), computes
+each plugin's own per-manifest `Identity(m, digest)`, and calls `Gate.Decide`
+for each — exactly what a standalone install does, N times. The **one screen** is
+a bundle sibling of `ConsentScene` (`BundleConsentScene`, authored the same
+map→`ParseNamed` way) that stacks the bundle's `name`/`description` identity
+block above one identity+capability block per plugin that `Decide` returned
+`DecisionNeedsConsent` for, and lists the already-`DecisionRemembered` plugins as
+trusted-no-new-power so the user sees the whole cost of the install, not just its
+new part. The user answers **once** — the same `y`/`r`/`n` vocabulary
+`consentAnswerForKey` already speaks — and that single answer fans out: on `y`
+(or `r`), the host calls `Gate.Grant(m, digest, m.Capabilities, remember)` once
+**per not-yet-remembered plugin**, each binding to that plugin's own identity, so
+"remember" writes N per-plugin rows that a later standalone or cross-bundle sight
+of the same identity finds already granted. On `n`, nothing is granted and
+nothing is mounted — a bundle is all-or-nothing at the screen because the user
+consented to *the interface the bundle ships*, and a scene wired to a plugin the
+user rejected is a scene with dead binds.
+
+This keeps every security-load-bearing primitive untouched: `Identity` stays
+per-manifest, `Grant` still refuses an undeclared capability against the plugin
+that declared it, the remembered-grant row is still keyed by the plugin's own
+tuple, and the escape hatch and fold are as far from this path as they are from a
+single install. The **only new artifacts** are `BundleConsentScene` (presentation)
+and the loop's fan-out of one answer to N `Grant` calls (sequencing) — no new
+identity, no new store shape, no new gate. That is precisely "a UX aggregation
+over the existing gate," now with the quantifier named: the screen is one, the
+grants are N, and each of the N is the grant the standalone install would have
+made.
+
+Two consequences follow for the wiring, recorded here so they are not
+re-litigated in code:
+
+- **The scene and theme request no powers.** They run no code — the H2
+  declarative/behavioral split makes "zero code" checkable as the absence of an
+  `executable` — so they appear on the screen only in the bundle identity block
+  (what is being installed), never with a capability list. A plugin-less bundle
+  (scene+theme only) still shows the one screen as a named confirm, mirroring the
+  single-plugin `(none — this plugin runs with no host powers)` row: install is
+  never blind, even when it grants nothing.
+- **Mount order is grant-then-compose.** The N `Grant` calls precede any
+  `patch.Mount`/`theme.Merge`, so a bundle that is rejected mid-fan-out (a
+  `Grant` refusing a capability a manifest declared but `KnownCapability` does not
+  know) changes nothing — the workspace is composed only after every grant the
+  bundle needs has succeeded, the same atomicity `checkEmpty` protects at parse
+  time carried to install time.
+
 ### What lands now vs. what is deferred (the J-block pattern)
 
 J4 lands its **pure, fully-testable core first** — the bundle manifest parser and
@@ -577,9 +656,13 @@ aggregation as a small, testable addition once the modal loop holds it.
    unchanged (fetch, `Validate`, consent), and embedding a manifest would fork
    that path into a second, drift-prone copy. The bundle discovers URLs; it
    grants nothing.
-3. **One consent screen as aggregation vs a new gate** — recommend aggregation
-   (as the section states): one identity grant covering the bundle's components,
-   over the existing Q15 gate, never a new authority.
+3. **One consent screen as aggregation vs a new gate** — resolved: aggregation,
+   and the mechanism is now pinned above ("How 'one consent screen' aggregates N
+   grants"). The screen is one and the grants are N per-plugin, each against the
+   plugin's own unchanged Q15 identity; the aggregate-identity reading is rejected
+   there as a new authority that would break grant transfer. This fork was signed
+   only at the authority level and needed its mechanism named before the live
+   wiring could be written — that is the section this revision adds.
 
 ## J5 — freeze the Scene 7 golden
 
