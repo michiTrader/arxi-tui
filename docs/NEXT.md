@@ -87,8 +87,12 @@ signed row/token to the relevant doc, before any code depends on it.
 
 - **0.1 — DONE.** Workspace path fixed (`arxi-tui`, hyphen); shell works.
 - **0.2 — DONE.** Green baseline captured (see above).
-- **0.3** Add `bin/` (or `/bin/arxi-tui`) to `.gitignore` so the compiled
-  binary is never accidentally committed (correction 7).
+- **0.3 — DONE (2026-09-29).** `.gitignore` now ignores the whole `/bin/` tree as
+  a directory rather than enumerating each artifact path. The enumerated list had
+  let `bin/arxi-tui.exe~` — a 4.9 MB editor/build backup whose trailing-tilde name
+  matched none of the exact patterns — get committed as a tracked binary; it is
+  untracked (kept on disk) and the directory rule closes the recurrence (correction
+  7).
 
 ### Block C — Finish fold coverage (DONE 2026-09-22)
 
@@ -1492,8 +1496,37 @@ counterfactual test).
   that lands the Scene 7 golden moves from the static build to `LiveInstallerScene`
   and the static `InstallerScene` retires.
 
-- **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent
-  screen).
+- **J4 — pure core BUILT (2026-09-28, committed f438423 / fe3ec73); live wiring
+  TODO [J3,I5].** Share complete bundles (scene+theme+plugins, one consent
+  screen). The J-block pattern held: the pure, network-free core landed first, the
+  way J2's `ParseRegistry` and J3's `LiveInstallerScene` did. `internal/ext/bundle.go`
+  is the `bundle/v1` parser and validator — `ParseBundle`/`ParseBundleNamed` +
+  `Bundle.Validate`, mirroring `registry.go`/`manifest.go` (closed-set
+  `legalBundleVersions`, an addressed `*Error`, a `Validate` that **never fetches**).
+  It refuses, each with `file:line`: a missing/unknown `version`, a missing `name`
+  or `description` (the identity the one consent screen shows), an empty bundle
+  (`checkEmpty`, ported from the manifest — a share that changes nothing bought
+  nothing), an embedded `scene` that does not parse or declares no `root` (rebased
+  onto the bundle bytes for a bundle-absolute address, and deliberately **not** run
+  through the full bind validator — a bundle scene may wire into its bundled
+  plugins' `<id>.*` namespaces, unknown until each manifest is fetched, so that is a
+  mount-time check), a malformed embedded `theme` block (through the one token
+  validator `theme.LoadBytes`), and a plugin reference whose `manifest_url` is
+  absent or not HTTPS (the same security refusal `registry.go` makes). Pinned by
+  `bundle_test.go` (13 tests) with counterfactuals run by hand.
+  **The pure core has no caller yet** — it is dead until the live wiring lands.
+  **Remaining (the deferred impure half, DESIGN-BLOCK-J.md J4 "what lands now vs
+  deferred"):** the loop wiring that fetches each referenced manifest, computes the
+  aggregated Q15 identity, shows the *one* consent screen (`ext.ConsentScene`'s
+  bundle sibling), then `theme.Merge` + `patch.Mount`s the scene and plugins on a
+  single grant — gated on the same live-loop surface the I5 modal mount uses
+  (`cmd/arxi-tui/install_modal.go`, `startInstall`). **One design point is signed
+  only as a sketch and should be pinned before that code:** DESIGN-BLOCK-J.md calls
+  the one screen "a UX aggregation over the existing Q15 gate (one identity grant
+  covering all the bundle's components)", but the identity tuple in
+  `internal/ext/identity.go` is per-manifest, so how N plugin identities compose
+  into one grant (one aggregate identity vs. N remembered grants decided on one
+  screen) is the decision that beat needs.
 - **J5** [J3] Freeze the Scene 7 golden.
 - **J5 — DONE (2026-09-28, PR #104).** The Scene 7 golden is frozen as the
   host-generated community installer, pinned the way Scene 6 (TICKER) and Scene 9
