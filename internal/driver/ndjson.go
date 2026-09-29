@@ -448,6 +448,107 @@ func (d *NDJSONDriver) SubmitRunStart(ctx context.Context, p RunStartParams) (*R
 	return &result, nil
 }
 
+// RunCancelParams are the wire parameters of a run.cancel request, the verb
+// that requests termination of an already-started run by the id run.start
+// returned. RunID is sent as the wire param `run` -- the same name run.prompt
+// uses to address a run, and the name the core's cancel dispatch reads
+// (arxi/cmd/arxi/serve.go stringParam(params, "run")). Reason is optional
+// operator text recorded with the cancellation; it is omitted when empty so the
+// wire carries only what the caller actually chose.
+type RunCancelParams struct {
+	// RunID is the job_id run.start returned. The core reads it from the wire
+	// param `run`; an empty one addresses no run, so SubmitRunCancel refuses to
+	// send it rather than let the core answer not_found for a request the client
+	// never meant to make.
+	RunID string
+	// Reason is optional operator-supplied text recorded with the cancellation;
+	// sent only when non-empty so an unset reason is an omission, not "".
+	Reason string
+}
+
+// RunCancelResult is the core's Job snapshot returned by run.cancel
+// (arxi/host/v1/types.go Job): the run's id, its status once the cancel was
+// accepted, whether that status is terminal, and whether cancellation has been
+// requested. Cancel is a REQUEST, not an instantaneous kill -- a running job
+// answers with cancellation_requested=true and a non-terminal status, while a
+// job already finished answers terminal=true without it -- so the host reads
+// these fields rather than assuming the run stopped the instant it asked.
+type RunCancelResult struct {
+	JobID                 string `json:"id"`
+	Status                string `json:"status"`
+	Terminal              bool   `json:"terminal"`
+	CancellationRequested bool   `json:"cancellation_requested"`
+}
+
+// SubmitRunCancel sends a run.cancel request for an already-started run and
+// returns the core's Job snapshot.
+//
+// It is the first of the run-addressing verbs (attach/show/result/cancel) the
+// TUI needs after run.start: the id run.start returns is exactly what this verb
+// addresses, so the serveDriver -- which already keeps that id via its log path
+// (runIDFromLogPath) -- can terminate the run it started rather than only
+// dropping its local follow, which leaves the kernel run alive. It keeps the
+// same ok:false-is-a-refusal contract SubmitRunStart and SubmitPrompt keep.
+func (d *NDJSONDriver) SubmitRunCancel(ctx context.Context, p RunCancelParams) (*RunCancelResult, error) {
+	// An empty run id addresses no run. The core would answer not_found, but
+	// that reads as "the run is gone" when the truth is "the client sent no
+	// run" -- refuse locally so the failure names the real cause rather than
+	// borrowing the core's for a request that never should have left the client.
+	if p.RunID == "" {
+		return nil, fmt.Errorf("ndjson: run.cancel with an empty run id; " +
+			"the id is how the verb reaches the run, so an empty one cancels " +
+			"nothing and the core's not_found would misname the cause")
+	}
+
+	params := map[string]any{"run": p.RunID}
+	if p.Reason != "" {
+		params["reason"] = p.Reason
+	}
+
+	req := protoRequest{
+		ID:     "cancel",
+		Type:   "run.cancel",
+		Params: params,
+	}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if err := d.enc.Encode(req); err != nil {
+		return nil, fmt.Errorf("ndjson: send run.cancel: %w", err)
+	}
+
+	resp, err := d.readResponse(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// ok:false is an answer, not a transport success -- the same contract
+	// SubmitRunStart keeps. run.cancel against a missing job answers not_found,
+	// and that must reach the caller as a *Refusal rather than a zero-valued
+	// result that reads as an accepted cancellation.
+	if !resp.OK {
+		return nil, resp.refusal("run.cancel")
+	}
+
+	var result RunCancelResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, fmt.Errorf("ndjson: decode run.cancel result: %w", err)
+	}
+
+	// A cancel answered ok but naming no run is unconfirmable: the host asked to
+	// cancel one run and got an acknowledgement that identifies none, so it
+	// cannot tell the intended run was the one addressed. Fail loud, the same way
+	// SubmitRunStart rejects an ok response with no job_id -- an unverifiable
+	// success is worse than a refusal, which at least says so.
+	if result.JobID == "" {
+		return nil, fmt.Errorf("ndjson: run.cancel returned ok with no job id; " +
+			"an acknowledgement that names no run cannot confirm the intended " +
+			"run was the one cancelled")
+	}
+	return &result, nil
+}
+
 // refusal converts an ok:false response into a *Refusal, preserving the code,
 // the core's sentence and its remedy. A response with ok:false and no error
 // object still becomes a refusal: `ok` is the field of record, and inventing a
