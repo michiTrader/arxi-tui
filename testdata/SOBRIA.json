@@ -31,6 +31,10 @@
   { "id": "status", "type": "row", "children": [
     { "type": "text", "bind": "slash.hint", "style": {"style": "dim"},
       "when": "slash.hint" },
+    { "type": "text", "bind": "host.run.actor", "style": {"style": "dim"},
+      "when": "host.run.actor" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"},
+      "when": "host.run.actor" },
     { "type": "text", "bind": "agent.mode", "style": {"style": "header"},
       "when": "status.active" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "status.active" },
