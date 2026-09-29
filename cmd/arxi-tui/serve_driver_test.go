@@ -103,7 +103,32 @@ func TestServeDriverStartsRunAndRelaysItsLog(t *testing.T) {
 	}
 }
 
-// TestServeDriverDoesNotFollowWhenRunStartRefused is the ordering guarantee on
+// TestServeDriverActorLabelIsEmptyUntilARunStarts pins the getter the repaint
+// loop reads to publish host.run.actor: it is empty before any run (so the
+// status label does not draw at boot), and after SubmitPrompt it returns the
+// actor the run was started with. The empty half is the counterfactual -- if
+// ActorLabel returned the resolved default before a prompt, the status bar
+// would name a run that does not exist yet.
+func TestServeDriverActorLabelIsEmptyUntilARunStarts(t *testing.T) {
+	rs := &fakeRunStarter{hello: implementingHello(), jobID: "run-abc"}
+	ff := &fakeFollower{}
+	var closed bool
+	sd := newTestServeDriver(rs, ff, emptyEnv, &closed)
+
+	if got := sd.ActorLabel(); got != "" {
+		t.Fatalf("ActorLabel() = %q before any run, want empty; the status bar would name a run that has not started", got)
+	}
+
+	if err := sd.SubmitPrompt(context.Background(), "hello there"); err != nil {
+		t.Fatalf("SubmitPrompt refused a clean sequence: %v", err)
+	}
+
+	if got := sd.ActorLabel(); got != defaultActor {
+		t.Fatalf("ActorLabel() = %q after a run started, want the resolved default %q; the loop publishes "+
+			"this into host.run.actor, so a wrong value mislabels the run on screen", got, defaultActor)
+	}
+}
+
 // the live side: if startRun refuses (a not_implemented kernel, a malformed
 // config), SubmitPrompt must return the error and NOT arm log-follow -- following
 // a run that was never created would wait forever on a file no run writes.
