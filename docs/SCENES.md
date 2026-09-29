@@ -356,16 +356,22 @@ preview mode is part of the engine contract; Q17 the registry is a JSON index
 in a repo — no servers. Full bundle sharing (scene + theme + plugins in one
 manifest, one consent screen) rides on the same gate.
 
-Golden status (J5, 2026-09-28): frozen as `testdata/COMMUNITY.json` — the
-byte-for-byte output of `Registry.InstallerScene()` over a fixed `reg/v1` index,
-rendered through the ordinary engine path (`COMMUNITY.frame`/`.styled`). This
-increment bakes each entry as a pressable card carrying H8's `cmd:/ui plugin add
-<manifest_url>` install action; the live `list` bind, the query-bound search
-`input` and the selection-driven preview pane are the follow-up increment (they
-need a signed `community.*` view-state bind). Q16 preview mode is pinned at the
-frame level by `COMMUNITY-PREVIEW.frame` (a stranger's binds drawn from the
-manifest's declared mocks) and `COMMUNITY-PREVIEW-NIL.frame` (the byte-identical
-no-op with no preview table).
+Golden status (J5, 2026-09-28; live-builder switch, 2026-09-29): frozen
+as `testdata/COMMUNITY.json` — the byte-for-byte output of
+`ext.LiveInstallerScene` (rendered through the ordinary engine path as
+`COMMUNITY.frame`/`.styled`). This builder binds the browse list to the
+`community.*` view state the keystroke loop writes (`community.query` in the
+search `input`, `community.matches` driving a `row_template` list,
+`community.selected` marking the highlighted row and the selection-driven preview
+pane) rather than baking entries from the index — the live follow-up increment
+DESIGN-BLOCK-J.md J3 deferred, landed together with the open command
+(`/ui plugin browse <url>`), the scene swap, and Enter dispatching the selected
+entry's `manifest_url` through the existing `startInstall` consent gate. The
+static-card `Registry.InstallerScene` that J5 originally froze retired with the
+consumer live, the way `ui.hidden`'s exemption retired once its walker existed.
+Q16 preview mode is pinned at the frame level by `COMMUNITY-PREVIEW.frame` (a
+stranger's binds drawn from the manifest's declared mocks) and
+`COMMUNITY-PREVIEW-NIL.frame` (the byte-identical no-op with no preview table).
 
 ## Scene 8 — BUTTONS
 

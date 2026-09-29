@@ -1465,32 +1465,42 @@ counterfactual test).
   moves from the static build to `LiveInstallerScene` in its own mutation family
   and the static `InstallerScene` retires.
 
-- **J3 follow-up — keystroke-loop core (`installerBrowse`) BUILT (2026-09-28).**
-  The pure core of the one remaining piece, landed ahead of its tty wiring the
-  way `FilterEntries` landed the filter core ahead of the loop that calls it.
-  `cmd/arxi-tui/installerBrowse` is the browse analogue of `installModal`:
-  loop-side host state (the fetched `*ext.Registry`, the typed query, the
-  selection cursor) with pure, `term`-free transitions. `matches()` runs
-  `Registry.FilterEntries` over the query and converts each `ext.RegistryEntry`
-  into a `fold.CommunityMatch` — the ext→fold boundary `fold.go` names as the
-  host's job, which is why the browse is package `main` and not an `ext` or
-  `fold` type (the fold never imports the registry's fetch/parse surface per
-  ADR-0002, and `ext` never imports the fold). `typeRune`/`backspace` edit the
-  query (rune-aware) and re-clamp the cursor; `moveUp`/`moveDown` wrap at both
-  ends; `publish` sets the `community.*` triple together so a repaint cannot show
-  a query without its matches or a selection past the list — all the signed
-  behaviour of BINDS.md §4.3 (empty query lists everything, clamp on filter, wrap
-  on ↑/↓, reset to 0 on open). Eight tests over a three-entry fixture prove it,
-  each with a named consequence; counterfactuals run and reported (never
-  committed): a clamp instead of a wrap fails the wrap test both directions,
-  skipping `clampSelection` in `typeRune` leaves the cursor past a shrunk list,
-  and dropping a field from the conversion fails the field-fidelity test. **Still
-  deferred (the next increment):** the impure half — a command to open the
-  installer, the scene swap that puts `LiveInstallerScene` on the display,
-  `term.Key` routing into these transitions, and Enter dispatching the selected
-  entry's `manifest_url` through the existing consent gate (`startInstall`). When
-  that lands the Scene 7 golden moves from the static build to `LiveInstallerScene`
-  and the static `InstallerScene` retires.
+- **J3 follow-up — keystroke-loop core BUILT (2026-09-28, PR #113), impure wiring
+  BUILT (2026-09-29).** The pure core landed first — `cmd/arxi-tui/installerBrowse`
+  — the same order `FilterEntries` landed the filter core ahead of the loop that
+  calls it. `installerBrowse`'s transitions are pure so they are proven without the
+  tty, exactly as `consentAnswerForKey` is the pure pinned core of the consent
+  modal: `matches()` runs `Registry.FilterEntries` over the query and converts each
+  `ext.RegistryEntry` to `fold.CommunityMatch` — the ext→fold boundary `fold.go`
+  names as the host's job — and the signed BINDS.md §4.3 behaviour (empty query
+  lists everything, clamp on filter, wrap on ↑/↓, reset to 0 on open) is pinned by
+  eight tests over a three-entry fixture, each with a named consequence, with
+  counterfactuals run by hand.
+
+  The impure wiring that drives it has now landed too: `/ui plugin browse <url>`
+  (`parsePluginBrowse`, `cmd/arxi-tui/plugin_install_cmd.go`) is intercepted in the
+  host before the patch surface, like install and remove, because opening the
+  installer fetches a registry index, swaps `LiveInstallerScene` onto the display
+  and drives a keystroke loop — none of which the pure patch transform can do. The
+  fetch runs on a worker (`startBrowseFetch`, `installer_browse_open.go`, using the
+  HTTPS-only bounded `FetchRegistryWithClient`) so a hung registry never freezes the
+  loop or the panic gesture (invariant 6); the loop publishes
+  `installerBrowse.publish` while `browse != nil` and routes every non-panic key
+  through `routeBrowseKey`, which maps query runes→`typeRune`, ↑/↓→`moveUp`/`moveDown`
+  (wrap), Backspace→`backspace`, Esc→close, and Enter→the selected entry's
+  `manifest_url` handed to `startInstall` — the same install path a typed
+  `/ui plugin install` takes, so a pressed card and a typed line cannot install
+  different bytes.
+
+  With the consumer live, the Scene 7 golden moved from the static
+  `Registry.InstallerScene` build to `ext.LiveInstallerScene` in its own mutation
+  family (`testdata/COMMUNITY.json`/`.frame`/`.styled` regenerated), and the static
+  builder retired — its `installerCard`/`installerHelp` deleted, `installerNotice`
+  kept as shared chrome in `registry_scene.go`, and `community_live_test.go` renamed
+  to the `TestCommunityScene*` family. The nested-style sweep absorbed the live
+  list's `row_template` (it now folds `community.matches`); the stack/row exemption
+  records the one surface that owns no style token, with a hand-run
+  counterfactual.
 
 - **J4** [J3,I5] Share complete bundles (scene+theme+plugins, one consent
   screen).

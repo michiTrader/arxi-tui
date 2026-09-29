@@ -183,6 +183,18 @@ func FetchRegistry(rawURL string) (*Registry, error) {
 	return fetchRegistry(http.DefaultClient, rawURL)
 }
 
+// FetchRegistryWithClient is FetchRegistry with the HTTP client supplied by the
+// caller, so the host can bound the fetch with a timeout the way its manifest and
+// archive fetchers bound theirs (newHTTPManifestFetcher's 15s client). The
+// HTTPS-only rule and every document refusal are unchanged: the client decides
+// only the transport and its timeout, never what index is accepted. It exists
+// because the loop opens the installer on a worker goroutine and an unbounded
+// DefaultClient could leave that goroutine hung on a slow-loris registry for the
+// life of the session.
+func FetchRegistryWithClient(client *http.Client, rawURL string) (*Registry, error) {
+	return fetchRegistry(client, rawURL)
+}
+
 // fetchRegistry is FetchRegistry with the HTTP client injected, so a test drives
 // it against httptest.NewTLSServer's client without reaching the real network and
 // without loosening the HTTPS-only rule the production path enforces.

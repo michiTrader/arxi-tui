@@ -73,6 +73,52 @@ func parsePluginInstall(line string) (rawURL string, matched bool, err error) {
 	return args[0], true, nil
 }
 
+// parsePluginBrowse recognizes the `/ui plugin browse <registry-url>` command and
+// returns the registry index URL to fetch and open the community installer over.
+//
+// It is the browse analogue of parsePluginInstall and lives here for the same
+// reason: opening the installer is not a source-to-source transform the patch
+// surface owns. It fetches a registry index, swaps the live installer document
+// onto the display, and drives a keystroke loop over the fetched entries — none
+// of which patch.ApplyWithFetch (a pure document transform) can do — so the line
+// is intercepted in the host before the patch surface, exactly as install and
+// remove are.
+//
+// matched reports whether the line IS a `plugin browse` invocation; a malformed
+// one (no URL, or more than one token) returns matched=true with a located
+// refusal so the host names the missing URL rather than letting the line fall
+// through to patch.parsePlugin, which knows only `add`/`remove` and would bury
+// the real problem under "unknown subcommand browse".
+func parsePluginBrowse(line string) (rawURL string, matched bool, err error) {
+	body := strings.TrimSpace(line)
+	for _, p := range []string{"/ui", "ui"} {
+		if body == p {
+			body = ""
+			break
+		}
+		if strings.HasPrefix(body, p+" ") {
+			body = strings.TrimSpace(body[len(p):])
+			break
+		}
+	}
+
+	fields := strings.Fields(body)
+	if len(fields) < 2 || fields[0] != "plugin" || fields[1] != "browse" {
+		return "", false, nil
+	}
+
+	args := fields[2:]
+	// The registry URL is a single token, the same rule install and add enforce:
+	// a URL with a space in it is not a URL, and splitting on spaces would let a
+	// fat-fingered second word be silently dropped. Scheme and reachability are
+	// FetchRegistry's to check (it is HTTPS-only); this only guarantees the
+	// command carries exactly one argument to hand it.
+	if len(args) != 1 {
+		return "", true, fmt.Errorf("/ui plugin browse needs exactly one registry URL: /ui plugin browse <url>")
+	}
+	return args[0], true, nil
+}
+
 // parsePluginRemoveID reads the plugin id from a `/ui plugin remove <id>` line, so
 // the host can Close a behavioral plugin's supervisor before the patch surface
 // handles the document/token half of the same command.
