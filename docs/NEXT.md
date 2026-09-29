@@ -220,6 +220,28 @@ Consequences for the plan:
   values the source cannot supply — which `actor`/blueprint a TUI session uses,
   the per-turn `budget`, and whether `sim` defaults on — are the product decisions
   M1b flags, not wire-schema gaps.
+  - **M1c pure core — BUILT (2026-09-29, PR #123).** The network-free half landed
+    first per the block pattern (M1a/M1b captured the schema; every J increment
+    landed its pure core ahead of the loop wiring). `NDJSONDriver.SubmitRunStart`
+    (`internal/driver/ndjson.go`) is the `run.start` wire method, the sibling of
+    `SubmitPrompt`: `RunStartParams` always sends the required `actor`/`prompt`/
+    `budget` and omits each optional (`max_turns`/`model`/`sim`) when unset so the
+    core applies its own default rather than the client sending a zero it never
+    chose; `workspace` is deliberately absent (its empty string is an illegal
+    fourth enum member — the core defaults it to `auto` on omission). It returns
+    `RunStartResult` (the core's `SubmitResult`: `job_id`/`accepted_seq`/`status`,
+    the shape M1a captured from arxi's `serve_lifecycle_test.go`), turns `ok:false`
+    into the same `*Refusal` error `SubmitPrompt` does rather than a zero-valued
+    result that reads as a started run, and fails loud on `ok:true` with an empty
+    `job_id` — an unreachable run is worse than a refusal, which at least says so.
+    Pinned by `run_start_test.go` (5 tests) with counterfactuals run by hand:
+    neutering the empty-`job_id` guard, returning nil on `ok:false`, and always
+    sending `sim` each fail exactly their test; a set-optionals test is the
+    counterfactual of the omission one (an optional the caller sets must reach the
+    wire). **Deferred (the impure half):** the `serveDriver`/loop wiring that calls
+    it needs the three product decisions M1b flagged (actor/blueprint, per-turn
+    budget, sim default), which are the user's call; that is M2's live round-trip
+    territory.
 - **M2** [M1c] Verify a real round-trip against a live `arxi serve`, re-reading
   the hello's `implemented` list at connect and gating on it.
 - **M3** [M2] Evaluate adopting the `run.attach`/`event.subscribe` path (a
