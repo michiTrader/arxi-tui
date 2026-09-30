@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	"github.com/michiTrader/arxi_tui/internal/fold"
@@ -71,3 +73,88 @@ func TestInboxItemIDRefusesAnEmptyInboxID(t *testing.T) {
 			"an empty id sent onward asks the core to answer nothing, the wrong-frame failure this guard exists to prevent", id, ok)
 	}
 }
+
+// fakeDecider records the verb, item and text answerInbox routed, so a test can
+// assert the kind→verb mapping without a live serveDriver or a subprocess.
+type fakeDecider struct {
+	verb   string
+	itemID string
+	text   string
+	err    error
+}
+
+func (f *fakeDecider) ApproveInboxItem(_ context.Context, itemID string) error {
+	f.verb, f.itemID = "approve", itemID
+	return f.err
+}
+
+func (f *fakeDecider) RejectInboxItem(_ context.Context, itemID, reason string) error {
+	f.verb, f.itemID, f.text = "reject", itemID, reason
+	return f.err
+}
+
+func (f *fakeDecider) ReplyInboxItem(_ context.Context, itemID, text string) error {
+	f.verb, f.itemID, f.text = "reply", itemID, text
+	return f.err
+}
+
+// TestAnswerInboxRoutesEachKindToItsVerb pins the kind→verb mapping: approve
+// reaches approve, reject reaches reject, reply reaches reply, each with the item
+// id, and the text lands on the two text-bearing verbs but not approve. If this
+// fails, a pressed approve button could fire reject (or answer the wrong item),
+// the exact button/verb drift the single-switch join exists to prevent.
+func TestAnswerInboxRoutesEachKindToItsVerb(t *testing.T) {
+	cases := []struct {
+		kind     string
+		wantVerb string
+		wantText string // the text the verb should have received
+	}{
+		{"approve", "approve", ""},        // approve ignores the text
+		{"reject", "reject", "no thanks"}, // reject carries the text as its reason
+		{"reply", "reply", "no thanks"},   // reply carries the text as its answer
+	}
+	for _, c := range cases {
+		t.Run(c.kind, func(t *testing.T) {
+			f := &fakeDecider{}
+			if err := answerInbox(context.Background(), c.kind, "item-7", "no thanks", f); err != nil {
+				t.Fatalf("answerInbox(%q): unexpected error %v", c.kind, err)
+			}
+			if f.verb != c.wantVerb {
+				t.Errorf("answer:%s routed to verb %q, want %q; a press fired the wrong inbox verb", c.kind, f.verb, c.wantVerb)
+			}
+			if f.itemID != "item-7" {
+				t.Errorf("answer:%s routed item %q, want \"item-7\"; the verb would answer the wrong item", c.kind, f.itemID)
+			}
+			if f.text != c.wantText {
+				t.Errorf("answer:%s carried text %q, want %q; approve must ignore the text and the text-bearing verbs must receive it", c.kind, f.text, c.wantText)
+			}
+		})
+	}
+}
+
+// TestAnswerInboxSurfacesTheDriverRefusal pins that a driver refusal reaches the
+// caller rather than being swallowed. If this fails, an approve that the core
+// rejected (a stale item, a finished run) would read at the press as success.
+func TestAnswerInboxSurfacesTheDriverRefusal(t *testing.T) {
+	want := errors.New("ndjson: inbox.approve: not_found")
+	f := &fakeDecider{err: want}
+	if err := answerInbox(context.Background(), "approve", "item-7", "", f); !errors.Is(err, want) {
+		t.Errorf("answerInbox: got %v, want the driver refusal %v surfaced to the caller", err, want)
+	}
+}
+
+// TestAnswerInboxRefusesAnUnknownKind pins the exhaustiveness guard: a kind
+// outside the closed vocabulary is named, not silently dropped. Counterfactual
+// run by hand: replacing the default arm with `return nil` makes this pass
+// silently while a signed-but-unrouted kind does nothing — the AGENTS.md missing
+// switch variant failure this message exists to catch.
+func TestAnswerInboxRefusesAnUnknownKind(t *testing.T) {
+	f := &fakeDecider{}
+	if err := answerInbox(context.Background(), "escalate", "item-7", "", f); err == nil {
+		t.Error("answerInbox: got nil for an unknown kind, want a named refusal; a kind not in the closed set must not be a silent no-op")
+	}
+	if f.verb != "" {
+		t.Errorf("answerInbox: an unknown kind routed to verb %q, want no verb; it must reach no driver method", f.verb)
+	}
+}
+
