@@ -359,6 +359,8 @@ func (r *Renderer) renderByType(n *scene.Node, state fold.State, budget int) ui.
 		return r.renderList(n, state, budget)
 	case "spinner":
 		return r.renderSpinner(n, state)
+	case "button":
+		return r.renderButton(n, state)
 	case "sparkline":
 		return r.renderSparkline(n, state)
 	default:
@@ -1391,6 +1393,41 @@ func (r *Renderer) renderSpinner(n *scene.Node, state fold.State) ui.Frame {
 	}
 	return ui.Frame{
 		Live:   []ui.Line{{ui.Span{Text: glyph, Style: style}}},
+		Width:  r.Width,
+		Height: 1,
+	}
+}
+
+// renderButton draws a pressable label. It is the leaf Scene 8 signs: a node
+// whose whole purpose is to carry an on_press the focus ring can Tab onto and
+// Enter can dispatch (H8's grammar). The press machinery is already universal —
+// on_press is an addresses-not-draws property honoured on any node, and the
+// focus glow is applied at the renderNode chokepoint before this method runs —
+// so what a `button` adds over a `text` with an on_press is the one thing that
+// belongs to the renderer and not the press path: a visible affordance that
+// tells the user this word is pressable rather than prose.
+//
+// The bracket frame is that affordance and it is the engine's, the way
+// renderSpinner owns its glyph and renderRule owns its dashes: the author
+// writes the label, the type draws the chrome that marks it a control. Baking
+// the brackets here rather than asking the author to type them into `text` is
+// what makes the type mean something — a plain `text` node styled to look like
+// a button would still read as prose to Tab and to the eye, and the whole point
+// of Scene 8 is that a button is a button because its type says so.
+//
+// The label reads from bind before text, the same precedence renderText keeps,
+// so a button labelled by the fold (an approve count, a row field) draws the
+// live value. styleName(n.Style) is applied to the framed span so a declared
+// token — and the focus glow that arrives as a rewritten n.Style — lands on the
+// button: dropping it here would be the own-style defect this package has paid
+// for four times, a declaration the validator accepts and the frame discards.
+func (r *Renderer) renderButton(n *scene.Node, state fold.State) ui.Frame {
+	label := n.Text
+	if n.Bind != "" {
+		label = resolveBindRow(n.Bind, state, r.curRow, r.PluginValues, r.PreviewMocks)
+	}
+	return ui.Frame{
+		Live:   []ui.Line{{ui.Span{Text: "[ " + label + " ]", Style: styleName(n.Style)}}},
 		Width:  r.Width,
 		Height: 1,
 	}

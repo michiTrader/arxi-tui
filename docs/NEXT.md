@@ -1198,6 +1198,33 @@ counterfactual test).
     index in the glow lights every row; disabling the glow row branch lights none.
     **Block H's row-click work is now complete** — the three pure halves and the
     impure wiring (ring, dispatch, glow) all built.
+  - **button node type — BUILT (2026-09-29, PR #141).** The leaf Scene 8 signs and
+    the last piece SCENES.md named as blocking its golden. `renderByType`
+    dispatches `button` to `renderButton` (`internal/engine/render.go`), which
+    frames the label as `[ label ]`: the affordance is the engine's — as
+    `renderSpinner` owns its glyph and `renderRule` its dashes — so the author
+    writes only the label and the type is what marks it pressable, rather than a
+    `text` styled to look like a button that Tab and the eye still read as prose.
+    The label reads bind-before-text (renderText's precedence, so a fold-labelled
+    button tracks live state), and `styleName(n.Style)` is applied to the framed
+    span so a declared token *and* the focus glow — which arrives as a rewritten
+    `n.Style` at the `renderNode` chokepoint every node passes through — land on
+    the button; dropping it would be the own-style defect this package has paid
+    for four times. No new press machinery: `on_press` is already an
+    addresses-not-draws property honoured on any node and the focus ring already
+    Tabs onto anything pressable, so a button reuses the H8 grammar and glow
+    whole. Pinned by `button_test.go` (label frame, bind-before-text, focus glow
+    reaches the type) with three counterfactuals run by hand — dropping the
+    brackets makes a button byte-identical to a text node (fails the frame test),
+    dropping the style token fails both the glow test and the package's own-style
+    sweep, and reading text before bind fails the bind test — plus a frozen
+    Scene 8 golden (`testdata/BUTTONS.json`/`.frame`/`.styled`, a review surface
+    with an `answer:approve`/`reject`/`reply` button row) held by `buttons_test.go`.
+    The unknown-type diagnostic was re-pointed off `button` (now built) to
+    `switch` in the same PR, the way it moved off `sparkline` when that graduated.
+    **Remaining Scene 8 work:** the `tab: false` input opt-out and the per-element
+    `{row.field}` args an `ext:` press in a template carries, both signed-but-unbuilt
+    and unchanged by this increment.
 
 ### Block I — Phase 3: behavioral plugins (NDJSON subprocess) [H]
 
