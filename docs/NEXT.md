@@ -556,6 +556,41 @@ Consequences for the plan:
     the reply-refusal type assertion. With this the full closed answer-kind
     vocabulary has its driver half; the deferred consumer (routing `on_press`
     `answer:*` to these three calls, the H8 seam) is unchanged.
+  - **M4 consumer — BUILT (2026-09-29, PR #140).** The H8 action-routing seam
+    meets the driver: an `on_press` `answer:<kind>` now answers the run's pending
+    inbox item instead of reporting the Block I deferral. Landed pure-first per the
+    block pattern, in four commits. (1) `inboxItemID(state) (string, bool)`
+    (`cmd/arxi-tui/inbox_answer.go`) sources *which* item — the closed kind
+    vocabulary names only approve/reject/reply, so the item is the one the run is
+    blocked on, read from `agent.blocked.blocked_ref`'s `inbox_id` (BINDS.md §4.2).
+    A nil ref, a missing/non-string/empty `inbox_id` all resolve to
+    "nothing to answer", so no empty item id ever reaches the driver — the
+    wrong-frame failure this repo holds worse than a loud refusal (the
+    `ExpandRowInterpolation` missing-field rule). (2) `answerInbox(ctx, kind,
+    itemID, text, dec)` is the kind→verb join, a single switch so a press and the
+    verb it fires cannot drift; `text` is the operator's line (a reply's answer, a
+    reject's optional reason, ignored by approve), and the default arm names an
+    unrouted signed kind rather than dropping it (the AGENTS.md missing-variant
+    rule). (3) `serveDriver` implements the optional `inboxDecider` capability (the
+    `actorLabeler` pattern — the mock driver follows no run and does not implement
+    it), supplying the followed run's id via a guarded `currentRunID` that refuses
+    the `runID()` "last" fallback: a decision with no active run is refused, never
+    routed to a guessed run. (4) `dispatchPress`'s `answer:` case sources the item,
+    asserts the decider, and routes — reporting (never dropping) a press with no
+    pending item or on a non-answering driver, the twin of the `ext:` nil-router
+    branch. Pinned by `inbox_answer_test.go` (item-id sourcing + kind→verb
+    mapping + refusal surfacing + unknown-kind guard), `serve_driver_test.go` (the
+    run id supplied is the followed run's; a decision with no run is refused), and
+    three `press_test.go` cases (no-item reports, non-answering driver reports,
+    a pending item routes to the decider), with the empty-id, default-arm and
+    no-run-fallback counterfactuals all run by hand. The old
+    `TestDispatchAnswerIsDeferredWithNotice` was replaced — it protected the
+    deferral this increment removed. **Remaining:** the `{row.field}` argument
+    substitution for an `answer:` in a template row (the same template-row dispatch
+    H8 parked, shared with `ext:`), and confirming the live round-trip against a
+    real `arxi serve` (the sandbox has none; verified by build + composition as the
+    I6/J/M2 loop-wiring commits are). Scene 8's golden still waits on the `button`
+    node type and a composed fixture.
 
 ### Block B — Agent patches + side-by-side diff (A6 said ship behind this gate)
 
