@@ -683,9 +683,26 @@ counterfactual test).
   (`on_press`, still refused) wait on that decision / H8. The Scene 9 heading
   was reformatted to `SUBAGENTS (below the input)` so the progress audit's
   fixture↔scene name match resolves.
-- **E5 — TODO.** Freeze the Scene 5 golden (CONFIG). Blocked on `switch`/`input`
-  rendering inside a template — `switch` is not yet in `renderNode`'s dispatch,
-  so the `/config` dogfood needs those primitives first.
+- **E5 — TODO (unblocked by one step, 2026-09-29).** Freeze the Scene 5 golden
+  (CONFIG). The `switch` primitive it named as the blocker is now built (PR #142):
+  `renderByType` dispatches `switch` to `renderSwitch`, which reads its boolean
+  from the bind through the same `evalWhenRow`/`bindTruthy` rule a `when` gate
+  uses (so a switch and a gate over one boolean agree on "on"), draws the checkbox
+  `[x]`/`[ ]` with an optional `text` label before the box, and applies
+  `styleName(n.Style)` so a declared token and the focus glow both land — the
+  button family's own-style discipline. Pinned by `switch_test.go` (bound state,
+  label-before-box, focus glow) with three counterfactuals run by hand: ignoring
+  the bind freezes the toggle (fails the bound-state test), dropping the label
+  fails the label test, and dropping the style token fails both the glow test and
+  the package own-style sweep. The unknown-type diagnostic was re-pointed off
+  `switch` to `slider` (now the last unbuilt v0 primitive) in the same PR.
+  **What still blocks the golden:** the CONFIG dogfood binds a settings `list` to
+  a config-settings array the fold does not yet project, and mixing `switch` and
+  `input` rows by `row.kind` needs per-row boolean discriminators (this engine's
+  `when` is bare truthiness, no `==`, exactly as `community.matches`' `row.selected`
+  documents), so the row_template gates two sibling nodes on projected booleans.
+  That is a fold model + BINDS row-schema increment, not a primitive, and it is
+  the remaining E5 work now that the primitive exists.
 - **E6 — DONE.** The `row_template` refusal left `unrenderedFields`; the
   `team.members` entry left `acceptedUnprojectedBinds`; the nested-branch,
   nested-owner, zero-value-key and composite-projection audits were reconciled.

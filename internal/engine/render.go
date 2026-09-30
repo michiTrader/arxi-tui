@@ -361,6 +361,8 @@ func (r *Renderer) renderByType(n *scene.Node, state fold.State, budget int) ui.
 		return r.renderSpinner(n, state)
 	case "button":
 		return r.renderButton(n, state)
+	case "switch":
+		return r.renderSwitch(n, state)
 	case "sparkline":
 		return r.renderSparkline(n, state)
 	default:
@@ -1428,6 +1430,47 @@ func (r *Renderer) renderButton(n *scene.Node, state fold.State) ui.Frame {
 	}
 	return ui.Frame{
 		Live:   []ui.Line{{ui.Span{Text: "[ " + label + " ]", Style: styleName(n.Style)}}},
+		Width:  r.Width,
+		Height: 1,
+	}
+}
+
+// renderSwitch draws a boolean toggle: the settings primitive Scene 5's CONFIG
+// dogfood needs, mixing `switch` and `input` rows in one row_template by
+// row.kind (Q11 — the one v0 addition SCENES.md forces). It is the mirror of
+// renderButton in the same family: renderButton frames a press, renderSwitch
+// frames a state.
+//
+// The state comes from the bind, read through evalWhenRow so a switch and a
+// `when` gate agree on what counts as on — the same bindTruthy rule, so a switch
+// bound to row.enabled inside a template reads the boolean off its own row scope
+// exactly as a gate would. The indicator is the checkbox convention `[x]`/`[ ]`
+// rather than the button's `[ label ]`: a toggle shows whether it is set, not a
+// word to press, and reusing the button's frame would make the two types read
+// alike where their whole point is that one is an action and the other a value.
+//
+// A `text` label is optional and drawn before the box, so a single switch node
+// can carry its own setting name; a row_template that composes the label from a
+// sibling text node leaves it empty and gets the bare indicator. styleName is
+// applied for the same reason renderButton applies it: the declared token and
+// the focus glow rewritten into n.Style at the renderNode chokepoint must land,
+// or a styled or focused switch silently loses its token — the own-style defect
+// this package has paid for four times.
+func (r *Renderer) renderSwitch(n *scene.Node, state fold.State) ui.Frame {
+	on := false
+	if n.Bind != "" {
+		on = evalWhenRow(n.Bind, state, r.curRow, r.PluginValues, r.PreviewMocks)
+	}
+	box := "[ ]"
+	if on {
+		box = "[x]"
+	}
+	text := box
+	if n.Text != "" {
+		text = n.Text + " " + box
+	}
+	return ui.Frame{
+		Live:   []ui.Line{{ui.Span{Text: text, Style: styleName(n.Style)}}},
 		Width:  r.Width,
 		Height: 1,
 	}
