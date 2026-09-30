@@ -111,6 +111,28 @@ type Renderer struct {
 	// row still resolves its own row rather than its parent's.
 	curRow map[string]string
 
+	// curRowIndex is the 0-based position of the row curRow describes, in the
+	// order rowScopesFor yields — the same index rowFocusKey encodes and the host
+	// decodes into FocusRowIndex. It is meaningful only while curRow is non-nil
+	// (inside a template instantiation); the row focus-glow reads the pair
+	// (this node's id, curRowIndex) against (FocusRowNode, FocusRowIndex) to light
+	// the one instantiated row the cursor is on, since an authored id repeats
+	// across every row and cannot name one alone (the decision RowPress records).
+	curRowIndex int
+
+	// FocusRowNode and FocusRowIndex are the host's decoding of a ui.focus that
+	// names one pressable node of one instantiated template row (rowFocusKey).
+	// They are fed in per repaint like curRow's siblings below, and for the same
+	// reason they are not fold.State: ui.focus is host-owned view state and its
+	// row encoding is the host's, so the engine receives the already-decoded pair
+	// rather than parsing the host's synthetic key. FocusRowNode == "" is the
+	// common case (focus is on the input, a plain node, or nothing), which lights
+	// no row and keeps every non-row golden byte-identical. The plain-node glow
+	// still reads state.UIFocus directly; this pair only reaches the row path,
+	// where an id alone is ambiguous.
+	FocusRowNode  string
+	FocusRowIndex int
+
 	// PluginValues is the host-owned plugin bind snapshot, fed in per repaint the
 	// way AnimTicks and ChatScroll are: the loop reads a snapshot of the
 	// ext.PluginStore once per frame and hands it here (I3, ADR-0007 §I-D). It maps
@@ -243,14 +265,17 @@ type AnimActivity struct {
 // construction site is a fresh chance to forget one.
 func (r *Renderer) child(width, height int) Renderer {
 	return Renderer{
-		Width:        width,
-		Height:       height,
-		curRow:       r.curRow,
-		PluginValues: r.PluginValues,
-		PreviewMocks: r.PreviewMocks,
-		AnimTicks:    r.AnimTicks,
-		AnimPhase:    r.AnimPhase,
-		active:       r.active,
+		Width:         width,
+		Height:        height,
+		curRow:        r.curRow,
+		curRowIndex:   r.curRowIndex,
+		FocusRowNode:  r.FocusRowNode,
+		FocusRowIndex: r.FocusRowIndex,
+		PluginValues:  r.PluginValues,
+		PreviewMocks:  r.PreviewMocks,
+		AnimTicks:     r.AnimTicks,
+		AnimPhase:     r.AnimPhase,
+		active:        r.active,
 	}
 }
 
@@ -292,7 +317,7 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 	if hiddenByWhenRow(n, state, r.curRow, r.PluginValues, r.PreviewMocks) {
 		return ui.Frame{Width: r.Width, Height: 0}
 	}
-	n = withFocusGlow(n, state)
+	n = r.focusGlowed(n, state)
 	n = r.withTransition(n)
 	// enter (G4) is the last wrapper, and it wraps the type switch rather than a
 	// single node the way withTransition does, because its axis is the container's
@@ -1762,11 +1787,13 @@ func (r *Renderer) renderList(n *scene.Node, state fold.State, budget int) ui.Fr
 // slash.matches all render zero rows when empty).
 func (r *Renderer) renderRowTemplate(n *scene.Node, state fold.State, budget int) ui.Frame {
 	saved := r.curRow
-	defer func() { r.curRow = saved }()
+	savedIndex := r.curRowIndex
+	defer func() { r.curRow = saved; r.curRowIndex = savedIndex }()
 
 	var lines []ui.Line
-	for _, row := range rowScopesFor(n.Bind, state) {
+	for i, row := range rowScopesFor(n.Bind, state) {
 		r.curRow = row
+		r.curRowIndex = i
 		frame := r.renderNode(n.RowTemplate, state, budget)
 		lines = append(lines, frame.Live...)
 	}
@@ -2185,7 +2212,19 @@ func withFocusGlow(n *scene.Node, state fold.State) *scene.Node {
 	if n.ID == "" || state.UIFocus != n.ID {
 		return n
 	}
+	return applyFocusGlow(n)
+}
 
+// applyFocusGlow returns the shallow copy the two focus paths both draw: a node
+// whose style token is the one its focus_glow names. It is factored out of
+// withFocusGlow because the row path (focusGlowed) reaches the identical
+// mechanics through a different match — a plain id equals ui.focus, an
+// instantiated row equals the decoded (node, row) pair — and a second copy of
+// the two-spelling style rewrite is the drift withFocusGlow's own comment warns
+// against: the glow must honour every key styleName consults, in both places it
+// is written, or a node spelling its token "token" glows on one focus kind and
+// not the other.
+func applyFocusGlow(n *scene.Node) *scene.Node {
 	glowed := *n
 	glowed.Style = make(map[string]string, len(n.Style)+1)
 	for k, v := range n.Style {
@@ -2201,6 +2240,37 @@ func withFocusGlow(n *scene.Node, state fold.State) *scene.Node {
 		glowed.Style[key] = n.FocusGlow.Style
 	}
 	return &glowed
+}
+
+// focusGlowed is renderNode's focus-glow step: the free withFocusGlow for a
+// plain focused node, plus the one case it cannot see — an instantiated
+// template row. A template's authored id repeats across every row, so a row is
+// focused by the (node, row) pair the host decoded into FocusRowNode/
+// FocusRowIndex, matched against this node's id and the row currently being
+// instantiated (curRowIndex). It sits in renderNode beside the plain glow and
+// the transition, the one chokepoint every node passes through, so "a plain
+// node glows but a row does not" is unrepresentable rather than merely tested
+// for — the same argument withFocusGlow makes about node types, carried to the
+// row axis a type name cannot reach.
+func (r *Renderer) focusGlowed(n *scene.Node, state fold.State) *scene.Node {
+	if plain := withFocusGlow(n, state); plain != n {
+		return plain // a plain id equal to ui.focus already glowed it
+	}
+	if n == nil || n.FocusGlow == nil || n.FocusGlow.Style == "" || n.ID == "" {
+		return n
+	}
+	// The row match is consulted only inside a template instantiation, where
+	// curRow is non-nil — the same sentinel resolveBindRow and hiddenByWhenRow
+	// read. Outside a row curRowIndex is not meaningful, so gating on curRow
+	// keeps a plain node that happens to share the focused row's id and index
+	// from lighting up where no row is being drawn.
+	if r.curRow == nil || r.FocusRowNode == "" {
+		return n
+	}
+	if n.ID != r.FocusRowNode || r.curRowIndex != r.FocusRowIndex {
+		return n
+	}
+	return applyFocusGlow(n)
 }
 
 // transitionDimToken is the intensity a node wears while its entrance
@@ -2397,9 +2467,11 @@ func (r *Renderer) enterRowFrames(n *scene.Node, state fold.State, budget int) [
 	var out []ui.Frame
 	if n.RowTemplate != nil {
 		saved := r.curRow
-		defer func() { r.curRow = saved }()
-		for _, row := range rowScopesFor(n.Bind, state) {
+		savedIndex := r.curRowIndex
+		defer func() { r.curRow = saved; r.curRowIndex = savedIndex }()
+		for i, row := range rowScopesFor(n.Bind, state) {
 			r.curRow = row
+			r.curRowIndex = i
 			out = append(out, r.renderNode(n.RowTemplate, state, budget))
 		}
 		return out
