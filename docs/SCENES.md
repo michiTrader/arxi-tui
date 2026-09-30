@@ -451,9 +451,16 @@ read it with `when` and write it only through registered commands.
 
 ## Scene 11 — ANIMATED, INTERACTIVE BANNER
 
-`box` + `shine` + `marquee` + `when: session.new_milestone` + `on_press` in
-one node, with no new primitives — the composition of scenes 2, 4 and 8.
-Decided: Q22 hit-testing runs on the final frame's cells; the engine resolves
+`box` + `shine` + `marquee` + `when: session.new_milestone` + `on_press` in one
+node, with no new primitives — the composition of scenes 2, 4 and 8. `shine` is
+the animated emphasis that gives the banner its pulse: a `{ "style": "<token>" }`
+object whose cadence rides the host clock, lit on the even beat and base on the
+odd, and it settles lit at rest so a frozen golden actually shows the emphasis
+rather than a silent no-op. `session.new_milestone` (§4.1) is a derived bool:
+true while a milestone event — `stage.advanced` or `agent.turn_done` — is the last
+event folded, cleared by any later event of any kind, so the banner flashes at the
+transition and vanishes the moment the run does anything else. Decided: Q22
+hit-testing runs on the final frame's cells; the engine resolves
 marquee/cursor collisions, not the scene.
 
 ## Q23 (signed) — how much of the pipeline plugins may touch

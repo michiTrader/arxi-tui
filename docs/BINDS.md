@@ -119,7 +119,7 @@ events from the log file the core writes.
 | `usage.out` | uint64 | cumulative sum of `llm.response.tokens_out` across all turns in the run | on every `llm.response` | `0` before the first response |
 | `usage.delta` | text | derived from cumulative `usage.in`/`usage.out` (e.g. `"+i25 +o35"`) | on every `llm.response` | empty string — the suffix is omitted |
 | `session.tokens_used` | uint64 | derived: `run.started.budget_usd` minus running sum of `llm.response.cost_usd`, reported as used budget in USD × 1000 (microunits) for integer bind compatibility | on `run.started`, every `llm.response`, `budget.warning`, `budget.exceeded` | `0` at run start |
-| `session.new_milestone` | event pulse | derived: fires on `stage.advanced` (stage transition) or `agent.turn_done` (turn boundary) | on `stage.advanced`, `agent.turn_done` | null/pulse inactive — no milestone to show |
+| `session.new_milestone` | event pulse (derived bool) | true while the most recently folded event is `stage.advanced` or `agent.turn_done`; any later event of any kind clears it | on `stage.advanced`, `agent.turn_done` | `false` — no milestone to show |
 | `team.members` | array of objects | projected from the run's members: each row has `id` (the agent name), `state` (`idle`/`thinking`/`tool`/`submitted`/`waiting`/`inactive`/`failed`), `role` (`backend`/`frontend`/`...` from `agent.activated`), `busy` (bool), `turns` (uint), `spent_usd` (float64) | on `agent.activated`, `agent.turn_done`, `agent.blocked`, `agent.unblocked`, `agent.failed` | empty array — the subagent list does not render |
 | `agent.todos` | array of `{task, blocked_on, actor}` | projected from pending `agent.blocked` events: `task` is the human-readable description, `blocked_on` the reason (`approval`/`lock`/`peer`/`budget`/`timer`/`tool`/`workspace`), `actor` the owning agent | on every `agent.blocked` / `agent.unblocked` | empty array — the Tasks pane renders empty |
 | `todos.count` | uint | derived: `len(agent.todos)` — the count of pending todos, for a header badge that must not re-walk the list | on every `agent.blocked` / `agent.unblocked` / `tool.call` | `0` |
@@ -313,14 +313,25 @@ Two guards now hold the two halves apart, both in `internal/engine`:
   the *wrong* fold field is caught too — the structural audit cannot see that,
   because the case label is present.
 
-Four signed binds are deliberately not projected, and the reason is recorded in
+Three signed binds are deliberately not projected, and the reason is recorded in
 `acceptedUnprojectedBinds` rather than left to be rediscovered:
 `team.members` (needs per-row templates over the still-unsigned `row.*`
 namespace, the same blocker as `row_template`), `agent.blocked.blocked_ref`
 (its projection is the command-resolution rule described above, not a value to
-print), `session.new_milestone` (a pulse with no fold field and an undecided
-lifetime — Scene 11), and `user.input.submitted` (signed only to reserve the
-name, as §4.3 states).
+print), and `user.input.submitted` (signed only to reserve the name, as §4.3
+states).
+
+`session.new_milestone` was a fourth for the same reason — a pulse whose
+lifetime was left undecided until a scene needed it — and it has now retired:
+Scene 11 decided the lifetime as the narrowest honest one. The pulse reads true
+only while a milestone event (`stage.advanced` or `agent.turn_done`) is the LAST
+event folded, and any later event of any kind clears it, so it flashes at the
+transition and is gone the moment the run does anything else. That keeps the
+fold pure — a duration would need a clock the fold must not hold (invariant 1),
+and "until dismissed" would need host view-state the fold does not own. The fold
+field `State.NewMilestone` (derived by `deriveNewMilestone`) now exists and
+`resolveBind` returns its truthiness, so a `when: session.new_milestone` gate
+draws its node exactly at the milestone.
 
 The three `community.*` installer binds (§4.3) were signed-but-not-projected for
 a fifth reason, recorded the same way and now retired: the vocabulary was
