@@ -363,6 +363,8 @@ func (r *Renderer) renderByType(n *scene.Node, state fold.State, budget int) ui.
 		return r.renderButton(n, state)
 	case "switch":
 		return r.renderSwitch(n, state)
+	case "slider":
+		return r.renderSlider(n, state)
 	case "sparkline":
 		return r.renderSparkline(n, state)
 	default:

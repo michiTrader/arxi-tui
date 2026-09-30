@@ -21,13 +21,21 @@ import (
 // The measurement that motivated it, taken on the tree with the whole suite
 // green:
 //
-//	{"type": "slider"}  -> parses, validates clean, draws [[UNKNOWN NODE TYPE]]
-//	{"type": "slidr"}   -> parses, validates clean, draws [[UNKNOWN NODE TYPE]]
+//	{"type": "gauge"}  -> parses, validates clean, draws [[UNKNOWN NODE TYPE]]
+//	{"type": "guage"}  -> parses, validates clean, draws [[UNKNOWN NODE TYPE]]
 //
-// A documented primitive awaiting its phase and a two-letter transposition
+// A type this engine does not build and a two-letter transposition of it
 // produced byte-identical output, and no other layer mentioned the type name
 // either: Warnings() reports unknown *keys*, and `type` is a known key whose
 // *value* nothing checks.
+//
+// The example is a future/community type rather than a v0 primitive awaiting its
+// phase because there is no longer such a thing: every base node in PLAN.md's v0
+// vocabulary is now built (`slider`, the last, graduated to renderSlider). That
+// does not retire this test — the type namespace is open by design (a downloaded
+// preset or a plugin fragment can name any type), so the two populations the
+// placeholder must never conflate are now "a type from outside this engine" and
+// "a typo of a built one", and the diagnostic owes the same six letters to both.
 func TestUnknownNodeTypeNamesTheTypeItCouldNotDraw(t *testing.T) {
 	render := func(t *testing.T, src string) string {
 		t.Helper()
@@ -48,12 +56,12 @@ func TestUnknownNodeTypeNamesTheTypeItCouldNotDraw(t *testing.T) {
 
 	t.Run("the type name appears in the frame", func(t *testing.T) {
 		// Four types, chosen to span the two populations the placeholder
-		// must stop conflating: `slider` is documented in SCENES.md and
-		// scheduled (it is the last v0 primitive still unbuilt — `button`,
-		// `switch` and `sparkline` all graduated to real renders), while
-		// `slidr`, `swtich` and `buton` are what typos of built or scheduled
-		// types look like.
-		for _, typ := range []string{"slider", "slidr", "swtich", "buton"} {
+		// must stop conflating: `gauge` is a type from outside this engine's
+		// vocabulary (every v0 primitive — `button`, `switch`, `slider`,
+		// `sparkline` — now graduated to a real render, so the open namespace
+		// is the only source of unknown types left), while `guage`, `swtich`
+		// and `buton` are what typos of a plausible or built type look like.
+		for _, typ := range []string{"gauge", "guage", "swtich", "buton"} {
 			got := render(t, `{"root":{"type":"stack","children":[{"id":"x","type":"`+typ+`"}]}}`)
 			if !strings.Contains(got, typ) {
 				t.Errorf("a node of type %q drew %q, which never names the type.\n"+
@@ -71,13 +79,13 @@ func TestUnknownNodeTypeNamesTheTypeItCouldNotDraw(t *testing.T) {
 		// A placeholder could contain the type name and still be
 		// degenerate — this asserts distinguishability directly, because
 		// that is the thing that was actually broken.
-		a := render(t, `{"root":{"type":"stack","children":[{"id":"x","type":"slider"}]}}`)
-		b := render(t, `{"root":{"type":"stack","children":[{"id":"x","type":"slidr"}]}}`)
+		a := render(t, `{"root":{"type":"stack","children":[{"id":"x","type":"gauge"}]}}`)
+		b := render(t, `{"root":{"type":"stack","children":[{"id":"x","type":"guage"}]}}`)
 		if a == b {
 			t.Errorf("a %q node and a %q node render byte-identically:\n%s\n"+
-				"consequence: the frame cannot distinguish a documented primitive awaiting its\n"+
-				"phase from a misspelling of it, which is the whole question LESSONS.md says\n"+
-				"separates the two kinds of unknown construction.", "slider", "slidr", strings.TrimSpace(a))
+				"consequence: the frame cannot distinguish a type from outside this engine\n"+
+				"from a misspelling of one, which is the whole question LESSONS.md says\n"+
+				"separates the two kinds of unknown construction.", "gauge", "guage", strings.TrimSpace(a))
 		}
 	})
 
