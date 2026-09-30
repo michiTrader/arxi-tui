@@ -55,9 +55,11 @@ import (
 //
 // Why a warning rather than a refusal. PLAN.md signs "unknown-but-parseable is
 // a warning, missing state is a placeholder", and the engine already honours
-// it for node *types*: `button`, `switch`, `slider` and `sparkline` are
+// it for node *types*: `button`, `switch` and `slider` are
 // documented, unimplemented, and each draws [[UNKNOWN NODE TYPE]] rather than
 // failing the load, so a document written for a later version keeps booting.
+// (`sparkline` graduated to a real render — it draws a plugin `series` as block
+// glyphs — so it is no longer in that unimplemented set.)
 // Refusing an unknown *property* would give the format two opposite answers
 // for its two kinds of unknown construction, and would break the forward
 // compatibility the plan calls a standing risk. A warning closes the asymmetry
