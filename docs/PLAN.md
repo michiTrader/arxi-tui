@@ -101,8 +101,8 @@ An extension is a **provider of scene fragments**, not "one panel".
 - The pipeline doors (Q23, settled): **B tools → C hooks → D providers**, each
   behind one consent gate *per grant*, and **self-extension** uses exactly the
   doors the user opened, on user command only.
-- The escape hatch (the wasm interpreter, `wazero` or similar) stays a
-  costed ADR in Phase 4 for renders that are none of our nodes.
+- The escape hatch (the wasm interpreter, `wazero` or similar) is a costed ADR
+  (ADR-0008, signed and deferred) for renders that are none of our nodes.
 
 ## Install rule: one command, Termux included
 
@@ -547,6 +547,65 @@ guard: the `executable`-bearing manifest refusal (`internal/ext/manifest.go`
 `checkBehavioral`) and the absence of any supervisor are lifted by I2–I6, each
 with its own counterfactual test, exactly as H2–H6 did.
 
+#### ADR-0008 — the embedded-wasm render escape hatch (Q14), costed and deferred
+
+Signed from `docs/DESIGN-BLOCK-K.md` (K4). Q14 asks what happens the first time
+a scene needs a render that is *none of our nodes*, and the when-data-when-code
+table has carried the answer as an IOU — "wasm runtime — ADR, Phase 4" — since
+the plan was written. This ADR pays it: it freezes *how* such a render lands and
+*why it does not land yet*, so the first non-expressible render is built against
+a fixed decision, not one improvised under the pressure of a waiting author (the
+discipline ADR-0007 applied to the behavioral wire). It signs **K4 only**; K1–K3
+(the behavior gates) are a separate, still-unstarted half of Phase 4.
+
+**The honest ceiling stays the node set, and the node route is tried first.**
+Every scene frozen so far is expressible in nodes, and the two graph renders
+that arrived — the marquee and the `sparkline` — landed as *mother-system
+nodes* because they were expressible (SCENES.md Scene 6: the plugin composes our
+primitives, it does not bring render code). A node is rewritable by the user and
+foreign render code is not, which is the arxi-sim closed-vocabulary mistake this
+whole project exists to avoid (ADR-0003 dogfooding). So the runtime's admission
+test, when it arrives, is a real render that *cannot* be said as a node — not
+one an author preferred to write in wasm.
+
+**wazero is the runtime, because it is the only choice that keeps the install
+rule.** The runtime is pure Go with zero CGO, which is not a preference but the
+install guarantee (`PLAN.md:112-116`): arxi ships static `CGO_ENABLED=0`
+binaries per platform, Termux included, and a runtime needing a C toolchain or a
+user-side shared library would cost the very guarantee the escape hatch protects.
+Measured on this host (go 1.26.5, `CGO_ENABLED=0`, wazero v1.12.0): the marginal
+binary cost isolated against an empty `main` is **~4.06 MiB** (1.79 MiB → 6.05
+MiB, windows/amd64), and — the fact that lets this be signed rather than studied
+further — it **cross-compiles CGO-free to android/arm64 (Termux) and linux/arm64**,
+built and confirmed, not asserted. Its only new module dependency is
+`golang.org/x/sys`, already an indirect dep here, so embedding it adds exactly
+one named third-party module.
+
+**The render contract is pull-by-frame, propose-never-write, and cannot capture
+the exit.** A wasm render module is called once per repaint (ADR-0004) with the
+immutable `PluginValues` snapshot the behavioral wire already feeds the renderer
+(ADR-0007) plus width/height, and returns a *description of cells* in the shape
+`ui.Frame` already carries — spans with text and style-token names — never an
+imperative terminal sequence. This is `internal/engine/sparkline.go`'s "read one
+bind snapshot, return one `ui.Frame` line" lifted across the wasm boundary,
+which is why the seam is expressible today though the runtime is absent: the host
+side is the render walk that already exists. The module's output is a *view* the
+host validates and composes exactly like a mounted fragment — unknown tokens
+warn (`vocabulary.go`), nothing touches the fold (invariant 2) — so it proposes a
+frame and never writes host state (plugins propose). It is called inside the
+render walk, downstream of the loop `select`, so it never sees a key and cannot
+capture double-Ctrl-C / `-scene ""` (invariant 6); wazero's default-deny sandbox
+(no FS/net/clock without a WASI grant) makes the I5 consent gate the only door,
+and a render module declares no capabilities.
+
+**Why deferred, not embedded now.** The ~4 MiB is real cost against zero current
+consumers: no non-expressible render exists, so embedding the runtime today would
+enlarge every artifact and widen the threat surface (a sandbox to audit, a frame
+contract to test) for a capability nothing uses. The seam is the cheap,
+load-bearing decision and it is made here; the dependency waits for the first
+render that fails the node-route bar. Signing this ADR lifts no code guard and
+adds nothing to `go.mod`.
+
 ## When data, when code
 
 | I want… | Tool |
@@ -558,7 +617,7 @@ with its own counterfactual test, exactly as H2–H6 did.
 | a floating popup, a banner | `overlay` node (data) |
 | buttons, lists, switches, dashboards | scene nodes (data) |
 | logic: compute something, react, register tools, hooks | plugin process (code, gated) |
-| a render that is none of our nodes | wasm runtime — **ADR, Phase 4** |
+| a render that is none of our nodes | wasm runtime — **ADR-0008 (signed, deferred)** |
 
 Rule: if it can be said as data, it is said as data. Code is the last option,
 not the first.
@@ -678,7 +737,7 @@ not the first.
   `/ui plugin add <url>`; the community installer itself as a scene (Q16/17).
   Tools gate (door B) lands here or in Phase 4, with the consent contract.
 - **Phase 4 — Behavior.** Doors C and D, self-extension over all doors, and
-  the embedded-wasm decision as a costed ADR.
+  the embedded-wasm decision as a costed ADR (ADR-0008, signed and deferred).
 
 ## Invariants this plan must not break
 
