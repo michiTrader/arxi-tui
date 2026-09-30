@@ -392,16 +392,21 @@ the pressable nodes in scene order with the input as home (Q19), and Enter on a
 focused node dispatches its action — `focus:` moves the cursor, `cmd:` runs the
 command through the same surface a typed line takes, `ext:` routes the press to a
 behavioral plugin through the registry (`internal/ext/supervisor`) under the
-plugin's granted `actions.register` capability (I4), and `answer:` is recognised
-but reports its deferral to the Block I driver channel rather than dropping
-silently. Like `focus:`, an `ext:` press against an unmounted, ungranted, or dead
-plugin is reported, never crashed (§I-G); the registry is empty until I5 mounts a
-plugin behind consent. Three parts are signed-but-unbuilt by design: the
-`tab: false` input opt-out (the input-as-home ring already protects typing), the
-`answer:` inbox call, and the per-element `{row.field}` argument substitution an
-`ext:` press in a template will carry (it rides on the same template-row dispatch
-H8 parked). No Scene 8 golden is frozen yet — that waits on the `button` node
-type and a composed fixture.
+plugin's granted `actions.register` capability (I4), and `answer:` routes the
+press to the run's pending inbox item (M4, 2026-09-29): the host sources the item
+id from the item the run is blocked on (`agent.blocked.blocked_ref`, BINDS.md
+§4.2), maps the closed kind to the driver's `inbox.approve`/`reject`/`reply`
+verb, and lets the driver supply the run it is following
+(`cmd/arxi-tui/inbox_answer.go`). A press with no pending item, or on the mock
+driver (which follows no run), is reported rather than dropped, the same
+propose-and-report discipline `focus:` and `ext:` keep. Like `focus:`, an `ext:`
+press against an unmounted, ungranted, or dead plugin is reported, never crashed
+(§I-G); the registry is empty until I5 mounts a plugin behind consent. Two parts
+remain signed-but-unbuilt by design: the `tab: false` input opt-out (the
+input-as-home ring already protects typing), and the per-element `{row.field}`
+argument substitution an `ext:` press in a template will carry (it rides on the
+same template-row dispatch H8 parked). No Scene 8 golden is frozen yet — that
+waits on the `button` node type and a composed fixture.
 
 ## Scene 9 — SUBAGENTS (below the input)
 
