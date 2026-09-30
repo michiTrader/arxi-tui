@@ -1071,6 +1071,34 @@ counterfactual test).
     rows in the focus ring and recovering the pressed row's scope, so
     `dispatchPress` can call this expander — that is the focus-ring wiring the
     row-click consumers ride on, its own increment.
+  - **H8 row-press enumeration — BUILT (2026-09-29, PR #135).** The second pure
+    piece toward the row-click consumer: `engine.RowPresses(n, state)` composes
+    the two signed halves — `rowScopesFor` (the per-element scopes) and
+    `scene.ExpandRowInterpolation` (PR #134) — into the flat, row-major list of
+    `RowPress{RowIndex, NodeID, OnPress}` the deferred focus-ring wiring will Tab
+    over and the dispatcher will look a pressed `(row, node)` up in. Landed ahead
+    of that wiring per the block pattern, so the resolution is network-free and
+    testable before a focus cursor exists. Two decisions recorded at the site:
+    (1) a pressable row target is `(RowIndex, NodeID)`, never node id alone — an
+    authored id repeats across every instantiated row, so `RowPress` carries the
+    pair and leaves the `ui.focus` id scheme to the loop that owns it, rather
+    than pinning a synthetic-id format the consumer has not yet needed; (2) the
+    whole on_press string is expanded, not the parsed arg, because a validated
+    on_press carries braces only in its argument region (a brace before the first
+    colon is an unknown prefix the validator refused), so whole-string expansion
+    equals arg expansion **and** keeps `ParseAction` the single grammar reader —
+    reconstructing `"cmd:"+arg` would be a second writer of the prefix
+    vocabulary. A `{row.<field>}` the scope lacks is propagated as an error, not a
+    dropped press (a silently dropped press is a button that looks present and
+    does nothing). Pinned by five tests in `row_press_test.go` with
+    counterfactuals run by hand: swallowing the missing-field error fails the
+    error test, stopping after the first row fails the per-row test, and skipping
+    expansion fails the same test on the on_press value. **Still deferred (the
+    impure half, unchanged):** the focus ring enumerating these targets,
+    recovering a pressed `(row, node)`, and dispatching its `OnPress` — plus the
+    focus-glow render path matching an instantiated row. That is the row-click
+    wiring, its own increment, now with both pure halves (`ExpandRowInterpolation`
+    and `RowPresses`) in place beneath it.
 
 ### Block I — Phase 3: behavioral plugins (NDJSON subprocess) [H]
 
