@@ -157,4 +157,3 @@ func TestAnswerInboxRefusesAnUnknownKind(t *testing.T) {
 		t.Errorf("answerInbox: an unknown kind routed to verb %q, want no verb; it must reach no driver method", f.verb)
 	}
 }
-

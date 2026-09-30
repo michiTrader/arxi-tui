@@ -154,7 +154,7 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 			// onPress already has its {row.<field>} braces resolved (RowPresses'
 			// contract), so it dispatches exactly like a static node's action and
 			// the interpolation is never re-run.
-			newFocus := dispatchPress(onPress, uiFocus, doc, notice, hidden, fetch, applyTokens, actions, ctx, drv)
+			newFocus := dispatchPress(onPress, uiFocus, input, state, doc, notice, hidden, fetch, applyTokens, actions, ctx, drv)
 			return true, "", newFocus
 		}
 		node := findPressable(*doc, uiFocus)
@@ -163,7 +163,7 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 			// is not a button, say). Enter is not ours; let it submit as usual.
 			return false, input, uiFocus
 		}
-		newFocus := dispatchPress(node.OnPress, uiFocus, doc, notice, hidden, fetch, applyTokens, actions, ctx, drv)
+		newFocus := dispatchPress(node.OnPress, uiFocus, input, state, doc, notice, hidden, fetch, applyTokens, actions, ctx, drv)
 		// Clear the input the way the command paths do: a press is a submitted
 		// action, not text left in the buffer.
 		return true, "", newFocus
@@ -189,10 +189,16 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 //     plugin, applies its granted capability gate, and writes the `action` frame.
 //     A plugin that is unmounted, ungranted, or down is reported (never a crash),
 //     the §I-G placeholder-not-crash rule on the input side.
-//   - answer: is recognised (the vocabulary is signed) but not yet actioned:
-//     answering an inbox item needs the behavioral driver channel Block I builds,
-//     so the press reports the deferral rather than dropping silently.
-func dispatchPress(onPress, currentFocus string, doc **scene.Document, notice *string, hidden map[string]bool, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) string {
+//   - answer: answers the agent's pending inbox item with the pressed kind
+//     (approve/reject/reply). The item is not named in the action — the closed
+//     kind vocabulary carries only the kind — so the host sources it from the
+//     item the run is blocked on (inboxItemID over agent.blocked.blocked_ref) and
+//     routes the kind to the driver's matching verb (answerInbox). The operator's
+//     typed line is the accompanying text: a reply's answer and a reject's
+//     optional reason, ignored by approve. A press with no pending item, or on a
+//     driver that follows no run (the mock), is reported, never a silent no-op —
+//     the same propose-and-report discipline focus: and ext: keep.
+func dispatchPress(onPress, currentFocus, answerText string, state fold.State, doc **scene.Document, notice *string, hidden map[string]bool, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) string {
 	action, err := scene.ParseAction(onPress)
 	if err != nil {
 		// The document validated at load, so a malformed action should be
@@ -234,7 +240,28 @@ func dispatchPress(onPress, currentFocus string, doc **scene.Document, notice *s
 		}
 		return currentFocus
 	case scene.ActionAnswer:
-		*notice = fmt.Sprintf("answer:%s recognised, but answering an inbox item needs the behavioral driver channel (Block I); the button is not yet actioned", action.Arg)
+		// Which item is answered is the one the run is blocked on, not a value in
+		// the action: the closed kind vocabulary names only approve/reject/reply.
+		itemID, ok := inboxItemID(state)
+		if !ok {
+			*notice = fmt.Sprintf("answer:%s: no inbox item is pending; a decision answers the item the run is blocked on (agent.blocked.blocked_ref), and nothing is currently blocked on one", action.Arg)
+			return currentFocus
+		}
+		// The driver answers inbox items only when it is following a real run: the
+		// mock driver follows none, so it does not implement inboxDecider. Report
+		// rather than drop, so an answer: press is never a silent no-op — the twin
+		// of the ext: nil-router branch above.
+		dec, ok := drv.(inboxDecider)
+		if !ok {
+			*notice = fmt.Sprintf("answer:%s cannot be routed: this driver follows no run and cannot answer inbox items", action.Arg)
+			return currentFocus
+		}
+		// The typed line is the operator's accompanying text: a reply's answer and
+		// a reject's reason (approve ignores it). answerInbox routes the kind to the
+		// driver verb; the driver supplies the run id (the one it is following).
+		if err := answerInbox(ctx, action.Arg, itemID, answerText, dec); err != nil {
+			*notice = err.Error()
+		}
 		return currentFocus
 	}
 	return currentFocus

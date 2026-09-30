@@ -209,19 +209,92 @@ func TestFocusKeyEnterOnInputFallsThrough(t *testing.T) {
 	}
 }
 
-// answer: is recognised but not yet actioned — the behavioral driver channel is
-// Block I. The press reports the deferral rather than dropping silently, and the
-// focus cursor does not move.
-func TestDispatchAnswerIsDeferredWithNotice(t *testing.T) {
+// answerDriver is a Driver that also answers inbox items, standing in for the
+// live serveDriver so a press test can prove an answer: routes to the decider
+// without a subprocess. The mock testDriver deliberately does NOT implement
+// inboxDecider, so it exercises the "follows no run" branch.
+type answerDriver struct {
+	testDriver
+	verb   string
+	itemID string
+	text   string
+}
+
+func (d *answerDriver) ApproveInboxItem(_ context.Context, itemID string) error {
+	d.verb, d.itemID = "approve", itemID
+	return nil
+}
+func (d *answerDriver) RejectInboxItem(_ context.Context, itemID, reason string) error {
+	d.verb, d.itemID, d.text = "reject", itemID, reason
+	return nil
+}
+func (d *answerDriver) ReplyInboxItem(_ context.Context, itemID, text string) error {
+	d.verb, d.itemID, d.text = "reply", itemID, text
+	return nil
+}
+
+// blockedState returns a fold.State with one item blocked on an approval, the
+// shape inboxItemID sources an answer: press's target from (agent.blocked.blocked_ref).
+func blockedState(inboxID string) fold.State {
+	return fold.State{BlockedRef: map[string]any{"inbox_id": inboxID}}
+}
+
+// An answer: press with no pending item reports it and does not route: the item a
+// decision answers is the one the run is blocked on, so with nothing blocked
+// there is nothing to answer, and the press must not fabricate an item id.
+func TestDispatchAnswerWithNoPendingItemReports(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"text","text":"OK","on_press":"answer:approve"}}`)
 	notice := ""
+	drv := &answerDriver{}
 
-	focus := dispatchPress("answer:approve", "btn", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
+	focus := dispatchPress("answer:approve", "btn", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), drv)
 	if focus != "btn" {
 		t.Errorf("an answer: press moved focus to %q; it should leave the cursor where it was", focus)
 	}
-	if !strings.Contains(notice, "Block I") {
-		t.Errorf("an answer: press left notice %q, want it to name the deferral (Block I) so the press is not a silent no-op", notice)
+	if !strings.Contains(notice, "no inbox item is pending") {
+		t.Errorf("an answer: press with nothing blocked left notice %q, want it to name that no item is pending", notice)
+	}
+	if drv.verb != "" {
+		t.Errorf("an answer: press with no pending item routed to verb %q; it must not answer a fabricated item", drv.verb)
+	}
+}
+
+// An answer: press on a driver that follows no run (the mock, which does not
+// implement inboxDecider) reports it rather than dropping silently — the twin of
+// the ext: nil-router branch.
+func TestDispatchAnswerOnADriverThatFollowsNoRunReports(t *testing.T) {
+	doc := pressDoc(t, `{"root":{"type":"text","text":"OK","on_press":"answer:approve"}}`)
+	notice := ""
+
+	focus := dispatchPress("answer:approve", "btn", "", blockedState("abc123"), &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
+	if focus != "btn" {
+		t.Errorf("an answer: press moved focus to %q; it should leave the cursor where it was", focus)
+	}
+	if !strings.Contains(notice, "cannot be routed") {
+		t.Errorf("an answer: press on a non-answering driver left notice %q, want it to name that the press cannot be routed", notice)
+	}
+}
+
+// An answer: press with a pending item on a driver that answers routes the kind
+// to the driver's verb, addressing the item the run is blocked on and carrying
+// the typed line as the reply's answer / reject's reason.
+func TestDispatchAnswerRoutesToTheDecider(t *testing.T) {
+	doc := pressDoc(t, `{"root":{"type":"text","text":"OK","on_press":"answer:reply"}}`)
+	notice := ""
+	drv := &answerDriver{}
+
+	focus := dispatchPress("answer:reply", "btn", "here is my answer", blockedState("abc123"), &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), drv)
+	if focus != "btn" {
+		t.Errorf("an answer: press moved focus to %q; it should leave the cursor where it was", focus)
+	}
+	if notice != "" {
+		t.Errorf("a routed answer: press left notice %q, want none", notice)
+	}
+	if drv.verb != "reply" || drv.itemID != "abc123" {
+		t.Errorf("answer:reply routed to (verb %q, item %q), want (reply, abc123)", drv.verb, drv.itemID)
+	}
+	if drv.text != "here is my answer" {
+		t.Errorf("answer:reply carried text %q, want the typed line \"here is my answer\"", drv.text)
 	}
 }
 
@@ -231,7 +304,7 @@ func TestDispatchFocusUnknownNodeReportsAndKeepsFocus(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"text","text":"x","id":"here","on_press":"focus:nowhere"}}`)
 	notice := ""
 
-	focus := dispatchPress("focus:nowhere", "here", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
+	focus := dispatchPress("focus:nowhere", "here", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
 	if focus != "here" {
 		t.Errorf("a focus: to an unknown node moved focus to %q; it must leave the cursor where it was", focus)
 	}
@@ -269,7 +342,7 @@ func TestDispatchExtRoutesToPluginRouter(t *testing.T) {
 	notice := ""
 	router := &fakeRouter{}
 
-	focus := dispatchPress("ext:tick:refresh", "btn", &doc, &notice, map[string]bool{}, nil, nil, router, context.Background(), &testDriver{})
+	focus := dispatchPress("ext:tick:refresh", "btn", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, router, context.Background(), &testDriver{})
 	if focus != "btn" {
 		t.Errorf("an ext: press moved focus to %q; a plugin press is not a focus move and must leave the cursor put", focus)
 	}
@@ -292,7 +365,7 @@ func TestDispatchExtReportsRouterError(t *testing.T) {
 	notice := ""
 	router := &fakeRouter{err: errors.New("no behavioral plugin with that id is mounted: \"tick\"")}
 
-	focus := dispatchPress("ext:tick:refresh", "btn", &doc, &notice, map[string]bool{}, nil, nil, router, context.Background(), &testDriver{})
+	focus := dispatchPress("ext:tick:refresh", "btn", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, router, context.Background(), &testDriver{})
 	if focus != "btn" {
 		t.Errorf("a refused ext: press moved focus to %q; it must leave the cursor put", focus)
 	}
@@ -308,7 +381,7 @@ func TestDispatchExtWithNoRouterReports(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"text","text":"R","id":"btn","on_press":"ext:tick:refresh"}}`)
 	notice := ""
 
-	focus := dispatchPress("ext:tick:refresh", "btn", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
+	focus := dispatchPress("ext:tick:refresh", "btn", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
 	if focus != "btn" {
 		t.Errorf("an ext: press with no router moved focus to %q; it must leave the cursor put", focus)
 	}
