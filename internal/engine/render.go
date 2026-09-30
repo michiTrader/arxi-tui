@@ -359,6 +359,8 @@ func (r *Renderer) renderByType(n *scene.Node, state fold.State, budget int) ui.
 		return r.renderList(n, state, budget)
 	case "spinner":
 		return r.renderSpinner(n, state)
+	case "sparkline":
+		return r.renderSparkline(n, state)
 	default:
 		return r.renderUnknownType(n)
 	}
