@@ -430,6 +430,7 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 
 	sd := &serveDriver{
 		rs:       nd,
+		inbox:    nd,
 		getenv:   os.Getenv,
 		runsRoot: runsRoot,
 		follow:   driver.LogFollow,
