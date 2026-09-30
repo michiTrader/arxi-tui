@@ -233,3 +233,87 @@ func TestServeDriverCloseCancelsFollowAndCloser(t *testing.T) {
 		t.Fatal("Close did not cancel the run's follow; the relay goroutine would leak past shutdown")
 	}
 }
+
+// fakeInboxSubmitter records the decision-verb calls serveDriver made, so a test
+// can assert the run id serveDriver supplied and the item/reason/text it passed
+// through, without a live arxi serve.
+type fakeInboxSubmitter struct {
+	verb   string
+	runID  string
+	itemID string
+	reason string
+	text   string
+	err    error
+}
+
+func (f *fakeInboxSubmitter) SubmitInboxApprove(_ context.Context, p driver.InboxApproveParams) (*driver.DecisionResult, error) {
+	f.verb, f.runID, f.itemID = "approve", p.RunID, p.ItemID
+	return &driver.DecisionResult{JobID: p.RunID}, f.err
+}
+
+func (f *fakeInboxSubmitter) SubmitInboxReject(_ context.Context, p driver.InboxRejectParams) (*driver.DecisionResult, error) {
+	f.verb, f.runID, f.itemID, f.reason = "reject", p.RunID, p.ItemID, p.Reason
+	return &driver.DecisionResult{JobID: p.RunID}, f.err
+}
+
+func (f *fakeInboxSubmitter) SubmitInboxReply(_ context.Context, p driver.InboxReplyParams) (*driver.DecisionResult, error) {
+	f.verb, f.runID, f.itemID, f.text = "reply", p.RunID, p.ItemID, p.Text
+	return &driver.DecisionResult{JobID: p.RunID}, f.err
+}
+
+// TestServeDriverAnswersAgainstTheFollowedRun pins that serveDriver supplies the
+// run it is following as the decision's run id, so the host names only the item.
+// If this fails, an approve/reject/reply would address the wrong run (or none),
+// answering an item on a run other than the one the operator is watching.
+func TestServeDriverAnswersAgainstTheFollowedRun(t *testing.T) {
+	var closed bool
+	rs := &fakeRunStarter{hello: implementingHello(), jobID: "run-xyz"}
+	ff := &fakeFollower{}
+	sd := newTestServeDriver(rs, ff, emptyEnv, &closed)
+	inbox := &fakeInboxSubmitter{}
+	sd.inbox = inbox
+
+	// A run must exist first: run.start on the first prompt sets the followed run.
+	if err := sd.SubmitPrompt(context.Background(), "do the thing"); err != nil {
+		t.Fatalf("SubmitPrompt failed: %v", err)
+	}
+
+	if err := sd.RejectInboxItem(context.Background(), "item-9", "not safe"); err != nil {
+		t.Fatalf("RejectInboxItem errored: %v", err)
+	}
+	if inbox.verb != "reject" {
+		t.Errorf("serveDriver routed to verb %q, want \"reject\"", inbox.verb)
+	}
+	if inbox.runID != "run-xyz" {
+		t.Errorf("serveDriver answered against run %q, want \"run-xyz\" (the followed run); a decision must address the run its item belongs to", inbox.runID)
+	}
+	if inbox.itemID != "item-9" {
+		t.Errorf("serveDriver answered item %q, want \"item-9\"", inbox.itemID)
+	}
+	if inbox.reason != "not safe" {
+		t.Errorf("serveDriver carried reason %q, want \"not safe\"", inbox.reason)
+	}
+}
+
+// TestServeDriverRefusesADecisionWithNoActiveRun pins that answering before any
+// run is followed is refused, not routed to the "last" fallback runID() would
+// return. If this fails, a decision made with no run would send inbox.approve to
+// whatever run "last" resolves to on disk — a decision against a run the operator
+// never addressed.
+func TestServeDriverRefusesADecisionWithNoActiveRun(t *testing.T) {
+	var closed bool
+	rs := &fakeRunStarter{hello: implementingHello(), jobID: "run-xyz"}
+	ff := &fakeFollower{}
+	sd := newTestServeDriver(rs, ff, emptyEnv, &closed)
+	inbox := &fakeInboxSubmitter{}
+	sd.inbox = inbox
+
+	// No SubmitPrompt: no run is followed yet.
+	err := sd.ApproveInboxItem(context.Background(), "item-9")
+	if err == nil {
+		t.Fatal("ApproveInboxItem: got nil with no active run, want a refusal; a decision with no run must not fall back to the \"last\" run id")
+	}
+	if inbox.verb != "" {
+		t.Errorf("ApproveInboxItem reached the driver (verb %q) with no active run; it must refuse before submitting", inbox.verb)
+	}
+}
