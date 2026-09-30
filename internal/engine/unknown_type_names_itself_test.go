@@ -21,8 +21,8 @@ import (
 // The measurement that motivated it, taken on the tree with the whole suite
 // green:
 //
-//	{"type": "switch"}  -> parses, validates clean, draws [[UNKNOWN NODE TYPE]]
-//	{"type": "swtich"}  -> parses, validates clean, draws [[UNKNOWN NODE TYPE]]
+//	{"type": "slider"}  -> parses, validates clean, draws [[UNKNOWN NODE TYPE]]
+//	{"type": "slidr"}   -> parses, validates clean, draws [[UNKNOWN NODE TYPE]]
 //
 // A documented primitive awaiting its phase and a two-letter transposition
 // produced byte-identical output, and no other layer mentioned the type name
@@ -48,11 +48,12 @@ func TestUnknownNodeTypeNamesTheTypeItCouldNotDraw(t *testing.T) {
 
 	t.Run("the type name appears in the frame", func(t *testing.T) {
 		// Four types, chosen to span the two populations the placeholder
-		// must stop conflating: `switch` and `slider` are documented in
-		// SCENES.md and scheduled (`button` and `sparkline` both graduated to
-		// real renders, so they are no longer unknown types), `swtich` and
-		// `slidr` are what a typo of each looks like.
-		for _, typ := range []string{"switch", "swtich", "slider", "slidr"} {
+		// must stop conflating: `slider` is documented in SCENES.md and
+		// scheduled (it is the last v0 primitive still unbuilt — `button`,
+		// `switch` and `sparkline` all graduated to real renders), while
+		// `slidr`, `swtich` and `buton` are what typos of built or scheduled
+		// types look like.
+		for _, typ := range []string{"slider", "slidr", "swtich", "buton"} {
 			got := render(t, `{"root":{"type":"stack","children":[{"id":"x","type":"`+typ+`"}]}}`)
 			if !strings.Contains(got, typ) {
 				t.Errorf("a node of type %q drew %q, which never names the type.\n"+
@@ -70,13 +71,13 @@ func TestUnknownNodeTypeNamesTheTypeItCouldNotDraw(t *testing.T) {
 		// A placeholder could contain the type name and still be
 		// degenerate — this asserts distinguishability directly, because
 		// that is the thing that was actually broken.
-		a := render(t, `{"root":{"type":"stack","children":[{"id":"x","type":"switch"}]}}`)
-		b := render(t, `{"root":{"type":"stack","children":[{"id":"x","type":"swtich"}]}}`)
+		a := render(t, `{"root":{"type":"stack","children":[{"id":"x","type":"slider"}]}}`)
+		b := render(t, `{"root":{"type":"stack","children":[{"id":"x","type":"slidr"}]}}`)
 		if a == b {
 			t.Errorf("a %q node and a %q node render byte-identically:\n%s\n"+
 				"consequence: the frame cannot distinguish a documented primitive awaiting its\n"+
 				"phase from a misspelling of it, which is the whole question LESSONS.md says\n"+
-				"separates the two kinds of unknown construction.", "switch", "swtich", strings.TrimSpace(a))
+				"separates the two kinds of unknown construction.", "slider", "slidr", strings.TrimSpace(a))
 		}
 	})
 
