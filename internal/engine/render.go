@@ -319,6 +319,7 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 	}
 	n = r.focusGlowed(n, state)
 	n = r.withTransition(n)
+	n = r.withShine(n)
 	// enter (G4) is the last wrapper, and it wraps the type switch rather than a
 	// single node the way withTransition does, because its axis is the container's
 	// rows, not one node's style: row:true staggers the children (or the rows of a
@@ -2106,6 +2107,16 @@ func resolveBind(bind string, state fold.State) string {
 			return "true"
 		}
 		return "false"
+	case "session.new_milestone":
+		// A pulse gated with `when`: the box in Scene 11 draws only while this
+		// reads truthy. It must return the concrete "true"/"false" and not fall
+		// through to the placeholder, because the placeholder is falsy (so the
+		// banner would stay hidden) — which reads the same as "no milestone"
+		// and would hide the very fact this bind exists to surface.
+		if state.NewMilestone {
+			return "true"
+		}
+		return "false"
 	case "agent.mode":
 		return state.AgentMode
 	case "model.name":
@@ -2362,6 +2373,65 @@ func applyFocusGlow(n *scene.Node) *scene.Node {
 		glowed.Style[key] = n.FocusGlow.Style
 	}
 	return &glowed
+}
+
+// withShine returns the node the render path should draw for Scene 11's shine:
+// the node itself, or a shallow copy wearing the shine token, and it reports
+// the node as animating so the host loop keeps repainting the pulse.
+//
+// It sits in renderNode beside withFocusGlow and withTransition — the one
+// chokepoint every node passes through — for their shared reason: this engine
+// has twice honoured a property on the node types the first test reached and
+// dropped it everywhere else. shine is universal (SCENES.md composes it on a
+// box, but nothing restricts the property to one type), so honouring it here
+// makes "some node types shine and others do not" unrepresentable rather than
+// merely tested for.
+//
+// The cadence rides the same host clock the marquee does (AnimTicks), not a
+// per-node number: an even tick is lit, an odd tick is base, so a shone banner
+// pulses. At rest — the pure/golden path where AnimTicks is nil — it holds the
+// LIT state rather than the base one. That direction is deliberate and is the
+// opposite of withTransition's rest state: a settled transition is finished and
+// wears its own style, but a shine that settled to base would draw identically
+// to no shine at all, so a static golden would witness nothing and certify a
+// silent drop — the exact trap LESSONS.md records for the marquee's styled
+// golden. Holding lit at rest keeps the emphasis visible in the frozen frame.
+func (r *Renderer) withShine(n *scene.Node) *scene.Node {
+	if n == nil || n.Shine == nil || n.Shine.Style == "" {
+		return n
+	}
+	// Report the shimmer so the host keeps ticking it. Not a one-shot: shine
+	// is a continuous cadence like scroll, so it never settles on its own — the
+	// clock modulates it forever while the node is on screen.
+	if r.active != nil {
+		*r.active = append(*r.active, AnimActivity{NodeID: n.ID, Token: n.Shine.Style})
+	}
+	// nil AnimTicks is the pure/golden path: hold lit (see the doc comment for
+	// why lit and not base). A non-nil map dims the emphasis on the odd beat.
+	// An id-less node cannot be tracked per-node, so it stays lit rather than
+	// keying the tick map on "" — the same id guard withFocusGlow makes.
+	if r.AnimTicks != nil && n.ID != "" && r.AnimTicks[n.ID]%2 == 1 {
+		return n // the off beat of the pulse: the node's ordinary style
+	}
+	return applyShine(n)
+}
+
+// applyShine is applyFocusGlow for the shine token: the shallow copy whose
+// style is rewritten under every key styleName consults, the two-spelling
+// obligation withFocusGlow documents, at the third place the engine writes a
+// token. The copy is shallow and local for the same reason — the document
+// renders again next repaint with the tick advanced, so a token written into
+// the tree would be permanent.
+func applyShine(n *scene.Node) *scene.Node {
+	shone := *n
+	shone.Style = make(map[string]string, len(n.Style)+1)
+	for k, v := range n.Style {
+		shone.Style[k] = v
+	}
+	for _, key := range scene.StyleTokenKeys() {
+		shone.Style[key] = n.Shine.Style
+	}
+	return &shone
 }
 
 // focusGlowed is renderNode's focus-glow step: the free withFocusGlow for a

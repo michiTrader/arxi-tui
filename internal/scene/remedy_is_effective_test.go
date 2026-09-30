@@ -305,6 +305,12 @@ func remedyProbeDocuments(t *testing.T) []remedyProbe {
 		"title":       `{"root":{"type":"box","border":"single","title":"T","children":[{"type":"text","text":"x"}]}}`,
 		"min_width":   `{"root":{"type":"overlay","anchor":"bottom","min_width":12,"children":[{"type":"text","text":"x"}]}}`,
 		"focus_glow":  `{"root":{"type":"text","text":"x","focus_glow":{"style":"banner"}}}`,
+		// shine graduated (Scene 11): the engine draws it at the renderNode
+		// chokepoint on every node type (withShine), so like focus_glow it is
+		// universal and not in unrenderedFields. The fixture is a plain text node
+		// with a shine, which validates clean — doc.Validate() is theme-agnostic
+		// and the style token is checked separately by ValidateTokens.
+		"shine": `{"root":{"type":"text","text":"x","shine":{"style":"banner"}}}`,
 		// scroll graduated (G2): it is rendered on a marquee and refused
 		// elsewhere, so it is no longer in unrenderedFields. Its fixture is a
 		// marquee with a valid scroll, which validates clean — the premise this

@@ -735,7 +735,21 @@ counterfactual test).
   `resolveBind` fails the render and discrimination tests on the missing `nvim`,
   and forcing `row.is_toggle` true makes the text row draw a stray checkbox and
   fails the discrimination guard. With this the scene axis reads **9 of 11 pinned**
-  (measured: DASHBOARD and ANIMATED remain).
+  (measured: DASHBOARD remains).
+- **Scene 11 (ANIMATED) golden — DONE.** Composes box + shine + marquee +
+  when:session.new_milestone + on_press, no new primitives. Two blockers, both
+  decided here: (1) `session.new_milestone` lifetime — a derived bool, true only
+  while a milestone event (stage.advanced/agent.turn_done) is the last event
+  folded and cleared by any later event (fold.go State.NewMilestone +
+  deriveNewMilestone; render.go resolveBind returns "true"/"false"); (2) `shine`
+  — graduated from parsed-and-warned to drawn (Node.Shine + shineVocabulary +
+  withShine, riding the marquee's host clock, settling lit at rest).
+  testdata/ANIMATED.json/frame/styled frozen; animated_test.go asserts the box
+  draws on the pulse, vanishes on the pulse-clearing event, and that shine
+  modulates lit/base with AnimTicks. Counterfactuals run: reverting deriveNewMilestone
+  to never set the field fails the render/gate tests; reverting withShine to a
+  no-op fails the modulate test. With this the scene axis reads **10 of 11 pinned**
+  (measured: DASHBOARD remains).
 - **slider node type — BUILT (PR #143).** The value half of the `switch`/`slider`
   pair Q11 forced into v0 (SCENES.md Scene 5), and the last v0 base primitive to
   graduate: with it, every node type in PLAN.md's v0 vocabulary is built.
@@ -2285,7 +2299,7 @@ counterfactual test).
   same not-hand-authored guarantee `TestTickerJSONIsTheMountOutput` carries — so a
   drift in the builder is a golden diff, not a silent divergence. This is the
   fixture the audit matches to `## Scene 7 — COMMUNITY`, and it now reads **7 of
-  11 scenes pinned** (CONFIG, BUTTONS, DASHBOARD, ANIMATED remain). J1's preview
+  11 scenes pinned** (CONFIG, BUTTONS, DASHBOARD remain). J1's preview
   mode is pinned at the composed-frame level:
   `testdata/plugins/COMMUNITY-PREVIEW.manifest.json` declares a `tick.price` text
   mock and a mock-less `tick.status`, and `testdata/COMMUNITY-PREVIEW.frame` /

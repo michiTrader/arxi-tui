@@ -273,8 +273,14 @@ func TestTheNonInteractivePathShowsTheNoticeToo(t *testing.T) {
 // asserted here is the delivery: the document still loads, and the notice
 // carrying the reason arrives on the channel invariant 3 already built.
 func TestAnUnknownPropertyLoadsTheSceneAndSaysWhatItIgnored(t *testing.T) {
+	// `glimmer` is the probe now that `shine` is implemented (Scene 11): an
+	// unknown-but-parseable key stands in for a typo or a later-version
+	// property, which is exactly what this test measures. It must stay a key no
+	// Node field declares — the moment one does, this reverts to warning about
+	// nothing, the way the `shine` probe silently did the turn shine graduated
+	// from parsed-and-warned to drawn.
 	path := writeScene(t, "future.json", `{ "root": { "type": "stack", "children": [
-    { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1, "shine": "gold" },
+    { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1, "glimmer": "gold" },
     { "id": "prompt", "type": "input", "bind": "user.input", "placeholder": "> " }
 ]}}`)
 
@@ -296,15 +302,15 @@ func TestAnUnknownPropertyLoadsTheSceneAndSaysWhatItIgnored(t *testing.T) {
 	}
 
 	if notice == "" {
-		t.Fatalf("a scene declaring %q — a property SCENES.md names and this engine does not\n"+
-			"implement — loaded with no notice at all.\n"+
+		t.Fatalf("a scene declaring %q — an unknown-but-parseable property — loaded with no\n"+
+			"notice at all.\n"+
 			"consequence: the silent drop, which is the class this repository has now paid for\n"+
 			"five times. The scene loads, reports success, and the property never happened, so\n"+
 			"the author's only evidence is a screen that looks wrong. Worse, the same silence\n"+
 			"covers a typo: a misspelled \"children\" deletes the whole subtree on this path.\n"+
-			"remedy: loadScene must surface scene.Warnings() on host.scene.error.", "shine")
+			"remedy: loadScene must surface scene.Warnings() on host.scene.error.", "glimmer")
 	}
-	if !strings.Contains(notice, "shine") {
+	if !strings.Contains(notice, "glimmer") {
 		t.Errorf("the notice does not name the ignored property, so the author cannot act on it: %q", notice)
 	}
 	if !strings.Contains(notice, "future.json") {
