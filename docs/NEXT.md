@@ -1045,6 +1045,32 @@ counterfactual test).
   Block I), plus dispatch of a *template* row (Scene 9's `cmd:/agent {row.id}`),
   which needs the per-element `{row.field}` substitution at press time. This
   unblocks I4 (the `ext:` arm) and Scene 8's interactive buttons.
+  - **H8 row-interpolation expand — BUILT (2026-09-29, PR #134).** The
+    press-time half of the `{row.<field>}` interpolation `validateOnPress`
+    checks at load (Q20), the substitution H8/E4 parked. Extraction
+    (`interpolationTokens`) and the schema check already ran at load, and a
+    template's `on_press` is stored verbatim (`Action.Arg` keeps the braces)
+    because the element it was instantiated for is only known when a specific
+    row is pressed; `scene.ExpandRowInterpolation(arg, row)` resolves those
+    fields against the pressed row's scope. Pure and network-free, landed ahead
+    of the impure focus-ring wiring per the block pattern — it is the keystone
+    the deferred consumers wait on (Scene 9's `cmd:/agent {row.id}` dispatch,
+    per-element `ext:` args, and eventually `answer:`). Contract: `row` is keyed
+    by the full token (`"row.field"`→value), the same keying `resolveBindRow`
+    uses, so display and press read one scope; an absent `row.*` field is an
+    **error**, not an empty substitution (the validator already refused any
+    field the element schema does not declare, so a miss is a scope/schema drift
+    and expanding to `""` would address the wrong run — the wrong frame this repo
+    holds worse than a refusal); a non-`row.*` `{...}` token is left verbatim,
+    exactly as `interpolationTokens` ignores it (it belongs to a later host
+    resolver). Pinned by six tests in `action_expand_test.go` with
+    counterfactuals run by hand: silently expanding a missing field to `""`
+    fails the missing-field test, dropping non-row tokens fails the verbatim
+    test, and stopping after the first token fails the every-field test.
+    **Still deferred (the impure half):** enumerating a template's instantiated
+    rows in the focus ring and recovering the pressed row's scope, so
+    `dispatchPress` can call this expander — that is the focus-ring wiring the
+    row-click consumers ride on, its own increment.
 
 ### Block I — Phase 3: behavioral plugins (NDJSON subprocess) [H]
 

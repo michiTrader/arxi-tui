@@ -154,3 +154,66 @@ func interpolationTokens(arg string) []string {
 		rest = rest[close+1:]
 	}
 }
+
+// ExpandRowInterpolation substitutes the {row.<field>} tokens in an on_press
+// argument with the values of the row scope the press happened in. It is the
+// press-time half of the {row.<field>} interpolation validateOnPress checks at
+// load (Q20): the extraction (interpolationTokens) and the schema check run at
+// load, and this is the substitution E4/H8 parked. A template's on_press is
+// stored verbatim -- Action.Arg keeps the braces -- because the element it was
+// instantiated for is only known when a specific row is pressed, so the fields
+// are resolved here against that row rather than when the action was parsed.
+//
+// row is keyed by the full token, "row.<field>" -> value, the same keying
+// resolveBindRow uses for a bare row.* bind, so the display side and the press
+// side read one row scope and cannot disagree on what "row.role" resolves to.
+//
+// An absent row.* field is an error, not an empty substitution. validateOnPress
+// has already refused any {row.<field>} the element schema does not declare, and
+// the scope is built from that same schema, so a token missing at press time is
+// a scope/schema drift inside the host, not an operator omission. This project
+// holds a wrong frame -- a run addressed by cmd:/agent whose id was silently
+// blanked to the empty string, hitting a different run or none -- to be worse
+// than a loud refusal, so the missing field is named rather than expanded to "".
+// A {...} token that is not a row.* reference is left verbatim, exactly as
+// interpolationTokens ignores it: those belong to a later host resolver, and
+// consuming them here would strip a string the author wrote for that resolver.
+func ExpandRowInterpolation(arg string, row map[string]string) (string, error) {
+	var b strings.Builder
+	rest := arg
+	for {
+		open := strings.IndexByte(rest, '{')
+		if open < 0 {
+			b.WriteString(rest)
+			return b.String(), nil
+		}
+		b.WriteString(rest[:open])
+		rest = rest[open+1:]
+		close := strings.IndexByte(rest, '}')
+		if close < 0 {
+			// An unterminated '{' is not an interpolation token: interpolationTokens
+			// stops at it and treats the tail as literal, so this pass writes the
+			// brace and the remainder back verbatim rather than inventing a token.
+			b.WriteByte('{')
+			b.WriteString(rest)
+			return b.String(), nil
+		}
+		token := rest[:close]
+		if strings.HasPrefix(token, "row.") {
+			v, ok := row[token]
+			if !ok {
+				return "", fmt.Errorf("on_press interpolates {%s}, but the row scope has no such field; a {row.<field>} validateOnPress accepted must be present in the scope built from the same element schema, so its absence is a scope/schema drift and expanding it to the empty string would address the wrong run (BINDS.md §4.7)", token)
+			}
+			b.WriteString(v)
+		} else {
+			// Not a row.* reference: interpolationTokens leaves these for a later
+			// host resolver, so this pass must write the literal {token} back rather
+			// than consume it -- the string that resolver sees must be the one the
+			// author wrote, not one this substitution silently edited.
+			b.WriteByte('{')
+			b.WriteString(token)
+			b.WriteByte('}')
+		}
+		rest = rest[close+1:]
+	}
+}
