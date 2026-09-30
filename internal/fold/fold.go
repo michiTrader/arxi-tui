@@ -218,9 +218,29 @@ type State struct {
 	CommunityQuery    string           `json:"community.query"`
 	CommunityMatches  []CommunityMatch `json:"community.matches"`
 	CommunitySelected int              `json:"community.selected"`
-	UIFocus           string           `json:"ui.focus"`
-	UIMax             string           `json:"ui.max"`
-	UISurface         string           `json:"ui.surface"`
+
+	// ConfigCategories and ConfigSettings are the /config screen's own view
+	// state (Scene 5, BINDS.md §4.3/§4.7, E5). arxi-sim's /config is 730 lines of
+	// Go; here it is a document over two list binds the host projects, the same
+	// host-owned-view-state shape as the community.* triple: no arxi-core event
+	// produces them, so they are carried here rather than folded from the log,
+	// and the empty slices are the default a fold that never opens /config leaves
+	// untouched — no golden moves.
+	//
+	// ConfigSettings is the list Scene 5 dogfoods: a row_template mixing a
+	// `switch` row and an `input` row by the setting's Kind. This engine's `when`
+	// is a bare truthiness test with no comparison operator, so the template
+	// cannot itself ask "Kind == toggle"; the engine synthesizes the two
+	// per-row booleans row.is_toggle/row.is_text from Kind (the row.selected
+	// idiom §4.7 signs for community.matches) and the template gates its two
+	// sibling nodes on those. Kind is the source column, never addressed
+	// directly, exactly as community.selected is the source of row.selected.
+	ConfigCategories []ConfigCategory `json:"config.categories"`
+	ConfigSettings   []ConfigSetting  `json:"config.settings"`
+
+	UIFocus   string `json:"ui.focus"`
+	UIMax     string `json:"ui.max"`
+	UISurface string `json:"ui.surface"`
 	// UIHidden is the set of node ids the user has hidden through `/ui hide <id>`
 	// (BINDS.md §4.3, signed as D3). It is a set and not a scalar for the reason
 	// the design pinned: every other `ui.*` row is a single id, so a scalar
@@ -1283,6 +1303,42 @@ type CommunityMatch struct {
 	ManifestURL string `json:"manifest_url"`
 	Description string `json:"description"`
 	Preview     string `json:"preview"`
+}
+
+// ConfigCategory is one row in config.categories: a settings group the /config
+// screen lists down its left rail (Scene 5). Its one column is the group name,
+// so a row_template over the list addresses `row.name` and no other field — the
+// same single-column shape a static menu list has, kept as a fold projection
+// rather than hard-coded so the category rail is a document the user can rewrite
+// like everything else.
+type ConfigCategory struct {
+	Name string `json:"name"`
+}
+
+// ConfigSetting is one row in config.settings: a single setting the /config
+// screen renders, either as a toggle or as a text field (Scene 5). It is the
+// dogfood the whole scene exists for — a settings list that mixes two node
+// types in one row_template.
+//
+// Kind is the discriminator, "toggle" or "text". It is NOT itself an addressable
+// row field: this engine's `when` is a bare truthiness test with no comparison
+// operator, so a template cannot gate a node on "Kind == toggle", and a bare
+// string column would be dead the way a row.index integer would be. The engine
+// synthesizes two booleans from it instead — row.is_toggle and row.is_text — and
+// the template gates its `switch` on the first and its `input` on the second.
+// That mirrors community.matches' row.selected (§4.7): a per-row boolean the
+// projection computes because the scene language cannot.
+//
+// Enabled is the toggle's state, read by the `switch` node through the same
+// bindTruthy rule a `when` gate uses; Value is the text field's contents, read
+// by the `input` node. A row carries only the one its Kind names — the other is
+// the zero value and never rendered, because the gate on the sibling node is
+// false — so the two never both show on one row.
+type ConfigSetting struct {
+	Label   string `json:"label"`
+	Kind    string `json:"kind"`
+	Enabled bool   `json:"enabled"`
+	Value   string `json:"value"`
 }
 
 // Commands is the host's command registry, the source for slash.matches.
