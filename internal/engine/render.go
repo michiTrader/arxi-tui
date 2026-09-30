@@ -2106,6 +2106,16 @@ func resolveBind(bind string, state fold.State) string {
 			return "true"
 		}
 		return "false"
+	case "session.new_milestone":
+		// A pulse gated with `when`: the box in Scene 11 draws only while this
+		// reads truthy. It must return the concrete "true"/"false" and not fall
+		// through to the placeholder, because the placeholder is falsy (so the
+		// banner would stay hidden) — which reads the same as "no milestone"
+		// and would hide the very fact this bind exists to surface.
+		if state.NewMilestone {
+			return "true"
+		}
+		return "false"
 	case "agent.mode":
 		return state.AgentMode
 	case "model.name":

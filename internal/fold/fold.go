@@ -24,6 +24,22 @@ type State struct {
 	TeamMembers       []TeamMember `json:"team.members"`
 	QuiescentDiag     string       `json:"run.quiescent.diagnosis"`
 
+	// NewMilestone is session.new_milestone (BINDS.md §4.1): the transient
+	// "something worth noticing just happened" pulse a celebratory banner
+	// (Scene 11) gates on. Its lifetime was the open question the bind was
+	// signed with, and it is decided here as the narrowest honest one: the
+	// pulse reads true only while a milestone event is the LAST event folded,
+	// and any later event clears it. That keeps the fold pure — a duration
+	// would need a clock the fold must never hold (invariant 1), and
+	// "until dismissed" would need host view-state the fold does not own — and
+	// it matches what a pulse is: it flashes at the transition and is gone the
+	// moment the run does anything else. The milestone events are the two
+	// BINDS.md names, stage.advanced (a stage boundary) and agent.turn_done (a
+	// turn boundary); it is derived after replay rather than set in apply()
+	// because "is this the last event" is a property of the whole log, not of
+	// one event in isolation.
+	NewMilestone bool `json:"session.new_milestone"`
+
 	// Run verdict (run.result). The core emits run.result ONLY on success:
 	// kernel/decide.go's `case RunResult` sets Status = StatusSucceeded
 	// unconditionally, and the two emission sites (decide.go:554 "all stages
@@ -320,6 +336,14 @@ type State struct {
 	// core's Recover() tolerates a repeated exec.work_finished as long as the
 	// status agrees, so a replay that sees one twice must not count it twice.
 	finishedWork map[string]bool
+
+	// lastEventType is the Type of the most recently applied event. It exists
+	// for the one derived bind whose value depends on the log's TAIL rather
+	// than its accumulation — session.new_milestone, whose pulse reads true
+	// only while a milestone event is the last thing that happened (see
+	// NewMilestone). apply() writes it for every event so the derive step does
+	// not have to reach back into a slice the reducer has already consumed.
+	lastEventType string
 }
 
 // Fold is the pure reducer: events in, view-state out. It is deterministic.
@@ -355,7 +379,22 @@ func Fold(events []Event) State {
 	s.deriveExecPhase()
 	s.deriveToolSurface()
 	s.deriveStageSurface()
+	s.deriveNewMilestone()
 	return s
+}
+
+// deriveNewMilestone sets session.new_milestone (BINDS.md §4.1). See the
+// NewMilestone field for why the lifetime is "last event only": the pulse is
+// true exactly when the most recently folded event is one of the two milestone
+// events, and any subsequent event — of any kind — clears it. An empty log has
+// no last event and therefore no milestone, which is the signed empty state.
+func (s *State) deriveNewMilestone() {
+	switch s.lastEventType {
+	case "stage.advanced", "agent.turn_done":
+		s.NewMilestone = true
+	default:
+		s.NewMilestone = false
+	}
 }
 
 // actorName is the member this event is about.
@@ -596,6 +635,11 @@ var handled = map[string]bool{
 func Handles(eventType string) bool { return handled[eventType] }
 
 func (s *State) apply(e Event) {
+	// Recorded before the switch so it is set for every event, including the
+	// ones with no case below: session.new_milestone's pulse is cleared by
+	// *any* later event, so an event this reducer otherwise ignores must still
+	// count as "the last thing that happened".
+	s.lastEventType = e.Type
 	switch e.Type {
 	case "run.prompt":
 		text := ""

@@ -55,14 +55,17 @@ import (
 //
 //   - user.input.submitted is the enter-key pulse consumed by the host's submit
 //     path, signed only to reserve the name (BINDS.md §4.3).
-//   - session.new_milestone is a pulse with no fold field and an undecided
-//     lifetime, pending Scene 11 (BINDS.md §4.1).
 //
-// If either ever gains a fold field, delete its entry here — the guard will
-// then hold it to the same standard as every other bind.
+// session.new_milestone WAS here while its lifetime was undecided; Scene 11
+// decided it (State.NewMilestone / deriveNewMilestone), so the entry is gone
+// and the guard now perturbs the bool field and requires resolveBind to vary
+// with it — the same standard as every other bind, exactly as the note below
+// promises.
+//
+// If either remaining entry ever gains a fold field, delete it here — the guard
+// will then hold it to the same standard as every other bind.
 var pulseBindsWithoutFoldFields = map[string]string{
-	"user.input.submitted":  "enter-key pulse consumed by the host submit path; name reserved (BINDS.md §4.3)",
-	"session.new_milestone": "pulse with no fold field and an undecided lifetime, pending Scene 11 (BINDS.md §4.1)",
+	"user.input.submitted": "enter-key pulse consumed by the host submit path; name reserved (BINDS.md §4.3)",
 	// The community installer's live view state (Scene 7, J3 follow-up) WAS here
 	// while it had no fold field, sitting for the same reason ui.hidden did before
 	// F3 — "no fold field yet, not a defect". State.CommunityQuery/Matches/Selected

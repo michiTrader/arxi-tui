@@ -133,12 +133,13 @@ var acceptedUnprojectedBinds = map[string]string{
 	// scalars of this group, are projected.
 	"agent.blocked.blocked_ref": "an object whose projection is a documented command-resolution rule, not a value to print",
 
-	// A pulse rather than a value, and the fold does not compute it: no
-	// State field exists, because a pulse that persists is not a pulse. Scene
-	// 11 gates a banner on it, so it needs a decision about how long a pulse
-	// stays true — one frame, a duration, until dismissed — which is
-	// animation-adjacent and belongs with that scene rather than ahead of it.
-	"session.new_milestone": "an event pulse with no fold field; how long a pulse reads true is a Scene 11 decision",
+	// session.new_milestone WAS here — a pulse with no fold field, waiting on
+	// the lifetime decision Scene 11 was meant to make. Scene 11 made it: the
+	// pulse reads true only while a milestone event is the last event folded
+	// (fold.State.NewMilestone / deriveNewMilestone), so a fold field now
+	// exists and resolveBind returns "true"/"false" from it. Keeping the entry
+	// after the case shipped would be the stale-comment failure this audit's
+	// own remedy warns about.
 
 	// BINDS.md §4.3 says it outright: consumed by the host's submit path,
 	// "listed so the name is reserved". It is the enter-key pulse, not

@@ -40,13 +40,15 @@ import (
 // one kind-switch wide, and nothing in the tree named them or asked anything
 // of them. Measured with a throwaway probe against the real inventory:
 //
-//	signed=30  scalars checked=23
+//	signed=30  scalars checked=24
 //	skipped silently (5): agent.blocked.blocked_ref, agent.todos,
 //	                      chat.history, slash.matches, team.members
-//	unmapped, exempted by name (2): session.new_milestone,
-//	                                user.input.submitted
+//	unmapped, exempted by name (1): user.input.submitted
 //
-// 23 + 5 + 2 = 30, so the five are the entire remainder.
+// 24 + 5 + 1 = 30, so the five are the entire remainder. session.new_milestone
+// moved from the exempted column to the scalar column once Scene 11 gave it a
+// bool fold field (State.NewMilestone): the scalar guard now owns it, and the
+// composite guard skips it via perturbScalar like every other scalar.
 //
 // # The first draft of this file was wrong, and the way it was wrong is the finding
 //
