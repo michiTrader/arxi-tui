@@ -183,6 +183,13 @@ var signedBinds = map[string]bool{
 	"community.matches":  true,
 	"community.selected": true,
 
+	// §4.3/§4.7 view state — the /config screen's two list binds (Scene 5, E5).
+	// Host-owned view state like the community.* triple, projected by the fold and
+	// consumed by a `list`: config.categories is the left-rail group list,
+	// config.settings the row_template that mixes a switch and an input by row.
+	"config.categories": true,
+	"config.settings":   true,
+
 	// §4.3 view state — the selected community entry's scalar projection (Scene
 	// 7, J3 follow-up). community.selected is an index; these resolve it against
 	// community.matches to the selected entry's own fields, so the installer's
@@ -259,6 +266,20 @@ var rowSchemas = map[string]map[string]bool{
 	// is signed alongside the element fields so that gate validates like any other
 	// row bind rather than being refused as an unsigned row.* name.
 	"community.matches": {"row.id": true, "row.name": true, "row.version": true, "row.manifest_url": true, "row.description": true, "row.preview": true, "row.selected": true},
+	// The /config screen's two lists (Scene 5, E5). config.categories is a
+	// single-column group list. config.settings carries the setting's label,
+	// the toggle state (row.enabled, read by a `switch`) and the text value
+	// (row.value, read by an `input`), plus two synthesized discriminator
+	// booleans: row.is_toggle and row.is_text. Those two are the config analogue
+	// of community.matches' row.selected — a per-row boolean the engine computes
+	// from the element's Kind, signed here rather than in the element schema
+	// because they are not data the host stored but the answer to "which node
+	// type does this row draw". This engine's `when` has no comparison operator,
+	// so the template gates its two sibling nodes on these booleans rather than
+	// on a `row.kind == "toggle"` it cannot write; a bare row.kind string would
+	// be dead without an operator to compare it, exactly the row.index argument.
+	"config.categories": {"row.name": true},
+	"config.settings":   {"row.label": true, "row.enabled": true, "row.value": true, "row.is_toggle": true, "row.is_text": true},
 }
 
 // RowSchema returns the signed `row.<field>` names for a list bind, or nil if

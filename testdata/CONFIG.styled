@@ -1,0 +1,24 @@
+«header:Δr×i v0.1.0 · config»
+«header:General»
+«header:Privacy»
+Telemetry                                                       [ ]             
+Auto-update                                                     [x]             
+Editor                                                          «input:nvim»            
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+«dim:values: defaults ← ~/.arxi/config.toml ← --flags (last wins)»
+«dim:↑↓ move · space toggle · enter edit · esc back»

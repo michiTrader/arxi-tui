@@ -922,7 +922,17 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 	value := state.UserInput
 	caret := state.UserInputCaret
 	if n.Bind != "user.input" {
-		value = resolveBind(n.Bind, state)
+		// resolveBindRow, not resolveBind: an input inside a row_template binds to
+		// a relative `row.<field>` (Scene 5's settings row is an input bound to
+		// row.value), and resolveBind knows nothing of the row scope, so the field
+		// resolved to the placeholder and every settings row drew the hint instead
+		// of its value. This is the row-position axis renderSwitch already reaches
+		// through evalWhenRow's r.curRow; an input reached the same way had never
+		// been asked for a relative bind. With no row in scope resolveBindRow
+		// delegates to resolveBind unchanged, so user.input's siblings
+		// (community.query and every absolute-bound input) resolve exactly as
+		// before — the fix adds the template case without moving the existing one.
+		value = resolveBindRow(n.Bind, state, r.curRow, r.PluginValues, r.PreviewMocks)
 		if value == placeholderValue {
 			value = ""
 		}
@@ -1952,6 +1962,34 @@ func rowScopesFor(bind string, state fold.State) []map[string]string {
 				"row.description":  m.Description,
 				"row.preview":      m.Preview,
 				"row.selected":     boolField(i == state.CommunitySelected),
+			})
+		}
+		return rows
+	case "config.categories":
+		rows := make([]map[string]string, 0, len(state.ConfigCategories))
+		for _, c := range state.ConfigCategories {
+			rows = append(rows, map[string]string{"row.name": c.Name})
+		}
+		return rows
+	case "config.settings":
+		// One scope per setting (Scene 5, BINDS.md §4.7). row.is_toggle and
+		// row.is_text are the two fields not read off the element: they are
+		// synthesized from Kind, the community.matches row.selected idiom applied
+		// to the /config dogfood. This engine's `when` is a bare truthiness test
+		// with no comparison operator, so the row_template cannot gate a node on
+		// "Kind == toggle" itself — the projection answers that comparison once
+		// per row, as the two mutually exclusive booleans the template gates its
+		// `switch` and `input` on. A row.kind string here would be dead without an
+		// operator to compare it, so the booleans are the honest projection of
+		// "which node type does this row draw", not a convenience over one.
+		rows := make([]map[string]string, 0, len(state.ConfigSettings))
+		for _, s := range state.ConfigSettings {
+			rows = append(rows, map[string]string{
+				"row.label":     s.Label,
+				"row.enabled":   boolField(s.Enabled),
+				"row.value":     s.Value,
+				"row.is_toggle": boolField(s.Kind == "toggle"),
+				"row.is_text":   boolField(s.Kind == "text"),
 			})
 		}
 		return rows

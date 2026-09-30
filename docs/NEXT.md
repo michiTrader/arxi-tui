@@ -696,13 +696,46 @@ counterfactual test).
   fails the label test, and dropping the style token fails both the glow test and
   the package own-style sweep. The unknown-type diagnostic was re-pointed off
   `switch` to `slider` (now the last unbuilt v0 primitive) in the same PR.
-  **What still blocks the golden:** the CONFIG dogfood binds a settings `list` to
-  a config-settings array the fold does not yet project, and mixing `switch` and
-  `input` rows by `row.kind` needs per-row boolean discriminators (this engine's
-  `when` is bare truthiness, no `==`, exactly as `community.matches`' `row.selected`
-  documents), so the row_template gates two sibling nodes on projected booleans.
-  That is a fold model + BINDS row-schema increment, not a primitive, and it is
-  the remaining E5 work now that the primitive exists.
+- **E5 — DONE (2026-09-30).** The Scene 5 golden (CONFIG) is frozen as
+  `testdata/CONFIG.json`/`.frame`/`.styled`, pinned the way SUBAGENTS (Scene 9)
+  and COMMUNITY (Scene 7) are: a category `list` over `config.categories` and a
+  settings `list` over `config.settings` whose `row_template` mixes a `switch`
+  row and an `input` row by kind, plus a provenance line, a key footer and the
+  gated `host.scene.error` notice every shipped scene carries. It is the dogfood
+  the scene exists for — arxi-sim's `/config` is 730 lines of Go; here it is a
+  document. The fold-model + row-schema increment the note below anticipated
+  landed in four beats:
+  (1) **Fold** projects two host-owned view-state lists, `config.categories`
+  (`{name}`) and `config.settings` (`{label, kind, enabled, value}`), the
+  community.* triple's shape — no arxi-core event produces them, the empty slices
+  are a no-op, so no other golden moved.
+  (2) **Validator** signs both binds in `signedBinds` and their §4.7 row schemas;
+  `config.settings` signs two synthesized booleans, `row.is_toggle`/`row.is_text`,
+  because this engine's `when` is bare truthiness with no comparison operator — the
+  row.selected idiom `community.matches` documents, applied so the row_template can
+  gate its two sibling nodes on kind without a `==` it cannot write. `kind` is the
+  source column and is deliberately not signed (a bare string is dead without an
+  operator, the row.index argument).
+  (3) **Engine** `rowScopesFor` synthesizes the two booleans from `Kind`; and
+  `renderInput` now resolves its bind through `resolveBindRow`/`r.curRow` instead
+  of `resolveBind` — the row-position axis it had never been asked for, so an
+  input inside a row_template read the placeholder instead of `row.value` and every
+  settings text row drew its hint. With no row in scope `resolveBindRow` delegates
+  to `resolveBind`, so `user.input` and `community.query` resolve unchanged.
+  (4) **BINDS.md** signs the two §4.3 rows and their §4.7 schemas, with the
+  discriminator argument written down.
+  Pinned by `config_test.go`: render (both categories, all three labels, one `[ ]`
+  and one `[x]`, the text value `nvim`, no `UNKNOWN NODE TYPE`, no leftover `[…]`),
+  a kind-discrimination guard (the text row shows its value and no checkbox; a
+  toggle row shows a checkbox), and the plain/styled goldens. Two package audits
+  were taught the new binds — `templateProjectedBinds` (composite projection) and
+  `nestedStyleState` (nested-token sweep) — so both witness the config lists
+  through the row_template that draws them rather than reporting them undrawn.
+  Counterfactuals run by hand, both directions: reverting `renderInput` to
+  `resolveBind` fails the render and discrimination tests on the missing `nvim`,
+  and forcing `row.is_toggle` true makes the text row draw a stray checkbox and
+  fails the discrimination guard. With this the scene axis reads **9 of 11 pinned**
+  (measured: DASHBOARD and ANIMATED remain).
 - **slider node type — BUILT (PR #143).** The value half of the `switch`/`slider`
   pair Q11 forced into v0 (SCENES.md Scene 5), and the last v0 base primitive to
   graduate: with it, every node type in PLAN.md's v0 vocabulary is built.
