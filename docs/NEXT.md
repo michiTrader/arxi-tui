@@ -1099,6 +1099,33 @@ counterfactual test).
     focus-glow render path matching an instantiated row. That is the row-click
     wiring, its own increment, now with both pure halves (`ExpandRowInterpolation`
     and `RowPresses`) in place beneath it.
+  - **H8 row-focus key — BUILT (2026-09-29, PR #136).** The third pure piece,
+    and the keystone the impure focus ring needs before it can Tab onto a row:
+    `rowFocusKey(nodeID, rowIndex)` / `parseRowFocusKey(key)`
+    (`cmd/arxi-tui/rowfocus.go`), the encode/decode that lets the single
+    `ui.focus` string name one pressable node of one instantiated `row_template`
+    row and recover that `(NodeID, RowIndex)` at Enter. It lives in the host
+    package because focus is host-owned view state (BINDS.md §4.3), not a signed
+    wire/scene format — the same standing as `enterRowKey`, an engine-internal
+    clock key. Two decisions recorded at the site: (1) `ui.focus` stays **one
+    string**, a row target folded into a synthetic key and unfolded at dispatch,
+    so `advanceFocus`, `findPressable` and the `focus_glow` bind are untouched
+    rather than rippling a pair through every focus getter; (2) the separator is
+    the **NUL marker** `\x00row\x00`, one no author id can contain (the guarantee
+    `enterRowKey` documents), so a row key can never collide with an ordinary
+    node in the mixed ring **and** `parseRowFocusKey`'s marker test doubles as
+    the discriminator the dispatcher branches on (no marker → resolve a plain
+    node via `findPressable`; marker → look the `(row, node)` up in
+    `RowPresses`). Pinned by four tests in `rowfocus_test.go` with
+    counterfactuals run by hand: dropping the row index fails the round-trip and
+    per-row-distinctness tests, decoding a marker-less string as a row target
+    fails the plain-id rejection, and skipping the integer guard fails the
+    bad-index rejection. **Still deferred (the impure half, now the only piece
+    left):** the focus ring enumerating template-row targets (interleaving these
+    keys with `pressableIDs`), recovering a pressed `(row, node)` and dispatching
+    its expanded `OnPress` through `dispatchPress`, plus the focus-glow render
+    path matching an instantiated row. All three pure halves
+    (`ExpandRowInterpolation`, `RowPresses`, `rowFocusKey`) now sit beneath it.
 
 ### Block I — Phase 3: behavioral plugins (NDJSON subprocess) [H]
 
