@@ -1600,7 +1600,42 @@ counterfactual test).
     fake-tty harness, so the glue is verified by build + the pieces it composes, as
     with the earlier I6 loop-wiring commit. **Remaining for I6:** the tool-door half
     (the agent-facing side of Gate B).
-  - **I6-tooldoor-design — SIGNED (PR #99, merged) and plugin-facing half BUILT
+  - **sparkline node — BUILT (2026-09-29, PR #138).** The render half of I3's
+    `series` bind kind, the piece I3 deferred as "stored and resolvable but drawn
+    by nothing yet — the `sparkline` node is signed and unimplemented". The store
+    already projects a `series` wire value to its compact-JSON string (`[1,3,2]`)
+    "awaiting the sparkline node that will parse it" (store.go), so this is the one
+    place the engine decodes a plugin's JSON — for the one kind whose value is not
+    a display string. `internal/engine/sparkline.go`: pure `parseSeries` (the
+    JSON→`[]float64` boundary) and `sparkline(nums, width)` (min..max-scaled block
+    glyphs U+2581..U+2588), plus `renderSparkline` reading its series through the
+    same `resolveBindRow` chokepoint every bound node uses — so a plugin bind (I3),
+    a preview mock (J1) and a row-scoped bind all resolve by one set of rules, and
+    `when`/focus-glow/style-token are honoured for free because `renderNode`
+    applied them before dispatch. `renderByType` gains `case "sparkline"`,
+    graduating it from `[[UNKNOWN NODE TYPE]]`; the unknown-type probe reseated
+    onto `button`/`slider` (both still unimplemented) so it keeps its
+    scheduled-vs-typo distinction, and the progress audit now reads 12 rendered / 3
+    unknown. Design decisions, each pinned by a test with the counterfactual run by
+    hand: **relative** min..max scale (a series of large-but-close values keeps its
+    shape — the absolute-axis regression collapses `1000..1007` to eight full bars
+    and fails the offset-equality test); a **flat** series draws the lowest glyph (a
+    mid glyph reads as "half of something" and a zero span would divide into a NaN
+    glyph — the mid-default counterfactual fails it); a longer-than-pane series
+    shows the **last** width values (a live series grows at the end — the clip-first
+    counterfactual fails on the flat-tail probe); and a non-series value (the
+    unresolved placeholder `[…]`, or a scalar bind pointed at the wrong field)
+    draws **verbatim**, never a zeroed chart, so "waiting" and "misconfigured" stay
+    visible (§I-G placeholder-not-crash). The render seam is pinned end-to-end
+    (`TestRenderSparklineDrawsAResolvedSeriesUnderItsToken` — a `tick.series`
+    snapshot draws glyphs wearing the node's token; disabling the `case` draws the
+    unknown placeholder and fails it), the way `plugin_bind_test.go` covers a text
+    bind without a live subprocess. **Not done (gated where the rest of behavioral
+    live-mount is):** wiring a sparkline into a *golden* scene needs a streamed
+    `series`, and the declarative TICKER golden (H7) has an empty `<id>.*`
+    namespace by rule, so a bound sparkline there would be refused — the live
+    behavioral TICKER that streams into a sparkline rides the same real-subprocess
+    surface the sandbox has no fake-tty harness for.
     (PR #100).** DESIGN-BLOCK-I.md §I-J signed the last piece of Gate B: how a
     mounted plugin teaches the **agent** a tool it can call, as distinct from an
     I3 `bind` (a scene projection the agent never reads) and an I4 `action`
