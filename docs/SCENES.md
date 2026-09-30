@@ -405,8 +405,16 @@ press against an unmounted, ungranted, or dead plugin is reported, never crashed
 remain signed-but-unbuilt by design: the `tab: false` input opt-out (the
 input-as-home ring already protects typing), and the per-element `{row.field}`
 argument substitution an `ext:` press in a template will carry (it rides on the
-same template-row dispatch H8 parked). No Scene 8 golden is frozen yet — that
-waits on the `button` node type and a composed fixture.
+same template-row dispatch H8 parked). The `button` node type is built (2026-09-29):
+`renderByType` dispatches it to `renderButton`, which frames its label as
+`[ label ]` — the pressable affordance is the engine's, the way `spinner` owns
+its glyph, so an author writes only the label and the type marks it a control —
+reads the label bind-before-text, and applies the declared style token (and the
+focus glow that arrives as a rewritten `n.Style` at the `renderNode` chokepoint)
+to the framed span. Scene 8's golden is frozen (`testdata/BUTTONS.json`,
+`.frame`, `.styled`): a review surface whose decision row carries an
+`answer:approve`/`reject`/`reply` button each, pinned so a change to the button
+frame or the row's layout is a reviewable diff.
 
 ## Scene 9 — SUBAGENTS (below the input)
 
