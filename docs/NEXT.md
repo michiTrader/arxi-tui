@@ -2177,7 +2177,31 @@ counterfactual test).
 - **K3** [K1,K2] Self-extension over the gates the user opened, only on user
   order (diff + attribution).
 - **K4** Costed ADR on embedded wasm (wazero) for renders that are none of our
-  nodes (Scene 14 / Q14).
+  nodes (Q14).
+- **K4 — SIGNED (2026-09-29, PR #139) as ADR-0008.** Argued in
+  `docs/DESIGN-BLOCK-K.md`, signed into `PLAN.md`. Paper only: no `go.mod`
+  change, no code guard lifted — it freezes *how* a non-expressible render lands
+  and *why it does not land yet*. **The seam:** a wasm render module is called
+  pull-by-frame (ADR-0004) with the `PluginValues` snapshot (ADR-0007) plus
+  width/height and returns a `ui.Frame`-shaped description of cells — the
+  `internal/engine/sparkline.go` "read one snapshot, return one line" shape
+  lifted across the wasm boundary — so it proposes a view (plugins propose,
+  never write; the fold is untouched, invariant 2) and, being called inside the
+  render walk downstream of the loop `select`, cannot capture the escape hatch
+  (invariant 6). **The runtime:** `wazero`, because it is pure Go with zero CGO —
+  the install rule (`PLAN.md:112-116`), not a preference. **The cost, measured**
+  (this host, go 1.26.5, `CGO_ENABLED=0`, wazero v1.12.0): marginal binary
+  ~4.06 MiB isolated against an empty `main` (1.79 → 6.05 MiB, windows/amd64),
+  cross-compiles CGO-free to android/arm64 (Termux, 6.33 MiB) and linux/arm64
+  (5.74 MiB) — built and confirmed, not asserted — and its only new module
+  dependency is `golang.org/x/sys`, already an indirect dep. **Deferred, not
+  embedded:** ~4 MiB against zero current consumers (no non-expressible render
+  exists; the honest ceiling stays the node set, and the node route — marquee,
+  sparkline — is tried first because a node is user-rewritable and foreign
+  render code is not). The dependency waits for the first render that fails the
+  node-route bar; the seam is signed now. **Remaining for K:** K1–K3 (the
+  behavior gates) — unstarted, blocked on a live agent and the arxi-core
+  surface this host cannot invent.
 
 ### Block L — Distribution and install
 
