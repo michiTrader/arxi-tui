@@ -171,6 +171,8 @@ written only through registered commands (`cmd:/slash`, `cmd:/max`,
 | `community.selected.name` | text | the `name` of the entry `community.selected` points at, resolved against `community.matches`; the installer's right pane renders it as the preview heading | changes with `community.selected` or with the entry list under it | empty string — the selection is out of range (an empty browse), so the pane heading is blank |
 | `community.selected.version` | text | the `version` of the selected entry, rendered under the name in the preview pane | changes with `community.selected` or the entry list | empty string — nothing selected |
 | `community.selected.preview` | text | the `preview` blurb of the selected entry (the same markdown a static card inlined), rendered as the body of the preview pane | changes with `community.selected` or the entry list | empty string — nothing selected, so the pane body is blank |
+| `config.categories` | array of `{name}` | the /config screen's left-rail groups (Scene 5); the category `list` binds to it and its `row_template` renders one row per group. Host view state, not an arxi-core projection — the host owns the settings model the way it owns the command registry | when the host loads or edits the settings model | empty array — no categories, so the rail draws nothing |
+| `config.settings` | array of `{label, kind, enabled, value}` | the /config screen's settings (Scene 5); the settings `list` binds to it and its `row_template` mixes a `switch` and an `input` row by `kind`. `label` is the setting name, `enabled` the toggle state a `switch` reads, `value` the text an `input` reads; `kind` (`"toggle"` \| `"text"`) is the discriminator the engine turns into the §4.7 booleans. Host view state, never a run event | when the host loads or edits the settings model | empty array — no settings, so the list draws nothing |
 
 **The `community.*` installer view state (signed 2026-09-28, J3 follow-up; argued in `docs/DESIGN-BLOCK-J.md` J3).** These three rows are the live half of the community installer (Scene 7): `Registry.InstallerScene` (J3, PR #103) currently bakes the entries as static cards because the live `list`/search-input pair needs exactly this signed vocabulary. They are host view state in the `slash.*` mould — a `query`, its filtered `matches`, and a `selected` cursor — written by the installer's own keystroke loop, never by an arxi-core event, so a stranger's registry can never author them. `community.matches` is the previewed plugin's own entries; it is not the `<plugin-id>.*` preview namespace (J1, §4.4), which carries a *previewed manifest's* mocked binds, not the browse list. The empty-state of each is a no-op — an empty query lists everything, an empty match array draws no cards, a zero cursor highlights the first — so signing these rows moves no golden until the installer loop populates them (the deferred live half, §4.6).
 
@@ -365,6 +367,8 @@ misspelled absolute bind is.
 | `agent.todos` | `row.task`, `row.blocked_on`, `row.actor` |
 | `slash.matches` | `row.name`, `row.category`, `row.description` |
 | `community.matches` | `row.id`, `row.name`, `row.version`, `row.manifest_url`, `row.description`, `row.preview`, `row.selected` |
+| `config.categories` | `row.name` |
+| `config.settings` | `row.label`, `row.enabled`, `row.value`, `row.is_toggle`, `row.is_text` |
 
 `community.matches` carries one row field, **`row.selected`**, that is not an
 element column: it is a boolean the engine synthesizes per row from
@@ -394,6 +398,21 @@ Refusals, each addressed with `file:line`:
   relative binds are template-only.
 - A `list` with a `row_template` whose own `bind` is a scalar, not an
   array-of-objects: refusal, because a scalar has no rows to instantiate over.
+
+`config.settings` carries **two** such synthesized fields, `row.is_toggle` and
+`row.is_text`, and they are the reason Scene 5 needs this idiom at all. The
+settings list mixes a `switch` row and an `input` row in one `row_template`, and
+which one a given row draws depends on the setting's `kind`. This engine's `when`
+is a bare truthiness test with no comparison operator, so the template cannot
+write `when: "row.kind == toggle"`; the projection answers that comparison once
+per row and exposes it as the two mutually exclusive booleans, and the template
+gates its `switch` on `when: "row.is_toggle"` and its `input` on
+`when: "row.is_text"` — the same shape `community.matches` uses for
+`when: "row.selected"`. `kind` is the source column and is deliberately **not**
+signed as a `row.*` field: a bare string would be dead here without an operator
+to compare it, exactly the argument that keeps `row.index` out of
+`community.matches`. `row.enabled` (the `switch`'s state) and `row.value` (the
+`input`'s text) are ordinary element columns.
 
 A field declared by the schema but absent or empty in a *particular* element is
 falsy and renders as the `"[…]"` placeholder (§4.6) — never a crash. Misspelled
