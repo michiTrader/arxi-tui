@@ -703,6 +703,29 @@ counterfactual test).
   documents), so the row_template gates two sibling nodes on projected booleans.
   That is a fold model + BINDS row-schema increment, not a primitive, and it is
   the remaining E5 work now that the primitive exists.
+- **slider node type — BUILT (PR #143).** The value half of the `switch`/`slider`
+  pair Q11 forced into v0 (SCENES.md Scene 5), and the last v0 base primitive to
+  graduate: with it, every node type in PLAN.md's v0 vocabulary is built.
+  `renderByType` dispatches `slider` to `renderSlider` (in `slider.go`), which
+  reads its scalar through the same `resolveBindRow` chokepoint every bound node
+  uses, draws a knob `●` on a `─` track clamped to `[0,1]` (`sliderTrack`, split
+  out pure like `sparkline`), and applies `styleName(n.Style)` so a declared token
+  and the focus glow both land — the button/switch family's own-style discipline.
+  A non-numeric bind draws verbatim rather than snapping the knob to zero, the
+  placeholder-not-crash rule (§I-G) `renderSparkline` also follows; `parseFraction`
+  is the scalar analogue of `parseSeries`, rejecting the `"[…]"` placeholder,
+  non-numeric text, NaN and infinities. Pinned by `slider_test.go` (track geometry
+  table, clamp both ends, parseFraction accept/reject, knob-tracks-bind, verbatim
+  fallback, label-before-track, focus glow); counterfactuals run both directions —
+  dropping the track-branch style fails the glow test, dropping the verbatim-branch
+  style fails the package own-style sweep (which now enumerates 15 types / 12
+  content-bearing), disabling the verbatim fallback fails the verbatim test, and
+  pinning the knob to cell 0 fails the geometry and knob-tracks-bind tests.
+  Because the documented-but-unbuilt population is now empty, the unknown-type
+  diagnostic (`unknown_type_names_itself_test.go`) was re-pointed off `slider` to
+  `gauge`/`guage` — a type from the open namespace vs a typo of one — since that
+  is the only source of unknown types left; the test's subject (the placeholder
+  must name the type and distinguish the two populations) is unchanged.
 - **E6 — DONE.** The `row_template` refusal left `unrenderedFields`; the
   `team.members` entry left `acceptedUnprojectedBinds`; the nested-branch,
   nested-owner, zero-value-key and composite-projection audits were reconciled.
