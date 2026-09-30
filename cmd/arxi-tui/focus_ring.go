@@ -39,34 +39,43 @@ import (
 func focusRing(doc *scene.Document, state fold.State, hidden map[string]bool) ([]string, error) {
 	var out []string
 	var walkErr error
-	var walk func(n *scene.Node)
-	walk = func(n *scene.Node) {
+	// inTemplate suppresses ordinary-id emission below the template boundary. A
+	// pressable node inside a row_template is a per-row target enumerated by
+	// RowPresses, not a static id; without this flag the static walk would add
+	// each template node's authored id a second time, once per document rather
+	// than once per row. The walk still descends the template subtree so this
+	// function stays a complete whole-document walker — the containment invariant
+	// every node walker in this codebase holds, checked by the scene package's
+	// nested-branch audit: a branch no walker recurses into is one where an
+	// unsigned bind is never refused.
+	var walk func(n *scene.Node, inTemplate bool)
+	walk = func(n *scene.Node, inTemplate bool) {
 		if n == nil || walkErr != nil {
 			return
 		}
 		if n.ID != "" && hidden[n.ID] {
 			return // the node and its subtree are hidden; skip both (D3)
 		}
-		// The node's own raw id is an ordinary target: a row_template container
-		// is a static node that may itself carry an on_press, distinct from the
-		// per-row targets its template instantiates below.
-		if n.OnPress != "" && n.ID != "" {
+		// The node's own raw id is an ordinary target only outside a template: a
+		// row_template container is a static node that may itself carry an
+		// on_press, distinct from the per-row targets its template instantiates.
+		if !inTemplate && n.OnPress != "" && n.ID != "" {
 			out = append(out, n.ID)
 		}
 		if p := n.PrefixNode(); p != nil {
-			walk(p)
+			walk(p, inTemplate)
 		}
 		if n.Suffix != nil {
-			walk(n.Suffix)
+			walk(n.Suffix, inTemplate)
 		}
 		for _, c := range n.Children {
-			walk(c)
+			walk(c, inTemplate)
 		}
-		// The template subtree is NOT walked as static ids: its pressable nodes
-		// are per-row, so they enter the ring through RowPresses as rowFocusKeys,
-		// row-major and in the document order the row is drawn. This is the walk
-		// pressableIDs left as a no-op placeholder, now that the pure halves exist.
 		if n.RowTemplate != nil {
+			// The pressable nodes of each instantiated row enter the ring through
+			// RowPresses as rowFocusKeys, row-major and in the document order the
+			// row is drawn — the emission the raw walk cannot do because the row
+			// scope is not known statically.
 			presses, err := engine.RowPresses(n, state)
 			if err != nil {
 				walkErr = err
@@ -75,10 +84,16 @@ func focusRing(doc *scene.Document, state fold.State, hidden map[string]bool) ([
 			for _, rp := range presses {
 				out = append(out, rowFocusKey(rp.NodeID, rp.RowIndex))
 			}
+			// Then descend the template subtree for containment, with emission
+			// suppressed: RowPresses already enumerated its pressable rows, so the
+			// static walk must not re-add their ids. This recursion is what keeps
+			// focusRing a complete walker rather than one that stops at the
+			// template boundary.
+			walk(n.RowTemplate, true)
 		}
 	}
 	if doc != nil {
-		walk(doc.Root)
+		walk(doc.Root, false)
 	}
 	if walkErr != nil {
 		return nil, walkErr
@@ -131,6 +146,12 @@ func rowPressOnPress(doc *scene.Document, state fold.State, nodeID string, rowIn
 					return
 				}
 			}
+			// Descend the template subtree after the match scan, for the same
+			// whole-document containment focusRing keeps: a walker that stops at
+			// the template boundary is a branch the nested-branch audit flags.
+			// RowPresses above already scanned this container's rows, so the
+			// recursion only reaches a template nested inside a row.
+			walk(n.RowTemplate)
 		}
 	}
 	if doc != nil {
