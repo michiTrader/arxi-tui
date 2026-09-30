@@ -1126,6 +1126,43 @@ counterfactual test).
     its expanded `OnPress` through `dispatchPress`, plus the focus-glow render
     path matching an instantiated row. All three pure halves
     (`ExpandRowInterpolation`, `RowPresses`, `rowFocusKey`) now sit beneath it.
+  - **H8 row-click focus wiring — BUILT (2026-09-29, PR #137).** The impure half
+    the three pure halves waited on, closing Block H's row-click work. Five
+    increments, each with its counterfactual run by hand. (1) `focusRing`
+    (`cmd/arxi-tui/focus_ring.go`) widens `pressableIDs` into the mixed Tab ring:
+    an ordinary node contributes its raw id, a `row_template` contributes one
+    `rowFocusKey` per pressable node of each instantiated row (via
+    `engine.RowPresses`) instead of its raw subtree ids, in document order and
+    row-major. A row whose on_press interpolates a field its scope lacks
+    propagates `RowPresses`' refusal rather than dropping the slot silently.
+    (2) `rowPressOnPress` recovers the already-expanded on_press for a decoded
+    `(node, row)`, the row-side twin of `findPressable`. Both walkers descend
+    `RowTemplate` for whole-document containment (the scene package's
+    nested-branch audit holds every non-type-dispatching `*scene.Node` walker in
+    the module to it); `focusRing` carries an `inTemplate` flag so the static
+    descent adds no per-row id a second time. `pressableIDs` was removed as
+    superseded. (3) `focusKey` now builds the ring from `focusRing` over the live
+    fold (rebuilt from the log at key time, so Tab and the frame agree on the
+    rows) and branches Enter on `parseRowFocusKey`: a row key dispatches
+    `rowPressOnPress`'s expanded action, a plain id resolves through
+    `findPressable` as before, and a stale row target (the array shrank under the
+    cursor) is reported and swallowed rather than submitted. (4) The engine glow:
+    `renderNode`'s glow step becomes `r.focusGlowed` — the free `withFocusGlow`
+    for a plain focused node plus the row case it cannot see, matching the
+    host-decoded `(FocusRowNode, FocusRowIndex)` against the node id and
+    `curRowIndex` (tracked beside `curRow` through `renderRowTemplate` and
+    `enterRowFrames`). The style rewrite is factored into `applyFocusGlow` so both
+    focus kinds honour every token spelling from one place. The pair are Renderer
+    inputs, not `fold.State`: `ui.focus` is host-owned view state and its row
+    encoding is the host's, so nothing moves until the host feeds them, and no
+    golden shifted. (5) The loop decodes the row-target `ui.focus` per repaint and
+    feeds the pair to the renderer. Counterfactuals run by hand: dropping the row
+    index in `focusRing` fails the interleave test; ignoring the index in
+    `rowPressOnPress` matches a stale row; swallowing the scope error returns a
+    ring anyway; disabling the Enter row branch drops the press; ignoring the
+    index in the glow lights every row; disabling the glow row branch lights none.
+    **Block H's row-click work is now complete** — the three pure halves and the
+    impure wiring (ring, dispatch, glow) all built.
 
 ### Block I — Phase 3: behavioral plugins (NDJSON subprocess) [H]
 

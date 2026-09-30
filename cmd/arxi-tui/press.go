@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/patch"
 	"github.com/michiTrader/arxi_tui/internal/scene"
 	"github.com/michiTrader/arxi_tui/internal/term"
@@ -23,57 +24,13 @@ import (
 // it every repaint. The engine already reads state.UIFocus for focus_glow, so a
 // moved cursor lights the glow with no new engine code.
 
-// pressableIDs returns the ids of nodes carrying an on_press action, in document
-// order — the Tab ring Q19 signs as "scene order". A node with no id is skipped
-// (ui.focus names an id, so an id-less node cannot be a focus target), and a
-// hidden node's whole subtree is skipped (ui.hidden, D3): focus must not land on
-// something not on screen.
-//
-// row_template subtrees ARE walked, for the whole-document containment
-// invariant every node walker in this codebase holds to (a branch no walker
-// visits is a branch where a bind is never refused). But a template node
-// contributes its raw id at most: a template is instantiated per element at
-// render time, and pressing an instantiated row (Scene 9's cmd:/agent
-// {row.id}) needs the per-element {row.field} interpolation the host does not
-// yet resolve — deferred with the rest of the row-click work E4 parked on H8.
-// So in practice a template rarely carries a focusable id today, and walking it
-// is a no-op for focus while keeping the walker complete.
-func pressableIDs(doc *scene.Document, hidden map[string]bool) []string {
-	var out []string
-	var walk func(n *scene.Node)
-	walk = func(n *scene.Node) {
-		if n == nil {
-			return
-		}
-		if n.ID != "" && hidden[n.ID] {
-			return // the node and its subtree are hidden; skip both
-		}
-		if n.OnPress != "" && n.ID != "" {
-			out = append(out, n.ID)
-		}
-		if p := n.PrefixNode(); p != nil {
-			walk(p)
-		}
-		if n.Suffix != nil {
-			walk(n.Suffix)
-		}
-		for _, c := range n.Children {
-			walk(c)
-		}
-		if n.RowTemplate != nil {
-			walk(n.RowTemplate)
-		}
-	}
-	if doc != nil {
-		walk(doc.Root)
-	}
-	return out
-}
-
 // findPressable returns the node with the given id if it carries an on_press,
-// searching the same subtree pressableIDs walks. It is what Enter-dispatch uses
-// to recover the focused button's action, and what a focus: target is resolved
-// against, so the two agree on what "a node in the scene" means.
+// searching the whole scene subtree focusRing walks. It is what Enter-dispatch
+// uses to recover a focused plain node's action, and what a focus: target is
+// resolved against, so the two agree on what "a pressable node in the scene"
+// means. A template-row target is not a plain id and is not resolved here: it
+// carries the NUL marker parseRowFocusKey decodes and is looked up in the
+// row-press enumeration instead (rowPressOnPress).
 func findPressable(doc *scene.Document, id string) *scene.Node {
 	if doc == nil || id == "" {
 		return nil
@@ -155,16 +112,51 @@ type pluginActionRouter interface {
 // with "/", Tab and Enter belong to the menu, so focusKey is never reached then.
 // Ctrl-C never reaches here either, so the escape hatch stays uncapturable
 // (invariant 6) whatever a button's action names.
-func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, notice *string, hidden map[string]bool, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) (bool, string, string) {
+func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fold.State, notice *string, hidden map[string]bool, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) (bool, string, string) {
 	switch {
 	case k.Type == term.KeyTab:
-		ids := pressableIDs(*doc, hidden)
+		ids, err := focusRing(*doc, state, hidden)
+		if err != nil {
+			// The ring cannot be built because a row_template's on_press
+			// interpolates a field its scope lacks (a scene/fold drift). Report
+			// it and swallow Tab rather than let it fall through and insert a tab
+			// character: the cursor cannot advance over a ring that does not
+			// resolve, and a silent no-op would hide the drift.
+			*notice = err.Error()
+			return true, input, uiFocus
+		}
 		if len(ids) == 0 {
 			return false, input, uiFocus // nothing pressable; Tab is not ours
 		}
 		forward := k.Mod&term.ModShift == 0
 		return true, input, advanceFocus(ids, uiFocus, forward)
 	case k.Type == term.KeyEnter && uiFocus != "":
+		// The cursor may name a plain node (a raw id) or one pressable node of one
+		// instantiated template row (a rowFocusKey). parseRowFocusKey is the
+		// discriminator: a key carrying the NUL marker is a row target resolved
+		// through the row-press enumeration, everything else a plain node resolved
+		// through findPressable. The two shapes share the dispatcher below; only
+		// how the on_press is recovered differs.
+		if nodeID, rowIndex, ok := parseRowFocusKey(uiFocus); ok {
+			onPress, found, err := rowPressOnPress(*doc, state, nodeID, rowIndex)
+			if err != nil {
+				*notice = err.Error()
+				return true, input, uiFocus
+			}
+			if !found {
+				// Focus names a row that is no longer instantiated — the array the
+				// template binds shrank under the cursor. Report and swallow rather
+				// than submit the buffer as a prompt: the user pressed Enter on a
+				// focused row, not on the input.
+				*notice = fmt.Sprintf("focus names row %d of %q, which is not in the current scene", rowIndex, nodeID)
+				return true, input, uiFocus
+			}
+			// onPress already has its {row.<field>} braces resolved (RowPresses'
+			// contract), so it dispatches exactly like a static node's action and
+			// the interpolation is never re-run.
+			newFocus := dispatchPress(onPress, uiFocus, doc, notice, hidden, fetch, applyTokens, actions, ctx, drv)
+			return true, "", newFocus
+		}
 		node := findPressable(*doc, uiFocus)
 		if node == nil || node.OnPress == "" {
 			// Focus points at a node that is not pressable (a focus: target that

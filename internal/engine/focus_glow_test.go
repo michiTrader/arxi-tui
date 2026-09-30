@@ -414,3 +414,55 @@ func TestFocusGlowNeverMatchesAnIdLessNode(t *testing.T) {
 		t.Errorf("with ui.focus=%q the id-less node renders under %q, want %q", "named", style, "text")
 	}
 }
+
+// TestFocusGlowLightsOneInstantiatedTemplateRow is the row axis of the glow: a
+// row_template's node carries one authored id shared by every instantiated row,
+// so ui.focus cannot name a single row by id alone. The host decodes its
+// rowFocusKey into the (FocusRowNode, FocusRowIndex) pair the Renderer carries,
+// and only the row at that index glows. This is the render half of the
+// row-click focus work — the pure resolvers (ExpandRowInterpolation, RowPresses,
+// rowFocusKey) and the host dispatch already land a press on the right row; this
+// is what shows the user which row that is.
+func TestFocusGlowLightsOneInstantiatedTemplateRow(t *testing.T) {
+	const src = `{"root":{"id":"list","type":"list","bind":"team.members",
+		"row_template":{"id":"go","type":"text","bind":"row.role","style":{"style":"text"},"focus_glow":{"style":"bright"}}}}`
+
+	doc, err := scene.ParseDocument([]byte(src))
+	if err != nil {
+		t.Fatalf("ParseDocument: %v", err)
+	}
+	if verr := doc.Validate(); verr != nil {
+		t.Fatalf("premise broken: the probe must validate clean; got %v", verr)
+	}
+
+	// Control: no row focused (the common case) leaves every row under its
+	// declared token, so the two assertions below cannot pass on a renderer that
+	// glows every instantiated row unconditionally.
+	unfocused := (&Renderer{Width: 40, Height: 10}).RenderFrame(doc, twoMemberState())
+	if s := styleOfText(unfocused, "backend"); s != "text" {
+		t.Errorf("with no row focused, row 0 renders under %q, want its declared %q; the glow marks a row nothing selected", s, "text")
+	}
+	if s := styleOfText(unfocused, "frontend"); s != "text" {
+		t.Errorf("with no row focused, row 1 renders under %q, want its declared %q", s, "text")
+	}
+
+	// Focus the second instantiated row (index 1 = the frontend member): it
+	// glows, the first row does not.
+	r := &Renderer{Width: 40, Height: 10, FocusRowNode: "go", FocusRowIndex: 1}
+	focused := r.RenderFrame(doc, twoMemberState())
+
+	if s := styleOfText(focused, "frontend"); s != "bright" {
+		t.Errorf("the focused row (node %q, index %d) renders under token %q, want %q from its focus_glow.\n"+
+			"consequence: pressing a row lands on it (the host dispatch works) but nothing shows the user\n"+
+			"which row is focused — a Tab ring with no visible cursor on its row targets.\n"+
+			"remedy: renderNode must resolve the row's style through focus_glow when the node id and the\n"+
+			"row being instantiated match FocusRowNode/FocusRowIndex.", "go", 1, s, "bright")
+	}
+	if s := styleOfText(focused, "backend"); s != "text" {
+		t.Errorf("row 0 renders under %q while row 1 is focused, want %q.\n"+
+			"consequence: the glow is keyed by the template node's shared id alone, so it lights every\n"+
+			"instantiated row at once — the id-repeats-across-rows ambiguity the (node, row) pair exists\n"+
+			"to resolve.\n"+
+			"remedy: the row index must be part of the match, not just the node id.", s, "text")
+	}
+}
