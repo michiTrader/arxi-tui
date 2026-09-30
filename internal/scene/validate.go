@@ -655,11 +655,13 @@ func (d *Document) validateOnPress(n *Node, path string, scope map[string]bool) 
 //
 // It also broke a rule the project signs elsewhere. PLAN.md's
 // forward-compatibility contract is "unknown-but-parseable is a warning", and
-// the engine honours it for node *types* — `button`, `switch`, `slider` and
-// `sparkline` are documented, unimplemented, and each draws
+// the engine honours it for node *types* — `button`, `switch` and
+// `slider` are documented, unimplemented, and each draws
 // [[UNKNOWN NODE TYPE]], so a v0 document keeps booting under v1 and the
-// screen says what it could not do. Properties had the opposite behaviour, and
-// the silent class was the one the documentation called universal.
+// screen says what it could not do. (`sparkline` graduated: it draws a plugin
+// `series` as block glyphs, so it renders rather than placeholding.) Properties
+// had the opposite behaviour, and the silent class was the one the
+// documentation called universal.
 //
 // `scroll` has since graduated (G2): its render semantics are signed (SCENES.md
 // Scene 4, G-B) and the host clock is signed (ADR-0005), so the engine draws it

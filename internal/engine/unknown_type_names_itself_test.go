@@ -48,10 +48,11 @@ func TestUnknownNodeTypeNamesTheTypeItCouldNotDraw(t *testing.T) {
 
 	t.Run("the type name appears in the frame", func(t *testing.T) {
 		// Four types, chosen to span the two populations the placeholder
-		// must stop conflating: `button` and `sparkline` are documented in
-		// SCENES.md and scheduled, `buton` and `sparklne` are what a typo
+		// must stop conflating: `button` and `slider` are documented in
+		// SCENES.md and scheduled (`sparkline` graduated to a real render, so
+		// it is no longer an unknown type), `buton` and `slidr` are what a typo
 		// of each looks like.
-		for _, typ := range []string{"button", "buton", "sparkline", "sparklne"} {
+		for _, typ := range []string{"button", "buton", "slider", "slidr"} {
 			got := render(t, `{"root":{"type":"stack","children":[{"id":"x","type":"`+typ+`"}]}}`)
 			if !strings.Contains(got, typ) {
 				t.Errorf("a node of type %q drew %q, which never names the type.\n"+
