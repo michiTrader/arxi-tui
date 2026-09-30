@@ -25,10 +25,14 @@ func twoMemberFold() fold.State {
 // node of each instantiated row, in document order and row-major within the
 // template. This is the whole point of the increment: a template's authored id
 // repeats across rows, so it must expand to one distinct ring slot per row, not
-// a single raw id that names all rows at once.
+// a single raw id that names all rows at once. A node with no id and a node with
+// no on_press are both skipped (ui.focus names an id; a non-pressable node is not
+// a target), so their absence from the ring is asserted here too.
 func TestFocusRingInterleavesPlainIDsAndPerRowKeys(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"stack","children":[
 	  {"id":"top","type":"text","text":"Top","on_press":"cmd:/top"},
+	  {"type":"text","text":"No id","on_press":"cmd:/nope"},
+	  {"id":"plain","type":"text","text":"Not pressable"},
 	  {"id":"list","type":"list","bind":"team.members",
 	   "row_template":{"id":"go","type":"text","bind":"row.role","on_press":"cmd:/agent {row.id}"}},
 	  {"id":"bottom","type":"text","text":"Bot","on_press":"cmd:/bottom"}

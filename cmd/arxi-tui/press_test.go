@@ -22,32 +22,6 @@ func pressDoc(t *testing.T, body string) *scene.Document {
 	return doc
 }
 
-// The Tab ring is the pressable nodes in document order (Q19 "scene order"). A
-// node with no id cannot be a focus target (ui.focus names an id), a node with
-// no on_press is not pressable, and a hidden node is skipped — so the order and
-// the membership are both asserted here, because getting either wrong sends Tab
-// to the wrong node or to none.
-func TestPressableIDsInSceneOrderSkippingHiddenAndIdless(t *testing.T) {
-	doc := pressDoc(t, `{"root":{"type":"stack","children":[
-	  {"id":"first","type":"text","text":"1","on_press":"cmd:/a"},
-	  {"type":"text","text":"no id","on_press":"cmd:/b"},
-	  {"id":"plain","type":"text","text":"not pressable"},
-	  {"id":"hidden","type":"text","text":"h","on_press":"cmd:/c"},
-	  {"id":"last","type":"text","text":"2","on_press":"cmd:/d"}
-	]}}`)
-
-	got := pressableIDs(doc, map[string]bool{"hidden": true})
-	want := []string{"first", "last"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Errorf("pressableIDs = %v, want %v.\n"+
-			"consequence: Tab would move focus to the wrong set of nodes — an id-less node cannot\n"+
-			"be focused (ui.focus names an id), a node with no on_press is not pressable, and a\n"+
-			"hidden node is not on screen. Any of those in the ring points Tab at a dead target.\n"+
-			"remedy: collect only nodes with both an id and an on_press, skipping hidden subtrees,\n"+
-			"in document order.", got, want)
-	}
-}
-
 // advanceFocus treats the empty string as the input's home slot: Tab from the
 // input lands on the first pressable node, Tab from the last returns to the
 // input, and Shift-Tab from the input wraps to the last. This is what keeps the
@@ -86,7 +60,7 @@ func TestFocusKeyTabMovesTheCursor(t *testing.T) {
 	]}}`)
 	notice := ""
 
-	handled, input, focus := focusKey(term.Key{Type: term.KeyTab}, "typed", "", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
+	handled, input, focus := focusKey(term.Key{Type: term.KeyTab}, "typed", "", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
 	if !handled {
 		t.Fatal("Tab was not handled, so it would fall through to typeKey and insert a literal tab into the buffer")
 	}
@@ -97,7 +71,7 @@ func TestFocusKeyTabMovesTheCursor(t *testing.T) {
 		t.Errorf("Tab from the input home moved focus to %q, want the first pressable node %q", focus, "one")
 	}
 
-	_, _, back := focusKey(term.Key{Type: term.KeyTab, Mod: term.ModShift}, "typed", "", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
+	_, _, back := focusKey(term.Key{Type: term.KeyTab, Mod: term.ModShift}, "typed", "", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
 	if back != "two" {
 		t.Errorf("Shift-Tab from the input home moved focus to %q, want the last pressable node %q", back, "two")
 	}
@@ -113,7 +87,7 @@ func TestFocusKeyEnterDispatchesFocusAction(t *testing.T) {
 	]}}`)
 	notice := ""
 
-	handled, input, focus := focusKey(term.Key{Type: term.KeyEnter}, "", "go", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
+	handled, input, focus := focusKey(term.Key{Type: term.KeyEnter}, "", "go", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
 	if !handled {
 		t.Fatal("Enter on a focused button was not handled, so the button cannot be pressed")
 	}
@@ -135,12 +109,88 @@ func TestFocusKeyEnterDispatchesCmdViaDriver(t *testing.T) {
 	notice := ""
 	drv := &testDriver{evCh: make(chan fold.Event, 4)}
 
-	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "", "run", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), drv)
+	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "", "run", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, context.Background(), drv)
 	if !handled {
 		t.Fatal("Enter on a cmd: button was not handled")
 	}
 	if len(drv.submitted) != 1 || drv.submitted[0] != "agent 5" {
 		t.Errorf("pressing cmd:/agent 5 submitted %v, want one prompt \"agent 5\" (leading slash stripped, as typeKey does)", drv.submitted)
+	}
+}
+
+// Tab builds the ring from the live fold, so a template's instantiated rows are
+// Tab targets: from the input home, Tab lands on the first pressable node, and
+// stepping through reaches the per-row focus keys the row-click work adds. This
+// is the wiring proof that focusKey consults focusRing (not the old static
+// pressableIDs) — a regression to the static walk would put the raw template id
+// in the ring instead of one slot per row.
+func TestFocusKeyTabRingIncludesTemplateRows(t *testing.T) {
+	doc := pressDoc(t, `{"root":{"type":"list","bind":"team.members",
+	  "row_template":{"id":"go","type":"text","bind":"row.role","on_press":"cmd:/agent {row.id}"}}}`)
+	notice := ""
+
+	// From the input home, Tab lands on row 0's target; a second Tab on row 1's.
+	tab := term.Key{Type: term.KeyTab}
+	_, _, first := focusKey(tab, "", "", &doc, twoMemberFold(), &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
+	if first != rowFocusKey("go", 0) {
+		t.Fatalf("Tab from the input home focused %q, want the row-0 key %q\n"+
+			"consequence: a template's instantiated rows are not in the ring, so Tab cannot reach a\n"+
+			"pressable row — the row-click work never becomes usable.\n"+
+			"remedy: focusKey must build the ring from focusRing over the live fold.", first, rowFocusKey("go", 0))
+	}
+	_, _, second := focusKey(tab, "", first, &doc, twoMemberFold(), &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
+	if second != rowFocusKey("go", 1) {
+		t.Fatalf("Tab from row 0 focused %q, want the row-1 key %q; the two rows are distinct ring slots", second, rowFocusKey("go", 1))
+	}
+}
+
+// Enter on a focused template row dispatches that row's expanded on_press, not
+// the template's verbatim {row.id}: focus names row 1, so the driver must see the
+// second member's command. This is the payoff of the whole row-click chain — the
+// pure halves resolve the action and the loop fires it against the pressed row.
+func TestFocusKeyEnterDispatchesRowPress(t *testing.T) {
+	doc := pressDoc(t, `{"root":{"type":"list","bind":"team.members",
+	  "row_template":{"id":"go","type":"text","bind":"row.role","on_press":"cmd:/agent {row.id}"}}}`)
+	notice := ""
+	drv := &testDriver{evCh: make(chan fold.Event, 4)}
+
+	handled, input, _ := focusKey(term.Key{Type: term.KeyEnter}, "", rowFocusKey("go", 1), &doc, twoMemberFold(), &notice, map[string]bool{}, nil, nil, nil, context.Background(), drv)
+	if !handled {
+		t.Fatal("Enter on a focused template row was not handled, so a row cannot be pressed")
+	}
+	if len(drv.submitted) != 1 || drv.submitted[0] != "agent fe" {
+		t.Errorf("pressing row 1 submitted %v, want one prompt \"agent fe\" (the row's {row.id} resolved to fe)\n"+
+			"consequence: pressing a row dispatches the wrong member's command, or the un-expanded\n"+
+			"{row.id} verbatim — the silent-wrong-frame this repo holds worse than an error.\n"+
+			"remedy: recover the (node,row) with parseRowFocusKey and dispatch rowPressOnPress's expanded action.", drv.submitted)
+	}
+	if input != "" {
+		t.Errorf("a row press left %q in the input buffer; a submitted action leaves no text", input)
+	}
+}
+
+// A focus key naming a row that is no longer instantiated (the array shrank under
+// the cursor) is reported and swallowed, never submitted as a prompt: the user
+// pressed Enter on a focused row, so the buffer must not be sent to the driver.
+func TestFocusKeyEnterOnStaleRowIsReportedNotSubmitted(t *testing.T) {
+	doc := pressDoc(t, `{"root":{"type":"list","bind":"team.members",
+	  "row_template":{"id":"go","type":"text","bind":"row.role","on_press":"cmd:/agent {row.id}"}}}`)
+	notice := ""
+	drv := &testDriver{evCh: make(chan fold.Event, 4)}
+
+	// row 5 does not exist in a two-member fold.
+	handled, _, focus := focusKey(term.Key{Type: term.KeyEnter}, "", rowFocusKey("go", 5), &doc, twoMemberFold(), &notice, map[string]bool{}, nil, nil, nil, context.Background(), drv)
+	if !handled {
+		t.Fatal("Enter on a stale row target fell through; it must be swallowed so the buffer is not submitted")
+	}
+	if len(drv.submitted) != 0 {
+		t.Errorf("a stale row press submitted %v to the driver; a row that no longer exists must dispatch nothing", drv.submitted)
+	}
+	if notice == "" {
+		t.Error("a stale row press was silent; the missing row must be reported so the drift is visible")
+	}
+	if focus != rowFocusKey("go", 5) {
+		t.Errorf("a stale row press moved focus to %q; it must leave the cursor where it was", focus)
 	}
 }
 
@@ -153,7 +203,7 @@ func TestFocusKeyEnterOnInputFallsThrough(t *testing.T) {
 	]}}`)
 	notice := ""
 
-	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "hello", "", &doc, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
+	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "hello", "", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, context.Background(), &testDriver{})
 	if handled {
 		t.Error("Enter was captured while the input held focus; it must fall through so typeKey submits the buffer")
 	}

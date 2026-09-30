@@ -1101,14 +1101,19 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// here, so the escape hatch stays uncapturable
 							// (invariant 6) no matter what the menu does.
 							input, caret, slashSel = slashMenuKey(input, caret, ev.Key, slashSel, ctx, drv)
-						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens, pluginActions, ctx, drv); handled {
+						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, pluginFetch, applyPluginTokens, pluginActions, ctx, drv); handled {
 							// H8 press routing: Tab/Shift-Tab move the ui.focus
-							// cursor over the pressable nodes, and Enter on a
-							// focused node dispatches its on_press. It sits after
-							// the slash branch so the menu keeps Tab/Enter while
-							// open, and returns handled=false for Enter while the
-							// input holds focus — so typeKey's submit below is
-							// untouched. Ctrl-C never reaches here (invariant 6).
+							// cursor over the pressable nodes (ordinary buttons and
+							// each instantiated template row), and Enter on a
+							// focused node dispatches its on_press. The fold is
+							// rebuilt from the log here because a template row's
+							// focus target and its {row.field} on_press resolve
+							// against the array the fold holds — the same state the
+							// repaint folds, so Tab and the frame agree on the rows.
+							// It sits after the slash branch so the menu keeps
+							// Tab/Enter while open, and returns handled=false for
+							// Enter while the input holds focus — so typeKey's submit
+							// below is untouched. Ctrl-C never reaches here (invariant 6).
 							input = nextInput
 							uiFocus = nextFocus
 							caret = clampCaret(input, caret)
