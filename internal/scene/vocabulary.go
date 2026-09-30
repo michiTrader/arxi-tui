@@ -35,6 +35,14 @@ import (
 // string nobody has ever typed before, because it was not looking at keys at
 // all.
 //
+// Five of the six have since graduated from parsed-and-warned to drawn: the
+// four Scene 4 props on the host clock (G1–G4), and now `shine` when Scene 11
+// gave it a Node field and a render step (withShine). `tab` remains the last
+// documented-but-undrawn key, so the warning above is now what a scene naming
+// it gets — an address, not a silent drop. This list stays as the measurement
+// it was: the argument for the vocabulary mechanism does not weaken because the
+// props it named later got readers.
+//
 // The worst case is not the documented gap, though. It is the typo:
 //
 //	{ "root": { "type": "stack", "chidlren": [ …two nodes… ] } }
@@ -222,6 +230,22 @@ func borderVocabulary() map[string]bool {
 func focusGlowVocabulary() map[string]bool {
 	vocab := make(map[string]bool)
 	t := reflect.TypeOf(FocusGlow{})
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != "" && name != "-" {
+			vocab[name] = true
+		}
+	}
+	return vocab
+}
+
+// shineVocabulary is focusGlowVocabulary for Scene 11's shine object. Derived
+// from the Shine struct for the same reason: the keys this guard accepts and
+// the keys the renderer reads are one list, so a misspelled shine key is
+// warned about rather than silently dropped.
+func shineVocabulary() map[string]bool {
+	vocab := make(map[string]bool)
+	t := reflect.TypeOf(Shine{})
 	for i := 0; i < t.NumField(); i++ {
 		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
 		if name != "" && name != "-" {
@@ -443,6 +467,17 @@ func (d *Document) collectWarnings(n *Node, path string, vocab map[string]bool, 
 		return fmt.Sprintf("the focus_glow of node type %q declares %q, which is not a "+
 			"focus_glow property this engine knows; it was ignored, so the node keeps its "+
 			"ordinary style when focused and the glow silently never happens", n.Type, key)
+	})
+
+	// The shine object (Scene 11). Same quiet failure as focus_glow: a
+	// misspelled key leaves the shine object present so the node still claims
+	// the emphasis, but the renderer reads nothing from the typo and the banner
+	// draws in its ordinary style — which reads as the shine not working rather
+	// than as a spelling mistake.
+	d.warnKeysOf(path+".shine", shineVocabulary(), out, func(key string) string {
+		return fmt.Sprintf("the shine of node type %q declares %q, which is not a shine "+
+			"property this engine knows; it was ignored, so the node keeps its ordinary "+
+			"style and the emphasis silently never happens", n.Type, key)
 	})
 
 	// The nested positions this node declares, checked against the owners

@@ -216,6 +216,42 @@ type Node struct {
 	// axis. It is a marker rather than a name convention because a
 	// name-based rule silently captures an unrelated field added later.
 	FocusGlow *FocusGlow `json:"focus_glow,omitempty" anim:"1"`
+
+	// Shine is Scene 11's animated emphasis, `{ "style": "<token>" }`: a
+	// highlight that a milestone banner wears and pulses while it is shown
+	// (SCENES.md Scene 11 composes box + shine + marquee). It graduated from a
+	// parsed-and-warned key — LESSONS.md records it drawing nothing — to a read
+	// struct here, so it needs a field for the render path to read and for the
+	// unrendered-field audit to hold to a reader.
+	//
+	// A struct rather than json.RawMessage, for FocusGlow's stated reason: the
+	// engine reads `{style}` now, so leaving it raw would parse the shape at the
+	// render site, and a shape parsed where it is used has no single definition.
+	// The shineVocabulary check is derived from the struct so the keys the guard
+	// accepts and the keys the renderer reads cannot drift.
+	//
+	// Deliberately NOT tagged `anim:"1"`. That tag is the marker for the
+	// progress audit's animation axis, which is keyed to the five properties
+	// SCENES.md's Scene 4 paragraph names; shine is a Scene 11 property, not one
+	// of those five, so tagging it would add it to that axis's rendered set
+	// while the Scene 4 document never lists it — an axis that measures the
+	// wrong denominator. shine is universal like focus_glow (any node may wear
+	// it), and its honouring is pinned by its own test rather than by that axis.
+	Shine *Shine `json:"shine,omitempty"`
+}
+
+// Shine is Scene 11's emphasis object, `{ "style": "<token>" }`. Its single
+// field mirrors FocusGlow, and for the same reason it is one named type: the
+// vocabulary check for `shine.*` is derived from this struct, so the keys the
+// guard accepts and the keys the renderer reads cannot drift apart.
+//
+// One field, deliberately. A cadence field (how fast it pulses) is the natural
+// second one, but the pulse is driven by the host clock the marquee already
+// rides (the AnimTicks the renderer reads), not by a per-node number the scene
+// sets — so the shape stays `{style}` and the motion is the host's, exactly as
+// scroll's speed is the only thing the scene says about marquee motion.
+type Shine struct {
+	Style string `json:"style"`
 }
 
 // declaredUnrenderedFields returns the json names of the fields this node
