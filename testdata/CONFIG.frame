@@ -1,0 +1,24 @@
+Δr×i v0.1.0 · config
+General
+Privacy
+Telemetry                                                       [ ]             
+Auto-update                                                     [x]             
+Editor                                                          nvim            
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+values: defaults ← ~/.arxi/config.toml ← --flags (last wins)
+↑↓ move · space toggle · enter edit · esc back

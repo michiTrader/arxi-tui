@@ -148,6 +148,21 @@ func nestedStyleState() fold.State {
 		{ID: "timer", Name: "Focus Timer", Version: "1.2.0", ManifestURL: "https://example.com/f/m.json", Description: "A pomodoro countdown overlay.", Preview: "# Timer"},
 	}
 	s.CommunitySelected = 0
+	// CONFIG's two lists reach their row_templates through config.categories and
+	// config.settings, the same shape the four lists above have: an empty list
+	// renders zero rows and the row_template candidate would be reported undrawn —
+	// the false alarm this state exists to prevent — instead of swept. The
+	// settings list carries both a toggle and a text row so its row_template's
+	// switch and input branches are each exercised, not only whichever kind a
+	// single row would have picked.
+	s.ConfigCategories = []fold.ConfigCategory{
+		{Name: "General"},
+		{Name: "Privacy"},
+	}
+	s.ConfigSettings = []fold.ConfigSetting{
+		{Label: "Telemetry", Kind: "toggle", Enabled: false},
+		{Label: "Editor", Kind: "text", Value: "nvim"},
+	}
 	return s
 }
 

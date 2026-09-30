@@ -1,0 +1,23 @@
+{ "root": { "type": "stack", "children": [
+  { "type": "text", "style": {"style": "header"},
+    "text": "Δr×i v0.1.0 · config" },
+
+  { "id": "notice", "type": "text", "bind": "host.scene.error",
+    "when": "host.scene.error", "style": {"style": "banner"} },
+
+  { "id": "categories", "type": "list", "bind": "config.categories",
+    "row_template": { "type": "text", "bind": "row.name", "style": {"style": "header"} } },
+
+  { "id": "settings", "type": "list", "bind": "config.settings", "grow": 1,
+    "row_template": { "type": "row", "children": [
+      { "type": "text", "bind": "row.label", "weight": 4 },
+      { "type": "switch", "bind": "row.enabled", "when": "row.is_toggle", "weight": 1 },
+      { "type": "input", "bind": "row.value", "when": "row.is_text", "weight": 1 }
+    ]}},
+
+  { "id": "provenance", "type": "text", "style": {"style": "dim"},
+    "text": "values: defaults ← ~/.arxi/config.toml ← --flags (last wins)" },
+
+  { "id": "footer", "type": "text", "style": {"style": "dim"},
+    "text": "↑↓ move · space toggle · enter edit · esc back" }
+]}}
