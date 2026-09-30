@@ -1,7 +1,11 @@
 package engine
 
 import (
+	"strings"
 	"testing"
+
+	"github.com/michiTrader/arxi_tui/internal/fold"
+	"github.com/michiTrader/arxi_tui/internal/scene"
 )
 
 // TestParseSeriesAcceptsNumericArraysAndRejectsEverythingElse pins the boundary
@@ -153,5 +157,49 @@ func TestSparklineEmptyInputsDrawNothing(t *testing.T) {
 	}
 	if got := sparkline([]float64{1, 2, 3}, 0); got != "" {
 		t.Errorf("sparkline(width 0) = %q, want empty.", got)
+	}
+}
+
+// TestRenderSparklineDrawsAResolvedSeriesUnderItsToken is the end-to-end render
+// half the pure tests above cannot reach: a sparkline node bound to a plugin's
+// `series` field resolves through the same PluginValues snapshot every bound
+// node uses (I3), parses the store's compact-JSON projection, and draws glyphs
+// wearing the node's style token. Without this a golden could pass while the
+// resolver→parse→render seam was broken, since the pure sparkline() never sees
+// a bind and the glyph math never sees a token.
+func TestRenderSparklineDrawsAResolvedSeriesUnderItsToken(t *testing.T) {
+	node := &scene.Node{Type: "sparkline", Bind: "tick.series", Style: map[string]string{"style": "bright"}}
+	r := &Renderer{Width: 80, Height: 4, PluginValues: map[string]string{"tick.series": "[1,4,2,8,5]"}}
+	f := r.renderNode(node, fold.State{}, 4)
+
+	text := f.Live[0].Text()
+	if !strings.ContainsAny(text, string(sparkLevels)) {
+		t.Fatalf("a sparkline bound to a published series drew %q, which contains no block glyph.\n"+
+			"consequence: a plugin's series never reaches the chart — the resolver, the parse, or the\n"+
+			"glyph mapping dropped it, and a mounted plugin's numeric stream is invisible.", text)
+	}
+	if got := styleOfText(f, text); got != "bright" {
+		t.Errorf("the sparkline glyphs drew under style %q, want %q.\n"+
+			"consequence: a sparkline ignores its declared token, so a theme cannot colour it and a\n"+
+			"focus glow (which swaps the token before dispatch) never reaches it.", got, "bright")
+	}
+}
+
+// TestRenderSparklineWithNoValueDrawsThePlaceholder is the §I-G waiting state: a
+// sparkline whose series has not resolved (no plugin mounted yet) draws the
+// honest "[…]" placeholder verbatim, not an empty or zeroed chart, so "waiting"
+// stays visible rather than reading as a real flat line.
+func TestRenderSparklineWithNoValueDrawsThePlaceholder(t *testing.T) {
+	node := &scene.Node{Type: "sparkline", Bind: "tick.series"}
+	r := &Renderer{Width: 80, Height: 4}
+	f := r.renderNode(node, fold.State{}, 4)
+	text := f.Live[0].Text()
+	if !strings.Contains(text, placeholderValue) {
+		t.Errorf("an unresolved sparkline drew %q, want the placeholder %q.\n"+
+			"consequence: a not-yet-published series draws a chart of nothing that reads as real data\n"+
+			"at zero, instead of the placeholder that says the value has not arrived.", text, placeholderValue)
+	}
+	if strings.ContainsAny(text, string(sparkLevels)) {
+		t.Errorf("an unresolved sparkline drew a block glyph in %q; the placeholder must not be charted.", text)
 	}
 }
