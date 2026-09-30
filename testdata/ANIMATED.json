@@ -1,0 +1,23 @@
+{ "root": { "id": "root", "type": "stack", "children": [
+  { "id": "header", "type": "text", "style": {"style": "header"},
+    "text": "\u0394r\u00d7i v0.1.0 \u00b7 session" },
+
+  { "id": "notice", "type": "text", "bind": "host.scene.error",
+    "when": "host.scene.error", "style": {"style": "banner"} },
+
+  { "id": "milestone", "type": "box", "border": "double", "title": "milestone",
+    "when": "session.new_milestone",
+    "shine": { "style": "banner" },
+    "on_press": "cmd:/dismiss",
+    "children": [
+      { "id": "banner", "type": "marquee",
+        "text": "a new milestone \u00b7 the stage advanced \u00b7 press to dismiss",
+        "scroll": { "speed": 2 },
+        "style": { "style": "header" } }
+    ]},
+
+  { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+
+  { "id": "footer", "type": "text", "style": {"style": "dim"},
+    "text": "the banner appears on a milestone and clears on the next event \u00b7 press to dismiss" }
+]}}

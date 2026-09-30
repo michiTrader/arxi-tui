@@ -163,6 +163,14 @@ func nestedStyleState() fold.State {
 		{Label: "Telemetry", Kind: "toggle", Enabled: false},
 		{Label: "Editor", Kind: "text", Value: "nvim"},
 	}
+	// ANIMATED's milestone banner is a box gated on session.new_milestone whose
+	// marquee child is reached through the box's children branch: an unset pulse
+	// hides the box, its nested marquee never draws, and the candidate would be
+	// reported undrawn — the same false alarm the seeds above prevent — instead
+	// of swept for its own token. Set directly rather than folded because this
+	// helper builds one State for every shipped scene; deriveNewMilestone's own
+	// contract is pinned by animated_test.go, not here.
+	s.NewMilestone = true
 	return s
 }
 
