@@ -47,6 +47,10 @@ type serveDriver struct {
 	// runStarter interface, not *driver.NDJSONDriver, so serveDriver's
 	// sequencing is testable against a fake; the real driver satisfies it.
 	rs runStarter
+	// inbox is the decision-verb subset of the same NDJSON driver rs is, used to
+	// answer inbox items (inboxDecider). It is a separate narrow seam so the
+	// run-id plumbing is testable against a fake without the run.start machinery.
+	inbox inboxSubmitter
 	// closer tears down the subprocess (kill + reap). It is a func rather than
 	// the *exec.Cmd so the test constructs a serveDriver with no process.
 	closer func() error
@@ -192,10 +196,80 @@ func (d *serveDriver) Close() error {
 	return d.closer()
 }
 
+// inboxSubmitter is the subset of the NDJSON driver serveDriver needs to answer
+// inbox items: the three decision verbs (M4, PRs #132/#133). It is a narrow seam
+// rather than *driver.NDJSONDriver so serveDriver's run-id plumbing is testable
+// against a fake, the same reason rs is a runStarter and not the concrete driver.
+type inboxSubmitter interface {
+	SubmitInboxApprove(ctx context.Context, p driver.InboxApproveParams) (*driver.DecisionResult, error)
+	SubmitInboxReject(ctx context.Context, p driver.InboxRejectParams) (*driver.DecisionResult, error)
+	SubmitInboxReply(ctx context.Context, p driver.InboxReplyParams) (*driver.DecisionResult, error)
+}
+
+// currentRunID returns the id of the run the driver is following and false when
+// no run is active. It is distinct from runID(), which falls back to "last" for
+// a log-path derivation: a decision must address the run its item belongs to, and
+// "last" is a guess that would send inbox.approve at whatever run that name
+// resolves to. An answer with no active run is "nothing to answer", not a
+// decision routed to a fallback run — the wrong-run failure this project holds
+// worse than a loud refusal (the same reasoning inboxItemID applies to an empty
+// item id).
+func (d *serveDriver) currentRunID() (string, bool) {
+	d.mu.Lock()
+	logPath := d.logPath
+	d.mu.Unlock()
+	if logPath == "" {
+		return "", false
+	}
+	return runIDFromLogPath(logPath), true
+}
+
+// ApproveInboxItem answers a pending approval item on the run the driver is
+// following. It is serveDriver's half of the inboxDecider capability: the host
+// names only the item (inboxItemID sourced it from the blocked_ref), and the
+// driver supplies the run — the run is the one it is following, never in question
+// at the press. A press with no active run is refused here rather than routed to
+// the "last" fallback.
+func (d *serveDriver) ApproveInboxItem(ctx context.Context, itemID string) error {
+	runID, ok := d.currentRunID()
+	if !ok {
+		return fmt.Errorf("cmd/arxi-tui/serve_driver.go: cannot approve item %q: no run is being followed, so there is no run the decision belongs to", itemID)
+	}
+	_, err := d.inbox.SubmitInboxApprove(ctx, driver.InboxApproveParams{RunID: runID, ItemID: itemID})
+	return err
+}
+
+// RejectInboxItem answers a pending approval item with a rejection, optionally
+// carrying the operator's reason. The reason is passed through to the driver,
+// which omits it on the wire when empty (an unset reason records nothing).
+func (d *serveDriver) RejectInboxItem(ctx context.Context, itemID, reason string) error {
+	runID, ok := d.currentRunID()
+	if !ok {
+		return fmt.Errorf("cmd/arxi-tui/serve_driver.go: cannot reject item %q: no run is being followed, so there is no run the decision belongs to", itemID)
+	}
+	_, err := d.inbox.SubmitInboxReject(ctx, driver.InboxRejectParams{RunID: runID, ItemID: itemID, Reason: reason})
+	return err
+}
+
+// ReplyInboxItem answers a pending question item with the operator's free text.
+// Unlike a reject's reason the text is always sent (it is the substance of the
+// answer, not metadata about the act), a distinction the driver's InboxReplyParams
+// carries on the wire.
+func (d *serveDriver) ReplyInboxItem(ctx context.Context, itemID, text string) error {
+	runID, ok := d.currentRunID()
+	if !ok {
+		return fmt.Errorf("cmd/arxi-tui/serve_driver.go: cannot reply to item %q: no run is being followed, so there is no run the decision belongs to", itemID)
+	}
+	_, err := d.inbox.SubmitInboxReply(ctx, driver.InboxReplyParams{RunID: runID, ItemID: itemID, Text: text})
+	return err
+}
+
 // compile-time assertions: *driver.NDJSONDriver satisfies runStarter (so
 // openServeDriver passes the real driver through unchanged), and serveDriver
 // satisfies Driver (so the loop never knows which path it is on).
 var (
-	_ runStarter = (*driver.NDJSONDriver)(nil)
-	_ Driver     = (*serveDriver)(nil)
+	_ runStarter     = (*driver.NDJSONDriver)(nil)
+	_ inboxSubmitter = (*driver.NDJSONDriver)(nil)
+	_ Driver         = (*serveDriver)(nil)
+	_ inboxDecider   = (*serveDriver)(nil)
 )
