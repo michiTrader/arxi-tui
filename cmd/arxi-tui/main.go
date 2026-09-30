@@ -755,6 +755,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		w, h := tty.Size()
 		r.Width, r.Height = w, h
 
+		// Decode a row-target ui.focus into the (node, row) pair the engine lights
+		// an instantiated template row by (H8 row-click). A plain focused node
+		// glows through state.UIFocus, but a row_template's authored id repeats
+		// across every instantiated row, so a row cursor cannot be named by id
+		// alone; the host owns the rowFocusKey encoding and hands the engine the
+		// decoded pair. A focus that is not a row key decodes to ok=false and
+		// leaves FocusRowNode empty, which lights no row and moves no golden.
+		if node, row, ok := parseRowFocusKey(uiFocus); ok {
+			r.FocusRowNode, r.FocusRowIndex = node, row
+		}
+
 		// A mounted behavioral plugin's frames drain into pluginStore from the pump
 		// goroutine (I3 DrainInto); this is where they reach the walk. The snapshot
 		// is a fresh copy taken under the store's lock, so the render reads a stable
