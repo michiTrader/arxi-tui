@@ -444,10 +444,21 @@ time, which is the remaining half of the row-click work parked here.
 
 ## Scene 10 — DASHBOARD (2×2 with click-to-maximize)
 
-No `grid` primitive was needed: nested `row`/`stack` with `weight`, per-pane
-`when: ui.max==''`, `on_press: "cmd:/max <pane>"`. Decided: Q21 `ui.*` is the
-host-owned interface state (focus, maximized pane, current surface); scenes
-read it with `when` and write it only through registered commands.
+No `grid` primitive was needed: nested `row` (horizontal `weight`) and `stack`
+(vertical `grow`) tile four panes 2×2, each with `on_press: "cmd:/max <pane>"`.
+Decided: Q21 `ui.*` is the host-owned interface state (focus, maximized pane,
+current surface); scenes read it with `when` and write it only through
+registered commands.
+
+The sketch wrote `when: ui.max==''`, but this engine's `when` has no comparison
+operator (the decision `config.settings`, `community.matches` and
+`status.active` all live under). So the comparison is signed as two derived host
+binds instead (BINDS.md §4.3, DESIGN-SCENE-10-DASHBOARD.md): the grid gates on
+`ui.max.none` (truthy when nothing is maximized, the inversion `status.active`
+uses) and each maximized pane gates on the family `ui.max.is.<id>` (truthy when
+`ui.max` equals that pane, the `ui.plugin.<id>` shape). Both resolve from the one
+`ui.max`/`UIMax` field, so there is one source of truth and no operator added to
+the predicate language.
 
 ## Scene 11 — ANIMATED, INTERACTIVE BANNER
 
