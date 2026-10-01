@@ -2354,13 +2354,31 @@ counterfactual test).
 
 ### Block L — Distribution and install
 
-Nothing here exists yet (audit correction: no `install.sh`, no CI, no
-per-platform build tooling). All aspirational in `docs/PLAN.md:107`.
+The install rule's deliverable now ships (PR #151, commits `5a1488b` +
+`49d4665`): a `-version`-stamped binary, a cross-compile matrix, a user-facing
+`install.sh`, and a tag-triggered release workflow. L1–L5 all DONE.
 
-- **L1** `install.sh` in the repo, served from the release host.
-- **L2** Per-platform static builds (`CGO_ENABLED=0`): linux, macos, windows,
-  android-arm64 (Termux).
-- **L3** [L2] GitHub Releases publication + artifact wiring.
+- **L1 — DONE.** `install.sh` at the repo root: POSIX sh (runs under Termux and
+  stock macOS `/bin/sh` — no arrays, no `[[ ]]`, no `local`), detects the
+  platform (Termux by its own env, not `uname`), resolves `latest` from the
+  `releases/latest` redirect or a pinned `ARXI_VERSION`, downloads the matching
+  artifact beside `SHA256SUMS`, **verifies the checksum before installing**
+  (a tampered or truncated download is refused), and drops the binary on a
+  writable user bin (`$PREFIX/bin` on Termux, else `~/.local/bin`).
+- **L2 — DONE.** `scripts/build-release.sh` cross-compiles one
+  `CGO_ENABLED=0 -trimpath -ldflags "-s -w -X main.version=…"` static binary per
+  target — `linux/{amd64,arm64}`, `darwin/{amd64,arm64}`, `windows/amd64`,
+  `android/arm64` (labelled `termux`) — and writes `dist/SHA256SUMS` over the
+  artifacts explicitly (never hashing itself on a re-run). The version defaults
+  to `git describe --tags --always --dirty`, so a local run is labelled honestly
+  and a tagged CI run is the clean tag; `arxi-tui -version` prints it. Verified
+  this session: all six targets build CGO-free and the native build prints its
+  stamp. The target labels in `build-release.sh` and `install.sh` are a single
+  contract — a mismatch is a 404, so they move together.
+- **L3 — DONE.** `.github/workflows/release.yml` runs the same
+  `build-release.sh` on a `v*` tag and uploads `dist/*` (binaries + SHA256SUMS)
+  to the GitHub Release, so `install.sh` has something to fetch — one source of
+  truth for the matrix and the `-ldflags` version stamp.
 - **L4 — DONE (correct-the-claim).** The OSC 11 claim (correction 3) is
   resolved by correcting the docs/comments to the relative dim/bright SGR
   mechanism that ships: `README.md`, `cmd/arxi-tui/main.go`, `docs/TOKENS.md`,
