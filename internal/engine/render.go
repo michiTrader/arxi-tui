@@ -2097,6 +2097,20 @@ func selectedCommunityMatch(state fold.State) fold.CommunityMatch {
 }
 
 func resolveBind(bind string, state fold.State) string {
+	// The ui.max.is.<id> family (BINDS.md §4.3, signed as scene.MaxIsBindPrefix):
+	// truthy exactly when the maximized pane is the one the suffix names. It is
+	// handled before the switch because the suffix is open — any pane id — so no
+	// finite set of cases could enumerate it, the ui.plugin.<id> shape. Concrete
+	// "true"/"false" rather than the placeholder for the same reason ui.max.none
+	// gives: a gate that fell through to the falsy placeholder would be correct by
+	// accident here (no pane matches), but a maximized pane whose gate read the
+	// placeholder when it SHOULD match would silently never draw.
+	if pane, ok := strings.CutPrefix(bind, scene.MaxIsBindPrefix); ok && pane != "" {
+		if state.UIMax == pane {
+			return "true"
+		}
+		return "false"
+	}
 	switch bind {
 	case "chat.history":
 		return state.ChatHistoryMarkdown()
@@ -2230,6 +2244,16 @@ func resolveBind(bind string, state fold.State) string {
 		return state.UIFocus
 	case "ui.max":
 		return state.UIMax
+	case "ui.max.none":
+		// The grid's gate (Scene 10): truthy exactly when no pane is maximized.
+		// It returns concrete "true"/"false" rather than falling through to the
+		// placeholder, because the placeholder is falsy and would hide the grid
+		// the one time it must show — the boot state, nothing maximized. This is
+		// the inversion `when` cannot write, the status.active shape.
+		if state.UIMax == "" {
+			return "true"
+		}
+		return "false"
 	case "ui.surface":
 		return state.UISurface
 
