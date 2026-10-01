@@ -1,0 +1,51 @@
+# Release — cut the static binaries the install rule promises.
+#
+# docs/PLAN.md's install rule says the user installs arxi, not arxi's
+# dependencies: one CGO_ENABLED=0 static binary per platform, published to a
+# GitHub Release, fetched and checksum-verified by install.sh. This workflow is
+# the publishing half. It fires on a version tag, runs the same
+# scripts/build-release.sh a developer runs locally (one source of truth for the
+# target matrix and the ldflags stamp), and uploads dist/* — every artifact plus
+# SHA256SUMS — to the release install.sh downloads from.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# Least privilege: the only write this job needs is to create/attach the
+# release. Nothing else in the token's default scope is required.
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # build-release.sh defaults its version to `git describe --tags`, so
+          # the tags must be present; fetch-depth 0 brings the full tag history
+          # rather than the shallow default.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          # Same pin as ci.yml: the toolchain go.mod requires, not a floating
+          # version that could change the output without a commit.
+          go-version: "1.25.0"
+
+      # The tag that triggered this run is the version stamped into every
+      # binary, so a user's `arxi-tui -version` prints exactly the release they
+      # installed. Passing it explicitly beats git-describe here because the
+      # checkout is a detached tag and we want the clean tag, not a -0-g suffix.
+      - name: Build release artifacts
+        run: scripts/build-release.sh "${GITHUB_REF_NAME}"
+
+      # The whole dist/ tree — six platform binaries and the SHA256SUMS install.sh
+      # verifies against — becomes the release's downloadable assets.
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
