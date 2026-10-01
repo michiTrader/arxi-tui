@@ -127,6 +127,14 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
       "when": "status.active" } ] }
 ]}}`
 
+// version is the build's version string, stamped by the release build
+// (scripts/build-release.sh) through -ldflags "-X main.version=…". It defaults
+// to "dev" for a plain `go build`/`go install`, so an un-stamped binary says so
+// honestly rather than claiming a release it is not. The install rule
+// (docs/PLAN.md) ships one static binary per platform; `arxi-tui -version` is how
+// a user and a bug report name which one they are running.
+var version = "dev"
+
 func main() {
 	// -scene names the document to boot. Its default is the shipped SOBRIA
 	// scene; a path lets a user (or a tester) boot any document —
@@ -141,7 +149,12 @@ func main() {
 	// argument (a flag-parse error); a boolean has no argument to strip, so the
 	// escape hatch works from every shell.
 	raw := flag.Bool("raw", false, `boot the factory raw scene (the start-time escape hatch)`)
+	showVersion := flag.Bool("version", false, `print the build version and exit`)
 	flag.Parse()
+	if *showVersion {
+		fmt.Println(version)
+		return
+	}
 	scenePath0 := *scenePath
 	if *raw {
 		scenePath0 = ""

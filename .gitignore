@@ -9,3 +9,11 @@
 # editor/build backup the exact-path patterns did not match — get committed as a
 # 4.9 MB tracked binary, the precise failure this comment warns about.
 /bin/
+# Release artifacts from scripts/build-release.sh. Same reason as the binary
+# above: cross-compiled output rewritten on every release build, never a source
+# of truth, so it is produced into dist/ and published to GitHub Releases rather
+# than committed.
+/dist/
+# Local agent coordination state (writer lock + append-only log). Per-machine
+# runtime scratch, never a source of truth, so it stays out of the repo.
+/.arxi/
