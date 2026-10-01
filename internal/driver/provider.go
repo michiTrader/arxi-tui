@@ -210,4 +210,3 @@ func (d *NDJSONDriver) SubmitModelEnable(ctx context.Context, ref string, on boo
 	}
 	return &result, nil
 }
-
