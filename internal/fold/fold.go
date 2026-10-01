@@ -1405,6 +1405,16 @@ var Commands = []SlashMatch{
 	// import would be a cycle, and a fold that imported the patch surface
 	// would stop being the pure host-owned fold ADR-0002 requires.
 	{"ui", "General", "Mutate the scene and its view state (add, move, set, style, hide, show, plugin)"},
+	// The provider/model management commands (K2). They are host-intercepted
+	// round-trips over the serve protocol, not patch verbs, so they are NOT held
+	// to patch.Verbs() the way `ui` is -- their subcommands are backed by the
+	// dispatchProviderCmd handler in the host, and the menu names them so a user
+	// discovers the TUI can manage providers without reading the source. The
+	// subcommands in parentheses are the real ones the parsers accept; keeping
+	// them honest is the same accepted-but-not-drawn discipline the `ui` entry
+	// documents, one layer out in the chrome.
+	{"provider", "Providers", "Manage model providers (add, list)"},
+	{"model", "Providers", "Manage models under a provider (list, enable, disable)"},
 }
 
 // FilterSlashMatches returns the commands matching the typed substring after

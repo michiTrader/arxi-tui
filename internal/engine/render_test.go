@@ -423,7 +423,7 @@ func TestSlashMenuListRendersHeaderColumnsAndSelection(t *testing.T) {
 	styled := f.Styled()
 
 	// The header is the count line, dim like the rest of the chrome.
-	if !strings.Contains(got, "Commands 5 · type to filter") {
+	if !strings.Contains(got, "Commands 7 · type to filter") {
 		t.Errorf("menu header missing; got:\n%s", got)
 	}
 
@@ -453,10 +453,16 @@ func TestSlashMenuListRendersHeaderColumnsAndSelection(t *testing.T) {
 		}
 	}
 
-	// The description column starts two past the longest name in the set, so
-	// descriptions line up without a global width nobody asked for.
-	if !strings.Contains(got, "surface  Switch active surface") {
-		t.Errorf("description column is not two past the longest name; got:\n%s", got)
+	// The description column starts two past the longest name in the set, which
+	// is now "provider" (8) rather than "surface" (7): the longest name is
+	// followed by exactly two spaces, and every shorter name is padded to the
+	// same column, so descriptions line up without a global width nobody asked
+	// for.
+	if !strings.Contains(got, "provider  Manage model providers") {
+		t.Errorf("the longest name is not two past its description; got:\n%s", got)
+	}
+	if !strings.Contains(got, "surface   Switch active surface") {
+		t.Errorf("a shorter name is not padded to the longest name's column; got:\n%s", got)
 	}
 }
 
@@ -475,8 +481,8 @@ func TestSlashMenuSelectionClampsToMatches(t *testing.T) {
 		t.Fatalf("ParseDocument: %v", err)
 	}
 	styled := r.RenderFrame(doc, state).Styled()
-	if !strings.Contains(styled, "«text:ui»") {
-		t.Errorf("stale selection did not clamp to the last row ('ui'); styled output:\n%s", styled)
+	if !strings.Contains(styled, "«text:model»") {
+		t.Errorf("stale selection did not clamp to the last row ('model'); styled output:\n%s", styled)
 	}
 }
 
@@ -506,12 +512,13 @@ func TestSlashMenuRowsAreDimExceptSelection(t *testing.T) {
 	styled := f.Styled()
 
 	// The header line carries the count, not a command — it is dim chrome.
-	if !strings.Contains(styled, "«dim:Commands 5") {
+	if !strings.Contains(styled, "«dim:Commands 7") {
 		t.Errorf("header is not dim; the count line is chrome and must not shout:\n%s", styled)
 	}
 
-	// Every command row except the selection is dim.
-	for _, name := range []string{"help", "max", "surface", "ui"} {
+	// Every command row except the selection is dim, including the two Providers
+	// rows added for the K2 provider/model commands.
+	for _, name := range []string{"help", "max", "surface", "ui", "provider", "model"} {
 		if !strings.Contains(styled, "«dim:"+name+"»") {
 			t.Errorf("unselected row %q is not dim; styled output:\n%s", name, styled)
 		}
