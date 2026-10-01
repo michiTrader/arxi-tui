@@ -116,12 +116,66 @@ func TestSignedInventoryMatchesDocument(t *testing.T) {
 // all of them, not a subset: MAXIMUM.json was previously absent from the
 // validation test, so the richest scene — the only one binding agent.todos and
 // session.tokens_used — was the one scene never checked against the inventory.
-var goldenScenes = []string{"RAW.json", "SOBRIA.json", "MAXIMUM.json"}
+var goldenScenes = []string{"RAW.json", "SOBRIA.json", "MAXIMUM.json", "DASHBOARD.json"}
+
+// signedFamilyPrefixesFromDocument parses docs/BINDS.md and returns the fixed
+// prefixes of its *parameterized* bind rows whose parameter trails a fixed host
+// prefix — `ui.plugin.<id>` and `ui.max.is.<id>` (§4.3). signedRowsFromDocument
+// deliberately skips every `<…>` row because the parameter is a runtime id the
+// exact-match inventory cannot enumerate; but a golden that uses a family member
+// (`ui.max.is.chat`) must still be recognised as signed, so the forward audit
+// checks the member against these prefixes. A leading-parameter row
+// (`<plugin-id>.*`) is excluded: its namespace is owned by the plugin scope, not
+// a host prefix, and is validated through that path rather than this one.
+func signedFamilyPrefixesFromDocument(t *testing.T) []string {
+	t.Helper()
+	path := filepath.Join("..", "..", "docs", "BINDS.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	var prefixes []string
+	for _, line := range strings.Split(string(data), "\n") {
+		m := bindRowPattern.FindStringSubmatch(line)
+		if m == nil {
+			continue
+		}
+		name := m[1]
+		lt := strings.Index(name, "<")
+		if lt <= 0 { // not parameterized, or a leading-parameter plugin namespace
+			continue
+		}
+		prefixes = append(prefixes, name[:lt])
+	}
+	return prefixes
+}
 
 // TestEveryGoldenBindIsSigned is the forward half of the §4.5 exit criterion:
 // every bind/when string in every golden scene resolves to a signed row.
 func TestEveryGoldenBindIsSigned(t *testing.T) {
 	signed := signedRowsFromDocument(t)
+	families := signedFamilyPrefixesFromDocument(t)
+	bindSigned := func(bind string) bool {
+		if signed[bind] {
+			return true
+		}
+		// A relative row.* bind is signed by its list's row schema (§4.7), not the
+		// flat §4.5 inventory, and doc.Validate() above already enforced it against
+		// the enclosing row_template's scope. Deferring to that check here keeps the
+		// one scope-aware validation as the authority rather than duplicating the
+		// row schemas into this flat sweep, which has no scope to check them against.
+		if strings.HasPrefix(bind, "row.") {
+			return true
+		}
+		// A family member (ui.max.is.chat) is signed by its documented pattern
+		// (ui.max.is.<id>) with a non-empty id after the fixed prefix.
+		for _, p := range families {
+			if len(bind) > len(p) && strings.HasPrefix(bind, p) {
+				return true
+			}
+		}
+		return false
+	}
 	for _, name := range goldenScenes {
 		path := filepath.Join("..", "..", "testdata", name)
 		data, err := os.ReadFile(path)
@@ -138,7 +192,7 @@ func TestEveryGoldenBindIsSigned(t *testing.T) {
 				"remedy: correct the scene, or sign the bind in docs/BINDS.md §4 if the scene is right.", name, err)
 		}
 		for _, bind := range collectBinds(doc.Root) {
-			if !signed[bind] {
+			if !bindSigned(bind) {
 				t.Errorf("%s references bind %q, which docs/BINDS.md signs nowhere\n"+
 					"consequence: the goldens would pin vocabulary that entered through the engine rather than through a signature (§4.5: \"No bind is invented by the engine implementation\").\n"+
 					"remedy: sign the bind with a row in §4 naming its source events, update timing and empty-state.", name, bind)
