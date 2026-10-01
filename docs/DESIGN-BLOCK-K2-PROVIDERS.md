@@ -1,4 +1,4 @@
-# Block K2 — Provider and model management from the TUI (proposal)
+# Block K2 — Provider and model management from the TUI
 
 This document drafts the paper decision Block K's **K2** needs: how a user adds
 and manages model **providers** from the TUI — the `/provider add <name>
@@ -8,10 +8,15 @@ full here, then sign the durable seam (the wire schema and the TUI surface) so
 the code is built against a fixed decision rather than one invented under the
 pressure of a half-written command.
 
-**Status: proposal, awaiting signature.** Signing this lifts no code guard and
-adds no dependency; it freezes the wire verbs, the TUI command grammar, and the
-one invariant (`api_key_env` is a variable *name*, never a key) that must hold
-end to end.
+**Status: signed and implemented.** The durable seam this document freezes —
+the four wire verbs, the TUI command grammar, and the `api_key_env`-is-a-name
+invariant — shipped exactly as argued below: arxi PR #117 (K2-a/b/c, the
+protocol surface and its subprocess tests) and arxi-tui PR #148 (K2-e/f, the
+slash commands and the `requireProviderVerbs` hello gate), on top of the driver
+methods of arxi-tui PR #147 (K2-d). The two open questions at the foot of this
+document are resolved in line, and the one place the implementation diverged
+from the draft — the mutating verbs are kept off the agent by *kind*, not by a
+capability — is recorded where the draft first assumed otherwise.
 
 **Scope decided by the owner (2026-10-01).** Two repos, **not** merged — the
 runtime boundary stays TUI ↔ `arxi serve` over NDJSON, exactly as every other
@@ -80,7 +85,8 @@ snake_case params.
   registered provider snapshot `{name, protocol, base_url, api_key_env,
   models:[{id, enabled}]}`. A base-url-less provider not in the known table is
   refused by `model.New` (the CLI's exact refusal); a key-shaped `api_key_env`
-  is refused by `validateKeyEnv`. Mutating → needs a capability.
+  is refused by `validateKeyEnv`. Mutating → `CLIOnly | Protocol`, **not**
+  `AgentTool` (see "How the agent is kept out" below).
 - **`model.list`** — no params. Maps to `store.List()` flattened to rows
   `{provider, id, enabled}` (optionally `base_url`). Idempotent, no capability
   beyond connect. This is the single read for both "what providers" and "what
@@ -90,7 +96,25 @@ snake_case params.
   required; `provider/id` or bare `id`). Maps to `store.Owner(ref)` →
   `SetEnabled(id, on)` → `store.Save`. Result `{provider, model, enabled,
   changed}` — `changed:false` is "already in that state", not a failure.
-  Mutating → needs a capability.
+  Mutating → `CLIOnly | Protocol`, **not** `AgentTool`.
+
+### How the agent is kept out (the divergence from the draft)
+
+The draft above assumed the mutating verbs would "need a capability" — a
+`ToolPolicy` gate like the agent-tool verbs carry. The implementation did not
+use one, and the reason is that a capability gates the wrong door. `ToolPolicy`
+(`PolicyAllow`/`PolicyAsk`) governs the **`AgentTool`** door only: it decides
+whether an agent, mid-run, may call a verb offered to its tool loop. The threat
+it defends against — an agent registering a provider that names a credential env
+var, or flipping a model that changes the bill — is closed more simply by never
+offering the verb to the agent at all. So the three mutating verbs are
+`CLIOnly | Protocol` with **no** `AgentTool` bit and **no** `ToolPolicy`, the
+exact shape `run.attach` already uses: reachable by the host (the TUI, on the
+user's behalf) over the wire, invisible to the agent loop. The TUI's
+`requireProviderVerbs` gate confirms the connected core *implements* them;
+nothing in the agent's surface can reach them to widen its own reach. `model.list`
+stays `CLIOnly | AgentTool | Protocol, PolicyAllow` — a read an agent may freely
+make.
 
 ### The `api_key_env` invariant, end to end
 
@@ -138,7 +162,9 @@ last — the pattern every M increment followed.
   `model.disable` in `surface.go`; keep `model.list` as is.
 - **K2-b** Add serve dispatch handlers (the `lifecycleHandlerDescriptors` /
   `protoHandlers` shape) mapping each verb to a host method over
-  `modelstore` + `model`. The mutating verbs declare a capability.
+  `modelstore` + `model`. The mutating verbs are reached through `protoHandlers`
+  (self-contained request/response) and carry no `ToolPolicy`: the agent is kept
+  out by the absent `AgentTool` bit, not by a capability gate.
 - **K2-c** Add the four verbs to the hello `implemented` list; pin with arxi's
   subprocess-test style, including the `validateKeyEnv` refusal over the wire.
 
@@ -155,11 +181,15 @@ last — the pattern every M increment followed.
   refuses the command with a located message instead of hanging on a reply that
   never comes — the M1b lesson that `types` is not `implemented`.
 
-## Open questions for signature
+## Open questions for signature — resolved
 
-1. **`provider.list` vs reuse `model.list`.** Recommended: reuse `model.list`
-   (it already carries the provider per row); add `provider.list` only when a
-   zero-model provider must be visible.
-2. **Capability name** for the mutating verbs — arxi's capability vocabulary
-   (`arxi/host/v1/capabilities.go`) decides this; to be read from source at K2-b,
-   not invented here.
+1. **`provider.list` vs reuse `model.list`.** Resolved: reuse `model.list`. It
+   carries the provider per row, so the TUI's `/provider list` reads the same
+   verb and collapses the rows to distinct provider names (the `ProviderView`
+   flag on the parsed command). No `provider.list` verb was added; it waits for
+   a concrete need to show a zero-model provider, which no current screen has.
+2. **Capability name for the mutating verbs.** Resolved by removing the
+   question: the verbs take no capability. As "How the agent is kept out" argues
+   above, a `ToolPolicy` gates the `AgentTool` door, and these verbs do not open
+   that door — they are `CLIOnly | Protocol`, host-reachable and agent-invisible,
+   the `run.attach` shape. There was nothing to name.
