@@ -131,6 +131,13 @@ func bindKindNodeTypeList(kind string) string {
 // direction is the expensive one: Phase 2's eval corpus measures the repair
 // loop — order, patch, file:line error, retry — so a validator that rejects a
 // signed bind teaches the model to avoid the vocabulary the product documents.
+// MaxIsBindPrefix is the signed prefix of the ui.max.is.<id> family (BINDS.md
+// §4.3). It is exported and named once here so the validator and the engine's
+// resolveBind share the one spelling and cannot drift on the family the whole
+// click-to-maximize gate turns on — the same discipline run.start and the
+// provider verbs name their strings once.
+const MaxIsBindPrefix = "ui.max.is."
+
 var signedBinds = map[string]bool{
 	// §4.1 run state
 	"chat.history":            true,
@@ -162,6 +169,7 @@ var signedBinds = map[string]bool{
 	"status.active":  true,
 	"ui.focus":       true,
 	"ui.max":         true,
+	"ui.max.none":    true,
 	"ui.surface":     true,
 	"ui.hidden":      true,
 
@@ -425,6 +433,23 @@ func (d *Document) validateOneBind(bind, where string, n *Node, path string, sco
 	// "agent.working") cannot capture the host field, because the inventory is
 	// consulted before the plugin scope.
 	if signedBinds[bind] {
+		return nil
+	}
+	// The ui.max.is.<id> family (BINDS.md §4.3): truthy when ui.max equals the
+	// suffix, the comparison `when` has no operator for. It is signed as a family
+	// rather than four exact binds so a downloaded dashboard names its own panes
+	// without a host change, the ui.plugin.<id> shape. The suffix must be
+	// non-empty: "ui.max.is." with nothing after it compares ui.max to "", which
+	// is what ui.max.none already answers, so an empty suffix is a scene mistake
+	// (it would gate the maximized view on "nothing maximized") rather than a
+	// legal address.
+	if rest, ok := strings.CutPrefix(bind, MaxIsBindPrefix); ok {
+		if rest == "" {
+			return &Error{
+				Loc: d.locOf(path),
+				Msg: fmt.Sprintf("bind %q in %s of node type %q names no pane id after %q; the ui.max.is.<id> family (BINDS.md §4.3) gates on which pane is maximized, so it needs the pane id — use ui.max.none to gate on nothing being maximized", bind, where, n.Type, MaxIsBindPrefix),
+			}
+		}
 		return nil
 	}
 	// Not a host bind. It is a legal plugin bind iff a plugin scope is in effect

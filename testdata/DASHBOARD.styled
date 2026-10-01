@@ -1,0 +1,24 @@
+«header:Δr×i v0.1.0 · dashboard»
+«border:┌ Chat ────────────────────────────────┐»«border:┌ Team ────────────────────────────────┐»
+«border:│»[ ⤢ max ]                             «border:│»«border:│»[ ⤢ max ]                             «border:│»
+«border:│»«chat.user:┃»«chat.user: »«chat.user:status?»                             «border:│»«border:│»backend                               «border:│»
+«border:│»                                      «border:│»«border:│»frontend                              «border:│»
+«border:│»«text:All»«text: »«text:green.»                            «border:│»«border:│»                                      «border:│»
+«border:│»                                      «border:│»«border:│»                                      «border:│»
+«border:│»                                      «border:│»«border:│»                                      «border:│»
+«border:│»                                      «border:│»«border:│»                                      «border:│»
+«border:│»                                      «border:│»«border:│»                                      «border:│»
+«border:│»                                      «border:│»«border:│»                                      «border:│»
+«border:└──────────────────────────────────────┘»«border:└──────────────────────────────────────┘»
+«border:┌ Tasks ───────────────────────────────┐»«border:┌ Status ──────────────────────────────┐»
+«border:│»[ ⤢ max ]                             «border:│»«border:│»[ ⤢ max ]                             «border:│»
+«border:│»wire /max dispatch                    «border:│»«border:│»openai/gpt-5.1                        «border:│»
+«border:│»pin the golden                        «border:│»«border:│»1234                                  «border:│»
+«border:│»                                      «border:│»«border:│»                                      «border:│»
+«border:│»                                      «border:│»«border:│»                                      «border:│»
+«border:│»                                      «border:│»«border:│»                                      «border:│»
+«border:│»                                      «border:│»«border:│»                                      «border:│»
+«border:│»                                      «border:│»«border:│»                                      «border:│»
+«border:│»                                      «border:│»«border:│»                                      «border:│»
+«border:└──────────────────────────────────────┘»«border:└──────────────────────────────────────┘»
+«dim:click ⤢ to maximize a pane · ⤡ to restore»

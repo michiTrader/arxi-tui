@@ -86,7 +86,9 @@ var pulseBindsWithoutFoldFields = map[string]string{
 // derived from composite state indexed by another field. This is a third
 // category the two buckets above do not cover — a pulse has no folded value at
 // all, a scalar bind has exactly one field, and these have a folded value that
-// comes from two fields at once. Listing them here is the same on-the-record
+// comes from other state: a pair of fields at once, or a single field under a
+// different name (ui.max.none is the inversion of UIMax). Listing them here is
+// the same on-the-record
 // exemption walkConsumedBinds is in the signed-bind audit: not "cannot be
 // projected" and not "no folded value", but "the folded value varies, proven by
 // a behavioural test this reflection guard cannot express". Each entry names
@@ -108,6 +110,14 @@ var derivedBindsWithoutScalarField = map[string]string{
 	"community.selected.name":    "resolves community.selected against community.matches (selectedCommunityMatch); varies by TestLiveInstallerPreviewPaneShowsTheSelectedEntry and the community.selected.* cases in TestEverySignedScalarBindTheFoldComputesReachesTheFrame",
 	"community.selected.version": "resolves community.selected against community.matches (selectedCommunityMatch); varies by TestLiveInstallerPreviewPaneShowsTheSelectedEntry and the community.selected.* cases in TestEverySignedScalarBindTheFoldComputesReachesTheFrame",
 	"community.selected.preview": "resolves community.selected against community.matches (selectedCommunityMatch); varies by TestLiveInstallerPreviewPaneShowsTheSelectedEntry and the community.selected.* cases in TestEverySignedScalarBindTheFoldComputesReachesTheFrame",
+	// ui.max.none is the inversion of ui.max/UIMax, resolved inline from that one
+	// field rather than mirrored into a field of its own: one source of truth, so
+	// it cannot drift from ui.max the way a copied field could. The guard cannot
+	// perturb a field named ui.max.none because there is none; the dependence on
+	// UIMax is proven at the resolver by TestDashboardMaxBindsResolveFromUIMax
+	// (empty UIMax yields "true", a named pane yields "false") and at the frame by
+	// TestDashboardGridShowsOnlyWhenNothingMaximized.
+	"ui.max.none": "inversion of ui.max/UIMax resolved inline; varies by TestDashboardMaxBindsResolveFromUIMax and TestDashboardGridShowsOnlyWhenNothingMaximized",
 }
 
 // perturbScalar sets f to a value distinct from its zero value and reports
