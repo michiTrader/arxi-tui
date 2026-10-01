@@ -1994,6 +1994,32 @@ func rowScopesFor(bind string, state fold.State) []map[string]string {
 			})
 		}
 		return rows
+	case "providers.models":
+		// One scope per model (Scene 12, BINDS.md §4.7). row.ref and row.disabled
+		// are the two fields not read verbatim off the element, the config.settings
+		// synthesis applied to the providers screen. row.ref is the enable/disable
+		// command's argument — provider/id, or the bare id when no provider is set —
+		// built once here so the on_press interpolation (`cmd:/model enable {row.ref}`)
+		// cannot drift from the model.list ref the verb already accepts. row.disabled
+		// is the inverse of Enabled: this engine's `when` has no operator, so the
+		// template gates its "enable" button on `when: row.disabled` and its "disable"
+		// button on `when: row.enabled`, the row.is_toggle/row.is_text idiom, and the
+		// two never both draw on one row.
+		rows := make([]map[string]string, 0, len(state.ProviderModels))
+		for _, m := range state.ProviderModels {
+			ref := m.ID
+			if m.Provider != "" {
+				ref = m.Provider + "/" + m.ID
+			}
+			rows = append(rows, map[string]string{
+				"row.provider": m.Provider,
+				"row.model":    m.ID,
+				"row.enabled":  boolField(m.Enabled),
+				"row.disabled": boolField(!m.Enabled),
+				"row.ref":      ref,
+			})
+		}
+		return rows
 	default:
 		return nil
 	}

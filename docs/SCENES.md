@@ -474,6 +474,31 @@ transition and vanishes the moment the run does anything else. Decided: Q22
 hit-testing runs on the final frame's cells; the engine resolves
 marquee/cursor collisions, not the scene.
 
+## Scene 12 — PROVIDERS (the visual face of the K2 provider verbs)
+
+The deferred K2 follow-up, built on the Scene 5 CONFIG pattern: one `list` over
+`providers.models` whose `row_template` draws each model as provider + id plus a
+single state-mixed action button — `enable` gated on `when: row.disabled`,
+`disable` gated on `when: row.enabled`, pressing either into
+`cmd:/model enable {row.ref}` / `cmd:/model disable {row.ref}`. The screen is the
+front end for the provider plumbing K2 shipped (the `provider.add`,
+`model.list`, `model.enable`, `model.disable` verbs over the serve socket):
+`providers.models` is host view state (§4.3) filled from a `model.list`
+round-trip, no event folds it, so the host builds it the way it builds
+`config.settings`. The two per-row booleans are synthesized by `rowScopesFor`
+(`row.enabled` = `boolField(m.Enabled)`, `row.disabled` its negation) because
+this engine's `when` is a bare truthiness test with no comparison operator — the
+same derived-bool mechanism Scene 5's `row.is_toggle`/`row.is_text` uses, so a
+row shows exactly one of the two actions. `row.ref` is the `provider/id` form the
+`model.enable` verb accepts, interpolated into `on_press` and validated against
+the row schema. Decided: the gated action button carries the model's state in
+place of a standalone `switch`, so each row is two text columns and one trailing
+button that pads cleanly (a `switch` plus two buttons concatenated tightly under
+the weighted-column layout rule). **Security invariant preserved:** the
+provenance line names `~/.arxi/providers.toml` and states credentials are named
+by env var only — the wire carries the environment-variable name, never a secret
+key value, and the screen never stores, logs or echoes a key.
+
 ## Q23 (signed) — how much of the pipeline plugins may touch
 
 The arxi core already has every door inside it: `internal/tool` + `toolrun`,

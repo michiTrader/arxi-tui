@@ -1,0 +1,24 @@
+Δr×i v0.1.0 · providers
+moonshot            kimi-k2             [ disable ]                             
+deepseek            deepseek-chat       [ enable ]                              
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+providers: ~/.arxi/providers.toml · credentials named by env var only
+↑↓ move · enter toggle · /provider add <name> · esc back
