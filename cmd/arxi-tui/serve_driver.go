@@ -85,6 +85,36 @@ type serveDriver struct {
 	// which is its own increment -- so it is captured here at the moment it is
 	// known rather than recomputed later.
 	actorLabel string
+
+	// providers is the K2 provider/model seam of the same NDJSON driver rs is: the
+	// four verbs dispatchProviderCmd round-trips. It is a narrow seam (the
+	// providerManager interface) rather than *driver.NDJSONDriver for the same
+	// reason rs and inbox are -- so a test can drive the command surface against a
+	// fake that returns a chosen hello and result without a subprocess. serveDriver
+	// exposes it to the loop by forwarding the four methods below, so the loop's
+	// `drv.(providerManager)` assertion finds the capability on the one Driver it
+	// holds.
+	providers providerManager
+}
+
+// Hello, SubmitProviderAdd, SubmitModelList and SubmitModelEnable forward the
+// providerManager capability to the driver seam. They exist so *serveDriver --
+// the concrete Driver the loop holds -- satisfies providerManager, which the loop
+// asserts before dispatching a /provider or /model command. The run surface gates
+// on the same hello through rs.Hello(); both reach the one NDJSONDriver, so there
+// is no second greeting to drift.
+func (d *serveDriver) Hello() *driver.Hello { return d.providers.Hello() }
+
+func (d *serveDriver) SubmitProviderAdd(ctx context.Context, p driver.ProviderAddParams) (*driver.ProviderAddResult, error) {
+	return d.providers.SubmitProviderAdd(ctx, p)
+}
+
+func (d *serveDriver) SubmitModelList(ctx context.Context) (*driver.ModelListResult, error) {
+	return d.providers.SubmitModelList(ctx)
+}
+
+func (d *serveDriver) SubmitModelEnable(ctx context.Context, ref string, on bool) (*driver.ModelEnableResult, error) {
+	return d.providers.SubmitModelEnable(ctx, ref, on)
 }
 
 // SubmitPrompt begins a run for the user's line and follows its event log.
@@ -268,8 +298,10 @@ func (d *serveDriver) ReplyInboxItem(ctx context.Context, itemID, text string) e
 // openServeDriver passes the real driver through unchanged), and serveDriver
 // satisfies Driver (so the loop never knows which path it is on).
 var (
-	_ runStarter     = (*driver.NDJSONDriver)(nil)
-	_ inboxSubmitter = (*driver.NDJSONDriver)(nil)
-	_ Driver         = (*serveDriver)(nil)
-	_ inboxDecider   = (*serveDriver)(nil)
+	_ runStarter      = (*driver.NDJSONDriver)(nil)
+	_ inboxSubmitter  = (*driver.NDJSONDriver)(nil)
+	_ providerManager = (*driver.NDJSONDriver)(nil)
+	_ providerManager = (*serveDriver)(nil)
+	_ Driver          = (*serveDriver)(nil)
+	_ inboxDecider    = (*serveDriver)(nil)
 )

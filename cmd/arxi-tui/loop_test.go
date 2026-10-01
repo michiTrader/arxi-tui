@@ -399,8 +399,8 @@ func TestLoopSlashMenuNavigateAndRun(t *testing.T) {
 	// One frame per repaint, each introduced by the synchronized-output opener.
 	frames := strings.Split(tty.output(), frameBegin)
 
-	// The menu must have been open with all five commands.
-	if !strings.Contains(tty.output(), "Commands 5 · type to filter") {
+	// The menu must have been open with every command.
+	if !strings.Contains(tty.output(), "Commands 7 · type to filter") {
 		t.Errorf("menu header never rendered; output:\n%s", tty.output())
 	}
 
@@ -410,7 +410,7 @@ func TestLoopSlashMenuNavigateAndRun(t *testing.T) {
 	// node by id", which contains the same word.
 	ranCommand := false
 	for _, f := range frames {
-		if frameHasTranscriptLine(f, "┃ focus") && !strings.Contains(f, "Commands 5") {
+		if frameHasTranscriptLine(f, "┃ focus") && !strings.Contains(f, "Commands 7") {
 			ranCommand = true
 			break
 		}
@@ -478,9 +478,11 @@ func TestLoopSlashMenuEscapeCloses(t *testing.T) {
 }
 
 // TestLoopSlashMenuTabWalksCategories verifies tab jumps the highlight to the
-// first match of the next category, wrapping to the top. The registry has a
-// single category, so down-down-tab must land back on row 0: enter then runs
-// "help", not "focus" — the exact discrimination the test hinges on.
+// first match of the next category. The registry now has two categories —
+// General (help, max, focus, surface, ui) and Providers (provider, model) — so
+// down-down lands on "focus" in General, and tab must jump past the rest of
+// General to the first Providers row: enter then runs "provider", not another
+// General command — the exact discrimination the test hinges on.
 func TestLoopSlashMenuTabWalksCategories(t *testing.T) {
 	doc, err := scene.ParseDocument([]byte(factorySobria))
 	if err != nil {
@@ -508,15 +510,15 @@ func TestLoopSlashMenuTabWalksCategories(t *testing.T) {
 	}
 
 	frames := strings.Split(tty.output(), frameBegin)
-	ranHelp := false
+	ranProvider := false
 	for _, f := range frames {
-		if frameHasTranscriptLine(f, "┃ help") && !strings.Contains(f, "Commands 5") {
-			ranHelp = true
+		if frameHasTranscriptLine(f, "┃ provider") && !strings.Contains(f, "Commands 7") {
+			ranProvider = true
 			break
 		}
 	}
-	if !ranHelp {
-		t.Errorf("tab did not walk the highlight back to the first row ('help' never ran); frames:\n%s", tty.output())
+	if !ranProvider {
+		t.Errorf("tab did not walk the highlight to the next category's first row ('provider' never ran); frames:\n%s", tty.output())
 	}
 }
 
@@ -607,11 +609,11 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	}
 
 	// "/" opens the menu on the first row (index 0 = "help"). Pressing Up at
-	// row 0 wraps to the last row (index 4 = "ui"); Enter runs it.
+	// row 0 wraps to the last row (index 6 = "model"); Enter runs it.
 	script := []scheduledEvent{
 		{0, keyEvent('/')},
-		{50 * time.Millisecond, arrowEvent(term.KeyUp)}, // wrap: help(0) → ui(4)
-		{30 * time.Millisecond, enterEvent()},           // runs "ui"
+		{50 * time.Millisecond, arrowEvent(term.KeyUp)}, // wrap: help(0) → model(6)
+		{30 * time.Millisecond, enterEvent()},           // runs "model"
 		{100 * time.Millisecond, ctrlCharEvent('c')},
 		{50 * time.Millisecond, ctrlCharEvent('c')},
 	}
@@ -628,18 +630,18 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 
 	frames := strings.Split(tty.output(), frameBegin)
 
-	// Up from "help" (row 0) must have wrapped to "ui" (row 4): Enter runs "ui",
-	// and "ui" appears as a whole transcript line in a frame where the menu
-	// is already closed (no "Commands 5" header above it).
-	ranUI := false
+	// Up from "help" (row 0) must have wrapped to "model" (row 6): Enter runs
+	// "model", and "model" appears as a whole transcript line in a frame where
+	// the menu is already closed (no "Commands 7" header above it).
+	ranModel := false
 	for _, f := range frames {
-		if frameHasTranscriptLine(f, "┃ ui") && !strings.Contains(f, "Commands 5") {
-			ranUI = true
+		if frameHasTranscriptLine(f, "┃ model") && !strings.Contains(f, "Commands 7") {
+			ranModel = true
 			break
 		}
 	}
-	if !ranUI {
-		t.Errorf("Up did not wrap from the first row to the last ('ui' never ran); frames:\n%s", tty.output())
+	if !ranModel {
+		t.Errorf("Up did not wrap from the first row to the last ('model' never ran); frames:\n%s", tty.output())
 	}
 }
 

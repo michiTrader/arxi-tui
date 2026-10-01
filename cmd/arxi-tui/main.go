@@ -429,12 +429,13 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 	}
 
 	sd := &serveDriver{
-		rs:       nd,
-		inbox:    nd,
-		getenv:   os.Getenv,
-		runsRoot: runsRoot,
-		follow:   driver.LogFollow,
-		relay:    make(chan fold.Event, 64),
+		rs:        nd,
+		inbox:     nd,
+		providers: nd,
+		getenv:    os.Getenv,
+		runsRoot:  runsRoot,
+		follow:    driver.LogFollow,
+		relay:     make(chan fold.Event, 64),
 		closer: func() error {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
@@ -558,6 +559,16 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	consentReqCh := make(chan consentRequest)
 	installDoneCh := make(chan installOutcome, 1)
 	mountedPlugins := map[string]*supervisor.Supervisor{}
+
+	// The K2 provider/model command surface: `/provider add|list` and `/model
+	// list|enable|disable` round-trip the serve protocol on a worker so a slow or
+	// hung core never freezes the loop or the panic gesture (invariant 6).
+	// providerCmdBusy refuses a second command while one is in flight -- the one
+	// response reader on the driver is serialized by its mutex, so two in flight
+	// would interleave their notices -- and providerCmdDoneCh carries the worker's
+	// one formatted notice back to the select, the same bridge installDoneCh is.
+	var providerCmdBusy bool
+	providerCmdDoneCh := make(chan providerCmdOutcome, 1)
 
 	// The bundle install surface (J4): `/ui plugin bundle <url>` fetches a bundle
 	// document, lays out and decides each referenced plugin, shows ONE consent
@@ -1107,6 +1118,25 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						} else if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens); handled {
 							input = next
 							caret = clampCaret(input, caret)
+						} else if act, matched, perr := parseProviderCommand(input); ev.Key.Type == term.KeyEnter && matched {
+							// `/provider add|list` is host-owned, not a patch: it
+							// round-trips the serve protocol (SubmitProviderAdd /
+							// SubmitModelList), which the pure patch surface cannot do, so
+							// it is intercepted here before the slash menu. dispatch runs
+							// the gate and busy guard and launches the worker; the loop
+							// only records the pending notice and reacts to the worker's
+							// message in the providerCmdDoneCh case below.
+							sceneNotice = dispatchProviderCmd(ctx, drv, act, perr, &providerCmdBusy, providerCmdDoneCh)
+							input = ""
+							caret = 0
+						} else if act, matched, perr := parseModelCommand(input); ev.Key.Type == term.KeyEnter && matched {
+							// `/model list|enable|disable`, the sibling of /provider above
+							// and intercepted here for the same reason: a model.list or
+							// model.enable round-trip is not a document transform the patch
+							// surface owns.
+							sceneNotice = dispatchProviderCmd(ctx, drv, act, perr, &providerCmdBusy, providerCmdDoneCh)
+							input = ""
+							caret = 0
 						} else if strings.HasPrefix(input, "/") {
 							// The menu is open: navigation steers the highlight
 							// and never reaches the buffer. Ctrl-C never gets
@@ -1266,6 +1296,16 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			default:
 				sceneNotice = "/ui plugin bundle: " + out.err.Error()
 			}
+			repaint()
+
+		case out := <-providerCmdDoneCh:
+			// The provider/model worker finished its round-trip. Clear busy so a
+			// next command may start, show its formatted notice (a success line or
+			// the core's refusal, already composed off the loop) and repaint. There
+			// is no screen to tear down -- unlike install, a provider command drives
+			// no modal -- so the notice is the whole of the result.
+			providerCmdBusy = false
+			sceneNotice = out.notice
 			repaint()
 
 		case out := <-browseDoneCh:
