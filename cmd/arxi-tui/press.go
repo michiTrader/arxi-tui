@@ -112,7 +112,7 @@ type pluginActionRouter interface {
 // with "/", Tab and Enter belong to the menu, so focusKey is never reached then.
 // Ctrl-C never reaches here either, so the escape hatch stays uncapturable
 // (invariant 6) whatever a button's action names.
-func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fold.State, notice *string, hidden map[string]bool, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) (bool, string, string) {
+func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fold.State, notice *string, hidden map[string]bool, uiMax *string, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) (bool, string, string) {
 	switch {
 	case k.Type == term.KeyTab:
 		ids, err := focusRing(*doc, state, hidden)
@@ -154,7 +154,7 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 			// onPress already has its {row.<field>} braces resolved (RowPresses'
 			// contract), so it dispatches exactly like a static node's action and
 			// the interpolation is never re-run.
-			newFocus := dispatchPress(onPress, uiFocus, input, state, doc, notice, hidden, fetch, applyTokens, actions, ctx, drv)
+			newFocus := dispatchPress(onPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, ctx, drv)
 			return true, "", newFocus
 		}
 		node := findPressable(*doc, uiFocus)
@@ -163,7 +163,7 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 			// is not a button, say). Enter is not ours; let it submit as usual.
 			return false, input, uiFocus
 		}
-		newFocus := dispatchPress(node.OnPress, uiFocus, input, state, doc, notice, hidden, fetch, applyTokens, actions, ctx, drv)
+		newFocus := dispatchPress(node.OnPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, ctx, drv)
 		// Clear the input the way the command paths do: a press is a submitted
 		// action, not text left in the buffer.
 		return true, "", newFocus
@@ -180,10 +180,11 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 //     crash), the declarative twin of cmd:/focus.
 //   - cmd: runs the command line exactly as a typed one: a /ui line goes through
 //     the same uiCommandKey the typed surface uses (so id prefixing, invariant-3
-//     re-validation and the token layers are reused, not reimplemented), and any
-//     other slash line is submitted as a prompt — the Phase-0 contract typeKey
-//     already honours, so a button and a keystroke cannot diverge on what a
-//     command means.
+//     re-validation and the token layers are reused, not reimplemented), `/max
+//     <pane>` writes the host ui.max cursor through the same parseMax the typed
+//     surface uses, and any other slash line is submitted as a prompt — the
+//     Phase-0 contract typeKey already honours, so a button and a keystroke
+//     cannot diverge on what a command means.
 //   - ext: routes the press to a behavioral plugin subprocess (I4). The plugin id
 //     and action name were split by ParseAction; the router resolves the live
 //     plugin, applies its granted capability gate, and writes the `action` frame.
@@ -198,7 +199,7 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 //     optional reason, ignored by approve. A press with no pending item, or on a
 //     driver that follows no run (the mock), is reported, never a silent no-op —
 //     the same propose-and-report discipline focus: and ext: keep.
-func dispatchPress(onPress, currentFocus, answerText string, state fold.State, doc **scene.Document, notice *string, hidden map[string]bool, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) string {
+func dispatchPress(onPress, currentFocus, answerText string, state fold.State, doc **scene.Document, notice *string, hidden map[string]bool, uiMax *string, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) string {
 	action, err := scene.ParseAction(onPress)
 	if err != nil {
 		// The document validated at load, so a malformed action should be
@@ -216,6 +217,24 @@ func dispatchPress(onPress, currentFocus, answerText string, state fold.State, d
 	case scene.ActionCmd:
 		enter := term.Key{Type: term.KeyEnter}
 		if handled, _ := uiCommandKey(action.Arg, enter, doc, notice, hidden, fetch, applyTokens); handled {
+			return currentFocus
+		}
+		// `/max <pane>` writes the host-owned ui.max cursor, the write half of
+		// Scene 10. It is intercepted here, before the SubmitPrompt fallthrough,
+		// so a pressed `cmd:/max chat` maximizes the pane instead of sending the
+		// literal text "max chat" to the agent — the same reason /ui is caught
+		// above rather than submitted. uiMax may be nil in a context that holds no
+		// such cursor (a press test that does not exercise maximize); a nil guard
+		// keeps the dispatcher usable there without inventing a cursor to write.
+		if pane, matched, perr := parseMax(action.Arg); matched {
+			switch {
+			case perr != nil:
+				*notice = perr.Error()
+			case uiMax == nil:
+				*notice = "cmd:/max: this surface holds no maximize state to write"
+			default:
+				*uiMax = pane
+			}
 			return currentFocus
 		}
 		line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(action.Arg), "/"))

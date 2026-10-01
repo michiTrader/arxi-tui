@@ -505,6 +505,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// for focus_glow, so a moved cursor lights the glow with no new engine code.
 	uiFocus := ""
 
+	// uiMax is the `ui.max` cursor (BINDS.md §4.3, Q21): the logical id of the
+	// maximized pane, host-owned view state held across frames like uiFocus. The
+	// empty string means nothing is maximized — the boot state, in which Scene
+	// 10's grid shows (ui.max.none is truthy). `/max <pane>` sets it and `/max`
+	// alone restores it, both through parseMax. The engine already reads
+	// state.UIMax (and derives ui.max.none / ui.max.is.<id> from it), so writing
+	// the cursor here is all the loop adds for click-to-maximize.
+	uiMax := ""
+
 	// pluginFetch is the network side of `/ui plugin add <url>` (H6). It is the
 	// only real HTTP client the loop holds, injected into the /ui dispatch so the
 	// patch surface stays a pure offline transform (patch.Fetcher is the seam).
@@ -699,6 +708,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// above (H8): the fold would forget a cursor kept only in State. The
 		// engine reads it for focus_glow, so the focused node lights up.
 		state.UIFocus = uiFocus
+		// ui.max is host-owned view state re-attached each frame for the same
+		// reason (Q21/Scene 10): Fold leaves it empty every frame, so a maximized
+		// pane set by /max would collapse back to the grid on the next keystroke
+		// if the loop did not re-apply its cursor here. The engine derives
+		// ui.max.none and the ui.max.is.<id> family from it, so the layout follows.
+		state.UIMax = uiMax
 		// Invariant 3's other half: the fallback scene is on screen, and this
 		// is the notice that says why. It is re-applied on every repaint
 		// because Fold rebuilds State from the event list each frame
@@ -1137,13 +1152,28 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							sceneNotice = dispatchProviderCmd(ctx, drv, act, perr, &providerCmdBusy, providerCmdDoneCh)
 							input = ""
 							caret = 0
+						} else if pane, matched, perr := parseMax(input); ev.Key.Type == term.KeyEnter && matched {
+							// `/max <pane>` writes the host ui.max cursor, Scene 10's
+							// write half, intercepted here before the slash menu for the
+							// same reason the plugin verbs are: a recognized command line
+							// is never the menu's to swallow (the menu lists "max", and its
+							// Enter would otherwise submit the bare word as a prompt). The
+							// same parseMax backs the pressed cmd:/max button, so typing and
+							// pressing cannot diverge. `/max` alone restores (clears ui.max).
+							if perr != nil {
+								sceneNotice = perr.Error()
+							} else {
+								uiMax = pane
+							}
+							input = ""
+							caret = 0
 						} else if strings.HasPrefix(input, "/") {
 							// The menu is open: navigation steers the highlight
 							// and never reaches the buffer. Ctrl-C never gets
 							// here, so the escape hatch stays uncapturable
 							// (invariant 6) no matter what the menu does.
 							input, caret, slashSel = slashMenuKey(input, caret, ev.Key, slashSel, ctx, drv)
-						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, pluginFetch, applyPluginTokens, pluginActions, ctx, drv); handled {
+						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, ctx, drv); handled {
 							// H8 press routing: Tab/Shift-Tab move the ui.focus
 							// cursor over the pressable nodes (ordinary buttons and
 							// each instantiated template row), and Enter on a
