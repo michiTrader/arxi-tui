@@ -198,6 +198,13 @@ var signedBinds = map[string]bool{
 	"config.categories": true,
 	"config.settings":   true,
 
+	// §4.3/§4.7 view state — the providers screen's one list (Scene 12, K2
+	// follow-up). Host-owned view state in the config.settings mould: the host
+	// fills it from a model.list round-trip over the serve socket, not from an
+	// arxi-core run event, and a `list` renders one row per model with a
+	// row_template that toggles each through an enable/disable button.
+	"providers.models": true,
+
 	// §4.3 view state — the selected community entry's scalar projection (Scene
 	// 7, J3 follow-up). community.selected is an index; these resolve it against
 	// community.matches to the selected entry's own fields, so the installer's
@@ -288,6 +295,16 @@ var rowSchemas = map[string]map[string]bool{
 	// be dead without an operator to compare it, exactly the row.index argument.
 	"config.categories": {"row.name": true},
 	"config.settings":   {"row.label": true, "row.enabled": true, "row.value": true, "row.is_toggle": true, "row.is_text": true},
+	// The providers screen's model list (Scene 12, K2 follow-up). row.provider and
+	// row.model are the model's displayed columns; row.enabled is the toggle state
+	// a `switch` reads and the gate the "disable" button draws on. row.ref and
+	// row.disabled are the two synthesized fields — the config.settings
+	// row.is_toggle/row.is_text idiom: row.ref is the enable/disable command's
+	// interpolated argument (provider/id), built in the projection so the on_press
+	// cannot drift from the ref model.list emits; row.disabled is the inverse of
+	// Enabled, gating the "enable" button, because this engine's `when` has no
+	// operator to write `row.enabled == false` with.
+	"providers.models": {"row.provider": true, "row.model": true, "row.enabled": true, "row.disabled": true, "row.ref": true},
 }
 
 // RowSchema returns the signed `row.<field>` names for a list bind, or nil if

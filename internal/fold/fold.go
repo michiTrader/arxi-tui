@@ -254,6 +254,16 @@ type State struct {
 	ConfigCategories []ConfigCategory `json:"config.categories"`
 	ConfigSettings   []ConfigSetting  `json:"config.settings"`
 
+	// ProviderModels is the providers screen's one list (Scene 12, K2 follow-up):
+	// every model a configured provider offers and whether it is enabled. Host
+	// view state like config.settings — the host fills it from a model.list
+	// round-trip over the serve socket (SubmitModelList), never from an arxi-core
+	// run event — so a run the TUI is following never writes it and an empty slice
+	// is the honest "no providers configured yet" state. The row_template over it
+	// reads row.provider/row.model/row.enabled and gates an enable/disable button
+	// on the enabled flag; see BINDS.md §4.3/§4.7.
+	ProviderModels []ProviderModel `json:"providers.models"`
+
 	UIFocus   string `json:"ui.focus"`
 	UIMax     string `json:"ui.max"`
 	UISurface string `json:"ui.surface"`
@@ -1383,6 +1393,25 @@ type ConfigSetting struct {
 	Kind    string `json:"kind"`
 	Enabled bool   `json:"enabled"`
 	Value   string `json:"value"`
+}
+
+// ProviderModel is one row of the providers screen (Scene 12, K2 follow-up): a
+// model a configured provider offers and whether it is enabled. It mirrors
+// driver.ModelRow — the shape model.list returns over the serve socket — so the
+// host can write a round-trip's result straight into providers.models without a
+// second model.
+//
+// Provider is the registered provider name, ID the model's own id. The engine
+// synthesizes row.ref (provider/id) for the enable/disable on_press and row.disabled
+// (the inverse of Enabled) for the enable button's gate, the config.settings
+// row.is_toggle idiom: this engine's `when` is a bare truthiness test with no
+// comparison operator, so a scene gates its "disable" button on `when: row.enabled`
+// and its "enable" button on `when: row.disabled`, the two never both drawing on one
+// row. Enabled is read directly by the `switch` and by the disable button's gate.
+type ProviderModel struct {
+	Provider string `json:"provider"`
+	ID       string `json:"id"`
+	Enabled  bool   `json:"enabled"`
 }
 
 // Commands is the host's command registry, the source for slash.matches.
