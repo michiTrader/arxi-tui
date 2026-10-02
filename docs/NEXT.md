@@ -159,8 +159,12 @@ case-runs converged**.
     (`scene.RowSchemas()` -> `PatchRequest.RowSchemas`), because `SignedBinds` is the
     absolute namespace only and the first live run scored `incomplete` for a field
     the model was never shown. With it, the row case is *still* `incomplete` in
-    5 of 5 samples: the model writes `{row.turns}` inside a `text` value, which the
-    engine accepts and draws literally (interpolation is read only in `on_press`).
+    both harness runs. Three direct samples diverged (one wrote `{row.turns}` inside
+    a `text` value, which the engine accepts and draws literally because
+    interpolation is read only in `on_press`; one dropped the counter; one was
+    malformed JSON), so the interpolation gap is real but only one of three
+    observed failure modes. The harness does not yet record what the model wrote
+    per turn, which is why the diagnosis is partial.
     **Open product decision, not made here:** refuse `{row.` outside `on_press`
     with a `file:line` (option a) or sign text interpolation (option b); see
     EVAL.md "Third live run". The buttons case converged in both runs, once
