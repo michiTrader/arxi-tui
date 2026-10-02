@@ -39,7 +39,10 @@ func (d *Document) Validate() error {
 	if d == nil || d.Root == nil {
 		return nil
 	}
-	return d.validateBinds(d.Root, nodePathRoot)
+	if err := d.validateBinds(d.Root, nodePathRoot); err != nil {
+		return err
+	}
+	return d.validateIDs()
 }
 
 // PluginScope is the schema a mounted plugin fragment is validated against: the
@@ -77,7 +80,10 @@ func (d *Document) ValidateWithPlugin(scope *PluginScope) error {
 	if d == nil || d.Root == nil {
 		return nil
 	}
-	return d.validateBindsScoped(d.Root, nodePathRoot, nil, scope)
+	if err := d.validateBindsScoped(d.Root, nodePathRoot, nil, scope); err != nil {
+		return err
+	}
+	return d.validateIDs()
 }
 
 // bindKindNodeTypes maps a declared plugin bind's `kind` to the node types that
@@ -260,6 +266,66 @@ func SignedBinds() []string {
 // code, and a position field would then be a field that is sometimes a lie.
 func (d *Document) validateBinds(n *Node, path string) error {
 	return d.validateBindsScoped(n, path, nil, nil)
+}
+
+// validateIDs enforces the ADDRESSING.md §3 id-uniqueness invariant: within one
+// document, no two nodes may carry the same non-empty id. An id is an address —
+// `focus_glow` keys on `id == ui.focus` and `ui.max` / `cmd:/max <pane>` address
+// a pane by id (internal/engine/render.go), and `/ui move <id>` resolves its
+// subject by id — so a duplicate makes every one of those targets ambiguous, and
+// the ambiguity is latent independent of the write path (two nodes sharing an id
+// already double-glow or fight over the maximised slot). It is therefore a
+// load-time refusal, not just a check at the /ui-verb boundary where F1/F2 first
+// enforced it: a document the user hand-wrote with a duplicate id is as unsafe as
+// one a verb would have produced, so the invariant belongs on the validator every
+// load path runs, with a file:line error naming the id and both offending nodes.
+//
+// Scope is per Document by construction — this walks one parsed tree, so the
+// eval-corpus fixtures that embed several documents in one file are never
+// cross-flagged (ADDRESSING.md §3). The empty id is exempt: an unnamed node is
+// not addressable and most nodes legitimately carry none. The traversal mirrors
+// validateBindsScoped (children, prefix, suffix, row_template) so a node reached
+// only through a prefix/suffix/template is held to the invariant too — its id is
+// as much an address as a child's.
+func (d *Document) validateIDs() error {
+	seen := make(map[string]string) // non-empty id -> path of its first occurrence
+	return d.collectIDs(d.Root, nodePathRoot, seen)
+}
+
+func (d *Document) collectIDs(n *Node, path string, seen map[string]string) error {
+	if n == nil {
+		return nil
+	}
+	if n.ID != "" {
+		if first, dup := seen[n.ID]; dup {
+			return &Error{
+				Loc: d.locOf(path),
+				Msg: fmt.Sprintf("duplicate node id %q: an id is an address (focus, ui.max and /ui move resolve a node by it), so it must be unique within a document (docs/ADDRESSING.md §3); first declared at %s, declared again at %s", n.ID, d.locOf(first), d.locOf(path)),
+			}
+		}
+		seen[n.ID] = path
+	}
+	for i, child := range n.Children {
+		if err := d.collectIDs(child, childPath(path, i), seen); err != nil {
+			return err
+		}
+	}
+	if prefix := n.PrefixNode(); prefix != nil {
+		if err := d.collectIDs(prefix, prefixPath(path), seen); err != nil {
+			return err
+		}
+	}
+	if n.Suffix != nil {
+		if err := d.collectIDs(n.Suffix, suffixPath(path), seen); err != nil {
+			return err
+		}
+	}
+	if n.RowTemplate != nil {
+		if err := d.collectIDs(n.RowTemplate, templatePath(path), seen); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // rowSchemas signs, per array-of-objects bind, the `row.<field>` names a

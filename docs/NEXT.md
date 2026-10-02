@@ -136,6 +136,19 @@ case-runs converged**.
   per-model engineering; widening across more scenes needs those goldens frozen
   first (later phases). This is the work that moves the claim from "reliable for
   this model" to "reliable".
+  - **Second live run (2026-10-01)**, `deepseek-v4-flash` on the same provider:
+    the gateway now intermittently 504s on the larger prompts, which a
+    single-shot run misreports as `model_error`. Hardened the adapter with a
+    bounded retry on transient transport only (502/503/504 + connection errors,
+    exponential backoff, `OPENAI_MAX_ATTEMPTS` knob; everything else surfaces at
+    once). With it, 4/5 completed (3 converged, 1 the known `agent.todos` naming
+    slip); `sobria-add-model-row` 504'd on every attempt even at budget 10 — a
+    deterministic gateway limit the harness correctly reports as `model_error`
+    rather than scoring. The retry decides *when* a transport error is reported,
+    never *whether* a model answer is scored, so the model_error-vs-score
+    separation is untouched. Written up in `docs/EVAL.md` ("Second live run").
+    Tests: `internal/eval/openai_test.go` (retry-then-success, no-retry-on-4xx,
+    exhaust-reports-gateway).
 - **A5 — DONE.** Finding written into `docs/EVAL.md` (First live run) and
   `docs/PLAN.md` (Phase 2 measured result). The gating question is answered:
   the repair loop works against a real model.
@@ -813,10 +826,8 @@ counterfactual test).
   and the slash-menu `ui` description now advertise `add`; the menu-agreement
   and verb-round-trip sweeps both cover it. Counterfactuals run for the
   above/below offset, the into-top prepend, and the dup-id refusal.
-  Note: the §3 id-uniqueness invariant is enforced *at the add boundary*, not
-  yet as a load-time check on every document — that broader guard remains
-  available to add when `move` (F2) needs an anchor guaranteed unique before it
-  resolves.
+  Note: the §3 id-uniqueness invariant is enforced *at the add boundary* here;
+  the broader load-time check on every parsed document landed later as F5.
 - **F2 — DONE (2026-09-23).** `/ui move <id> <where>` in `internal/patch`
   (`move.go`). Reuses F1's write-path `where` resolver — `parseWhere` was
   factored out of `parseAdd` as the single reader of the grammar, so `add` and
@@ -834,8 +845,8 @@ counterfactual test).
   menu-agreement and verb-round-trip sweeps cover it. Counterfactuals run for
   the cycle refusal (disabling it fails exactly the three cycle tests) and the
   detach (an off-by-one that fails to drop the moved node fails the offset
-  tests). The §3 id-uniqueness invariant is still enforced at the verb boundary,
-  not yet load-time — the broader guard remains F2's natural companion.
+  tests). The §3 id-uniqueness invariant is enforced at the verb boundary here;
+  the document-wide load-time guard — its natural companion — landed as F5.
 - **F3 — DONE (2026-09-23).** `/ui hide <id>` / `/ui show <id>` / `/ui show *`,
   gated on D3's signed `ui.hidden` set (BINDS.md §4.3). Unlike `add`/`move`/
   `set`/`style`, hide/show are *not* source edits: they write host-owned view
@@ -857,8 +868,8 @@ counterfactual test).
   drop test (`hiddenFilterVaries`, and `TestUIHidden*`) rather than a switch
   label. Counterfactual: disabling the membership test fails exactly the three
   `TestUIHidden*` tests and the composite audit's `ui.hidden` case, nothing
-  else. The §3 id-uniqueness invariant is still enforced at the verb boundary,
-  not yet load-time.
+  else. The §3 id-uniqueness invariant is enforced at the verb boundary here;
+  the document-wide load-time guard landed as F5.
 - **F4 — DONE (2026-09-23).** The slash-menu advertisement and the sweeps
   landed incrementally with F1–F3 (each verb was added to `Verbs()`, the `ui`
   description, the menu-agreement test and the verb-round-trip sweep in the same
@@ -869,8 +880,34 @@ counterfactual test).
   at the docs. It now describes the six implemented verbs (`add`, `move`, `set`,
   `style`, `hide`, `show`), the D2 addressing and D3 view-state notes as
   *implemented*, and the menu-drift bullet as a resolved past defect. No golden
-  moves: the empty `ui.hidden` set is a no-op, so nothing new was frozen. Block
-  F is complete.
+  moves: the empty `ui.hidden` set is a no-op, so nothing new was frozen.
+- **F5 — DONE (2026-10-01).** The §3 id-uniqueness invariant graduated from a
+  write-path check (enforced at the `/ui add`/`move` boundary and over a mounted
+  plugin's composed tree) to a **load-time** invariant on every parsed document,
+  which ADDRESSING.md §3 is explicit it must be: an id is an address several
+  *read*-path features resolve against — `focus_glow` keys on `id == ui.focus`,
+  `ui.max` / `cmd:/max <pane>` address a pane by id — so a hand-written document
+  with a duplicate id is as unsafe as one a verb would have produced, double-
+  glowing or fighting over the maximised slot independent of the write path.
+  `Document.validateIDs` (`internal/scene/validate.go`) walks the parsed tree —
+  children, prefix, suffix, **and** row_template, mirroring `validateBindsScoped`
+  so a node reached only through a template is held to it too — and refuses the
+  first duplicate non-empty id with a `file:line` error naming the id and **both**
+  offending nodes (§3's exact wording). It runs after the bind walk in both
+  `Validate` and `ValidateWithPlugin`, so a more specific per-node bind refusal
+  still surfaces first. Scope is per `Document` by construction, so the eval-corpus
+  fixtures that embed several documents in one file are never cross-flagged (§3);
+  the empty id is exempt (an unnamed node is not addressable). No shipped scene or
+  golden carried a duplicate, so **no fixture moved** — the full suite was already
+  green under the new guard. `Mount`'s own `firstDuplicateID` pass (H3) still runs
+  first with its plugin-specific message, so the composed-tree refusal is
+  unchanged; this closes the hand-written-document gap F1/F2 flagged as the guard's
+  natural companion. Pinned by `id_uniqueness_test.go` (children duplicate with
+  exact lines + both-node naming, a template-reached duplicate, and the
+  unique-plus-empty accept case) with both counterfactuals run by hand: disabling
+  the pass fails exactly the two refusal tests and leaves the accept test green,
+  and dropping the row_template recursion fails only the template-reached test.
+  Block F is complete.
 
 ### Block G — Phase 3: animation props [D4]
 

@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -34,7 +36,48 @@ type OpenAIModel struct {
 	// requests. Zero is the value a reproducible eval wants, and a plain
 	// float64 could not express leaving the server's default alone.
 	Temperature *float64
+	// MaxAttempts bounds the retry on a *transient* transport failure (a
+	// gateway 502/503/504 or a connection error), never on a model answer.
+	// Zero means defaultMaxAttempts.
+	MaxAttempts int
+	// Backoff is the wait before attempt n+1 (1-based). Injectable so a test
+	// does not sleep real seconds; nil means defaultBackoff.
+	Backoff func(attempt int) time.Duration
 }
+
+// defaultMaxAttempts and defaultBackoff tune the retry.
+//
+// The retry exists because of a measured incident, like gatewayRefusal below:
+// a hosted gateway in front of a large model answers the corpus's big
+// scene-patch prompts with an intermittent 504 Gateway Timeout — some requests
+// complete, most do not — so a single-shot run reports model_error for most
+// cases and the operator reads a flaky proxy as a finding about the model. A
+// bounded retry on exactly the transient transport codes (502/503/504) and on
+// connection errors lets the loop ride out the proxy without touching the
+// model_error-vs-score separation: a 4xx, a vendor error envelope, bad JSON or
+// a non-gateway 5xx is still returned on the first attempt, because those are
+// the model's or the operator's answer and retrying them would only hide a
+// real result behind a delay.
+const defaultMaxAttempts = 5
+
+func defaultBackoff(attempt int) time.Duration {
+	// 0.5s, 1s, 2s, 4s … capped at 8s. Exponential so a briefly overloaded
+	// gateway is given room, capped so a long run does not stall on one case.
+	d := 500 * time.Millisecond << (attempt - 1)
+	if d > 8*time.Second {
+		d = 8 * time.Second
+	}
+	return d
+}
+
+// transientError marks a transport failure worth retrying. It is distinct from
+// every other error Patch can return precisely so classification is explicit:
+// only an error wrapped as transient is retried; everything else surfaces at
+// once as the model/operator result it is.
+type transientError struct{ err error }
+
+func (e *transientError) Error() string { return e.err.Error() }
+func (e *transientError) Unwrap() error { return e.err }
 
 // NewOpenAIModelFromEnv builds a model from the environment.
 //
@@ -61,7 +104,25 @@ func NewOpenAIModelFromEnv(model string) (*OpenAIModel, error) {
 		Model:       model,
 		Client:      &http.Client{Timeout: 120 * time.Second},
 		Temperature: &zero,
+		MaxAttempts: maxAttemptsFromEnv(),
 	}, nil
+}
+
+// maxAttemptsFromEnv lets an operator widen the retry against a gateway worse
+// than the default rides out, without a recompile. A missing or unparseable
+// value is the default rather than an error: the retry is an operability knob,
+// not part of the measurement, so a typo here must not fail a run the way a
+// missing key does.
+func maxAttemptsFromEnv() int {
+	v := os.Getenv("OPENAI_MAX_ATTEMPTS")
+	if v == "" {
+		return defaultMaxAttempts
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < 1 {
+		return defaultMaxAttempts
+	}
+	return n
 }
 
 type chatMessage struct {
@@ -85,8 +146,48 @@ type chatResponse struct {
 	} `json:"error,omitempty"`
 }
 
-// Patch implements Model.
+// Patch implements Model. It retries a transient transport failure (a gateway
+// 502/503/504 or a connection error) up to MaxAttempts, with backoff, and
+// returns every other error — a 4xx, a vendor refusal, bad JSON — on the first
+// attempt, so the retry hardens the harness against a flaky proxy without ever
+// retrying the model's own answer.
 func (m *OpenAIModel) Patch(ctx context.Context, req PatchRequest) ([]byte, error) {
+	attempts := m.MaxAttempts
+	if attempts <= 0 {
+		attempts = defaultMaxAttempts
+	}
+	backoff := m.Backoff
+	if backoff == nil {
+		backoff = defaultBackoff
+	}
+
+	var last error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		body, err := m.patchOnce(ctx, req)
+		if err == nil {
+			return body, nil
+		}
+		var tr *transientError
+		if !errors.As(err, &tr) {
+			// A model/operator result, not transport: surface it now.
+			return nil, err
+		}
+		last = err
+		if attempt == attempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(backoff(attempt)):
+		}
+	}
+	return nil, fmt.Errorf("after %d attempts: %w", attempts, last)
+}
+
+// patchOnce is one request/response. It wraps a connection error or a gateway
+// 502/503/504 as *transientError; every other failure is returned bare.
+func (m *OpenAIModel) patchOnce(ctx context.Context, req PatchRequest) ([]byte, error) {
 	body, err := json.Marshal(chatRequest{
 		Model:       m.Model,
 		Temperature: m.Temperature,
@@ -112,21 +213,36 @@ func (m *OpenAIModel) Patch(ctx context.Context, req PatchRequest) ([]byte, erro
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return nil, err
+		// A cancelled/expired context is the operator stopping the run, not
+		// a flaky gateway: do not retry it.
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		return nil, &transientError{fmt.Errorf("connection error: %w", err)}
 	}
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		return nil, &transientError{fmt.Errorf("reading response: %w", err)}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// The body is included because the status alone does not
-		// distinguish a bad key from a bad model name, and both are
-		// operator mistakes that would otherwise be reported as the
-		// model failing every case.
-		return nil, fmt.Errorf("chat completions: %s: %s", resp.Status, truncate(string(raw), 400))
+		msg := fmt.Errorf("chat completions: %s: %s", resp.Status, truncate(string(raw), 400))
+		if isTransientStatus(resp.StatusCode) {
+			// A gateway/proxy transient: the request never reached the
+			// model, so retrying it is not retrying an answer. The body is
+			// still carried so a run that exhausts its attempts reports what
+			// the gateway said.
+			return nil, &transientError{msg}
+		}
+		// A 4xx (bad key, bad model, insufficient quota) or a non-gateway
+		// 5xx is the operator's or the service's answer, not transport —
+		// returned at once so it is not hidden behind a delay.
+		return nil, msg
 	}
 
 	var parsed chatResponse
@@ -146,6 +262,19 @@ func (m *OpenAIModel) Patch(ctx context.Context, req PatchRequest) ([]byte, erro
 	}
 
 	return StripFence([]byte(content)), nil
+}
+
+// isTransientStatus names the gateway/proxy codes a retry is for. It is
+// deliberately narrow — the three classic reverse-proxy transients — because a
+// plain 500 is as likely to be a deterministic server fault that a retry only
+// delays, and the measured incident is a 504.
+func isTransientStatus(code int) bool {
+	switch code {
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 // gatewayRefusal detects a proxy or gateway that answered instead of the
