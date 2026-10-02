@@ -1,0 +1,51 @@
+{
+  "id": "subagents-turns-and-busy-dot",
+  "order": "in the team list, after each member's role show how many turns it has taken, and put a dot after that while the member is busy",
+  "base": "SUBAGENTS.json",
+  "rationale": "The only case that puts the model inside a row_template, where the vocabulary is the relative row.* schema (BINDS.md 4.7) and not the absolute signed list the prompt prints. The obvious reading of 'how many turns' is a field called row.turn_count, which reads exactly like a signed row field and is not: BINDS.md signs row.turns for team.members. That makes it the corpus' cover for the row-scope arm of the bind validator, which reports through scene.Error from a different walk than a top-level bind and so can regress independently. It also exercises a gate inside a template: the busy dot must be gated on row.busy, not on an absolute bind, or every member would show it. row.turns and row.busy are both novel against SUBAGENTS (which binds only row.role), so doing nothing does not pass, and both must reach the frame through the template (TestEveryCorpusMustBindFieldReachesTheFrame renders a busy member with a distinctive turn count).",
+  "attempts": [
+    {
+      "note": "structure is right (a row of role, turns and a gated dot inside the template), but the turn count is guessed as row.turn_count, which is not in the team.members row schema",
+      "document": {
+        "root": {
+          "type": "stack",
+          "children": [
+            { "type": "text", "style": { "style": "header" }, "text": "subagents" },
+            { "id": "notice", "type": "text", "bind": "host.scene.error", "when": "host.scene.error", "style": { "style": "banner" } },
+            { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+            { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ ", "placeholder": "ask anything, or / for commands" },
+            { "id": "team", "type": "list", "bind": "team.members",
+              "row_template": { "type": "row", "children": [
+                { "type": "text", "bind": "row.role", "style": { "style": "header" } },
+                { "type": "text", "text": " " },
+                { "type": "text", "bind": "row.turn_count" },
+                { "type": "text", "text": " \u25cf", "when": "row.busy" }
+              ] } }
+          ]
+        }
+      },
+      "expect_refused": { "reason": "row.turn_count", "line": 13 }
+    }
+  ],
+  "convergence": {
+    "document": {
+      "root": {
+        "type": "stack",
+        "children": [
+          { "type": "text", "style": { "style": "header" }, "text": "subagents" },
+          { "id": "notice", "type": "text", "bind": "host.scene.error", "when": "host.scene.error", "style": { "style": "banner" } },
+          { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+          { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ ", "placeholder": "ask anything, or / for commands" },
+          { "id": "team", "type": "list", "bind": "team.members",
+            "row_template": { "type": "row", "children": [
+              { "type": "text", "bind": "row.role", "style": { "style": "header" } },
+              { "type": "text", "text": " " },
+              { "type": "text", "bind": "row.turns" },
+              { "type": "text", "text": " \u25cf", "when": "row.busy" }
+            ] } }
+        ]
+      }
+    },
+    "must_bind": ["row.turns", "row.busy"]
+  }
+}

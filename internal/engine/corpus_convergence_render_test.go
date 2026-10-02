@@ -148,6 +148,19 @@ var corpusBindWitness = map[string]string{
 	"usage.in":            "1234",
 	"usage.out":           "5678",
 	"session.tokens_used": "9012",
+
+	// The two row-scoped binds of subagents-turns-and-busy-dot. They are
+	// witnessed through the team rows corpusRenderState folds: one busy member
+	// (backend, 4242 turns) and one idle member (frontend, 7 turns).
+	//
+	// row.busy is a gate, not a value, so its only visible effect is the dot,
+	// and a bare dot would be satisfied by a gate that ignored the bind (every
+	// member would draw one). The witness therefore ties the dot to the busy
+	// member's own turn count: it can only appear if the template resolved
+	// row.busy against the right element. The idle member's absence of a dot is
+	// asserted separately in TestCorpusBusyDotIsGatedPerRow.
+	"row.turns": "4242",
+	"row.busy":  "4242 \u25cf",
 }
 
 // corpusRenderState is the one fold state every case renders against.
@@ -172,5 +185,43 @@ func corpusRenderState() fold.State {
 		UsageOut:          5678,
 		SessionTokensUsed: 9012,
 		StatusActive:      "true",
+		TeamMembers: []fold.TeamMember{
+			{ID: "be-1", Role: "backend", Busy: true, Turns: 4242},
+			{ID: "fe-1", Role: "frontend", Busy: false, Turns: 7},
+		},
+	}
+}
+
+// TestCorpusBusyDotIsGatedPerRow is the counterfactual half of the row.busy
+// witness above. A witness that only proves the dot can appear is satisfied by a
+// template whose gate ignores the bind; this proves the dot is drawn for the busy
+// member and withheld from the idle one, which is the whole meaning of gating on
+// a row-scoped bind.
+func TestCorpusBusyDotIsGatedPerRow(t *testing.T) {
+	cases, err := eval.LoadAll(filepath.Join("..", "..", "testdata", "eval"))
+	if err != nil {
+		t.Fatalf("loading the corpus: %v", err)
+	}
+	var found bool
+	for _, c := range cases {
+		if c.ID != "subagents-turns-and-busy-dot" {
+			continue
+		}
+		found = true
+		doc, err := scene.ParseDocument(c.Convergence.Document)
+		if err != nil {
+			t.Fatalf("convergence document does not parse: %v", err)
+		}
+		r := Renderer{Width: 72, Height: 24}
+		plain := r.RenderFrame(doc, corpusRenderState()).Plain()
+		if !strings.Contains(plain, "backend 4242 \u25cf") {
+			t.Errorf("the busy member's row has no dot\nconsequence: row.busy gates nothing visible, so the case cannot tell a model that gated the dot from one that omitted it.\nremedy: check renderRowTemplate resolves a when against the current row.\nframe:\n%s", plain)
+		}
+		if strings.Contains(plain, "frontend 7 \u25cf") {
+			t.Errorf("the idle member's row has a dot\nconsequence: the gate ignores row.busy, so every member looks busy and the order is satisfied by drawing the dot unconditionally.\nremedy: evaluate when through evalWhenRow, not the absolute resolver.\nframe:\n%s", plain)
+		}
+	}
+	if !found {
+		t.Fatal("subagents-turns-and-busy-dot is not in the corpus; this guard is reading the wrong directory and would pass over nothing")
 	}
 }
