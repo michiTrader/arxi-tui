@@ -270,6 +270,43 @@ diff-and-approve step catches by eye. The caveat is one model, one provider,
 and four cases — widening the corpus (Block A4) is what would move the claim
 from "reliable for this model" to "reliable".
 
+### Second live run (2026-10-01): a flaky gateway, and the retry that answers it
+
+The five-case corpus was re-run against `deepseek-v4-flash` on the same
+provider. The provider's gateway now answers the corpus's larger scene-patch
+prompts with an intermittent **504 Gateway Timeout** — some requests complete,
+most do not — so a single-shot run reported `model_error` for most cases, which
+reads as a finding about the model when it is a finding about the proxy.
+
+A 504 arrives *before* the request reaches the model: it is transport, not an
+answer, so retrying it is not retrying the model's own output. The adapter now
+retries exactly the three classic reverse-proxy transients (502/503/504) and
+connection errors, with exponential backoff, bounded by `OPENAI_MAX_ATTEMPTS`
+(default 5). Everything else — a 4xx, a vendor error envelope, bad JSON, a
+non-gateway 5xx, a `gatewayRefusal` 200-but-prose — still surfaces on the first
+attempt, because those are the model's or the operator's result and a retry
+would only hide them behind a delay. The `model_error`-vs-score separation is
+untouched: the retry only decides *when* a transport error is reported, never
+*whether* a model answer is scored.
+
+With the retry enabled, four of five cases completed:
+
+| Case | Outcome |
+| --- | --- |
+| `maximum-count-the-tasks` | converged (1) |
+| `raw-add-tasks-panel` | incomplete (same naming slip as above) |
+| `raw-model-name-while-working` | converged (1) |
+| `sobria-add-model-row` | **model_error** — persistent 504 across 10 attempts |
+| `sobria-dim-the-footer` | converged (1) |
+
+The retry did its job: cases that back-to-back 504'd before the change now ride
+out the intermittent timeouts and converge. One case, `sobria-add-model-row`,
+504'd on *every* attempt even at a budget of 10 — a deterministic gateway limit
+on that particular request, not flakiness — and the harness correctly refused
+to score it rather than letting a transport failure depress the number. That is
+the separation working as designed: an unanswerable transport problem is
+reported as `model_error`, not folded into the convergence count.
+
 ### "Not converged" is not one fact
 
 The runner reports five outcomes, because collapsing them points a reader at
@@ -1151,6 +1188,12 @@ JSON is still scored as a model that returned bad JSON.
 go build -o arxi-eval ./cmd/arxi-eval
 OPENAI_API_KEY=... arxi-eval -model <name> -v
 ```
+
+A flaky gateway in front of the model can be ridden out with
+`OPENAI_MAX_ATTEMPTS` (default 5), which bounds the retry on transient transport
+failures (502/503/504 and connection errors) only. A higher value does not and
+cannot change a score: it changes how long the harness waits before reporting a
+transport failure it could not clear.
 
 `arxi-eval` is a separate binary from `arxi-tui`. The shipped interface must not
 carry an eval harness, an HTTP client for a model API, or a reason to read

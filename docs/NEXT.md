@@ -136,6 +136,19 @@ case-runs converged**.
   per-model engineering; widening across more scenes needs those goldens frozen
   first (later phases). This is the work that moves the claim from "reliable for
   this model" to "reliable".
+  - **Second live run (2026-10-01)**, `deepseek-v4-flash` on the same provider:
+    the gateway now intermittently 504s on the larger prompts, which a
+    single-shot run misreports as `model_error`. Hardened the adapter with a
+    bounded retry on transient transport only (502/503/504 + connection errors,
+    exponential backoff, `OPENAI_MAX_ATTEMPTS` knob; everything else surfaces at
+    once). With it, 4/5 completed (3 converged, 1 the known `agent.todos` naming
+    slip); `sobria-add-model-row` 504'd on every attempt even at budget 10 — a
+    deterministic gateway limit the harness correctly reports as `model_error`
+    rather than scoring. The retry decides *when* a transport error is reported,
+    never *whether* a model answer is scored, so the model_error-vs-score
+    separation is untouched. Written up in `docs/EVAL.md` ("Second live run").
+    Tests: `internal/eval/openai_test.go` (retry-then-success, no-retry-on-4xx,
+    exhaust-reports-gateway).
 - **A5 — DONE.** Finding written into `docs/EVAL.md` (First live run) and
   `docs/PLAN.md` (Phase 2 measured result). The gating question is answered:
   the repair loop works against a real model.
