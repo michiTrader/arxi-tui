@@ -149,6 +149,26 @@ case-runs converged**.
     separation is untouched. Written up in `docs/EVAL.md` ("Second live run").
     Tests: `internal/eval/openai_test.go` (retry-then-success, no-retry-on-4xx,
     exhaust-reports-gateway).
+  - **Third pass (2026-10-02): corpus 5 -> 7, one harness gap fixed, one product
+    gap found.** `subagents-turns-and-busy-dot` (row_template scope, BINDS.md 4.7)
+    and `buttons-model-name-focus-input` (the `on_press` grammar, 4.8) are added,
+    with `row.turns`/`row.busy` witnessed in `TestEveryCorpusMustBindFieldReachesTheFrame`
+    and `TestCorpusBusyDotIsGatedPerRow` (a gate witness that a template ignoring
+    the bind would still satisfy is not a witness; the counterfactual -- dropping
+    the `when` -- fails it). The prompt gained the relative vocabulary
+    (`scene.RowSchemas()` -> `PatchRequest.RowSchemas`), because `SignedBinds` is the
+    absolute namespace only and the first live run scored `incomplete` for a field
+    the model was never shown. With it, the row case is *still* `incomplete` in
+    both harness runs. Three direct samples diverged (one wrote `{row.turns}` inside
+    a `text` value, which the engine accepts and draws literally because
+    interpolation is read only in `on_press`; one dropped the counter; one was
+    malformed JSON), so the interpolation gap is real but only one of three
+    observed failure modes. The harness does not yet record what the model wrote
+    per turn, which is why the diagnosis is partial.
+    **Open product decision, not made here:** refuse `{row.` outside `on_press`
+    with a `file:line` (option a) or sign text interpolation (option b); see
+    EVAL.md "Third live run". The buttons case converged in both runs, once
+    through a real repair turn. Still one model, one provider.
 - **A5 — DONE.** Finding written into `docs/EVAL.md` (First live run) and
   `docs/PLAN.md` (Phase 2 measured result). The gating question is answered:
   the repair loop works against a real model.

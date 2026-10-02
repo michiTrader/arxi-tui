@@ -1,0 +1,49 @@
+{
+  "id": "buttons-model-name-focus-input",
+  "order": "add a button after Reply that is labelled with the model's name and, when pressed, puts the cursor back in the input box",
+  "base": "BUTTONS.json",
+  "rationale": "The only case that exercises on_press, the closed action grammar of BINDS.md 4.8 (cmd:, focus:, answer:, ext:). The order says what the press should do, not how the grammar spells it, so the plausible first miss is an invented spelling that has no prefix at all. The refusal is the validator's own grammar reader (scene.ParseAction), so this pins that diagnostic where the repair loop depends on it: the message lists the closed set, which is everything the model needs to fix the line. It also checks that a button's label can come from a bind (renderButton reads bind before text), so model.name must reach the frame through the button. model.name is novel against BUTTONS, which binds nothing, so doing nothing does not pass.",
+  "attempts": [
+    {
+      "note": "the button and the label bind are right, but the press action is spelled as a bare verb with no prefix",
+      "document": {
+        "root": {
+          "type": "stack",
+          "children": [
+            { "type": "text", "style": { "style": "header" }, "text": "review" },
+            { "id": "notice", "type": "text", "bind": "host.scene.error", "when": "host.scene.error", "style": { "style": "banner" } },
+            { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+            { "id": "decision", "type": "row", "children": [
+              { "id": "approve", "type": "button", "text": "Approve", "on_press": "answer:approve" },
+              { "id": "reject", "type": "button", "text": "Reject", "on_press": "answer:reject" },
+              { "id": "reply", "type": "button", "text": "Reply", "on_press": "answer:reply" },
+              { "id": "model", "type": "button", "bind": "model.name", "on_press": "focus-input" }
+            ] },
+            { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ ", "placeholder": "ask anything, or / for commands" }
+          ]
+        }
+      },
+      "expect_refused": { "reason": "no action prefix", "line": 12 }
+    }
+  ],
+  "convergence": {
+    "document": {
+      "root": {
+        "type": "stack",
+        "children": [
+          { "type": "text", "style": { "style": "header" }, "text": "review" },
+          { "id": "notice", "type": "text", "bind": "host.scene.error", "when": "host.scene.error", "style": { "style": "banner" } },
+          { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+          { "id": "decision", "type": "row", "children": [
+            { "id": "approve", "type": "button", "text": "Approve", "on_press": "answer:approve" },
+            { "id": "reject", "type": "button", "text": "Reject", "on_press": "answer:reject" },
+            { "id": "reply", "type": "button", "text": "Reply", "on_press": "answer:reply" },
+            { "id": "model", "type": "button", "bind": "model.name", "on_press": "focus:prompt" }
+          ] },
+          { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ ", "placeholder": "ask anything, or / for commands" }
+        ]
+      }
+    },
+    "must_bind": ["model.name"]
+  }
+}
