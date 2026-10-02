@@ -307,6 +307,60 @@ to score it rather than letting a transport failure depress the number. That is
 the separation working as designed: an unanswerable transport problem is
 reported as `model_error`, not folded into the convergence count.
 
+### Third live run (2026-10-02): two new cases, and a defect the harness found in the product
+
+The corpus widened from five to seven cases (Block A4). The two additions each
+cover a validator arm no earlier case reached: `subagents-turns-and-busy-dot`
+works inside a `row_template`, where the vocabulary is the relative `row.*`
+schema (BINDS.md 4.7), and `buttons-model-name-focus-input` exercises the closed
+`on_press` grammar (BINDS.md 4.8). Both attempts' lines were first written one
+off from the engine's, and `TestEveryExpectedRefusalIsTheRefusalTheEngineGives`
+caught both -- the third time that test has corrected a hand-written address.
+
+Against `deepseek-v4.1-flash` (same provider, `OPENAI_MAX_ATTEMPTS=8`):
+
+| Case | Outcome |
+| --- | --- |
+| `buttons-model-name-focus-input` | converged (1), then converged (2) -- the second run invented `ui.focus:input`, was refused with the closed set listed, and repaired it. A repair-loop case, not a first-shot one. |
+| `subagents-turns-and-busy-dot` | **incomplete** in every sample (two harness runs, three direct samples) |
+
+Two separate findings came out of the second row, and the order matters.
+
+**A harness gap, fixed.** The first run scored `incomplete` because the prompt
+listed only `scene.SignedBinds()`, which is the absolute namespace. A `row.*`
+name is legal solely inside a template, so it is not, and cannot be, in that flat
+list: the model was never told the field is `row.turns`. The prompt now carries
+`scene.RowSchemas()` as its own section (`PatchRequest.RowSchemas`), exported from
+the validator's own map for the same single-source reason `SignedBinds` is. This
+is the kind of defect AGENTS.md describes as a measurement error in the
+flattering direction reversed: the harness's omission was being recorded as the
+model's inability.
+
+**A product gap, not fixed here.** With the vocabulary in the prompt the case
+still scores `incomplete`, and the samples show why. The model reaches for
+`"text": "{row.turns}•"` -- interpolation inside a `text` value -- or drops the
+`when` entirely. The first validates and draws the literal string `{row.turns}•`.
+`{row.<field>}` is signed (BINDS.md 4.7, Q20) for **`on_press` arguments only**,
+and `validateOnPress` is the only reader of it; a `text` value carrying the same
+syntax is accepted without a warning and drawn verbatim. That is the
+accepted-but-not-drawn class this project holds worst, and it has the extra
+property that the prompt now says "NOT substituted" and the model does it anyway,
+because the syntax is exactly what an author would write.
+
+Two ways to close it, and the choice is a product decision, so it is recorded
+rather than made: **(a)** refuse `{row.` in a non-`on_press` string with a
+`file:line` pointing at `bind`/`when` (cheapest; keeps interpolation an action-
+argument feature and gives the repair loop an address to read), or **(b)** sign
+text interpolation (Q10 already names "same machinery" for it). Until one lands,
+this case measures the gap directly: it should convert from `incomplete` to a
+repair-loop case under (a), since the refusal gives the model something to read.
+
+The caveat from the earlier runs stands and widens slightly: still one model and
+one provider, now seven cases. `maximum-count-the-tasks`, `sobria-add-model-row`
+and `sobria-dim-the-footer` 504'd on every attempt in the same session -- the
+gateway limit recorded in the second run, reported as `model_error` and never
+scored.
+
 ### "Not converged" is not one fact
 
 The runner reports five outcomes, because collapsing them points a reader at
