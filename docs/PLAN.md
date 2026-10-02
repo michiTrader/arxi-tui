@@ -606,6 +606,86 @@ load-bearing decision and it is made here; the dependency waits for the first
 render that fails the node-route bar. Signing this ADR lifts no code guard and
 adds nothing to `go.mod`.
 
+#### ADR-0009 — Gate C behavior hooks: a plugin proposes, the core decides, the user governs
+
+Signed from `docs/DESIGN-BLOCK-K1-GATE-C.md` (K1). Q23 lists Gate C as one door
+("behavior hooks: gating tool calls, prompt adjustments, custom compaction"), but
+reading the arxi source shows the three are not one difficulty, so this ADR freezes
+the seam at three different ceilings and names the one buildable-now half — the way
+ADR-0007 froze the behavioral wire before the subprocess landed. It signs **K1's
+seam only**; the agent-facing half stays blocked on Block M and a coordinated arxi
+surface bump, and K3 (self-extension over the gate) is still unstarted.
+
+**A hook proposes a verdict; the core decides; the user governs.** A hook returns a
+*proposed* `deny`/`ask` (or a proposed compaction artifact); the core's
+`TurnToolPolicyResolver` (`arxi/internal/exec/turn.go:147`) remains the sole
+authority that acts on it, and the fold is never written by the plugin (invariants
+2 & 7). A hook may **only narrow, never widen** — composition is
+most-restrictive-wins (`deny` > `ask` > `allow`), so a plugin can tighten a call
+but never turn a core `deny` into `allow`. This is the wire enforcement of arxi's
+own `agent.tool.policy`-off-wire rule (`arxi/internal/surface/surface.go:341`): "the
+user governs the agent" is the only representable direction. Multiple hooks stack in
+a deterministic order keyed by the §I-H consent-identity tuple (F5) — the composed
+verdict is order-independent under most-restrictive-wins, but the *surfaced reason*
+must be deterministic for replay.
+
+**The hook runs once; its verdict is logged; replay never re-invokes it.** A hook
+consults a stranger's live process (non-deterministic), but the run log must replay
+deterministically (invariant 2; the eval corpus, the goldens and
+`verifyPreparedContext` all depend on it). Resolution, the one invariant 7 gives for
+free (as §I-J resolved the tool result): the hook is invoked **once**, live, and its
+proposed verdict is written to the run log as an event **the host attributes on the
+plugin's behalf** ("plugin P proposed `deny` on call C, reason R"). Replay reads the
+record and never touches the plugin — which is why a hung plugin on replay is
+impossible. The net-new fold event vocabulary for an attributed verdict is part of
+what the arxi surface bump must settle, named as a dependency, not invented here.
+
+**The invocation reuses the §I-J action/reply round-trip** (`ext/v1`): a host→plugin
+`id`-correlated `action` frame naming the hook, sent only under the matching granted
+capability, awaited on a worker goroutine with a timeout (invariant 6 — never on the
+loop, so a hung hook cannot capture double-Ctrl-C / `-scene ""`). A timeout or
+`error` reply fails safe (F3): a `tool_gate` hook resolves to `ask` (routed to the
+durable inbox the user already drives via M4's `inbox.approve`/`reject`/`reply`),
+**never** silently `allow` (a vetoing hook that fell over must not become a rubber
+stamp) and **not** auto-`deny` (a crashed third party must not hard-block the user's
+own agent with no recourse); a `compaction` hook falls back to the core's built-in
+`Extractive{}` generator. Every fail-safe resolution is logged as such.
+
+**The three sub-features sit at three ceilings.** *C-tool-gate* is the tractable one:
+the core already has the 3-valued pre-dispatch seam and `ask` already routes to the
+durable inbox end to end, so a hook that narrows a tool call is the most reachable.
+*C-compaction* is reachable but constrained — `compaction.Generator`
+(`arxi/internal/compaction/compaction.go:126`) is a clean interface, but a stranger's
+generator must stay pure for replay, so the plugin proposes an artifact once, the
+host records it attributed, and replay reads the record. *C-prompt* has no honest live
+shape and is **rejected as a live hook** (F1): there is no post-`Prepare` seam and one
+cannot exist without defeating `verifyPreparedContext`; prompt influence that survives
+replay is submit-time blueprint config (`SubmitRequest.Prompt`/`Blueprint`/`Model`),
+which already exists and is not a hook.
+
+**New vocabulary this signature pins** (detailed in the design doc; the code lands
+later, each behind its counterfactual, never at signing):
+
+- Two closed capabilities — **`hooks.tool_gate`** ("may see and veto your agent's
+  tool calls — tighten to ask-first or deny, never loosen") and **`hooks.compaction`**
+  ("may rewrite how your agent's history is compacted") — extending the §I-J closed
+  set and thereby the §I-H identity tuple (so a plugin that gains a hook capability
+  re-asks consent).
+- A manifest field — **`hooks: [HookDecl{Kind, Tools}]`** — with a **closed `Kind`
+  set `{tool_gate, compaction}`** (`prompt` absent, F1), digested with the rest of the
+  manifest tree so a hook is authority the consent screen showed and the digest
+  covered, never registered at runtime.
+- One supervisor method — **`Supervisor.CallHook`** — and its `replyhook` helper mode,
+  the request/response sibling of §I-J's `CallTool` (F4 reuses its worker-timeout
+  constant, not a second knob).
+- A pure **verdict-composition** function (most-restrictive-wins, identity-ordered).
+
+Everything else — the host→core advertisement, the core↔host gate/verdict frames, a
+net-new `hostv1.Capability` (`arxi/host/v1/capabilities.go` is only job/decision/event
+today), and the attributed-verdict fold event — is a **dependency the arxi surface
+bump settles alongside Block M**, not vocabulary this ADR signs. Signing lifts no code
+guard and adds nothing to `go.mod`.
+
 ## When data, when code
 
 | I want… | Tool |

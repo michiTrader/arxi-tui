@@ -52,6 +52,9 @@ func (m *Manifest) ValidateBehavioral() error {
 	if err := m.validateTools(); err != nil {
 		return err
 	}
+	if err := m.validateHooks(); err != nil {
+		return err
+	}
 	if err := m.validateTokensBlock(); err != nil {
 		return err
 	}
@@ -155,6 +158,73 @@ func (m *Manifest) validateTools() error {
 			return &Error{Loc: m.locAt("tools"), Msg: fmt.Sprintf("tool %q is declared twice; the relative name composes into the agent-visible <plugin-id>.<name>, so a duplicate would shadow the first and one of the two could never be called (DESIGN-BLOCK-I §I-J) — give each tool a distinct name", tool.Name)}
 		}
 		seen[tool.Name] = true
+	}
+	return nil
+}
+
+// validateHooks refuses a malformed `hooks` block (Gate C, ADR-0009 /
+// DESIGN-BLOCK-K1-GATE-C.md Decision 1). A hook is a declared, digested field like
+// `tools` and `binds`, so the well-formedness net runs here in the behavioral
+// validator, beside the tool checks, rather than at the gate — a package whose
+// hook declarations are broken should be refused at install, not spawned and then
+// discovered wrong when the agent's first tool call reaches a nameless hook.
+//
+// Four refusals, each with its counterfactual (reverting it accepts a malformed
+// block):
+//
+//   - an unknown `kind`, because the kind is a closed-set discriminator the host
+//     opens a seam for in its own code (legalHookKinds); `prompt` lands here too,
+//     since it is deliberately not in the set (F1).
+//   - a `tool_gate` hook naming an empty tool element, because an empty string
+//     names no tool and would silently widen the hook to all tools or match
+//     nothing — a declaration the author did not mean either way.
+//   - a `tools` list on a `compaction` hook, because compaction is whole-history
+//     and has no per-tool axis; a tool filter there is a field with no meaning,
+//     refused rather than ignored (the §I-J nameless-tool precedent).
+//   - a second `compaction` hook, because the core runs exactly one
+//     compaction.Generator (F2) and a stack of them has no deterministic,
+//     meaningful composition rule the way tool-gate's most-restrictive-wins does.
+//
+// And one contradiction, mirroring validateTools' tools-without-capability: a hook
+// of a given kind without the capability that kind requires (HookKindCapability)
+// is a manifest asking to subject the agent's turn to a power the consent screen
+// never showed, because the capability is what puts "this plugin may see and veto
+// your agent's tool calls" (or "rewrite how your history is compacted") in front
+// of the user. The two must agree, so the author is told to add the capability or
+// drop the hook rather than shipping a hook no grant can ever cover.
+func (m *Manifest) validateHooks() error {
+	if len(m.Hooks) == 0 {
+		return nil
+	}
+	declared := map[string]bool{}
+	for _, c := range m.Capabilities {
+		declared[c] = true
+	}
+	seenCompaction := false
+	for i, hook := range m.Hooks {
+		if !legalHookKinds[hook.Kind] {
+			return &Error{Loc: m.locAt("hooks"), Msg: fmt.Sprintf("hook %d has unknown kind %q; the kind set is closed because a hook is a seam the host opens in its own code (ADR-0009, DESIGN-BLOCK-K1-GATE-C.md Decision 1) — the legal kinds are %s (%q is deliberately absent: a prompt hook cannot survive the context.prepared replay digest)", i, hook.Kind, legalHookKindList(), "prompt")}
+		}
+		cap, _ := HookKindCapability(hook.Kind)
+		if !declared[cap] {
+			return &Error{Loc: m.locAt("hooks"), Msg: fmt.Sprintf("manifest %q declares a %q hook but not the %q capability; a hook subjects the agent's turn to this plugin, and %q is the grant the consent screen shows the user for exactly that (ADR-0009) — add %q to \"capabilities\", or drop the hook", m.ID, hook.Kind, cap, cap, cap)}
+		}
+		switch hook.Kind {
+		case hookKindToolGate:
+			for j, t := range hook.Tools {
+				if t == "" {
+					return &Error{Loc: m.locAt("hooks"), Msg: fmt.Sprintf("hook %d (tool_gate) names an empty tool at index %d; an empty tool name matches no tool and would silently widen the hook to all tools or none (DESIGN-BLOCK-K1-GATE-C.md Decision 1) — name a tool, or omit \"tools\" to be consulted for every tool", i, j)}
+				}
+			}
+		case hookKindCompaction:
+			if len(hook.Tools) > 0 {
+				return &Error{Loc: m.locAt("hooks"), Msg: fmt.Sprintf("hook %d (compaction) declares \"tools\"; compaction rewrites the whole history and has no per-tool axis, so a tool filter there is meaningless (ADR-0009) — drop \"tools\" from the compaction hook", i)}
+			}
+			if seenCompaction {
+				return &Error{Loc: m.locAt("hooks"), Msg: fmt.Sprintf("manifest %q declares more than one compaction hook; the core runs exactly one compaction generator and a stack of them has no deterministic composition rule (DESIGN-BLOCK-K1-GATE-C.md F2) — declare at most one \"compaction\" hook", m.ID)}
+			}
+			seenCompaction = true
+		}
 	}
 	return nil
 }
