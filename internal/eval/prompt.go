@@ -2,6 +2,7 @@ package eval
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 )
 
@@ -56,6 +57,25 @@ func BuildUserPrompt(req PatchRequest) string {
 		fmt.Fprintf(&b, "  %s\n", bind)
 	}
 	b.WriteString("\n")
+
+	if len(req.RowSchemas) > 0 {
+		// Sorted by list bind so the prompt is byte-stable across runs: a
+		// map iteration order that changed between two runs would be a
+		// wording difference the measurement did not intend to vary.
+		binds := make([]string, 0, len(req.RowSchemas))
+		for bind := range req.RowSchemas {
+			binds = append(binds, bind)
+		}
+		sort.Strings(binds)
+
+		b.WriteString("Row fields (the only names allowed in \"bind\" and \"when\" INSIDE a row_template, ")
+		b.WriteString("which repeats once per element of the list it is attached to; they are refused anywhere else):\n")
+		for _, bind := range binds {
+			fmt.Fprintf(&b, "  row_template of a list bound to %s: %s\n", bind, strings.Join(req.RowSchemas[bind], ", "))
+		}
+		b.WriteString("A row field is read only through \"bind\" or \"when\". Text such as \"{row.role}\" inside a \"text\" value is NOT substituted; it is drawn literally.\n")
+		b.WriteString("\n")
+	}
 
 	fmt.Fprintf(&b, "Style tokens defined by the active theme:\n")
 	for _, tok := range req.Tokens {

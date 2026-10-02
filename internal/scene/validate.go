@@ -378,6 +378,33 @@ var rowSchemas = map[string]map[string]bool{
 // projection keys match this contract rather than restating it.
 func RowSchema(bind string) map[string]bool { return rowSchemas[bind] }
 
+// RowSchemas returns the §4.7 inventory: for every list bind that carries a row
+// schema, the sorted `row.<field>` names a row_template over it may address.
+// Both the map and each slice are freshly built on every call.
+//
+// It exists for the reason SignedBinds does, one namespace over. The repair loop
+// has to tell the model which names exist, and SignedBinds deliberately lists
+// only the absolute namespace -- a `row.*` name is legal solely inside a
+// row_template, so it cannot be in a flat list a scene may use anywhere. Without
+// this the prompt told the model nothing about the relative vocabulary, and a
+// model asked to show a team member's turn count had no way to learn the field
+// is `row.turns`: the case then scored `incomplete` against the model for a
+// vocabulary the harness never showed it. Exporting the inventory rather than
+// copying it into the prompt keeps the validator the single source, so there is
+// no fifth hand-maintained copy of the list to drift.
+func RowSchemas() map[string][]string {
+	out := make(map[string][]string, len(rowSchemas))
+	for bind, fields := range rowSchemas {
+		names := make([]string, 0, len(fields))
+		for f := range fields {
+			names = append(names, f)
+		}
+		sort.Strings(names)
+		out[bind] = names
+	}
+	return out
+}
+
 // validateBindsScoped walks a subtree, carrying the access path (so a refusal
 // names where it happened) and the row scope in effect. The scope is non-nil
 // only inside a row_template: it holds the source list's bind and the

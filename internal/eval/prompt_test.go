@@ -204,3 +204,45 @@ func TestProseThatIsNotABillingMessageStaysTheModelsProblem(t *testing.T) {
 			"remedy: restrict the vendor-independent check to service-message markers.", err)
 	}
 }
+
+// TestThePromptCarriesTheRowVocabulary guards the defect that made the
+// subagents-turns-and-busy-dot case score `incomplete` against a real model: the
+// prompt listed only the absolute signed binds, so the model could not know that
+// the team.members row field is `row.turns`. It guessed a `{row.turns}`
+// interpolation inside a text value, which validates and draws literally.
+//
+// The assertion is on the text the model reads, not on the request struct, for
+// the reason TestTheRetryPromptCarriesTheAddressedRefusal gives: plumbing a
+// vocabulary into PatchRequest and not rendering it passes one check and fails
+// the user.
+func TestThePromptCarriesTheRowVocabulary(t *testing.T) {
+	req := PatchRequest{
+		Order:      "show turns",
+		Base:       []byte("{}"),
+		RowSchemas: map[string][]string{"team.members": {"row.busy", "row.turns"}, "agent.todos": {"row.task"}},
+	}
+	got := BuildUserPrompt(req)
+
+	for _, want := range []string{"team.members", "row.turns", "row.busy", "agent.todos", "row.task", "NOT substituted"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("prompt omits %q\n"+
+				"consequence: the model is asked to work inside a row_template without being told the relative vocabulary, so a correct order is recorded as an incomplete answer and the harness's gap reads as a model deficiency.\n"+
+				"remedy: render PatchRequest.RowSchemas, and say that row fields are bind/when only.\n--- prompt ---\n%s", want, got)
+		}
+	}
+
+	// Byte-stability: the section must not depend on map iteration order, or
+	// two runs of one case would differ in wording the measurement did not mean
+	// to vary.
+	for i := 0; i < 20; i++ {
+		if again := BuildUserPrompt(req); again != got {
+			t.Fatalf("the prompt differs between two builds of the same request\n" +
+				"consequence: wording would vary between runs, so a change in score could be a change in prompt.\n" +
+				"remedy: sort the list binds before rendering.")
+		}
+	}
+
+	if none := BuildUserPrompt(PatchRequest{Order: "x", Base: []byte("{}")}); strings.Contains(none, "Row fields") {
+		t.Errorf("a request with no row schemas still renders a Row fields section\nconsequence: every non-template case would carry an empty heading the model must interpret.\nremedy: omit the section when RowSchemas is empty.")
+	}
+}

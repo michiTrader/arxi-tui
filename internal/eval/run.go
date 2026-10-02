@@ -52,6 +52,14 @@ type PatchRequest struct {
 	// from scene.SignedBinds() rather than a list written here, so the
 	// prompt cannot drift from the thing that refuses patches.
 	SignedBinds []string
+	// RowSchemas is the relative vocabulary: per list bind, the row.<field>
+	// names legal inside a row_template over it. It comes from
+	// scene.RowSchemas() for the same reason SignedBinds comes from the
+	// validator. It is a separate field because the two namespaces have
+	// different scope rules -- a row.* name is refused outside a template --
+	// and folding them into one flat list would invite the model to use a
+	// relative name at the top level.
+	RowSchemas map[string][]string
 	// Tokens is the style vocabulary the active theme defines.
 	Tokens []string
 	// History is every previous turn of this case, oldest first. On the
@@ -180,6 +188,7 @@ func Run(ctx context.Context, m Model, c Case, opt Options) Result {
 		Base:        base,
 		BaseName:    c.Base,
 		SignedBinds: scene.SignedBinds(),
+		RowSchemas:  scene.RowSchemas(),
 		Tokens:      corpusTheme().Tokens(),
 	}
 
