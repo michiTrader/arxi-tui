@@ -2319,12 +2319,44 @@ counterfactual test).
 
 ### Block K — Phase 4: behavior + wasm [I]
 
-- **K1** Gate C (behavior hooks): gate tool calls, prompt tweaks, custom
-  compaction, with identity-ordered stacking.
-- **K2** Gate D (providers): wire provider plugins (nearly free; exists in the
-  core).
-- **K3** [K1,K2] Self-extension over the gates the user opened, only on user
-  order (diff + attribution).
+- **K1 — BLOCKED (needs a live agent + the arxi-core behavior surface).** Gate C
+  (behavior hooks): gate tool calls, prompt tweaks, custom compaction, with
+  identity-ordered stacking. Unstarted for the same reason the I6 tool-door half
+  is: the agent-facing side cannot be built against a surface this host can only
+  invent — it needs the arxi-core hook vocabulary over the serve socket, the way
+  K2's provider verbs needed arxi PR #117 before the TUI half (K2-d/e/f) could land.
+- **K2 — DONE (2026-09-29/30).** Gate D (providers): the provider/model plumbing
+  the core already had is now wired end to end, pure-first per the M pattern.
+  **K2-a/b/c (arxi PR #117):** `provider.add`/`model.enable`/`model.disable` gained
+  a `Protocol` kind + serve dispatch handlers over `modelstore`/`model`, added to
+  the hello `implemented` list; the mutating verbs carry no `ToolPolicy` (the agent
+  is kept out by the absent `AgentTool` bit, not a capability gate), and the
+  `validateKeyEnv` refusal is pinned over the wire. **K2-d (PR #147):** pure driver
+  methods `SubmitProviderAdd`/`SubmitModelList`/`SubmitModelEnable`/`Disable`
+  (`internal/driver/ndjson.go`, siblings of `SubmitRunStart`): build params, read
+  the result, `ok:false`→`*Refusal`, fail loud on a success naming no provider/model.
+  **K2-e (PR #148):** the `/provider` and `/model` slash-command parsers + async
+  orchestration, registered in the slash menu (the registry is now 7 commands; the
+  menu-render goldens moved). **K2-f (PR #148):** `requireProviderVerbs`, the
+  `requireRunStart` hello gate (the M1b lesson — `types` is not `implemented`) —
+  three refusals, all-or-nothing, pinned. **The design was signed into
+  `docs/DESIGN-BLOCK-K2-PROVIDERS.md` + PLAN.md (PR #146),** recording the
+  no-capability divergence. **Scene 12 PROVIDERS (PR #152)** is the visual face:
+  `testdata/PROVIDERS.{json,frame,styled}` freeze a `list` over `providers.models`
+  (host view state from a `model.list` round-trip, SCENES.md §12) whose
+  `row_template` draws provider + id and one state-mixed action button
+  (`enable`/`disable` gated on the synthesized `row.disabled`/`row.enabled`,
+  pressing into `cmd:/model enable {row.ref}` / `disable`). The security invariant
+  holds: the wire carries the credential's env-var *name*, never a key value, and
+  the screen never stores, logs or echoes a key. **Still only verified by build +
+  the pieces it composes** against a live `arxi serve` with real providers
+  configured — the sandbox has none (the K2-c/K2-f wire facts a real kernel confirms).
+- **K3 — BLOCKED [K1].** Self-extension over the gates the user opened, only on
+  user order (diff + attribution). Gated on K1 (and the live agent that gates it):
+  there is no behavior gate for the agent to extend itself over until Gate C exists.
+  The diff + attribution machinery it would reuse is already built (Block B's
+  `patch.Diff`/`Diff.Scene`, H8's `on_press` routing); what is missing is the open
+  door, not the mechanism.
 - **K4** Costed ADR on embedded wasm (wazero) for renders that are none of our
   nodes (Q14).
 - **K4 — SIGNED (2026-09-29, PR #139) as ADR-0008.** Argued in
@@ -2348,9 +2380,10 @@ counterfactual test).
   exists; the honest ceiling stays the node set, and the node route — marquee,
   sparkline — is tried first because a node is user-rewritable and foreign
   render code is not). The dependency waits for the first render that fails the
-  node-route bar; the seam is signed now. **Remaining for K:** K1–K3 (the
-  behavior gates) — unstarted, blocked on a live agent and the arxi-core
-  surface this host cannot invent.
+  node-route bar; the seam is signed now. **Remaining for K:** K1 (Gate C, behavior
+  hooks) and K3 (self-extension over it) — unstarted, blocked on a live agent and
+  the arxi-core hook surface this host cannot invent. K2 (Gate D, providers) and K4
+  (the wasm ADR) are done; K2 shipped end to end incl. Scene 12 PROVIDERS.
 
 ### Block L — Distribution and install
 
