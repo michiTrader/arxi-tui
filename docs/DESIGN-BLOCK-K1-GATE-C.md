@@ -1,4 +1,4 @@
-# Block K1 — Gate C: behavior hooks from a behavioral plugin (proposal)
+# Block K1 — Gate C: behavior hooks from a behavioral plugin (signed)
 
 This document drafts the paper decision Block K's **K1** needs: how a mounted
 behavioral plugin (Block I) may participate in a running agent's turn — **gate a
@@ -7,10 +7,19 @@ identity-ordered stacking and consent contract Q23 signed. It follows the
 on-paper method of Blocks D, G, H, I, J, K2 and K4: argue the decision in full
 here, then sign the durable seam before any code depends on it.
 
-**Status: PROPOSAL, paper only, awaiting signature.** Signing this lifts no code
-guard, adds nothing to `go.mod`, and sends no frame. As with every design beat,
-each buildable piece lands later with its own counterfactual test; the
-core-facing pieces land only once their named dependencies exist.
+**Status: SIGNED (owner-accepted). Paper only — no code guard lifted.** The five
+forks at the foot of this document are resolved to their recommended defaults
+(F1 C-prompt out by rejection; F2 exactly one `compaction` hook; F3 fail-closed
+to the hook's own ceiling — `ask` for `tool_gate`, core `Extractive{}` for
+`compaction`; F4 reuse the §I-J `CallTool` timeout constant; F5 order by the §I-H
+consent-identity tuple). The durable seam frozen by this signature is recorded as
+**ADR-0009** in `PLAN.md`. Signing adds nothing to `go.mod` and sends no frame;
+it authorizes the one buildable-now, plugin-facing quartet (declaration, consent,
+awaited round-trip, composition) under "What is buildable now", each landing later
+behind its own counterfactual test. The agent-facing half stays blocked on Block M
+and a coordinated `arxi` surface-version bump, named below and never faked. As with
+every design beat, each buildable piece lands later with its own counterfactual
+test; the core-facing pieces land only once their named dependencies exist.
 
 ## The honest headline, before anything is proposed
 

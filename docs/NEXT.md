@@ -2341,12 +2341,32 @@ counterfactual test).
 
 ### Block K — Phase 4: behavior + wasm [I]
 
-- **K1 — BLOCKED (needs a live agent + the arxi-core behavior surface).** Gate C
-  (behavior hooks): gate tool calls, prompt tweaks, custom compaction, with
-  identity-ordered stacking. Unstarted for the same reason the I6 tool-door half
-  is: the agent-facing side cannot be built against a surface this host can only
-  invent — it needs the arxi-core hook vocabulary over the serve socket, the way
-  K2's provider verbs needed arxi PR #117 before the TUI half (K2-d/e/f) could land.
+- **K1 design — SIGNED (2026-10-01, ADR-0009).** Gate C (behavior hooks): gate
+  tool calls, propose compaction, with identity-ordered stacking and the
+  narrow-only (most-restrictive-wins) composition that makes "the user governs the
+  agent" the only representable direction. Argued in `docs/DESIGN-BLOCK-K1-GATE-C.md`
+  and signed into `PLAN.md` as ADR-0009; the five forks resolved to their
+  recommendations (F1 C-prompt out by rejection — no post-`Prepare` seam survives
+  `verifyPreparedContext`; F2 exactly one `compaction` hook; F3 fail-closed to the
+  hook's own ceiling — `ask` for `tool_gate`, core `Extractive{}` for `compaction`;
+  F4 reuse the §I-J `CallTool` timeout; F5 order by the §I-H identity tuple). The
+  signature pins the new vocabulary — two closed capabilities `hooks.tool_gate`/
+  `hooks.compaction`, a digested manifest `hooks: [HookDecl{Kind, Tools}]` with the
+  closed kind set `{tool_gate, compaction}`, `Supervisor.CallHook` + its `replyhook`
+  helper, and a pure most-restrictive-wins verdict composer — and **authorizes the
+  one buildable-now, plugin-facing quartet** (declaration, consent, awaited
+  round-trip, composition), each to land later behind its own counterfactual the way
+  §I-J's tool quartet did, testable headless against a helper process with no live
+  agent. Signing lifts no code guard and adds nothing to `go.mod`.
+- **K1 agent-facing half + implementation — BLOCKED (needs a live agent + the
+  arxi-core behavior surface).** The core-facing wiring — a host→core advertisement,
+  the core↔host gate/verdict frames feeding `TurnToolPolicyResolver`/
+  `compaction.Generator`, a net-new `hostv1.Capability` (today's host surface is only
+  job/decision/event), and the attributed-verdict fold event — is a coordinated
+  `arxi` surface-version bump the host cannot invent, the same wall the I6 tool-door
+  half and K2's provider verbs hit (K2 needed arxi PR #117 before the TUI half could
+  land). The design signature predetermines the wiring; the code waits on M (a live
+  agent the TUI drives) and the bump, named as a dependency and never faked.
 - **K2 — DONE (2026-09-29/30).** Gate D (providers): the provider/model plumbing
   the core already had is now wired end to end, pure-first per the M pattern.
   **K2-a/b/c (arxi PR #117):** `provider.add`/`model.enable`/`model.disable` gained
@@ -2402,10 +2422,12 @@ counterfactual test).
   exists; the honest ceiling stays the node set, and the node route — marquee,
   sparkline — is tried first because a node is user-rewritable and foreign
   render code is not). The dependency waits for the first render that fails the
-  node-route bar; the seam is signed now. **Remaining for K:** K1 (Gate C, behavior
-  hooks) and K3 (self-extension over it) — unstarted, blocked on a live agent and
-  the arxi-core hook surface this host cannot invent. K2 (Gate D, providers) and K4
-  (the wasm ADR) are done; K2 shipped end to end incl. Scene 12 PROVIDERS.
+  node-route bar; the seam is signed now. **Remaining for K:** K1's **design is now
+  signed** (ADR-0009) and authorizes its buildable-now plugin-facing quartet; K1's
+  agent-facing implementation and K3 (self-extension over the gate) stay unstarted,
+  blocked on a live agent and the arxi-core hook surface this host cannot invent. K2
+  (Gate D, providers) and K4 (the wasm ADR) are done; K2 shipped end to end incl.
+  Scene 12 PROVIDERS.
 
 ### Block L — Distribution and install
 
