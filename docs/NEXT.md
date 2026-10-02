@@ -750,6 +750,28 @@ counterfactual test).
   to never set the field fails the render/gate tests; reverting withShine to a
   no-op fails the modulate test. With this the scene axis reads **10 of 11 pinned**
   (measured: DASHBOARD remains).
+- **Scene 10 (DASHBOARD) golden — DONE (2026-09-30, PR #149).** The last unpinned
+  scene golden, closing the scene axis at **11 of 11 pinned** (measured; Scene 12
+  PROVIDERS was additionally pinned later under K2). No `grid` primitive was
+  needed (SCENES.md §10): nested `row` (horizontal `weight`) + `stack` (vertical
+  `grow`) tile four panes 2×2, each `on_press: "cmd:/max <pane>"`. The
+  comparison the sketch wrote as `when: ui.max==''` is signed as two derived host
+  binds (this engine's `when` is bare truthiness, no operator — the
+  `config.settings`/`community.matches`/`status.active` decision):
+  `ui.max.none` (truthy when nothing is maximized, the grid gate) and the
+  `ui.max.is.<id>` family (truthy when `ui.max` equals that pane), both resolved
+  from the one `fold.State.UIMax` field so there is one source of truth and no
+  operator added to the predicate language. The write half is the host-owned
+  `/max <pane>` command (`cmd/arxi-tui/max_cmd.go`): `parseMax` is the single
+  grammar reader shared by the typed line and the pressed `cmd:/max` button so
+  the two cannot drift, bare `/max` restores (clears `ui.max`, the grid returns),
+  and `ui.max` is re-attached each frame like `ui.hidden`/`ui.focus` (no core
+  event produces it). The validator signs `ui.max`/`ui.max.none` and the
+  `ui.max.is.<id>` family prefix (`internal/scene/validate.go`), refusing an
+  empty pane id after the prefix with `file:line`. Pinned by
+  `testdata/DASHBOARD.{json,frame,styled}` and `internal/engine/dashboard_test.go`
+  (the grid draws when nothing is maxed; a maximized pane fills; the press writes
+  the cursor and does not submit a chat line), with counterfactuals run by hand.
 - **slider node type — BUILT (PR #143).** The value half of the `switch`/`slider`
   pair Q11 forced into v0 (SCENES.md Scene 5), and the last v0 base primitive to
   graduate: with it, every node type in PLAN.md's v0 vocabulary is built.
