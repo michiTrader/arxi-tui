@@ -81,6 +81,7 @@ type Manifest struct {
 	ConsentRequired *bool               `json:"consent_required,omitempty"`
 	Binds           map[string]BindDecl `json:"binds,omitempty"`
 	Tools           []ToolDecl          `json:"tools,omitempty"`
+	Hooks           []HookDecl          `json:"hooks,omitempty"`
 
 	// The address book, kept so a refusal names a position instead of only a
 	// reason (the same contract scene.Document keeps). Set by the parser; a
@@ -128,6 +129,44 @@ type ToolDecl struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
+}
+
+// Hook kind vocabulary (ADR-0009, DESIGN-BLOCK-K1-GATE-C.md Decision 1). The set
+// is CLOSED: a hook is power the agent's turn is subjected to, so a new kind is a
+// new seam in the host's own code, not a string a manifest may mint. `prompt` is
+// deliberately absent — there is no post-Prepare seam in the core and one cannot
+// exist without defeating the context.prepared replay digest (F1), so a prompt
+// hook has no honest live shape and is rejected rather than parsed-and-warned.
+const (
+	hookKindToolGate   = "tool_gate"
+	hookKindCompaction = "compaction"
+)
+
+// legalHookKinds is the closed hook-kind set validateHooks checks against. Closed
+// for the same reason legalProtocols is: an unknown kind is a refusal at load,
+// not a hook the host silently ignores — a plugin that declared a kind the host
+// does not implement would carry authority the user granted but nothing consumes.
+var legalHookKinds = map[string]bool{
+	hookKindToolGate:   true,
+	hookKindCompaction: true,
+}
+
+// HookDecl declares one behavior hook a behavioral plugin participates in during
+// a running agent's turn (Gate C, ADR-0009). It mirrors ToolDecl/BindDecl: a
+// small, declared shape inside the digested manifest tree, because a hook is
+// authority the agent's turn is subjected to and so must be part of the bytes the
+// consent screen showed and the digest covered — a hook that appeared over the
+// wire after mount would be authority the grant never bound to, the identical
+// failure PackageDigest exists to prevent (Decision 1: hooks are declared in the
+// manifest, never registered at runtime).
+//
+// Kind is a closed-set discriminator (legalHookKinds). Tools is the optional
+// subset of tool names a `tool_gate` hook is consulted for (absent ⇒ all tools),
+// so a plugin that only needs to see `bash` is not woken for every `read`; it is
+// meaningless on a `compaction` hook and validateHooks refuses it there.
+type HookDecl struct {
+	Kind  string   `json:"kind"`
+	Tools []string `json:"tools,omitempty"`
 }
 
 // Parse parses a manifest from bytes with no origin name. Syntax and type errors
@@ -296,6 +335,9 @@ func (m *Manifest) checkBehavioral() error {
 	}
 	if m.Tools != nil {
 		return m.contradiction("tools")
+	}
+	if m.Hooks != nil {
+		return m.contradiction("hooks")
 	}
 	if m.ConsentRequired != nil {
 		return m.contradiction("consent_required")
@@ -535,6 +577,17 @@ func legalProtocolList() string {
 	out := make([]string, 0, len(legalProtocols))
 	for p := range legalProtocols {
 		out = append(out, p)
+	}
+	sort.Strings(out)
+	return strings.Join(out, ", ")
+}
+
+// legalHookKindList renders the closed hook-kind set for an error message, sorted
+// so the message is stable across runs (the legalProtocolList sibling).
+func legalHookKindList() string {
+	out := make([]string, 0, len(legalHookKinds))
+	for k := range legalHookKinds {
+		out = append(out, k)
 	}
 	sort.Strings(out)
 	return strings.Join(out, ", ")

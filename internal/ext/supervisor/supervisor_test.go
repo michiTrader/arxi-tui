@@ -113,6 +113,16 @@ func TestHelperProcess(t *testing.T) {
 			_ = enc.Encode(map[string]any{"type": "error", "id": a.ID, "error": map[string]any{"code": "bad_params", "message": "no such symbol"}})
 		case "silenttool":
 			// Read and drop: the host must surface ErrToolTimeout, not hang.
+		case "replyhook":
+			// Gate C's reply (DESIGN-BLOCK-K1-GATE-C.md, the invocation shape): an
+			// id-correlated `ok` carrying a proposed verdict and reason. The action
+			// echoes into the result so a test can prove the host sent "hook.<kind>",
+			// not a bare tool action, over the one shared channel.
+			_ = enc.Encode(map[string]any{"type": "ok", "id": a.ID, "result": map[string]any{"verdict": "ask", "reason": "needs a human", "action": a.Action}})
+		case "badhook":
+			// An `ok` reply whose result carries no legal verdict token: the host
+			// must surface ErrHookBadReply, never coerce it to a silent allow.
+			_ = enc.Encode(map[string]any{"type": "ok", "id": a.ID, "result": map[string]any{"verdict": "permit"}})
 		}
 	}
 }

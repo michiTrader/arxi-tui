@@ -28,6 +28,40 @@ import (
 // send gate cannot drift on the spelling.
 const capToolsRegister = "tools.register"
 
+// capHooksToolGate and capHooksCompaction are the two capabilities a behavioral
+// plugin needs to participate in a running agent's turn as a Gate C behavior hook
+// (ADR-0009, DESIGN-BLOCK-K1-GATE-C.md Decision 2). Each is a distinct power the
+// consent screen must let the user weigh apart from tools.register ("adds tools
+// your agent can call"): a hook does not add a tool, it *sees and can veto* the
+// agent's own calls (tool_gate) or *rewrites how history is compacted*
+// (compaction). The narrow-only promise — a tool_gate hook may tighten a call to
+// ask-first or deny, never loosen it — is the whole reason the power is safe to
+// grant, so it is stated in the grant sentence the host shows. Named once here so
+// the closed set, the manifest validator (validateHooks) and the CallHook gate
+// cannot drift on the spelling.
+const (
+	capHooksToolGate   = "hooks.tool_gate"
+	capHooksCompaction = "hooks.compaction"
+)
+
+// HookKindCapability maps a manifest hook `kind` to the capability a plugin must
+// be granted to run that hook. It is the single source both the manifest
+// validator (the hooks-without-capability refusal) and the supervisor's CallHook
+// gate read, so a kind and the power it requires cannot drift. An unknown kind
+// returns ("", false) — validateHooks refuses it as an unknown kind before this
+// is ever consulted for a grant, but returning false rather than panicking keeps
+// a stray caller from spawning a hook the closed set does not know.
+func HookKindCapability(kind string) (string, bool) {
+	switch kind {
+	case hookKindToolGate:
+		return capHooksToolGate, true
+	case hookKindCompaction:
+		return capHooksCompaction, true
+	default:
+		return "", false
+	}
+}
+
 // knownCapabilities is the closed vocabulary of powers a behavioral plugin may
 // request. Closed because each capability is a door the host opens in its own
 // code (DESIGN-BLOCK-H.md §capabilities): a manifest cannot mint a new power by
@@ -42,6 +76,8 @@ var knownCapabilities = map[string]bool{
 	"inbox.answer":     true,
 	"actions.register": true,
 	capToolsRegister:   true,
+	capHooksToolGate:   true,
+	capHooksCompaction: true,
 }
 
 // KnownCapability reports whether a capability name belongs to the closed set.
