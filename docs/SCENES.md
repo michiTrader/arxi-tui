@@ -495,9 +495,9 @@ the row schema. Decided: the gated action button carries the model's state in
 place of a standalone `switch`, so each row is two text columns and one trailing
 button that pads cleanly (a `switch` plus two buttons concatenated tightly under
 the weighted-column layout rule). **Security invariant preserved:** the
-provenance line names `~/.arxi/providers.toml` and states credentials are named
-by env var only — the wire carries the environment-variable name, never a secret
-key value, and the screen never stores, logs or echoes a key.
+provenance line says providers live one file per provider in the core and that
+`/login` stores API keys, never shown — this screen itself never stores, logs or
+echoes a key; keys are entered only in Scene 13.
 
 **Wired (no longer a fixture only).** `/provider` and `/model`, typed or picked from
 the slash menu, open this document as a replacement screen (`cmd/arxi-tui/
@@ -510,6 +510,36 @@ typed `/provider add ...` or `/model enable|disable ...` runs it, Esc goes back.
 text typed here is refused with the grammar, not sent to the agent. Without a live core
 (`ARXI_BIN` unset) the screen still opens and says so in its banner. Ctrl-C twice still
 exits (invariant 6).
+
+## Scene 13 — LOGIN (the API-key wizard)
+
+The screen `/login` opens (typed, or picked from the `/` menu). It is a replacement
+document like Scene 12: while open it owns the keyboard, after the Ctrl-C branch, so
+the escape hatch still works (invariant 6). Three steps share one document, bound to
+four host view-state fields: `login.title`, `login.rows` (label, status, selected),
+`login.pager` and `login.hint`.
+
+1. **Select authentication method:** "Sign in with an account" (answers that it is
+   not available yet; there is no account service) and "Sign in with an API key".
+2. **Select provider to configure:** a 17-entry catalog plus any provider the core
+   already knows, then "Other". The status column reads the core's `provider.list`
+   (`✓ env: NAME`, `✓ key stored`, `• unconfigured`), a window of 10 rows is shown
+   and the pager reads `(n/total)`.
+3. **The form:** one masked "API key" field for a catalog provider; for "Other",
+   Name, Base URL, API key and an optional env var NAME, plus an optional model id
+   and prices (both or neither).
+
+**Security invariants.** The key lives only in the wizard's field and is published as
+bullets (`publish` writes `•` characters, capped at 40, so even the length is bounded).
+Refusals name the field, never its value. A field meant for an env var NAME that holds
+something not shaped like a name is shown as bullets too, because it is probably a key
+pasted in the wrong box. The worker scrubs the key out of every message it returns.
+`/login` takes no arguments, so a key can never be typed on a command line or reach the
+chat. The core stores the key in `<name>.key` (0600, in a 0700 directory) and never
+returns it. Without a core that implements `provider.key`, `provider.list` and
+`model.add` the command is refused with the exact rebuild command.
+
+Golden: `testdata/LOGIN.frame` / `.styled`, pinned by `internal/engine/login_screen_test.go`.
 
 ## Q23 (signed) — how much of the pipeline plugins may touch
 

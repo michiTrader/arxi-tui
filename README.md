@@ -345,6 +345,10 @@ cd core && go build -o ../arxi ./cmd/arxi    # the core
 ARXI_BIN=./arxi ./arxi-tui
 ```
 
+Direction: one program. The core now lives in this repository so the frontend and the
+backend change together; the goal is a single binary installed with one command. Until
+that lands, build both as above.
+
 CI note: the root `go test ./...` does not descend into `core/` (nested module). Test the
 core with `cd core && go test ./...`; the matching CI job is in `docs/ci-core-job.yml`,
 ready to paste into `.github/workflows/ci.yml`.
@@ -370,6 +374,33 @@ UPDATE_GOLDEN=1 go test ./internal/...   # regenerate golden fixtures
 # With arxi serve subprocess (Phase 0.5, requires arxi binary)
 ARXI_BIN=/path/to/arxi ./arxi-tui
 ```
+
+### Signing in with an API key (`/login`)
+
+Type `/login` (or pick it in the `/` menu). A short wizard asks how to sign in, then
+which provider to configure, and shows for each one whether it already has a key:
+
+| Key | Does |
+|---|---|
+| Up / Down | move the `>` highlight |
+| Enter | select / go to the next field / save |
+| Tab / Shift-Tab | next / previous field |
+| Esc | back one step (then close) |
+| Ctrl-C | the escape hatch, as everywhere |
+
+Paste the key into the API key field. It is shown as `••••` and never printed back,
+logged or sent to the chat. "Sign in with an account" is not available yet.
+
+Where the key goes: the core writes it to `<name>.key` in its secrets directory
+(mode 0600, directory 0700; override with `ARXI_SECRETS_DIR`). **It is not encrypted**,
+only protected by file permissions. An environment variable named by the provider
+(for example `OPENROUTER_API_KEY`) wins over a stored key. `/login` takes no
+arguments on purpose, so a key is never typed on a command line.
+
+`/login` needs a core that implements `provider.key`, `provider.list` and `model.add`.
+If yours is older, rebuild it: `cd core && go build -o ../arxi ./cmd/arxi`
+(Windows PowerShell: `cd core; go build -o ..\arxi.exe .\cmd\arxi`) and point
+`ARXI_BIN` at it.
 
 ### Managing providers and models (`/provider`, `/model`)
 
