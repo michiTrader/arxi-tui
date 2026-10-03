@@ -495,7 +495,7 @@ the row schema. Decided: the gated action button carries the model's state in
 place of a standalone `switch`, so each row is two text columns and one trailing
 button that pads cleanly (a `switch` plus two buttons concatenated tightly under
 the weighted-column layout rule). **Security invariant preserved:** the
-provenance line names `~/.arxi/providers.toml` and states credentials are named
+provenance line names `./providers/` (the folder the core is started in, which is where the core keeps them) and states credentials are named
 by env var only — the wire carries the environment-variable name, never a secret
 key value, and the screen never stores, logs or echoes a key.
 

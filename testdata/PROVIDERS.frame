@@ -19,6 +19,6 @@
 
 
 
-providers: ~/.arxi/providers.toml · credentials named by env var only
+providers: ./providers/ (the folder arxi starts in) · keys are never stored, only the env var name
 ↑↓ move · enter toggle · /provider add <name> · esc back
 ┃ /provider add <name> --api-key-env <VAR>

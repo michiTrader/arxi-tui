@@ -47,7 +47,7 @@ const factoryProviders = `{ "root": { "type": "stack", "children": [
     ]}},
 
   { "id": "provenance", "type": "text", "style": {"style": "dim"},
-    "text": "providers: ~/.arxi/providers.toml · credentials named by env var only" },
+    "text": "providers: ./providers/ (the folder arxi starts in) · keys are never stored, only the env var name" },
 
   { "id": "footer", "type": "text", "style": {"style": "dim"},
     "text": "↑↓ move · enter toggle · /provider add <name> · esc back" },

@@ -19,6 +19,6 @@
 
 
 
-«dim:providers: ~/.arxi/providers.toml · credentials named by env var only»
+«dim:providers: ./providers/ (the folder arxi starts in) · keys are never stored, only the env var name»
 «dim:↑↓ move · enter toggle · /provider add <name> · esc back»
 «input:┃ »«input.placeholder:/provider add <name> --api-key-env <VAR>»
