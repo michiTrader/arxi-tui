@@ -87,3 +87,37 @@ func requireProviderVerbs(hello *driver.Hello) error {
 
 	return nil
 }
+
+// loginVerbs are the verbs the /login wizard needs beyond the provider set. They are
+// gated together for the same all-or-nothing reason providerVerbs are: a core that
+// stores keys but cannot list their state would show every provider as unconfigured.
+var loginVerbs = []string{"provider.add", "provider.key", "provider.list", "model.add"}
+
+// requireLoginVerbs decides from the hello whether this core can run the /login
+// wizard. The remedy names the exact rebuild command, because the usual cause is a
+// core binary built before the key verbs existed.
+func requireLoginVerbs(hello *driver.Hello) error {
+	if hello == nil {
+		return fmt.Errorf(
+			"cmd/arxi-tui/provider_cmd_gate.go: no hello to gate on; the handshake " +
+				"must complete before requireLoginVerbs")
+	}
+	implemented := map[string]bool{}
+	for _, t := range hello.Implemented {
+		implemented[t] = true
+	}
+	var missing []string
+	for _, v := range loginVerbs {
+		if !implemented[v] {
+			missing = append(missing, v)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf(
+			"the connected core does not implement %s, so /login cannot store keys. "+
+				"remedy: rebuild it with `cd core && go build -o arxi ./cmd/arxi` "+
+				"and point ARXI_BIN at it",
+			strings.Join(missing, ", "))
+	}
+	return nil
+}
