@@ -1,0 +1,279 @@
+package v1
+
+import (
+	"context"
+	"encoding/json"
+)
+
+// WorkspaceCapabilitiesV1 is the explicit, versioned host declaration used for
+// preflight. Nil preserves text-only source compatibility and promises no tool
+// or source guarantees.
+type WorkspaceCapabilitiesV1 struct {
+	Schema            string               `json:"schema"`
+	CapabilityVersion string               `json:"capability_version"`
+	Platform          string               `json:"platform"`
+	Modes             []string             `json:"modes"`
+	SourceKinds       []string             `json:"source_kinds,omitempty"`
+	Profiles          []WorkspaceProfileV1 `json:"profiles"`
+	Provisioners      map[string]string    `json:"provisioners"`
+
+	// Pairs names, per mode, which profile IDs are offered with that layout.
+	//
+	// Omitting it means every advertised profile is available on every
+	// advertised layout. That is what this type has always meant -- Modes and
+	// Profiles are separate lists and nothing related them -- so leaving it
+	// unset preserves an existing host's behaviour exactly.
+	//
+	// Setting it is how a host states the narrower thing it probably intends.
+	// A host declaring modes {shared, copy} with read and write profiles has,
+	// without this field, also declared that its SHARED layout may be
+	// written; if that layout is the operator's own checkout, the difference
+	// is whether an agent edits a snapshot or the operator's files.
+	//
+	// A mode absent from a non-nil map is offered with no profile at all,
+	// which is the restriction most worth being able to state.
+	Pairs map[string][]string `json:"pairs,omitempty"`
+}
+
+const WorkspaceCapabilitiesSchemaV1 = "arxi.host.workspace-capabilities/v1"
+
+// WorkspaceProfileV1 declares one complete profile. ID is a display/selection
+// label; exact authorization binds the digest identity of all profile fields.
+type WorkspaceProfileV1 struct {
+	Schema            string                     `json:"schema"`
+	ID                string                     `json:"id"`
+	FileAccess        string                     `json:"file_access"`
+	HandleRelative    bool                       `json:"handle_relative"`
+	FinalLinkRaceFree bool                       `json:"final_link_race_free"`
+	Process           WorkspaceProcessProfileV1  `json:"process"`
+	Command           *WorkspaceCommandProfileV1 `json:"command,omitempty"`
+}
+
+const WorkspaceProfileSchemaV1 = "arxi.host.workspace-profile/v1"
+
+type WorkspaceProcessProfileV1 struct {
+	Descendants string `json:"descendants"`
+	Filesystem  string `json:"filesystem"`
+	Environment string `json:"environment"`
+	Network     string `json:"network"`
+}
+
+type WorkspaceCommandProfileV1 struct {
+	Schema             string `json:"schema"`
+	RunnerVersion      string `json:"runner_version"`
+	Executable         string `json:"executable"`
+	EnvironmentVersion string `json:"environment_version"`
+	Descendants        string `json:"descendants"`
+	Filesystem         string `json:"filesystem"`
+	Network            string `json:"network"`
+	OutputLimitBytes   int    `json:"output_limit_bytes"`
+}
+
+const WorkspaceCommandSchemaV1 = "arxi.host.command-profile/v1"
+
+// JobID is an opaque job identifier.
+type JobID string
+
+// ItemID is an opaque pending-decision identifier scoped to a job.
+type ItemID string
+
+// Principal identifies the caller for authorization and audit.
+type Principal struct {
+	ID         string            `json:"id"`
+	Attributes map[string]string `json:"attributes,omitempty"`
+}
+
+// SubmitRequest contains source text and Phase 1 execution controls. Actor is a
+// logical name; resolving filesystem paths remains an adapter responsibility.
+type SubmitRequest struct {
+	Principal      Principal `json:"principal"`
+	Actor          string    `json:"actor"`
+	Blueprint      string    `json:"blueprint"`
+	Prompt         string    `json:"prompt"`
+	BudgetUSD      float64   `json:"budget_usd,omitempty"`
+	MaxTurns       int       `json:"max_turns,omitempty"`
+	Simulated      bool      `json:"simulated,omitempty"`
+	IdempotencyKey string    `json:"idempotency_key,omitempty"`
+	// Model names the model a text-only job runs on. Empty keeps the host
+	// default; the CLI's --model and the protocol's model parameter arrive
+	// here, so a submitted job bills the model its client chose and not one
+	// the host invented.
+	Model string `json:"model,omitempty"`
+}
+
+// SubmitResult confirms durable acceptance. AcceptedSeq is the confirmed
+// run-start sequence at which the job became inspectable.
+type SubmitResult struct {
+	JobID       JobID     `json:"job_id"`
+	AcceptedSeq int64     `json:"accepted_seq"`
+	Status      JobStatus `json:"status"`
+}
+
+// InspectRequest identifies a job to inspect.
+type InspectRequest struct {
+	Principal Principal `json:"principal"`
+	JobID     JobID     `json:"job_id"`
+}
+
+// CancelRequest identifies a job to cancel.
+type CancelRequest struct {
+	Principal Principal `json:"principal"`
+	JobID     JobID     `json:"job_id"`
+	Reason    string    `json:"reason,omitempty"`
+}
+
+// ApproveRequest approves one approval item.
+type ApproveRequest struct {
+	Principal Principal `json:"principal"`
+	JobID     JobID     `json:"job_id"`
+	ItemID    ItemID    `json:"item_id"`
+}
+
+// RejectRequest rejects one approval item with a reason.
+type RejectRequest struct {
+	Principal Principal `json:"principal"`
+	JobID     JobID     `json:"job_id"`
+	ItemID    ItemID    `json:"item_id"`
+	Reason    string    `json:"reason"`
+}
+
+// AnswerRequest answers one question item.
+type AnswerRequest struct {
+	Principal Principal `json:"principal"`
+	JobID     JobID     `json:"job_id"`
+	ItemID    ItemID    `json:"item_id"`
+	Text      string    `json:"text"`
+}
+
+// WaitRequest identifies a job whose terminal projection is required.
+type WaitRequest struct {
+	Principal Principal `json:"principal"`
+	JobID     JobID     `json:"job_id"`
+}
+
+// CapabilitiesRequest identifies the principal whose effective snapshot is
+// requested. It is not a declaration of all vocabulary.
+type CapabilitiesRequest struct {
+	Principal Principal `json:"principal"`
+}
+
+// JobStatus is the selected public lifecycle state.
+type JobStatus string
+
+const (
+	JobQueued    JobStatus = "queued"
+	JobRunning   JobStatus = "running"
+	JobBlocked   JobStatus = "blocked"
+	JobPaused    JobStatus = "paused"
+	JobSucceeded JobStatus = "succeeded"
+	JobFailed    JobStatus = "failed"
+	JobCancelled JobStatus = "cancelled"
+	JobExpired   JobStatus = "expired"
+	JobUnknown   JobStatus = "unknown"
+)
+
+// Terminal reports whether no further lifecycle mutation is accepted.
+func (s JobStatus) Terminal() bool {
+	switch s {
+	case JobSucceeded, JobFailed, JobCancelled, JobExpired, JobUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Job is the selected public projection of one job.
+type Job struct {
+	ID                     JobID             `json:"id"`
+	Actor                  string            `json:"actor,omitempty"`
+	Status                 JobStatus         `json:"status"`
+	Terminal               bool              `json:"terminal"`
+	Sequence               int64             `json:"sequence"`
+	Stage                  string            `json:"stage,omitempty"`
+	StageIndex             int               `json:"stage_index"`
+	Turns                  int               `json:"turns"`
+	MaxTurns               int               `json:"max_turns,omitempty"`
+	Members                []Member          `json:"members,omitempty"`
+	SpentUSD               float64           `json:"spent_usd,omitempty"`
+	TreeSpentUSD           float64           `json:"tree_spent_usd,omitempty"`
+	BudgetUSD              float64           `json:"budget_usd,omitempty"`
+	Simulated              bool              `json:"simulated,omitempty"`
+	Pending                []PendingDecision `json:"pending,omitempty"`
+	UnknownWork            int               `json:"unknown_work,omitempty"`
+	AttemptCount           uint64            `json:"attempt_count,omitempty"`
+	ReconciliationRequired bool              `json:"reconciliation_required,omitempty"`
+	CancellationRequested  bool              `json:"cancellation_requested,omitempty"`
+	Result                 string            `json:"result,omitempty"`
+}
+
+// Member is one participant in the selected job projection.
+type Member struct {
+	Name      string  `json:"name"`
+	Role      string  `json:"role,omitempty"`
+	State     string  `json:"state"`
+	Detail    string  `json:"detail,omitempty"`
+	Submitted bool    `json:"submitted,omitempty"`
+	Busy      bool    `json:"busy,omitempty"`
+	Runnable  bool    `json:"runnable,omitempty"`
+	SpentUSD  float64 `json:"spent_usd,omitempty"`
+	Turns     int     `json:"turns,omitempty"`
+}
+
+// DecisionKind says which exact host method may resolve an item.
+type DecisionKind string
+
+const (
+	DecisionApproval DecisionKind = "approval"
+	DecisionQuestion DecisionKind = "question"
+)
+
+// PendingDecision is an unresolved human decision.
+type PendingDecision struct {
+	ID       ItemID       `json:"id"`
+	Kind     DecisionKind `json:"kind"`
+	Question string       `json:"question"`
+	Actor    string       `json:"actor,omitempty"`
+}
+
+// Event is a copied, provider-independent confirmed event envelope.
+type Event struct {
+	Sequence      int64           `json:"sequence"`
+	ID            string          `json:"id"`
+	Time          string          `json:"time,omitempty"`
+	Type          string          `json:"type"`
+	Scope         string          `json:"scope,omitempty"`
+	Source        string          `json:"source"`
+	Actor         string          `json:"actor,omitempty"`
+	CorrelationID string          `json:"correlation_id,omitempty"`
+	CausedBy      []string        `json:"caused_by,omitempty"`
+	Depth         int             `json:"depth,omitempty"`
+	Payload       json.RawMessage `json:"payload,omitempty"`
+}
+
+// EventFilter is OR within each populated dimension and AND across dimensions.
+type EventFilter struct {
+	TypePrefixes []string `json:"type_prefixes,omitempty"`
+	Sources      []string `json:"sources,omitempty"`
+	Actors       []string `json:"actors,omitempty"`
+}
+
+// SubscribeRequest starts after AfterSeq; the logical sequence is exclusive.
+type SubscribeRequest struct {
+	Principal Principal   `json:"principal"`
+	JobID     JobID       `json:"job_id"`
+	AfterSeq  int64       `json:"after_seq,omitempty"`
+	Filter    EventFilter `json:"filter,omitempty"`
+}
+
+// EventBatch contains confirmed events. AfterSeq advances to the greatest
+// confirmed sequence scanned, even when the filter matched no events.
+type EventBatch struct {
+	Events   []Event `json:"events"`
+	AfterSeq int64   `json:"after_seq"`
+}
+
+// Subscription is a bounded stream of confirmed event batches.
+type Subscription interface {
+	Next(context.Context) (EventBatch, error)
+	Close() error
+}

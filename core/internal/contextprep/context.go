@@ -1,0 +1,655 @@
+// Package contextprep freezes the exact provider-neutral presentation used by a model child.
+package contextprep
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"strings"
+	"unicode/utf8"
+
+	"github.com/michiTrader/arxi/internal/compaction"
+	"github.com/michiTrader/arxi/internal/kernel"
+	"github.com/michiTrader/arxi/internal/transcript"
+	"github.com/michiTrader/arxi/internal/turn"
+)
+
+const (
+	Schema          = "arxi.prepared-context/v1"
+	RequestSchema   = "arxi.context-prepare/v1"
+	PreparerVersion = "arxi.context-preparer/v2"
+)
+
+// Measurement records how much context the presentation uses, per layer, and
+// against which limits. Every figure counts runes of the canonical JSON
+// encoding; that is an upper-bound estimate, never an exact tokenizer count,
+// and unknown limits stay absent instead of being invented. The total is the
+// arithmetic sum of the layers: each layer's JSON framing makes the sum a
+// conservative bound on the whole presentation, which is the honest direction
+// for a pressure figure.
+type Measurement struct {
+	Implementation string `json:"implementation"`
+	Version        string `json:"version"`
+	Mode           string `json:"mode"`
+	StaticTokens   int    `json:"static_tokens"`
+	SummaryTokens  int    `json:"summary_tokens,omitempty"`
+	VerbatimTokens int    `json:"verbatim_tokens,omitempty"`
+	InputTokens    int    `json:"input_tokens"`
+	TotalTokens    int    `json:"total_tokens"`
+	InputLimit     int    `json:"input_limit,omitempty"`
+	OutputLimit    int    `json:"output_limit,omitempty"`
+}
+
+// OverflowDecision records the outcome of pressure: whether a known limit was
+// exceeded, which declared mode governed, and — when compaction ran — which
+// verified artifact the presentation shed material into.
+type OverflowDecision struct {
+	Exceeded         bool   `json:"exceeded"`
+	Mode             string `json:"mode,omitempty"`
+	Compacted        bool   `json:"compacted"`
+	CompactionDigest string `json:"compaction_digest,omitempty"`
+}
+
+// MemoryReceipt is evidence of what memory was presented. ADR-0020 decided the
+// channel memory arrives through; this records which record version arrived.
+//
+// RecordID and VersionID are empty for KindFrozenContextMemory and that is a
+// fact about the source, not a gap: ContextSpec.Memory is a configuration field
+// on a frozen blueprint, so it has no record identity to name. Minting one
+// would produce a synthetic version ID indistinguishable downstream from a real
+// one, and nothing could ever correct it.
+//
+// They are required for any governed record, which Governed reports and
+// Validate enforces. ADR-0021 exists because ADR-0020 stated this receipt
+// already carried "record identities and version IDs" when no field did; a
+// field that nothing fails on is how that claim survived unmeasured.
+type MemoryReceipt struct {
+	Kind               string `json:"kind"`
+	EffectiveConfigSHA string `json:"effective_config_sha"`
+	ContentDigest      string `json:"content_digest"`
+
+	// RecordID is the stable identity of a governed record across all of its
+	// versions. Empty for frozen configuration memory.
+	RecordID string `json:"record_id,omitempty"`
+	// VersionID is the immutable identity of this particular version of that
+	// record. Empty for frozen configuration memory. Phase 7's correction
+	// propagation is unverifiable without it: with no version named, there is
+	// nothing for a correction to supersede.
+	VersionID string `json:"version_id,omitempty"`
+}
+
+// The enumerated memory receipt kinds. ADR-0023 enumerates authority instead of
+// inferring it: a kind outside this set is not authority, it is invalid.
+const (
+	// KindFrozenContextMemory marks a receipt for ContextSpec.Memory, the
+	// static prose Phase 5 carries on a frozen blueprint. It has no record
+	// identity, because a configuration field is not a record.
+	KindFrozenContextMemory = "frozen_context_memory"
+	// KindApprovedMemoryRecord marks a stored record supplied or explicitly
+	// approved by a user, operator or import.
+	KindApprovedMemoryRecord = "approved_memory_record"
+	// KindProposedMemoryCandidate marks model-generated material. It may be
+	// stored, inspected and promoted, and it is never presented: the roadmap
+	// requires that model material "may propose candidates but cannot create
+	// active memory", and a candidate that can be presented is not a candidate.
+	KindProposedMemoryCandidate = "proposed_memory_candidate"
+)
+
+// memoryKindPresentable maps every enumerated kind to whether a receipt of that
+// kind may appear in a prepared context.
+//
+// A map rather than a switch so that Validate's unknown-kind refusal and
+// Presentable's answer come from one table: two lists would let a kind be
+// valid and un-presentable by omission rather than by decision.
+var memoryKindPresentable = map[string]bool{
+	KindFrozenContextMemory:     true,
+	KindApprovedMemoryRecord:    true,
+	KindProposedMemoryCandidate: false,
+}
+
+// Governed reports whether the receipt describes a stored memory record rather
+// than frozen configuration prose. Governed records must name their version.
+//
+// Derived from the enumeration, not from `!= KindFrozenContextMemory`. The
+// negation form was a blocklist with one entry, so a typo'd kind reported true
+// and validated as authority -- measured, not supposed. ADR-0020 had already
+// rejected a blocklist for memory content; this is the same shape on the kind
+// field.
+func (r MemoryReceipt) Governed() bool {
+	_, known := memoryKindPresentable[r.Kind]
+	return known && r.Kind != KindFrozenContextMemory
+}
+
+// Presentable reports whether the receipt may appear in a prepared context.
+//
+// False for an unknown kind, which is the inverted failure direction ADR-0023
+// decided: material nobody enumerated gets no authority rather than authority
+// by default.
+func (r MemoryReceipt) Presentable() bool {
+	return memoryKindPresentable[r.Kind]
+}
+
+// Validate refuses a receipt that advertises more identity than it carries, or
+// that carries no evidence at all.
+//
+// This is the assertion that keeps RecordID and VersionID from being
+// decoration. A governed record whose VersionID is empty would otherwise
+// encode, verify and present exactly like one that named its version, letting
+// a store ship without version identity while every existing test stayed
+// green.
+//
+// Prepare calls this on every receipt it builds (ADR-0024). Until it did, this
+// function had no production caller: ADR-0021's version rule, ADR-0023's
+// enumeration and ADR-0023's candidate refusal were all reachable only from
+// tests, so an artifact carrying a candidate receipt marshalled cleanly and
+// would have been committed by the durable barrier. A guard with no caller is
+// an intention, and a green suite is what disguises it.
+func (r MemoryReceipt) Validate() error {
+	if r.Kind == "" {
+		return fmt.Errorf("memory receipt has no kind: a receipt must say what it is evidence of")
+	}
+	if _, known := memoryKindPresentable[r.Kind]; !known {
+		return fmt.Errorf("memory receipt has unknown kind %q: authority is enumerated, so an "+
+			"unrecognized kind fails closed rather than inheriting the authority of a record "+
+			"somebody approved", r.Kind)
+	}
+	if !r.Presentable() {
+		return fmt.Errorf("memory receipt of kind %q reached the preparer: model-proposed "+
+			"material may be stored and promoted but never presented, and a candidate that "+
+			"can be presented is not a candidate", r.Kind)
+	}
+	// Evidence before identity: a receipt is evidence of what was presented, so
+	// one that names no content is evidence of nothing. This held for every
+	// kind before ADR-0024 -- an empty ContentDigest validated -- which made
+	// Phase 7's exit requirement that "every influence identifies its source
+	// and version" satisfiable by a receipt identifying neither.
+	if r.ContentDigest == "" {
+		return fmt.Errorf("memory receipt of kind %q has no content_digest: a receipt is evidence "+
+			"of what memory was presented, and one that names no content proves nothing about "+
+			"the presentation it accompanies", r.Kind)
+	}
+	if !r.Governed() {
+		if r.RecordID != "" || r.VersionID != "" {
+			return fmt.Errorf("memory receipt of kind %q carries record_id %q and version_id %q: "+
+				"frozen configuration memory has no record identity, so naming one invents a "+
+				"version that no store can correct", r.Kind, r.RecordID, r.VersionID)
+		}
+		// The config SHA is this kind's only version identity. ADR-0021 left
+		// RecordID and VersionID empty for frozen memory because a
+		// configuration field has no record identity -- the effective config
+		// SHA was what made that exemption acceptable. Empty, the frozen kind
+		// has no version identity of any sort, which is the state ADR-0021
+		// refuses for governed records, reached from the other side.
+		//
+		// Production reaches here with a SHA today only because
+		// internal/exec/turn.go declines the durable path when
+		// Context.EffectiveConfigSHA is empty. That gate is a compatibility
+		// decision about which runs record proofs, not an assertion about
+		// receipt integrity, and it is two packages from the evidence. Asserted
+		// here so relaxing it fails a preparation instead of silently
+		// committing memory nobody can trace.
+		if r.EffectiveConfigSHA == "" {
+			return fmt.Errorf("memory receipt of kind %q has no effective_config_sha: frozen "+
+				"configuration memory names no record, so the config version is the only "+
+				"identity it has, and without it nothing can say which blueprint presented "+
+				"this memory", r.Kind)
+		}
+		return nil
+	}
+	if r.RecordID == "" {
+		return fmt.Errorf("memory receipt of kind %q has no record_id: a governed record must "+
+			"identify its source", r.Kind)
+	}
+	if r.VersionID == "" {
+		return fmt.Errorf("memory receipt of kind %q for record %q has no version_id: without it "+
+			"a correction cannot supersede the version that was presented, which is the "+
+			"guarantee Phase 7 owes", r.Kind, r.RecordID)
+	}
+	return nil
+}
+
+// Route binds the presentation to the destination it was prepared for. The
+// spec requires the artifact to prove not just what was presented but to which
+// model under which tool schema: without it, a recovered presentation could be
+// replayed against a different model and the artifact would still look valid.
+// Credentials never appear here — only the non-secret route identity.
+type Route struct {
+	Provider             string `json:"provider,omitempty"`
+	Protocol             string `json:"protocol,omitempty"`
+	Model                string `json:"model,omitempty"`
+	BaseURL              string `json:"base_url,omitempty"`
+	ToolSchemaVersion    string `json:"tool_schema_version,omitempty"`
+	ContextPolicyVersion string `json:"context_policy_version,omitempty"`
+}
+
+type Artifact struct {
+	Schema             string               `json:"schema"`
+	ContextID          string               `json:"context_id"`
+	RunID              string               `json:"run_id"`
+	ParentWorkID       string               `json:"parent_work_id"`
+	Subject            string               `json:"subject_agent"`
+	SourceThroughSeq   int64                `json:"source_through_seq"`
+	EffectiveConfigSHA string               `json:"effective_config_sha,omitempty"`
+	Transcript         transcript.Artifact  `json:"transcript"`
+	PreparerVersion    string               `json:"preparer_version"`
+	Route              Route                `json:"route"`
+	Messages           []turn.Message       `json:"messages"`
+	Measurement        Measurement          `json:"token_measurement"`
+	Overflow           OverflowDecision     `json:"overflow_decision"`
+	Compaction         *compaction.Artifact `json:"compaction,omitempty"`
+	MemoryReceipts     []MemoryReceipt      `json:"memory_use_receipts"`
+	ContentDigest      string               `json:"content_digest"`
+	PresentationDigest string               `json:"presentation_digest"`
+}
+
+// Request names one preparation commission. It is a struct rather than a
+// positional list because every field is an identity that must be recorded
+// exactly, and a transposed pair of strings would be invisible at the call
+// site and wrong in the artifact.
+type Request struct {
+	ContextID          string
+	RunID              string
+	ParentWorkID       string
+	EffectiveConfigSHA string
+	Effect             kernel.SpawnTurn
+	History            transcript.Artifact
+	Route              Route
+	OutputLimit        int
+	Generator          compaction.Generator
+
+	// RetrievedMemory is governed memory a store selected for this turn, and
+	// RetrievedReceipts is the evidence for it. Both or neither: a body with no
+	// receipts would present memory this artifact cannot account for, and
+	// receipts with no body would claim an influence that never reached the
+	// model. Prepare refuses each half alone.
+	//
+	// Carried as rendered text and receipts rather than as records because this
+	// package must not import the store. contextprep is the package the store
+	// depends on for the receipt vocabulary (ADR-0023 owns the kinds here), so
+	// importing it back would be an import cycle -- and more importantly, the
+	// preparer's job is to freeze a presentation, not to decide what memory is
+	// relevant. Retrieval and authorization happen before this call and their
+	// outcome arrives as data.
+	RetrievedMemory   string
+	RetrievedReceipts []MemoryReceipt
+}
+
+// OverflowError marks every failure on the overflow path — an unusable mode, a
+// generator error, a budget that cannot be satisfied — so the durable barrier
+// can record the failure class without importing this package.
+type OverflowError struct{ Err error }
+
+func (e *OverflowError) Error() string { return e.Err.Error() }
+
+func (e *OverflowError) Unwrap() error { return e.Err }
+
+func (e *OverflowError) PreparationClass() string { return "compaction" }
+
+// Prepare freezes one presentation from a projected transcript. It is a pure
+// function of its request: the same confirmed history, route and effect always
+// yield the same bytes, which is what lets the durable barrier reproduce the
+// artifact it committed.
+func Prepare(req Request) (Artifact, error) {
+	contextID, runID, history, effect := req.ContextID, req.RunID, req.History, req.Effect
+	artifact := Artifact{Schema: Schema, ContextID: contextID, RunID: runID, ParentWorkID: req.ParentWorkID,
+		Subject: effect.Agent, SourceThroughSeq: history.SourceThroughSeq, EffectiveConfigSHA: req.EffectiveConfigSHA,
+		Transcript: history, PreparerVersion: PreparerVersion, Route: req.Route, MemoryReceipts: []MemoryReceipt{}}
+	if err := checkRetrieved(req); err != nil {
+		return Artifact{}, err
+	}
+	static := staticMessages(effect.Context)
+	// Retrieved memory joins the STATIC layer, on the same channel and in the
+	// same position as frozen configuration memory. Both are memory, so both
+	// are measured against the static budget and both arrive as a user-role
+	// message; putting retrieved memory in another layer would silently re-cut
+	// the budget while claiming to be a retrieval change, which is the mistake
+	// ADR-0025's own comment warns about one function down.
+	if memory := strings.TrimSpace(req.RetrievedMemory); memory != "" {
+		static = append(static, textMessage(turn.RoleUser, memoryMessageText(memory)))
+	}
+	prior := transcriptMessages(history.Items)
+	trailing := inputMessages(effect.Context, prior)
+	full := joinMessages(static, prior, trailing)
+	// Encoding is validated once here: every layer measurement marshals a
+	// subset of these exact message elements, so no layer measure can fail
+	// after the whole presentation was proven encodable.
+	if _, err := json.Marshal(full); err != nil {
+		return Artifact{}, fmt.Errorf("encode prepared presentation: %w", err)
+	}
+	limit := effect.Context.MaxTokens
+	switch {
+	case limit <= 0 || pressure(static, nil, prior, trailing) <= limit:
+		// An unknown limit means unknown pressure: no budget is derived, no
+		// compaction runs, and the limit fields stay absent rather than invented.
+		artifact.Messages = full
+		artifact.Measurement = measurement(static, nil, prior, trailing, limit)
+		artifact.Measurement.OutputLimit = req.OutputLimit
+	default:
+		presented, selected, m, err := compact(contextID, runID, effect, history, limit, static, prior, trailing, req.Generator)
+		if err != nil {
+			return Artifact{}, err
+		}
+		artifact.Messages = presented
+		artifact.Compaction = &selected
+		artifact.Overflow = OverflowDecision{Exceeded: true, Mode: effect.Context.OnOverflow,
+			Compacted: true, CompactionDigest: selected.ContentDigest}
+		m.OutputLimit = req.OutputLimit
+		artifact.Measurement = m
+	}
+	if memory := strings.TrimSpace(effect.Context.Memory); memory != "" {
+		artifact.MemoryReceipts = append(artifact.MemoryReceipts, MemoryReceipt{Kind: KindFrozenContextMemory,
+			EffectiveConfigSHA: req.EffectiveConfigSHA, ContentDigest: digest("arxi.context-memory/v1", []byte(memory))})
+	}
+	// Retrieved receipts are appended after the frozen one so the order of the
+	// evidence matches the order of the presentation. They go through the same
+	// validation loop below rather than a separate path: a receipt a store
+	// produced earns no more trust than one this package produced, and the
+	// barrier must not be able to receive an unvalidated receipt through any
+	// route.
+	artifact.MemoryReceipts = append(artifact.MemoryReceipts, req.RetrievedReceipts...)
+	// Every receipt is validated here, before any digest is computed (ADR-0024).
+	// Position is the decision, not the call: ADR-0013 freezes the artifact once
+	// committed, so validating after PresentationDigest and ContentDigest would
+	// describe bytes that are already immutable. A refused receipt must not
+	// reach the barrier at all.
+	//
+	// Failing the preparation rather than dropping the receipt is deliberate.
+	// Dropping it would present the memory to the model and record nothing,
+	// making the presentation un-auditable while looking clean -- the worse of
+	// the two failures, and the one Phase 7's exit evidence forbids.
+	for i, receipt := range artifact.MemoryReceipts {
+		if err := receipt.Validate(); err != nil {
+			return Artifact{}, fmt.Errorf("memory receipt %d of %d for context %s is not presentable "+
+				"evidence: %w", i+1, len(artifact.MemoryReceipts), contextID, err)
+		}
+	}
+	presentation, err := json.Marshal(artifact.Messages)
+	if err != nil {
+		return Artifact{}, fmt.Errorf("encode prepared presentation: %w", err)
+	}
+	artifact.PresentationDigest = digest("arxi.context-presentation/v1", presentation)
+	// The route joins the content digest because "what was presented" is not
+	// complete without "to whom": the same messages sent to a different model
+	// under a different tool schema are a different presentation.
+	content, err := json.Marshal(struct {
+		TranscriptDigest string          `json:"transcript_digest"`
+		Route            Route           `json:"route"`
+		Messages         []turn.Message  `json:"messages"`
+		Memory           []MemoryReceipt `json:"memory"`
+		CompactionDigest string          `json:"compaction_digest,omitempty"`
+	}{history.ContentDigest, artifact.Route, artifact.Messages, artifact.MemoryReceipts, artifact.Overflow.CompactionDigest})
+	if err != nil {
+		return Artifact{}, fmt.Errorf("encode prepared content: %w", err)
+	}
+	artifact.ContentDigest = digest("arxi.context-content/v1", content)
+	return artifact, nil
+}
+
+// checkRetrieved refuses a request whose retrieved memory and receipts
+// disagree about whether memory exists.
+//
+// Both halves or neither. A body with no receipts presents memory the artifact
+// cannot account for, which is the un-auditable presentation Phase 7's exit
+// evidence forbids; receipts with no body claim an influence that never reached
+// the model, which is a false audit trail and the worse of the two. Neither is
+// recoverable later: ADR-0013 freezes the artifact once committed, so a
+// mismatch has to fail here or become permanent.
+func checkRetrieved(req Request) error {
+	memory := strings.TrimSpace(req.RetrievedMemory)
+	switch {
+	case memory != "" && len(req.RetrievedReceipts) == 0:
+		return fmt.Errorf("prepared context carries retrieved memory with no receipts: the "+
+			"presentation would influence the model with %d bytes of memory that the artifact "+
+			"cannot attribute to any record version, and the exit evidence requires every "+
+			"influence to identify its source", len(memory))
+	case memory == "" && len(req.RetrievedReceipts) > 0:
+		return fmt.Errorf("prepared context carries %d retrieved memory receipts with no "+
+			"memory: the artifact would claim an influence that never reached the model, which "+
+			"is a false audit trail rather than a missing one", len(req.RetrievedReceipts))
+	}
+	return nil
+}
+
+// compact runs the overflow path: select, present, re-measure and verify.
+// Selection is iterated against the measured presentation because the summary
+// framing and JSON encoding add weight the item-level cost model cannot see
+// in advance: each round shrinks the verbatim budget by the measured
+// overshoot, deterministically, until the presentation fits or the window is
+// already minimal and the limit cannot be met. Any failure here is an
+// OverflowError — compaction that quietly degraded into truncation, or a mode
+// the runtime does not implement, must surface as a terminal preparation
+// failure, never as a shorter silent prompt.
+func compact(contextID, runID string, effect kernel.SpawnTurn, history transcript.Artifact, limit int,
+	static, prior, trailing []turn.Message, generator compaction.Generator) ([]turn.Message, compaction.Artifact, Measurement, error) {
+	if effect.Context.OnOverflow != "summarize" {
+		return nil, compaction.Artifact{}, Measurement{}, &OverflowError{fmt.Errorf(
+			"context pressure %d exceeds input limit %d and on_overflow %q is not summarize: unknown modes fail closed instead of guessing a policy",
+			pressure(static, nil, prior, trailing), limit, effect.Context.OnOverflow)}
+	}
+	budgets := compaction.DeriveBudgets(limit)
+	request := compaction.Request{ContextID: contextID, RunID: runID, Subject: effect.Agent,
+		SourceThroughSeq: history.SourceThroughSeq, Budgets: budgets, Items: history.Items}
+	for {
+		selected, err := generator.Compact(request)
+		if err != nil {
+			return nil, compaction.Artifact{}, Measurement{}, &OverflowError{fmt.Errorf("compact context %s: %w", contextID, err)}
+		}
+		summary := summaryMessage(selected)
+		window := messagesForItems(history.Items, selected.Window)
+		retained := messagesForItems(history.Items, selected.Retained)
+		presented := joinMessages(static, summary, retained, window, trailing)
+		afterTotal := pressure(static, summary, joinMessages(retained, window), trailing)
+		if afterTotal <= limit {
+			selected.BeforeTokens = pressure(static, nil, prior, trailing)
+			selected.AfterTokens = afterTotal
+			if err := compaction.Finalize(&selected); err != nil {
+				return nil, compaction.Artifact{}, Measurement{}, &OverflowError{fmt.Errorf("finalize compaction for context %s: %w", contextID, err)}
+			}
+			if err := compaction.Verify(selected, history.Items); err != nil {
+				return nil, compaction.Artifact{}, Measurement{}, &OverflowError{fmt.Errorf("verify compaction for context %s: %w", contextID, err)}
+			}
+			m := measurement(static, summary, joinMessages(retained, window), trailing, limit)
+			return presented, selected, m, nil
+		}
+		if request.Budgets.Verbatim <= 0 {
+			return nil, compaction.Artifact{}, Measurement{}, &OverflowError{fmt.Errorf(
+				"compaction cannot bring context %s within limit %d: the presentation floor (static %d, summary %d, minimal window %d, input %d) already exceeds the limit, so no selection can relieve the pressure",
+				contextID, limit, measurementOf(static), measurementOf(summary), measurementOf(window), measurementOf(trailing))}
+		}
+		request.Budgets.Verbatim -= afterTotal - limit
+		if request.Budgets.Verbatim < 0 {
+			request.Budgets.Verbatim = 0
+		}
+	}
+}
+
+// pressure sums the layer measures under one identity: runes of the canonical
+// JSON encoding of each message slice. The sum is a conservative bound on the
+// joined presentation, so pressure is never understated.
+func pressure(static, summary, verbatim, trailing []turn.Message) int {
+	return measurementOf(static) + measurementOf(summary) + measurementOf(verbatim) + measurementOf(trailing)
+}
+
+func measurement(static, summary, verbatim, trailing []turn.Message, limit int) Measurement {
+	return Measurement{Implementation: "unicode-rune-upper-bound", Version: "v1", Mode: "estimate",
+		StaticTokens: measurementOf(static), SummaryTokens: measurementOf(summary),
+		VerbatimTokens: measurementOf(verbatim), InputTokens: measurementOf(trailing),
+		TotalTokens: pressure(static, summary, verbatim, trailing), InputLimit: limit}
+}
+
+// measurementOf counts runes of the canonical JSON encoding, the same identity
+// the layer pressures use. Callers must have proven the presentation encodable
+// before measuring, which makes the panic below unreachable.
+func measurementOf(messages []turn.Message) int {
+	if len(messages) == 0 {
+		return 0
+	}
+	body, err := json.Marshal(messages)
+	if err != nil {
+		panic(fmt.Sprintf("contextprep: encode messages for measurement: %v", err))
+	}
+	return utf8.RuneCount(body)
+}
+
+// summaryMessage renders the extractive claims as one user message. The
+// artifact carries the citations; the presentation stays lean and states the
+// claims, which are proven excerpts of their sources either way.
+func summaryMessage(selected compaction.Artifact) []turn.Message {
+	if len(selected.Claims) == 0 {
+		return nil
+	}
+	var body strings.Builder
+	body.WriteString("[Earlier conversation compacted: extractive summary of the turns before the recent history. The compaction artifact records every citation and omission.]\n")
+	for _, claim := range selected.Claims {
+		body.WriteString("- ")
+		body.WriteString(claim.Text)
+		if claim.Incomplete {
+			body.WriteString(" [incomplete]")
+		}
+		body.WriteString("\n")
+	}
+	return []turn.Message{textMessage(turn.RoleUser, strings.TrimRight(body.String(), "\n"))}
+}
+
+// inputMessages closes the presentation with what this turn adds: the
+// activation causes the reducer computed. They are not history — they state
+// what changed since the member last ran, which is the difference between a
+// member that knows it was steered and one that re-reads the conversation and
+// guesses. A turn with no causes still needs a user message, because many
+// providers reject a system-only conversation with a 400 that would surface as
+// a domain error on a turn that was merely empty.
+func inputMessages(context kernel.ContextSpec, prior []turn.Message) []turn.Message {
+	var user strings.Builder
+	writeSection(&user, "Why you were activated", context.Cause)
+	if text := strings.TrimSpace(user.String()); text != "" {
+		return []turn.Message{textMessage(turn.RoleUser, text)}
+	}
+	if len(prior) > 0 && prior[len(prior)-1].Role == turn.RoleUser {
+		return nil
+	}
+	return []turn.Message{textMessage(turn.RoleUser, "Proceed.")}
+}
+
+// staticMessages renders the frozen framing: what the operator authored, and
+// what memory supplied, as two different kinds of thing.
+//
+// The system message carries only operator-authored material — identity,
+// situation, shared instructions. Memory occupies its own user-role message
+// (ADR-0020), because the system channel is a structural grant of authority
+// and memory content is data. It previously shared the system message, which
+// meant a Phase 7 record would have arrived carrying the authority of "You are
+// backend." no matter what its recorded provenance said.
+//
+// The user role rather than a second system message, and this is the part that
+// is not obvious from here: internal/provider/anthropic.go concatenates EVERY
+// system message into one `System` string. A second system message would look
+// separated in this function and arrive fused on the wire — the appearance of
+// a boundary with none of the effect. internal/provider/memory_channel_test.go
+// pins that, because it is invisible at this layer.
+//
+// Both messages stay in the STATIC layer. Memory is still frozen blueprint
+// prose measured against the static budget; only its channel changed. Moving
+// it to another layer would have silently re-cut the budget quarters while
+// claiming to be a channel change.
+func staticMessages(context kernel.ContextSpec) []turn.Message {
+	var system strings.Builder
+	if context.Identity != "" {
+		system.WriteString("You are ")
+		system.WriteString(context.Identity)
+		system.WriteString(".\n")
+	}
+	writeSection(&system, "Situation", context.Situation)
+	writeSection(&system, "Shared", context.Shared)
+	var messages []turn.Message
+	if text := strings.TrimSpace(system.String()); text != "" {
+		messages = append(messages, textMessage(turn.RoleSystem, text))
+	}
+	if memory := strings.TrimSpace(context.Memory); memory != "" {
+		messages = append(messages, textMessage(turn.RoleUser, memoryMessageText(memory)))
+	}
+	return messages
+}
+
+// memoryMessageText labels the memory message for a reader without pretending
+// the label is a security boundary.
+//
+// The prefix is a courtesy to the model, not a control: a record can contain
+// the same words, which is exactly why ADR-0020 discarded delimiter-based
+// marking inside the system message and moved the channel instead. The
+// guarantee comes from the role; this text only makes the message legible.
+func memoryMessageText(memory string) string {
+	var b strings.Builder
+	b.WriteString("Memory:\n")
+	b.WriteString(memory)
+	b.WriteString("\n")
+	return b.String()
+}
+
+func transcriptMessages(items []transcript.Item) []turn.Message {
+	messages := make([]turn.Message, 0, len(items))
+	for _, item := range items {
+		if message, ok := item.Message(); ok {
+			messages = append(messages, message)
+		}
+	}
+	return messages
+}
+
+// messagesForItems renders exactly the named items, in transcript order, so
+// the verbatim window and retained slots present the same bytes the full
+// history would have presented for those items.
+func messagesForItems(items []transcript.Item, ids []string) []turn.Message {
+	selected := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		selected[id] = true
+	}
+	messages := make([]turn.Message, 0, len(ids))
+	for _, item := range items {
+		if !selected[item.ID] {
+			continue
+		}
+		if message, ok := item.Message(); ok {
+			messages = append(messages, message)
+		}
+	}
+	return messages
+}
+
+func textMessage(role turn.Role, text string) turn.Message {
+	return turn.Message{Role: role, Content: []turn.ContentBlock{{Type: turn.BlockText, Text: text}}}
+}
+
+func joinMessages(groups ...[]turn.Message) []turn.Message {
+	var joined []turn.Message
+	for _, group := range groups {
+		joined = append(joined, group...)
+	}
+	return joined
+}
+
+func writeSection(builder *strings.Builder, title string, values []string) {
+	if len(values) == 0 {
+		return
+	}
+	if builder.Len() > 0 {
+		builder.WriteString("\n")
+	}
+	builder.WriteString(title)
+	builder.WriteString(":\n")
+	for _, value := range values {
+		if value != "" {
+			builder.WriteString("- ")
+			builder.WriteString(value)
+			builder.WriteString("\n")
+		}
+	}
+}
+
+func digest(domain string, body []byte) string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(domain))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write(body)
+	return hex.EncodeToString(h.Sum(nil))
+}
