@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -490,5 +492,32 @@ func TestBareProviderAndModelOpenTheScreen(t *testing.T) {
 	act, _, _ := parseProviderCommand("/provider list")
 	if act.OpenScreen {
 		t.Error("/provider list opened the screen; the typed subcommands print a notice and must stay that way")
+	}
+}
+
+// TestCheckArxiBinNamesTheRealCause pins the fix for the first-run failure seen on
+// Windows: ARXI_BIN pointed at arxi-tui.exe, the TUI spawned itself, and the user got
+// "hello is not JSON: invalid character". The refusal must name the wrong path and the
+// fix, before anything is spawned.
+func TestCheckArxiBinNamesTheRealCause(t *testing.T) {
+	dir := t.TempDir()
+	core := filepath.Join(dir, "arxi")
+	if err := os.WriteFile(core, []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkArxiBin(core); err != nil {
+		t.Errorf("a readable file named arxi was refused: %v", err)
+	}
+	for _, path := range []string{`C:\bin\arxi-tui.exe`, "/usr/bin/arxi-tui", "./ARXI-TUI.EXE"} {
+		err := checkArxiBin(path)
+		if err == nil || !strings.Contains(err.Error(), "this TUI") {
+			t.Errorf("ARXI_BIN=%s gave %v; want a refusal saying it is the TUI, not the core", path, err)
+		}
+	}
+	if err := checkArxiBin(filepath.Join(dir, "missing")); err == nil || !strings.Contains(err.Error(), "cannot be read") {
+		t.Errorf("a missing path gave %v; want a 'cannot be read' refusal naming the path", err)
+	}
+	if err := checkArxiBin(dir); err == nil || !strings.Contains(err.Error(), "directory") {
+		t.Errorf("a directory gave %v; want a 'directory' refusal", err)
 	}
 }

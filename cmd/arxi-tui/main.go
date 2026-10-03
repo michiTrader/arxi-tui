@@ -317,10 +317,39 @@ func openDriver(ctx context.Context, doc *scene.Document) (Driver, <-chan fold.E
 		return openMockDriver(ctx, doc)
 	}
 
+	if err := checkArxiBin(arxiBin); err != nil {
+		return nil, nil, err
+	}
+
 	// Phase 0.5: spawn arxi serve as a subprocess. The subprocess communicates
 	// via stdin/stdout using the NDJSON request/response protocol (ADR-0002).
 	// Log-follow reads the run's event log file separately.
 	return openServeDriver(ctx, arxiBin)
+}
+
+// checkArxiBin refuses an ARXI_BIN that cannot be the arxi core, before it is spawned.
+// The commonest slip is pointing it at this program (arxi-tui itself): the TUI would
+// launch a copy of itself, read its terminal escape codes as the core's hello, and die
+// with "hello is not JSON: invalid character", which names a protocol problem when the
+// real cause is a wrong path. The sentence here names the cause and the fix instead.
+func checkArxiBin(path string) error {
+	// Split on both separators by hand: filepath.Base on Linux would not treat the
+	// backslashes of a Windows path as separators.
+	base := strings.ToLower(path[strings.LastIndexAny(path, `/\`)+1:])
+	base = strings.TrimSuffix(base, ".exe")
+	if strings.HasPrefix(base, "arxi-tui") {
+		return fmt.Errorf("ARXI_BIN points at %q, which is this TUI, not the arxi core; "+
+			"set ARXI_BIN to the arxi core executable (for example arxi.exe), or unset it to use the offline demo", path)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("ARXI_BIN is set to %q but that file cannot be read (%v); "+
+			"fix the path to the arxi core executable, or unset ARXI_BIN to use the offline demo", path, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("ARXI_BIN is set to %q, which is a directory; it must be the arxi core executable", path)
+	}
+	return nil
 }
 
 // openMockDriver creates the Phase 0 mock: a fixed log replay plus a

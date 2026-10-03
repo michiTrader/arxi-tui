@@ -371,6 +371,12 @@ $env:ARXI_BIN = "C:\path\to\arxi.exe"
 .\arxi-tui.exe
 ```
 
+`ARXI_BIN` must be the **arxi core** (built from the separate `arxi` project), never
+`arxi-tui.exe` itself. Pointing it at the TUI used to fail with the cryptic
+`hello is not JSON: invalid character`; it is now refused up front with a sentence that
+names the wrong path. Leave `ARXI_BIN` unset to run the offline demo (the providers
+screen opens but cannot reach a core).
+
 ### The files in `testdata/` ("scenarios")
 
 `testdata/*.json` are scene documents: the JSON that describes one whole screen. They
