@@ -47,7 +47,7 @@ type catalogEntry struct {
 var loginCatalog = []catalogEntry{
 	{ID: "anthropic", Display: "Anthropic", CoreKnown: true},
 	{ID: "openai", Display: "OpenAI", CoreKnown: true},
-	{ID: "local", Display: "Local server (Ollama, llama.cpp)", CoreKnown: true, NoKey: true},
+	{ID: "local", Display: "Local server (Ollama)", CoreKnown: true, NoKey: true},
 	{ID: "openrouter", Display: "OpenRouter", BaseURL: "https://openrouter.ai/api/v1"},
 	{ID: "groq", Display: "Groq", BaseURL: "https://api.groq.com/openai/v1"},
 	{ID: "deepseek", Display: "DeepSeek", BaseURL: "https://api.deepseek.com/v1"},
