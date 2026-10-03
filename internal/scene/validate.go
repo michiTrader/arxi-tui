@@ -381,7 +381,7 @@ var rowSchemas = map[string]map[string]bool{
 	// operator to write `row.enabled == false` with.
 	// The /login screen's list. row.marker is the same fixed-width gutter the
 	// providers screen wears; row.label and row.status are the two columns.
-	"login.rows": {"row.marker": true, "row.label": true, "row.status": true},
+	"login.rows":       {"row.marker": true, "row.label": true, "row.status": true},
 	"providers.models": {"row.provider": true, "row.model": true, "row.enabled": true, "row.disabled": true, "row.ref": true, "row.marker": true},
 }
 

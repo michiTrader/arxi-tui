@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -400,7 +401,7 @@ func TestLoopSlashMenuNavigateAndRun(t *testing.T) {
 	frames := strings.Split(tty.output(), frameBegin)
 
 	// The menu must have been open with every command.
-	if !strings.Contains(tty.output(), "Commands 7 · type to filter") {
+	if !strings.Contains(tty.output(), fmt.Sprintf("Commands %d · type to filter", len(fold.Commands))) {
 		t.Errorf("menu header never rendered; output:\n%s", tty.output())
 	}
 
@@ -410,7 +411,7 @@ func TestLoopSlashMenuNavigateAndRun(t *testing.T) {
 	// node by id", which contains the same word.
 	ranCommand := false
 	for _, f := range frames {
-		if frameHasTranscriptLine(f, "┃ focus") && !strings.Contains(f, "Commands 7") {
+		if frameHasTranscriptLine(f, "┃ focus") && !strings.Contains(f, fmt.Sprintf("Commands %d", len(fold.Commands))) {
 			ranCommand = true
 			break
 		}
@@ -608,9 +609,9 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	}
 
 	// "/" opens the menu on the first row (index 0 = "help"). Pressing Up at
-	// row 0 wraps to the last row (index 6 = "model"); Enter runs it, which
-	// opens the providers screen. Had Up not wrapped, Enter would run "help"
-	// and the screen would stay closed.
+	// row 0 wraps to the LAST row; Enter runs it. The last row is whatever the
+	// registry ends with, so the test asserts that, not a name written here.
+	// Had Up not wrapped, Enter would run "help" and nothing would open.
 	script := []scheduledEvent{
 		{0, keyEvent('/')},
 		{50 * time.Millisecond, arrowEvent(term.KeyUp)}, // wrap: help(0) → model(6)
