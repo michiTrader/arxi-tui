@@ -327,6 +327,28 @@ feature, as `PLAN.md` requires:
   in place (`/ui: styled "status" as "dim"`); the side-by-side view belongs
   with the agent half, where a proposal arrives *before* it is applied.
 
+## Repository layout
+
+This is a monorepo with two Go modules:
+
+| Folder | What it is | Module |
+|---|---|---|
+| `/` (root) | `arxi-tui`, the terminal front end | `github.com/michiTrader/arxi_tui` |
+| `core/` | `arxi`, the backend/kernel the TUI drives (full history imported from `github.com/michiTrader/arxi`) | `github.com/michiTrader/arxi` |
+
+They stay separate modules on purpose: the core is Go 1.22 with no third-party
+dependencies and its tests enforce that; the TUI uses Charm libraries. Build both:
+
+```bash
+go build -o arxi-tui ./cmd/arxi-tui          # from the repo root
+cd core && go build -o ../arxi ./cmd/arxi    # the core
+ARXI_BIN=./arxi ./arxi-tui
+```
+
+CI note: the root `go test ./...` does not descend into `core/` (nested module). Test the
+core with `cd core && go test ./...`; the matching CI job is in `docs/ci-core-job.yml`,
+ready to paste into `.github/workflows/ci.yml`.
+
 ## Build
 
 Requires Go 1.25.
