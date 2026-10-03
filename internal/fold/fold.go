@@ -264,6 +264,14 @@ type State struct {
 	// on the enabled flag; see BINDS.md §4.3/§4.7.
 	ProviderModels []ProviderModel `json:"providers.models"`
 
+	// ProviderSelected is the providers screen's highlighted row, an index into
+	// ProviderModels. Host view state like CommunitySelected: no log event moves it,
+	// the host owns it across frames (↑/↓) and clamps it to the list, so the engine
+	// always receives an in-range value. It exists so the template can mark one row
+	// (row.marker) with only signed mechanism -- `when` has no comparison operator,
+	// so a scene cannot ask "is this row the selected one" itself.
+	ProviderSelected int `json:"providers.selected"`
+
 	UIFocus   string `json:"ui.focus"`
 	UIMax     string `json:"ui.max"`
 	UISurface string `json:"ui.surface"`
@@ -1412,6 +1420,20 @@ type ProviderModel struct {
 	Provider string `json:"provider"`
 	ID       string `json:"id"`
 	Enabled  bool   `json:"enabled"`
+}
+
+// Ref is the model's address in the form the model.enable / model.disable verbs
+// accept: "provider/id", or the bare id when no provider is set. It is a method on
+// the type so the one place the form is decided serves both consumers -- the engine
+// projecting row.ref into a row's on_press, and the host building the same command
+// when a row is toggled from the keyboard -- which would otherwise each own a copy
+// that could drift, leaving a pressed button and a typed Enter naming different
+// models.
+func (m ProviderModel) Ref() string {
+	if m.Provider == "" {
+		return m.ID
+	}
+	return m.Provider + "/" + m.ID
 }
 
 // Commands is the host's command registry, the source for slash.matches.

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/michiTrader/arxi_tui/internal/driver"
+	"github.com/michiTrader/arxi_tui/internal/fold"
 )
 
 // This file is the host-level grammar for `/provider …` and `/model …`, the K2
@@ -41,6 +42,17 @@ type providerAction struct {
 	ProviderView bool                     // true for `/provider list`: format rows as providers, not models
 	Add          driver.ProviderAddParams // populated when Verb == "provider.add"
 	Ref          string                   // populated when Verb == "model.enable" | "model.disable"
+
+	// OpenScreen marks the bare `/provider` and `/model`: the user asked to SEE the
+	// providers, not to read them as a sentence, so the host opens the providers
+	// screen and fills it from one model.list round-trip. It rides on Verb
+	// "model.list" because that is the single read behind the screen.
+	OpenScreen bool
+	// Refresh asks the worker to re-read model.list after the command and hand the
+	// rows back, so an open providers screen stays in step with what a toggle or an
+	// add just changed. It is set by the loop, never by the grammar: the same typed
+	// `/model enable x` needs no second round-trip when no screen is showing.
+	Refresh bool
 }
 
 // stripLeadingVerb removes a leading "/word" or "word" prefix from the line, the
@@ -78,9 +90,13 @@ func parseProviderCommand(line string) (action providerAction, matched bool, err
 	}
 	fields := strings.Fields(rest)
 	if len(fields) == 0 {
-		return providerAction{}, true, fmt.Errorf(
-			"/provider needs a subcommand: /provider add <name> [--base-url <url>] " +
-				"[--api-key-env <env>], or /provider list")
+		// Bare `/provider` is the doorway to the providers screen. It used to be a
+		// refusal ("needs a subcommand"), which was the right answer for a grammar
+		// and the wrong one for a person: the slash menu advertises `provider`, a
+		// user who picks it expects a menu, and a one-line notice at the top of the
+		// chat is easy to miss -- so the command read as "it sent the word to the
+		// chat". The subcommands stay for the typed, scripted use.
+		return providerAction{Verb: "model.list", ProviderView: true, OpenScreen: true}, true, nil
 	}
 
 	switch fields[0] {
@@ -175,9 +191,11 @@ func parseModelCommand(line string) (action providerAction, matched bool, err er
 	}
 	fields := strings.Fields(rest)
 	if len(fields) == 0 {
-		return providerAction{}, true, fmt.Errorf(
-			"/model needs a subcommand: /model list, /model enable <ref>, or " +
-				"/model disable <ref>")
+		// Bare `/model` opens the same screen as bare `/provider`: the screen lists
+		// every model with its enable/disable action, which is what a user reaching
+		// for `/model` wants. One screen, two doors, so the two cannot disagree on
+		// what the models are.
+		return providerAction{Verb: "model.list", OpenScreen: true}, true, nil
 	}
 
 	switch fields[0] {
@@ -226,7 +244,27 @@ type providerManager interface {
 // slow format never competes with a repaint.
 type providerCmdOutcome struct {
 	notice string
+	// models and hasModels carry the fresh model.list rows when the action asked for
+	// them (OpenScreen or Refresh). hasModels is separate from len(models) because
+	// an empty list is a real answer -- "no provider yet" -- that must clear the
+	// screen, whereas a failed read carries no rows at all and must leave the last
+	// good list standing.
+	models    []fold.ProviderModel
+	hasModels bool
+	// open says the rows should OPEN the providers screen, not merely refresh one
+	// that is showing. Without it a user who pressed Esc while a refresh was in
+	// flight would have the screen reopen under them when the answer landed.
+	open bool
 }
+
+// noLiveCoreNotice is the one sentence for "this process has no arxi core". It is
+// a constant because two places must say exactly the same thing -- the refusal of
+// a typed command and the banner on the providers screen that opens anyway -- and
+// a user who reads one and then the other should not wonder whether two different
+// things are wrong.
+const noLiveCoreNotice = "provider management needs a live arxi core; set ARXI_BIN to an " +
+	"arxi binary and restart so the TUI connects to a core that can " +
+	"register providers"
 
 // pendingNotice is the line shown the instant a command is accepted, before its
 // round-trip returns. It names the act in flight so the user sees the command
@@ -268,22 +306,45 @@ func dispatchProviderCmd(ctx context.Context, drv Driver, act providerAction, pe
 	if *busy {
 		return "a provider command is already running; wait for it to finish before starting another"
 	}
+	if refusal := providerCoreRefusal(drv); refusal != "" {
+		return refusal
+	}
+	pm := drv.(providerManager)
+	*busy = true
+	startProviderCmd(ctx, pm, act, done)
+	return act.pendingNotice()
+}
+
+// providerCoreRefusal says why this connection cannot manage providers, or returns
+// "" when it can. It is the capability assertion and the hello gate that
+// dispatchProviderCmd runs, lifted out so the loop can ask the same question before
+// opening the providers screen: a screen that opens is still useful without a core
+// (it tells the user what is missing, in place), but only if the sentence it shows
+// is the one the typed command would have refused with.
+//
+// The mock driver (ARXI_BIN unset) has no core to manage providers with. Naming that
+// is the honest refusal: the feature is real but this process is not connected to a
+// kernel that can serve it, so point at the fix rather than let a round-trip hang
+// against a driver that cannot answer.
+func providerCoreRefusal(drv Driver) string {
 	pm, ok := drv.(providerManager)
 	if !ok {
-		// The mock driver (ARXI_BIN unset) has no core to manage providers with.
-		// Naming that is the honest refusal: the feature is real but this process
-		// is not connected to a kernel that can serve it, so point at the fix
-		// rather than let a round-trip hang against a driver that cannot answer.
-		return "provider management needs a live arxi core; set ARXI_BIN to an " +
-			"arxi binary and restart so the TUI connects to a core that can " +
-			"register providers"
+		return noLiveCoreNotice
 	}
 	if err := requireProviderVerbs(pm.Hello()); err != nil {
 		return err.Error()
 	}
-	*busy = true
-	startProviderCmd(ctx, pm, act, done)
-	return act.pendingNotice()
+	return ""
+}
+
+// parseProviderOrModel runs the two grammars in the order the loop does, so the
+// slash menu's pick and a typed line resolve through one function and cannot
+// diverge on what `/provider` or `/model` means.
+func parseProviderOrModel(line string) (act providerAction, matched bool, err error) {
+	if act, matched, err = parseProviderCommand(line); matched {
+		return act, true, err
+	}
+	return parseModelCommand(line)
 }
 
 // startProviderCmd runs the command's round-trip on a worker goroutine and sends
@@ -294,8 +355,42 @@ func dispatchProviderCmd(ctx context.Context, drv Driver, act providerAction, pe
 // repaint when the response arrives.
 func startProviderCmd(ctx context.Context, pm providerManager, act providerAction, done chan<- providerCmdOutcome) {
 	go func() {
-		done <- providerCmdOutcome{notice: runProviderCmd(ctx, pm, act)}
+		done <- runProviderWork(ctx, pm, act)
 	}()
+}
+
+// runProviderWork is the worker's body, split from the goroutine so it is testable
+// without a channel. It returns the notice and, when the action asked for them, the
+// fresh model rows.
+//
+// OpenScreen is ONE model.list whose rows feed the screen, and its notice stays
+// empty on success because the screen is the answer; formatting the list into a
+// sentence as well would put the same information on screen twice. Every other
+// action keeps its own notice, and Refresh adds a second read afterwards so an open
+// screen reflects the change the command just made. A failed refresh keeps the
+// command's own notice and leaves hasModels false: the command succeeded, and
+// reporting a list error as if the toggle had failed would send the user to retry
+// something that worked.
+func runProviderWork(ctx context.Context, pm providerManager, act providerAction) providerCmdOutcome {
+	if act.OpenScreen {
+		res, err := pm.SubmitModelList(ctx)
+		if err != nil {
+			return providerCmdOutcome{notice: "/provider: " + err.Error()}
+		}
+		out := providerCmdOutcome{models: modelsFromRows(res.Models), hasModels: true, open: true}
+		if len(out.models) == 0 {
+			out.notice = providersEmptyNotice
+		}
+		return out
+	}
+	out := providerCmdOutcome{notice: runProviderCmd(ctx, pm, act)}
+	if act.Refresh {
+		if res, err := pm.SubmitModelList(ctx); err == nil {
+			out.models = modelsFromRows(res.Models)
+			out.hasModels = true
+		}
+	}
+	return out
 }
 
 // runProviderCmd performs the one round-trip the action names and formats the

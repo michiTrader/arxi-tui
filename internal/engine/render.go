@@ -2006,23 +2006,34 @@ func rowScopesFor(bind string, state fold.State) []map[string]string {
 		// button on `when: row.enabled`, the row.is_toggle/row.is_text idiom, and the
 		// two never both draw on one row.
 		rows := make([]map[string]string, 0, len(state.ProviderModels))
-		for _, m := range state.ProviderModels {
-			ref := m.ID
-			if m.Provider != "" {
-				ref = m.Provider + "/" + m.ID
-			}
+		for i, m := range state.ProviderModels {
+			ref := m.Ref()
 			rows = append(rows, map[string]string{
 				"row.provider": m.Provider,
 				"row.model":    m.ID,
 				"row.enabled":  boolField(m.Enabled),
 				"row.disabled": boolField(!m.Enabled),
 				"row.ref":      ref,
+				"row.marker":   selectionMarker(i == state.ProviderSelected),
 			})
 		}
 		return rows
 	default:
 		return nil
 	}
+}
+
+// selectionMarker is the fixed-width gutter a list row wears: a caret on the
+// selected row and two spaces on every other. It is a value, not a gated node,
+// because a gated "> " glyph that appears and disappears shifts every column of
+// its row by two cells -- the installer accepts that, but a table of provider and
+// model columns would visibly jitter as the highlight moves. Both spellings are the
+// same width, so the columns never move.
+func selectionMarker(selected bool) string {
+	if selected {
+		return "> "
+	}
+	return "  "
 }
 
 // boolField renders a bool row field as the truthy/falsy string evalWhenRow
@@ -2244,6 +2255,11 @@ func resolveBind(bind string, state fold.State) string {
 		return fmt.Sprintf("%d", state.SlashSelected)
 	case "community.query":
 		return state.CommunityQuery
+	case "providers.selected":
+		// The highlighted model row's index into providers.models, the analogue of
+		// community.selected. The host clamps it to the list, so the value the
+		// renderer receives is always in range.
+		return fmt.Sprintf("%d", state.ProviderSelected)
 	case "community.selected":
 		// The highlighted card's index into community.matches, the direct
 		// analogue of slash.selected. A list bound to community.matches reads it

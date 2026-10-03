@@ -349,6 +349,38 @@ UPDATE_GOLDEN=1 go test ./internal/...   # regenerate golden fixtures
 ARXI_BIN=/path/to/arxi ./arxi-tui
 ```
 
+### Managing providers and models (`/provider`, `/model`)
+
+Type `/provider` (or `/model`), or pick it in the `/` menu and press Enter. The
+providers screen opens with the real list from the core:
+
+| Key | Does |
+|---|---|
+| Up / Down | move the `>` highlight |
+| Enter (empty input line) | enable or disable the highlighted model |
+| Enter after typing `/provider add <name> --api-key-env <VAR>` | register a provider |
+| Esc | back to the chat |
+
+Credentials are named by environment variable only; the key itself is never typed here.
+This needs a live core (`ARXI_BIN` set). Without one the screen still opens and says so.
+
+**Windows PowerShell:**
+
+```powershell
+$env:ARXI_BIN = "C:\path\to\arxi.exe"
+.\arxi-tui.exe
+```
+
+### The files in `testdata/` ("scenarios")
+
+`testdata/*.json` are scene documents: the JSON that describes one whole screen. They
+are the fixtures the tests render and compare against `*.frame` / `*.styled` goldens.
+Open one with `./arxi-tui -scene testdata/PROVIDERS.json`. That shows the screen as a
+**static picture with fake data**: nothing is connected behind it, so `SUBAGENTS.json`
+shows a frozen chat and only reacts when a live run emits sub-agent events. Seeing
+"nothing happens" there is expected. The real, working screens are the ones you reach
+from the normal chat (`/provider`, `/ui plugin browse`, ...).
+
 ### What the NDJSON bridge actually does today
 
 Measured on 2026-09-21 against a real `arxi serve` (arxi 0.0.1-spec, surface

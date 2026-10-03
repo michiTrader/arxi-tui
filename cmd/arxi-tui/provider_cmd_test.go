@@ -179,7 +179,6 @@ func TestParseModelCommand(t *testing.T) {
 	}
 
 	for _, c := range []struct{ line, want string }{
-		{"/model", "needs a subcommand"},
 		{"/model enable", "exactly one model ref"},
 		{"/model enable a b", "exactly one model ref"},
 		{"/model wat", "no subcommand"},
@@ -466,5 +465,30 @@ func TestDispatchLaunchesTheWorkerOnSuccess(t *testing.T) {
 	out := <-done
 	if !strings.Contains(out.notice, "1 provider") {
 		t.Errorf("the worker's outcome did not carry the formatted result: %q", out.notice)
+	}
+}
+
+// TestBareProviderAndModelOpenTheScreen pins the doorway: a bare command is not a
+// grammar error, it asks for the providers screen. The old answer ("needs a
+// subcommand") was a one-line notice at the top of the chat, which read as "the word
+// went to the chat". The counterfactual is the typed subcommands: they must NOT open
+// the screen, or `/provider add x` would swap the display before it ran.
+func TestBareProviderAndModelOpenTheScreen(t *testing.T) {
+	for _, line := range []string{"/provider", "/model", "/provider  "} {
+		var act providerAction
+		var matched bool
+		var err error
+		if strings.HasPrefix(line, "/provider") {
+			act, matched, err = parseProviderCommand(line)
+		} else {
+			act, matched, err = parseModelCommand(line)
+		}
+		if !matched || err != nil || !act.OpenScreen || act.Verb != "model.list" {
+			t.Errorf("%q parsed to %+v matched=%v err=%v; want model.list with OpenScreen", line, act, matched, err)
+		}
+	}
+	act, _, _ := parseProviderCommand("/provider list")
+	if act.OpenScreen {
+		t.Error("/provider list opened the screen; the typed subcommands print a notice and must stay that way")
 	}
 }

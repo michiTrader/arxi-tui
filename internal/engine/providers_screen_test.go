@@ -200,3 +200,41 @@ func TestProvidersSceneStyledGolden(t *testing.T) {
 		t.Errorf("providers scene styled output does not match golden:\n--- got ---\n%s\n--- want ---\n%s", got, string(want))
 	}
 }
+
+// TestProvidersMarkerFollowsTheSelection pins the highlight the keyboard drives: the
+// "> " gutter sits on the row providers.selected names and on no other. Without it the
+// arrows would move something the user cannot see, and Enter would toggle a model they
+// could not tell was chosen. The counterfactual is the second assertion: moving the
+// selection must move the marker, so a marker hard-wired to row 0 fails here.
+func TestProvidersMarkerFollowsTheSelection(t *testing.T) {
+	doc := providersDoc(t)
+	if err := doc.Validate(); err != nil {
+		t.Fatalf("scene validation: %v", err)
+	}
+	r := Renderer{Width: 80, Height: 24}
+
+	markedRows := func(sel int) []string {
+		st := providersState()
+		st.ProviderSelected = sel
+		var marked []string
+		for _, line := range strings.Split(r.RenderFrame(doc, st).Plain(), "\n") {
+			if strings.HasPrefix(line, "> ") {
+				marked = append(marked, line)
+			}
+		}
+		return marked
+	}
+
+	first := markedRows(0)
+	if len(first) != 1 || !strings.Contains(first[0], "kimi-k2") {
+		t.Fatalf("selection 0 marked %q; want exactly the kimi-k2 row.\n"+
+			"consequence: the highlight is not on the row Enter will toggle.\n"+
+			"remedy: rowScopesFor must set row.marker from providers.selected.", first)
+	}
+	second := markedRows(1)
+	if len(second) != 1 || !strings.Contains(second[0], "deepseek-chat") {
+		t.Fatalf("selection 1 marked %q; want exactly the deepseek-chat row.\n"+
+			"consequence: the arrows move nothing the user can see.\n"+
+			"remedy: row.marker must compare the row index with providers.selected.", second)
+	}
+}
