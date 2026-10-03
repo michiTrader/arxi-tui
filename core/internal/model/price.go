@@ -96,6 +96,19 @@ func PriceOf(ref string) (Price, bool) {
 	return p, ok
 }
 
+// PriceFor is the price a run charges for a resolved model: the operator's own
+// declaration when there is one, the shipped table otherwise.
+//
+// The declared price wins over the table. A table entry describes the vendor's
+// list price; a declaration describes what THIS operator pays, which is what a
+// budget is about.
+func PriceFor(res Resolution) (Price, bool) {
+	if res.Price != nil {
+		return *res.Price, true
+	}
+	return PriceOf(res.Model)
+}
+
 // ErrNoPrice is returned when a model's price is not known.
 //
 // It is a distinct error rather than a generic one because the caller has a real
@@ -108,9 +121,10 @@ type ErrNoPrice struct {
 func (e *ErrNoPrice) Error() string {
 	return fmt.Sprintf("no published price for model %q: "+
 		"this build cannot charge a budget for it, and a run that cannot charge a "+
-		"budget cannot enforce --budget. Use a model this build prices (%s), or "+
-		"a provider whose models bill nothing",
-		e.Ref, strings.Join(PricedIDs(), ", "))
+		"budget cannot enforce --budget.\n"+
+		"  declare what it costs: arxi model add <provider> %s --in <usd per million input tokens> --out <usd per million output tokens>\n"+
+		"  or use a model this build prices (%s)",
+		e.Ref, e.Ref, strings.Join(PricedIDs(), ", "))
 }
 
 // PricedIDs lists every model id this build can price, sorted.

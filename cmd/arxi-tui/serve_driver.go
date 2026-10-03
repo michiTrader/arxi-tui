@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -115,6 +116,37 @@ func (d *serveDriver) SubmitModelList(ctx context.Context) (*driver.ModelListRes
 
 func (d *serveDriver) SubmitModelEnable(ctx context.Context, ref string, on bool) (*driver.ModelEnableResult, error) {
 	return d.providers.SubmitModelEnable(ctx, ref, on)
+}
+
+// errNoLoginCore is what the key verbs answer when the provider seam is a fake that
+// only manages providers. The loop gates on the hello first, so a real user never
+// sees it; it keeps the forwarders total instead of panicking on a bad seam.
+var errNoLoginCore = errors.New("serve driver: this connection cannot store API keys")
+
+// SubmitProviderKey, SubmitProviderList and SubmitModelAdd forward the loginManager
+// capability the same way the provider verbs above are forwarded.
+func (d *serveDriver) SubmitProviderKey(ctx context.Context, name, apiKey string) (*driver.ProviderKeyResult, error) {
+	lm, ok := d.providers.(loginManager)
+	if !ok {
+		return nil, errNoLoginCore
+	}
+	return lm.SubmitProviderKey(ctx, name, apiKey)
+}
+
+func (d *serveDriver) SubmitProviderList(ctx context.Context) (*driver.ProviderListResult, error) {
+	lm, ok := d.providers.(loginManager)
+	if !ok {
+		return nil, errNoLoginCore
+	}
+	return lm.SubmitProviderList(ctx)
+}
+
+func (d *serveDriver) SubmitModelAdd(ctx context.Context, p driver.ModelAddParams) (*driver.ProviderAddResult, error) {
+	lm, ok := d.providers.(loginManager)
+	if !ok {
+		return nil, errNoLoginCore
+	}
+	return lm.SubmitModelAdd(ctx, p)
 }
 
 // SubmitPrompt begins a run for the user's line and follows its event log.

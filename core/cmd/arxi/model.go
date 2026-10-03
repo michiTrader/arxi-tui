@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
-	"time"
+	"strconv"
 
 	"github.com/michiTrader/arxi/internal/model"
 	"github.com/michiTrader/arxi/internal/modelstore"
@@ -45,12 +47,16 @@ func openProviders() *modelstore.Store {
 func cmdProvider(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintf(os.Stderr, "usage: arxi provider add <name> "+
-			"[--base-url URL] [--api-key-env VAR]\n")
+			"[--base-url URL] [--api-key-env VAR] | key <name> | list\n")
 		os.Exit(2)
 	}
 	switch args[0] {
 	case "add":
 		cmdProviderAdd(args[1:])
+	case "key":
+		cmdProviderKey(args[1:])
+	case "list":
+		cmdProviderList(args[1:])
 	default:
 		// notImplemented rather than "unknown command", because the surface may
 		// declare a provider subcommand this build has not written yet, and
@@ -61,12 +67,14 @@ func cmdProvider(args []string) {
 
 func cmdModel(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "usage: arxi model list | enable <model> | disable <model>\n")
+		fmt.Fprintf(os.Stderr, "usage: arxi model list | add <provider> <model> | enable <model> | disable <model>\n")
 		os.Exit(2)
 	}
 	switch args[0] {
 	case "list":
 		cmdModelList(args[1:])
+	case "add":
+		cmdModelAdd(args[1:])
 	case "enable":
 		cmdModelEnable(args[1:], true)
 	case "disable":
@@ -85,25 +93,33 @@ func cmdProviderAdd(args []string) {
 		os.Exit(2)
 	}
 
-	// The timestamp is stamped HERE and passed in, which is why internal/model
-	// can be forbidden from importing time (arch rule 17). The alternative — the
-	// package reaching for the wall clock — is what makes a pure rule
-	// untestable.
-	p, err := model.New(
-		vals["name"], vals["base-url"], vals["api-key-env"],
-		nowFunc().Format(time.RFC3339),
-	)
-	if err != nil {
-		// Exit 2: this is a bad invocation, not an operational failure. A key
-		// passed where a variable name belongs lands here, and it is the most
-		// important refusal in the command.
-		fmt.Fprintf(os.Stderr, "arxi provider add: %v\n", err)
+	// A key on a command line lands in shell history and in the process table.
+	// The flag is declared because the protocol accepts it (the TUI sends it in
+	// the request body, which is neither), but the CLI refuses it and names the
+	// safe way. Exit 2: this is a bad invocation.
+	if _, given := vals["api-key"]; given {
+		fmt.Fprintf(os.Stderr, "arxi provider add: --api-key is refused on the command line "+
+			"(it would be kept in your shell history).\n"+
+			"  register the provider, then give the key on standard input:\n"+
+			"    arxi provider add %s ...\n    arxi provider key %s\n", vals["name"], vals["name"])
 		os.Exit(2)
 	}
 
-	if err := openProviders().Add(p); err != nil {
-		fatal(err)
+	// The timestamp is stamped inside registerProvider and passed to internal/model,
+	// which arch rule 17 forbids from importing time.
+	added, err := registerProvider(vals["name"], vals["base-url"], vals["api-key-env"], "")
+	if err != nil {
+		// Exit 2 for a bad invocation: a key passed where a variable name
+		// belongs lands here, and it is the most important refusal in the
+		// command. A store failure is operational and exits 1.
+		fmt.Fprintf(os.Stderr, "arxi provider add: %v\n", err)
+		var bad badInvocation
+		if errors.As(err, &bad) {
+			os.Exit(2)
+		}
+		os.Exit(1)
 	}
+	p := added.Provider
 
 	// The output names the variable, not the key, and says so — because the
 	// whole point of --api-key-env is that the secret is somewhere else, and a
@@ -225,4 +241,91 @@ func cmdModelEnable(args []string, on bool) {
 		fatal(err)
 	}
 	fmt.Printf("model %s %sd\n", id, verb)
+}
+
+// cmdProviderKey implements `arxi provider key <name>`: the key is read from
+// standard input, never from argv.
+func cmdProviderKey(args []string) {
+	c := surface.Lookup("provider", "key")
+	vals, err := parseInvocation(c, args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi provider key: %v\n", err)
+		os.Exit(2)
+	}
+	if _, given := vals["api-key"]; given {
+		fmt.Fprintf(os.Stderr, "arxi provider key: --api-key is refused on the command line "+
+			"(it would be kept in your shell history).\n"+
+			"  give the key on standard input:  printenv MY_KEY | arxi provider key %s\n", vals["name"])
+		os.Exit(2)
+	}
+	key, err := stdinKey(os.Stdin, os.Stderr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi provider key: %v\n", err)
+		os.Exit(2)
+	}
+	if err := setProviderKey(vals["name"], key); err != nil {
+		fmt.Fprintf(os.Stderr, "arxi provider key: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("key for provider %s stored privately (never shown again)\n", vals["name"])
+}
+
+// cmdProviderList implements `arxi provider list [--json]`.
+func cmdProviderList(args []string) {
+	c := surface.Lookup("provider", "list")
+	vals, err := parseInvocation(c, args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi provider list: %v\n", err)
+		os.Exit(2)
+	}
+	rows, err := listProviders()
+	if err != nil {
+		fatal(err)
+	}
+	if vals["json"] == "true" {
+		out, _ := json.Marshal(map[string]any{"providers": rows})
+		fmt.Println(string(out))
+		return
+	}
+	if len(rows) == 0 {
+		fmt.Println("no providers registered; add one with: arxi provider add <name> --base-url URL")
+		return
+	}
+	for _, r := range rows {
+		fmt.Printf("%-20s %-10s %d models  %s\n", r.Name, r.Key, r.Models, r.BaseURL)
+	}
+}
+
+// cmdModelAdd implements `arxi model add <provider> <model> [--in N --out N]`.
+func cmdModelAdd(args []string) {
+	c := surface.Lookup("model", "add")
+	vals, err := parseInvocation(c, args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi model add: %v\n", err)
+		os.Exit(2)
+	}
+	num := func(k string) (*float64, error) {
+		v, ok := vals[k]
+		if !ok {
+			return nil, nil
+		}
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil {
+			return nil, fmt.Errorf("--%s %q is not a number", k, v)
+		}
+		return &f, nil
+	}
+	in, err := num("in")
+	if err == nil {
+		var out *float64
+		out, err = num("out")
+		if err == nil {
+			_, err = addModel(vals["provider"], vals["model"], in, out)
+		}
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi model add: %v\n", err)
+		os.Exit(2)
+	}
+	fmt.Printf("model %s added to %s\n", vals["model"], vals["provider"])
 }

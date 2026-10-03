@@ -678,6 +678,35 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		}
 		sceneNotice = dispatchProviderCmd(ctx, drv, act, perr, &providerCmdBusy, providerCmdDoneCh)
 	}
+	// login is the open /login wizard (Scene 13), non-nil exactly while it is
+	// showing, like providers above: it replaces the scene on display and owns the
+	// keyboard. The API key a user types lives only inside it (loginField.value) and
+	// is published as bullets; see login_wizard.go. loginBusy refuses a second
+	// round-trip while one is in flight, and loginDoneCh carries the worker's answer
+	// back to the select.
+	var login *loginWizard
+	var loginBusy bool
+	loginDoneCh := make(chan loginOutcome, 1)
+	loginDoc, loginDocErr := loadLoginScene()
+	// runLogin is the one door a typed `/login` and a slash-menu pick both take.
+	// It reads the provider list on a worker first, so the wizard opens with the
+	// credential state already known and a hung core never freezes the loop.
+	runLogin := func() {
+		switch {
+		case loginDocErr != nil:
+			sceneNotice = "/login: " + loginDocErr.Error()
+		case loginBusy:
+			sceneNotice = "/login: another login step is still running"
+		default:
+			if refusal := loginOpenRefusal(drv); refusal != "" {
+				sceneNotice = refusal
+				return
+			}
+			loginBusy = true
+			sceneNotice = "/login: reading providers …"
+			startLoginOpen(ctx, drv.(loginManager), loginDoneCh)
+		}
+	}
 	browseDoneCh := make(chan browseOutcome, 1)
 	registryFetchClient := newRegistryFetchClient()
 	liveInstaller, liveInstallerErr := ext.LiveInstallerScene()
@@ -901,6 +930,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// binds to none of the fold state, so the swap is purely which document is
 			// walked.
 			activeDoc = bundleMod.consent.doc
+		case login != nil:
+			// The /login wizard is open: it replaces the scene on display. Its
+			// rows are published as display text only -- the key is bullets by the
+			// time it reaches the fold (loginWizard.publish).
+			activeDoc = loginDoc
+			login.publish(&state)
 		case providers != nil:
 			// The providers screen is open: it replaces the scene on display and
 			// its rows and highlight are published onto the fold the renderer
@@ -1034,6 +1069,32 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// screen on y/r/n/Esc and leaving it standing otherwise.
 						panicGesture.Reset()
 						bundleMod.handleKey(ev.Key)
+					} else if login != nil {
+						// The /login wizard owns the keyboard, after the Ctrl-C
+						// branch so the escape hatch still reaches HandleCtrlC
+						// (invariant 6). Every key here, printable or not, goes to
+						// the wizard and never to the chat input: a key typed into
+						// the API-key field must not become a prompt.
+						panicGesture.Reset()
+						res := routeLoginKey(login, ev.Key)
+						switch {
+						case res.close:
+							login.wipe()
+							login = nil
+							sceneNotice = ""
+						case res.dispatch != nil:
+							if loginBusy {
+								sceneNotice = "/login: another login step is still running"
+							} else {
+								loginBusy = true
+								sceneNotice = "/login: saving …"
+								startLoginSave(ctx, drv.(loginManager), *res.dispatch, loginDoneCh)
+							}
+						case res.notice != "":
+							sceneNotice = res.notice
+						case res.clear:
+							sceneNotice = ""
+						}
 					} else if providers != nil {
 						// The providers screen is open and owns the keyboard, like the
 						// installer below. It sits after the Ctrl-C branch so the escape
@@ -1241,6 +1302,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						} else if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens); handled {
 							input = next
 							caret = clampCaret(input, caret)
+						} else if isLoginCommand(input) && ev.Key.Type == term.KeyEnter {
+							// `/login` is host-owned: it opens the API-key wizard.
+							// It takes no arguments on purpose, so a key can never
+							// be typed on (and echoed from) the command line.
+							runLogin()
+							input = ""
+							caret = 0
+							slashSel = 0
 						} else if act, matched, perr := parseProviderCommand(input); ev.Key.Type == term.KeyEnter && matched {
 							// `/provider add|list` is host-owned, not a patch: it
 							// round-trips the serve protocol (SubmitProviderAdd /
@@ -1267,8 +1336,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// "provider" to the chat instead of opening the screen the
 							// row advertises. The row resolves to the same line a typed
 							// command is, and takes the same door.
-							act, _, perr := parseProviderOrModel(line)
-							runProviderInput(act, perr)
+							if isLoginCommand(line) {
+								runLogin()
+							} else {
+								act, _, perr := parseProviderOrModel(line)
+								runProviderInput(act, perr)
+							}
 							input = ""
 							caret = 0
 							slashSel = 0
@@ -1340,6 +1413,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					// control byte so a stray ESC in the clipboard cannot inject
 					// an escape sequence into the line the host re-emits.
 					panicGesture.Reset()
+					if login != nil {
+						// A pasted key goes to the wizard's focused field, never
+						// to the chat input.
+						login.paste(ev.Text)
+						break
+					}
 					input, caret = insertText(input, caret, cleanPaste(ev.Text))
 				case term.EventResize:
 					// A resize only needs a fresh frame at the new size, delivered
@@ -1466,6 +1545,24 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				if providers != nil {
 					providers.setModels(out.models)
 				}
+			}
+			repaint()
+
+		case out := <-loginDoneCh:
+			// The login worker finished. Clear busy, show its notice (already
+			// scrubbed of the key on the worker) and apply the answer: an opening
+			// read creates the wizard; a refresh only updates one still showing, so
+			// a user who pressed Esc meanwhile does not see it reappear.
+			loginBusy = false
+			sceneNotice = out.notice
+			if out.open && login == nil && out.hasRows {
+				login = newLoginWizard(out.rows)
+				sceneNotice = ""
+			} else if login != nil && out.hasRows {
+				login.setProviders(out.rows)
+			}
+			if out.saved && login != nil {
+				login.finishSave()
 			}
 			repaint()
 

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/michiTrader/arxi/internal/secretstore"
 	"io"
 	"net/http"
 	"os"
@@ -22,6 +23,16 @@ import (
 type Client struct {
 	BaseURL   string
 	APIKeyEnv string
+
+	// Provider names the provider this client speaks to. It is how a key typed
+	// into the TUI (and kept by internal/secretstore) is found when the
+	// environment variable is empty. Empty means "do not look": the tests build
+	// bare clients and must never read the developer's real key directory.
+	Provider string
+
+	// Secret looks up a stored key by provider name. Nil means
+	// secretstore.Lookup. Injectable for the reason Getenv is.
+	Secret func(provider string) (key string, ok bool, err error)
 
 	// HTTP is injectable so the tests can point at an httptest server. Nil
 	// means DefaultClient() -- a client with a timeout, never http.DefaultClient,
@@ -61,10 +72,11 @@ type ErrNoCredential struct {
 }
 
 func (e *ErrNoCredential) Error() string {
-	return fmt.Sprintf("provider %s reads its key from $%s, which is empty.\n"+
-		"  fix: export %s=... in the shell that runs arxi.\n"+
-		"  note: arxi never stores the key; it stores only the NAME of this variable, "+
-		"which is why it has to be present in the environment at run time",
+	return fmt.Sprintf("provider %s has no API key: $%s is empty and no key is stored for it.\n"+
+		"  fix, in the TUI: /login, then pick the provider and paste the key.\n"+
+		"  fix, in a shell: export %s=...\n"+
+		"  a key typed into /login is kept in your private arxi configuration folder, "+
+		"never in the project, and is never printed",
 		e.Provider, e.Env, e.Env)
 }
 
@@ -197,24 +209,45 @@ func (c *Client) Complete(ctx context.Context, req chatRequest) (*chatResponse, 
 // would threaten the process.
 const maxResponseBytes = 8 << 20 // 8 MiB
 
-// credential reads the key out of the environment.
+// credential finds the key: the environment first, then the key the user typed
+// into the TUI.
+//
+// The environment wins when it is set. That keeps CI and every script that
+// exports a key behaving exactly as before, and it means a person can override
+// a stored key for one shell without editing anything.
 //
 // An empty APIKeyEnv is not an error: a model on loopback needs no credential,
 // and that is the one case testable with no key and no bill. Requiring one would
-// make the only free path the only impossible one.
+// make the only free path the only impossible one. A key stored for such a
+// provider is still sent, because some local servers do check a token.
 func (c *Client) credential() (string, error) {
+	if c.APIKeyEnv != "" {
+		getenv := c.Getenv
+		if getenv == nil {
+			getenv = os.Getenv
+		}
+		if key := strings.TrimSpace(getenv(c.APIKeyEnv)); key != "" {
+			return key, nil
+		}
+	}
+	if c.Provider != "" {
+		lookup := c.Secret
+		if lookup == nil {
+			lookup = secretstore.Lookup
+		}
+		key, ok, err := lookup(c.Provider)
+		if err != nil {
+			// The error names the file problem, never the key.
+			return "", fmt.Errorf("provider %s: reading the stored API key: %w", c.Provider, err)
+		}
+		if ok {
+			return strings.TrimSpace(key), nil
+		}
+	}
 	if c.APIKeyEnv == "" {
 		return "", nil
 	}
-	getenv := c.Getenv
-	if getenv == nil {
-		getenv = os.Getenv
-	}
-	key := strings.TrimSpace(getenv(c.APIKeyEnv))
-	if key == "" {
-		return "", &ErrNoCredential{Env: c.APIKeyEnv, Provider: hostOf(c.BaseURL)}
-	}
-	return key, nil
+	return "", &ErrNoCredential{Env: c.APIKeyEnv, Provider: hostOf(c.BaseURL)}
 }
 
 // hostOf names the endpoint for an error message without dragging in net/url

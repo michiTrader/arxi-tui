@@ -47,7 +47,7 @@ const factoryProviders = `{ "root": { "type": "stack", "children": [
     ]}},
 
   { "id": "provenance", "type": "text", "style": {"style": "dim"},
-    "text": "providers: ~/.arxi/providers.toml · credentials named by env var only" },
+    "text": "providers: one file per provider (arxi core) · /login stores API keys, never shown" },
 
   { "id": "footer", "type": "text", "style": {"style": "dim"},
     "text": "↑↓ move · enter toggle · /provider add <name> · esc back" },
@@ -235,8 +235,14 @@ func menuHostCommand(input string, sel int) (line string, ok bool) {
 		sel = len(matches) - 1
 	}
 	switch name := matches[sel].Name; name {
-	case "provider", "model":
+	case "provider", "model", "login":
 		return "/" + name, true
 	}
 	return "", false
 }
+
+// isLoginCommand reports whether the line is exactly `/login`. It takes no
+// arguments on purpose: an argument would be an API key typed on the command line,
+// where it is echoed, kept in the input buffer and could reach the chat. The key is
+// only ever typed into the wizard's masked field.
+func isLoginCommand(line string) bool { return strings.TrimSpace(line) == "/login" }

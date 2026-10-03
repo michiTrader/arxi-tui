@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -423,7 +424,7 @@ func TestSlashMenuListRendersHeaderColumnsAndSelection(t *testing.T) {
 	styled := f.Styled()
 
 	// The header is the count line, dim like the rest of the chrome.
-	if !strings.Contains(got, "Commands 7 · type to filter") {
+	if want := fmt.Sprintf("Commands %d · type to filter", len(fold.Commands)); !strings.Contains(got, want) {
 		t.Errorf("menu header missing; got:\n%s", got)
 	}
 
@@ -481,8 +482,11 @@ func TestSlashMenuSelectionClampsToMatches(t *testing.T) {
 		t.Fatalf("ParseDocument: %v", err)
 	}
 	styled := r.RenderFrame(doc, state).Styled()
-	if !strings.Contains(styled, "«text:model»") {
-		t.Errorf("stale selection did not clamp to the last row ('model'); styled output:\n%s", styled)
+	// The last row of the registry, not a name written here: a command added after
+	// this test would otherwise move the row and break it for the wrong reason.
+	last := fold.Commands[len(fold.Commands)-1].Name
+	if !strings.Contains(styled, "«text:"+last+"»") {
+		t.Errorf("stale selection did not clamp to the last row (%q); styled output:\n%s", last, styled)
 	}
 }
 
@@ -512,7 +516,7 @@ func TestSlashMenuRowsAreDimExceptSelection(t *testing.T) {
 	styled := f.Styled()
 
 	// The header line carries the count, not a command — it is dim chrome.
-	if !strings.Contains(styled, "«dim:Commands 7") {
+	if want := fmt.Sprintf("«dim:Commands %d", len(fold.Commands)); !strings.Contains(styled, want) {
 		t.Errorf("header is not dim; the count line is chrome and must not shout:\n%s", styled)
 	}
 

@@ -237,6 +237,17 @@ type providerManager interface {
 	SubmitModelEnable(ctx context.Context, ref string, on bool) (*driver.ModelEnableResult, error)
 }
 
+// loginManager is what the /login wizard needs on top of providerManager: store a key
+// for a registered provider, read the credential state, and add a model by hand. It
+// is a separate interface so a fake that only manages providers is not forced to stub
+// verbs it cannot answer, and so the loop can refuse /login on an older core.
+type loginManager interface {
+	providerManager
+	SubmitProviderKey(ctx context.Context, name, apiKey string) (*driver.ProviderKeyResult, error)
+	SubmitProviderList(ctx context.Context) (*driver.ProviderListResult, error)
+	SubmitModelAdd(ctx context.Context, p driver.ModelAddParams) (*driver.ProviderAddResult, error)
+}
+
 // providerCmdOutcome is the worker's one message back to the loop: the notice to
 // show when the round-trip finished. It carries a plain string rather than the
 // typed result because the loop's only job is to display it and clear busy --

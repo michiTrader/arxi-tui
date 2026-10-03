@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 
 	hostv1 "github.com/michiTrader/arxi/host/v1"
 	"github.com/michiTrader/arxi/internal/blueprint"
@@ -368,6 +367,9 @@ var protoHandlers = map[string]protoHandler{
 	"schema":             handleSchema,
 	"blueprint.validate": handleBlueprintValidate,
 	"provider.add":       handleProviderAdd,
+	"provider.key":       handleProviderKey,
+	"provider.list":      handleProviderList,
+	"model.add":          handleModelAdd,
 	"model.list":         handleModelList,
 	"model.enable":       handleModelEnable,
 	"model.disable":      handleModelDisable,
@@ -796,27 +798,62 @@ func handleSchema(map[string]any) (any, error) {
 func handleProviderAdd(params map[string]any) (any, error) {
 	// Names arrive normalized to underscores: WireParams() maps the surface's
 	// `base-url`/`api-key-env` to `base_url`/`api_key_env`, and validateParams
-	// has already refused any key not in that set, so reading the underscore
-	// spellings is reading exactly what a well-formed request carries.
-	name := stringParam(params, "name")
-	baseURL := stringParam(params, "base_url")
-	keyEnv := stringParam(params, "api_key_env")
+	// has already refused any key not in that set.
+	//
+	// api_key is the key itself. It goes straight to registerProvider, which stores
+	// it in the private secrets folder; the result carries only key_stored.
+	res, err := registerProvider(
+		stringParam(params, "name"), stringParam(params, "base_url"),
+		stringParam(params, "api_key_env"), stringParam(params, "api_key"))
+	if err != nil {
+		return nil, err
+	}
+	return res, nil
+}
 
-	p, err := model.New(name, baseURL, keyEnv, nowFunc().Format(time.RFC3339))
+// handleProviderKey answers `provider.key`: store or replace the key of a
+// provider that exists. The result says that it happened and never what the key
+// was.
+func handleProviderKey(params map[string]any) (any, error) {
+	name := stringParam(params, "name")
+	if strings.TrimSpace(stringParam(params, "api_key")) == "" {
+		return nil, errors.New("provider.key needs api_key: there is nothing to store")
+	}
+	if err := setProviderKey(name, stringParam(params, "api_key")); err != nil {
+		return nil, err
+	}
+	return struct {
+		Name      string `json:"name"`
+		KeyStored bool   `json:"key_stored"`
+	}{Name: strings.ToLower(strings.TrimSpace(name)), KeyStored: true}, nil
+}
+
+// handleProviderList answers `provider.list`: every registered provider and
+// where its credential would come from. An empty store is an empty list.
+func handleProviderList(map[string]any) (any, error) {
+	rows, err := listProviders()
 	if err != nil {
 		return nil, err
 	}
-	store, err := modelstore.Open(providerDir)
+	return struct {
+		Providers []providerRow `json:"providers"`
+	}{Providers: rows}, nil
+}
+
+// handleModelAdd answers `model.add`: a model for an endpoint this build cannot
+// ask what it serves, with the operator's own price.
+func handleModelAdd(params map[string]any) (any, error) {
+	var in, out *float64
+	if v, ok := params["in"].(float64); ok {
+		in = &v
+	}
+	if v, ok := params["out"].(float64); ok {
+		out = &v
+	}
+	p, err := addModel(stringParam(params, "provider"), stringParam(params, "model"), in, out)
 	if err != nil {
 		return nil, err
 	}
-	if err := store.Add(p); err != nil {
-		return nil, err
-	}
-	// model.Provider marshals to exactly the frozen result shape
-	// {name, protocol, base_url, api_key_env, models:[{id, enabled}]}, so the
-	// snapshot the client reads back is the record on disk, not a reprojection
-	// that could drift from it.
 	return p, nil
 }
 

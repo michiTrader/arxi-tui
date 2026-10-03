@@ -344,6 +344,9 @@ IMPLEMENTED TODAY
   blueprint create <name>    compose stored agents into a team: --members a,b
   blueprint install <ref>    install a blueprint from a path or https URL: --as
   provider add <name>        register a provider (--base-url, --api-key-env)
+  provider key <name>        store its API key, read from standard input
+  provider list              providers and where each key comes from
+  model add <prov> <model>   add a model by hand (--in, --out USD per M tokens)
   model list                 see which models may be called, and their status
   run start <bp> <prompt>    run a blueprint file or a stored agent (or --sim)
   run result <run>           the recorded result, and an exit code to gate on

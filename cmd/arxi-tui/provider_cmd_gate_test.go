@@ -105,3 +105,28 @@ func TestRequireProviderVerbsRefusesNilHello(t *testing.T) {
 			"not tell the caller the gate ran too early: %v", err)
 	}
 }
+
+// TestOldCoreRefusalSaysHowToUpdateIt pins the message a user actually met: an arxi.exe
+// built before the provider verbs existed. It used to say "wrong kernel" and print the
+// whole declared list, which sent the reader looking for a different program. The
+// refusal must say the core is too old, name every missing verb, and give the rebuild
+// command -- and must not call it a different kernel.
+func TestOldCoreRefusalSaysHowToUpdateIt(t *testing.T) {
+	old := &driver.Hello{Type: "hello", Types: []string{"schema", "model.list", "run.start"},
+		Implemented: []string{"schema", "model.list", "run.start"}}
+	err := requireProviderVerbs(old)
+	if err == nil {
+		t.Fatal("requireProviderVerbs accepted a core with no provider.add")
+	}
+	for _, want := range []string{"too old", "provider.add", "model.enable", "model.disable", "git pull", "go build"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("old-core refusal %q is missing %q; the user cannot tell what is wrong or what to run", err, want)
+		}
+	}
+	if strings.Contains(err.Error(), "wrong kernel") {
+		t.Errorf("old-core refusal still blames a different kernel: %v", err)
+	}
+	if strings.Contains(err.Error(), "model.list") {
+		t.Errorf("old-core refusal names model.list as missing, but this core declares it: %v", err)
+	}
+}

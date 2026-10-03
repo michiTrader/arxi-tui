@@ -272,6 +272,25 @@ type State struct {
 	// so a scene cannot ask "is this row the selected one" itself.
 	ProviderSelected int `json:"providers.selected"`
 
+	// The /login screen's four view-state fields. The screen is a small wizard
+	// (authentication method, provider, then a form), and the HOST composes what
+	// each step shows into these strings, so the scene stays a dumb list.
+	//
+	// That choice is what keeps a pasted API key out of the render path: the form's
+	// key field is published as a row of bullets (LoginRow.Status), never as the
+	// key, and the key itself lives in the host's own struct, not in State. A State
+	// that held the key would be one `%+v` in a debug line away from a log file.
+	//
+	// LoginTitle is the prompt above the list ("Select provider to configure:").
+	// LoginRows are the visible rows only -- the host windows a long list around
+	// the highlight, so the engine never has to scroll it.
+	// LoginPager is "(3/42)": the highlight's place in the whole list. LoginHint is
+	// the key legend for the current step.
+	LoginTitle string     `json:"login.title"`
+	LoginRows  []LoginRow `json:"login.rows"`
+	LoginPager string     `json:"login.pager"`
+	LoginHint  string     `json:"login.hint"`
+
 	UIFocus   string `json:"ui.focus"`
 	UIMax     string `json:"ui.max"`
 	UISurface string `json:"ui.surface"`
@@ -1422,6 +1441,17 @@ type ProviderModel struct {
 	Enabled  bool   `json:"enabled"`
 }
 
+// LoginRow is one visible row of the /login screen. Label is the row's name (a
+// provider, a form field), Status its right-hand column ("✓ env: OPENAI_API_KEY",
+// "• unconfigured", or a form field's value -- masked, for the key). Selected marks
+// the highlighted row; the engine turns it into the same fixed-width gutter the
+// providers screen uses, so columns do not shift as the highlight moves.
+type LoginRow struct {
+	Label    string `json:"label"`
+	Status   string `json:"status"`
+	Selected bool   `json:"selected"`
+}
+
 // Ref is the model's address in the form the model.enable / model.disable verbs
 // accept: "provider/id", or the bare id when no provider is set. It is a method on
 // the type so the one place the form is decided serves both consumers -- the engine
@@ -1466,6 +1496,9 @@ var Commands = []SlashMatch{
 	// documents, one layer out in the chrome.
 	{"provider", "Providers", "Manage model providers (add, list)"},
 	{"model", "Providers", "Manage models under a provider (list, enable, disable)"},
+	// /login is a host-owned screen like /provider: it round-trips the serve
+	// protocol (provider.add / provider.key / model.add), so it is not a patch verb.
+	{"login", "Providers", "Sign in: add an API key for a provider"},
 }
 
 // FilterSlashMatches returns the commands matching the typed substring after

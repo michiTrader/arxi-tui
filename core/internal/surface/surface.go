@@ -157,7 +157,24 @@ var Registry = []Cmd{
 		Kind: CLIOnly | Protocol, Mutates: true, Since: 1,
 		Params: []Param{pos(p("name", "string", "provider name")),
 			p("base-url", "string", "OpenAI-compatible endpoint"),
-			p("api-key-env", "string", "environment variable holding the key")}},
+			p("api-key-env", "string", "environment variable holding the key"),
+			// Declared so the TUI can register a provider and its key in one
+			// request. The CLI REFUSES this flag (a key on a command line lands in
+			// shell history and the process table): `arxi provider key` reads it
+			// from stdin instead. See cmdProviderAdd.
+			p("api-key", "string", "the key itself; kept in a private file outside the project, never echoed")}},
+	{Path: []string{"provider", "list"}, Desc: "list registered providers and where each key comes from",
+		Kind: CLIOnly | Protocol, Idempotent: true, Since: 1},
+	{Path: []string{"provider", "key"}, Desc: "store or replace a provider's API key",
+		Kind: CLIOnly | Protocol, Mutates: true, Since: 1,
+		Params: []Param{pos(p("name", "string", "provider name")),
+			p("api-key", "string", "the key itself (wire only; the CLI reads it from stdin)")}},
+	{Path: []string{"model", "add"}, Desc: "add a model by hand to a provider, with the price you pay",
+		Kind: CLIOnly | Protocol, Mutates: true, Since: 1,
+		Params: []Param{pos(p("provider", "string", "provider name")),
+			pos(p("model", "string", "model id as the provider names it")),
+			p("in", "number", "USD per million input tokens"),
+			p("out", "number", "USD per million output tokens")}},
 	{Path: []string{"model", "list"}, Desc: "list available models",
 		Kind: CLIOnly | AgentTool | Protocol, ToolPolicy: PolicyAllow, Idempotent: true, Since: 1},
 	{Path: []string{"model", "enable"}, Desc: "enable a model",

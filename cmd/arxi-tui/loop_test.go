@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -400,7 +401,7 @@ func TestLoopSlashMenuNavigateAndRun(t *testing.T) {
 	frames := strings.Split(tty.output(), frameBegin)
 
 	// The menu must have been open with every command.
-	if !strings.Contains(tty.output(), "Commands 7 · type to filter") {
+	if !strings.Contains(tty.output(), fmt.Sprintf("Commands %d · type to filter", len(fold.Commands))) {
 		t.Errorf("menu header never rendered; output:\n%s", tty.output())
 	}
 
@@ -410,7 +411,7 @@ func TestLoopSlashMenuNavigateAndRun(t *testing.T) {
 	// node by id", which contains the same word.
 	ranCommand := false
 	for _, f := range frames {
-		if frameHasTranscriptLine(f, "┃ focus") && !strings.Contains(f, "Commands 7") {
+		if frameHasTranscriptLine(f, "┃ focus") && !strings.Contains(f, fmt.Sprintf("Commands %d", len(fold.Commands))) {
 			ranCommand = true
 			break
 		}
@@ -608,13 +609,14 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	}
 
 	// "/" opens the menu on the first row (index 0 = "help"). Pressing Up at
-	// row 0 wraps to the last row (index 6 = "model"); Enter runs it, which
-	// opens the providers screen. Had Up not wrapped, Enter would run "help"
-	// and the screen would stay closed.
+	// row 0 wraps to the LAST row; Enter runs it. The last row is whatever the
+	// registry ends with, so the test derives it instead of naming it here. Had Up
+	// not wrapped, Enter would run "help" and nothing would open.
+	last := fold.Commands[len(fold.Commands)-1].Name
 	script := []scheduledEvent{
 		{0, keyEvent('/')},
-		{50 * time.Millisecond, arrowEvent(term.KeyUp)}, // wrap: help(0) → model(6)
-		{30 * time.Millisecond, enterEvent()},           // runs "model"
+		{50 * time.Millisecond, arrowEvent(term.KeyUp)}, // wrap: first row -> last row
+		{30 * time.Millisecond, enterEvent()},           // runs the last row
 		{100 * time.Millisecond, ctrlCharEvent('c')},
 		{50 * time.Millisecond, ctrlCharEvent('c')},
 	}
@@ -629,14 +631,23 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 		t.Fatalf("loop returned error: %v", err)
 	}
 
-	frames := strings.Split(tty.output(), frameBegin)
-
-	_ = frames
-	if !strings.Contains(tty.output(), "· providers") {
-		t.Errorf("Up did not wrap from the first row to the last (the providers screen never opened); frames:\n%s", tty.output())
+	out := tty.output()
+	// provider/model open their screen even without a core; login has no screen to
+	// show without one, so it answers with the same no-core refusal in the banner.
+	var want string
+	switch last {
+	case "login":
+		want = noLiveCoreNotice
+	case "provider", "model":
+		want = "· providers"
+	default:
+		t.Fatalf("the last registry row is %q; teach this test what picking it does", last)
+	}
+	if !strings.Contains(out, want) {
+		t.Errorf("Up did not wrap from the first row to the last (%q); expected %q; frames:\n%s", last, want, out)
 	}
 	if len(drv.submitted) != 0 {
-		t.Errorf("menu-picked /model reached the driver as %q; a host command must never be sent to the chat", drv.submitted)
+		t.Errorf("menu-picked /%s reached the driver as %q; a host command must never be sent to the chat", last, drv.submitted)
 	}
 }
 

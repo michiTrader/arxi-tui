@@ -15,7 +15,7 @@
     ]}},
 
   { "id": "provenance", "type": "text", "style": {"style": "dim"},
-    "text": "providers: ~/.arxi/providers.toml · credentials named by env var only" },
+    "text": "providers: one file per provider (arxi core) · /login stores API keys, never shown" },
 
   { "id": "footer", "type": "text", "style": {"style": "dim"},
     "text": "↑↓ move · enter toggle · /provider add <name> · esc back" },

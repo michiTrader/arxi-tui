@@ -110,6 +110,18 @@ func (s *Store) Save(p model.Provider) error {
 	return s.write(p)
 }
 
+// Remove deletes a provider's record. It exists for one caller: `provider add`
+// with a key writes the record first (so an existing provider is never
+// overwritten) and the key second, and a key that cannot be stored must not
+// leave a half-registered provider behind that looks usable and has no
+// credential. Removing a record that is not there is not an error.
+func (s *Store) Remove(name string) error {
+	if err := os.Remove(s.Path(name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("modelstore: remove provider %q: %w", name, err)
+	}
+	return fsdurability.SyncDirectory(s.dir)
+}
+
 // write publishes atomically: a crash leaves the old file or the new one, never
 // a truncated provider whose credential pointer fails to parse.
 func (s *Store) write(p model.Provider) error {

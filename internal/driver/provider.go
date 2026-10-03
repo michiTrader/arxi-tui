@@ -44,6 +44,13 @@ type ProviderAddParams struct {
 	Name      string
 	BaseURL   string
 	APIKeyEnv string
+	// APIKey is the key itself, typed into the /login form. It is the one field
+	// here that IS a secret, so it has three rules: it travels only in the request
+	// body (the serve socket is a pipe to a child process, not a shell command
+	// line); it is never part of any error this package builds; and the core never
+	// returns it (the result carries only KeyStored). Empty means "no key given" and
+	// is omitted from the request.
+	APIKey string
 }
 
 // ProviderAddResult is the registered provider snapshot the core returns:
@@ -54,6 +61,9 @@ type ProviderAddResult struct {
 	BaseURL   string          `json:"base_url"`
 	APIKeyEnv string          `json:"api_key_env"`
 	Models    []ProviderModel `json:"models"`
+	// KeyStored says the core kept an API key for this provider. It is the only
+	// trace of the key the core sends back.
+	KeyStored bool `json:"key_stored"`
 }
 
 // SubmitProviderAdd sends a provider.add request and returns the registered
@@ -72,6 +82,9 @@ func (d *NDJSONDriver) SubmitProviderAdd(ctx context.Context, p ProviderAddParam
 	}
 	if p.APIKeyEnv != "" {
 		params["api_key_env"] = p.APIKeyEnv
+	}
+	if p.APIKey != "" {
+		params["api_key"] = p.APIKey
 	}
 
 	req := protoRequest{ID: "provider-add", Type: "provider.add", Params: params}
@@ -207,6 +220,141 @@ func (d *NDJSONDriver) SubmitModelEnable(ctx context.Context, ref string, on boo
 	if result.Model == "" {
 		return nil, fmt.Errorf("ndjson: %s returned ok with no model named; a "+
 			"toggle the host cannot attribute to a model is unverifiable", verb)
+	}
+	return &result, nil
+}
+
+// ProviderKeyResult is the core's answer to provider.key: which provider now has
+// a stored key. It deliberately has no field that could hold the key.
+type ProviderKeyResult struct {
+	Name      string `json:"name"`
+	KeyStored bool   `json:"key_stored"`
+}
+
+// SubmitProviderKey stores or replaces the API key of a provider that is already
+// registered. Both arguments are required; an empty key is refused here rather than
+// sent, because the core would refuse it too and the user would learn it a round trip
+// later. Errors from this method never contain the key: the encode error wraps the
+// transport, not the request, and the core's refusals are tested to omit it.
+func (d *NDJSONDriver) SubmitProviderKey(ctx context.Context, name, apiKey string) (*ProviderKeyResult, error) {
+	if name == "" {
+		return nil, fmt.Errorf("ndjson: provider.key needs a provider name")
+	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("ndjson: provider.key needs a key; there is nothing to store")
+	}
+	req := protoRequest{ID: "provider-key", Type: "provider.key",
+		Params: map[string]any{"name": name, "api_key": apiKey}}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if err := d.enc.Encode(req); err != nil {
+		return nil, fmt.Errorf("ndjson: send provider.key: %w", err)
+	}
+	resp, err := d.readResponse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, resp.refusal("provider.key")
+	}
+	var result ProviderKeyResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, fmt.Errorf("ndjson: decode provider.key result: %w", err)
+	}
+	if !result.KeyStored {
+		return nil, fmt.Errorf("ndjson: provider.key returned ok but says no key was stored; " +
+			"a success the host cannot confirm is not reported as one")
+	}
+	return &result, nil
+}
+
+// ProviderRow is one registered provider and where its credential comes from. Key is
+// one of "env" (the named variable is set), "stored" (a key was typed into /login),
+// "missing" (a credential is needed and neither exists), "none" (no credential is
+// configured, as for a local server) or "unreadable" (the key folder could not be
+// read). It states a SOURCE, never a value.
+type ProviderRow struct {
+	Name      string `json:"name"`
+	BaseURL   string `json:"base_url"`
+	APIKeyEnv string `json:"api_key_env"`
+	Key       string `json:"key"`
+	Models    int    `json:"models"`
+}
+
+// ProviderListResult wraps provider.list. Empty is a valid answer.
+type ProviderListResult struct {
+	Providers []ProviderRow `json:"providers"`
+}
+
+// SubmitProviderList reads the registered providers and their credential state. It
+// mutates nothing (the core marks it Idempotent).
+func (d *NDJSONDriver) SubmitProviderList(ctx context.Context) (*ProviderListResult, error) {
+	req := protoRequest{ID: "provider-list", Type: "provider.list"}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if err := d.enc.Encode(req); err != nil {
+		return nil, fmt.Errorf("ndjson: send provider.list: %w", err)
+	}
+	resp, err := d.readResponse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, resp.refusal("provider.list")
+	}
+	var result ProviderListResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, fmt.Errorf("ndjson: decode provider.list result: %w", err)
+	}
+	return &result, nil
+}
+
+// ModelAddParams are the wire parameters of a model.add request. In and Out are the
+// price in USD per million tokens, and are pointers because "not given" and "zero"
+// are different claims: a zero price lets a run start, an omitted one leaves the model
+// unpriced and a run refuses it. They are sent together or not at all.
+type ModelAddParams struct {
+	Provider string
+	Model    string
+	In, Out  *float64
+}
+
+// SubmitModelAdd adds a model by hand to a registered provider.
+func (d *NDJSONDriver) SubmitModelAdd(ctx context.Context, p ModelAddParams) (*ProviderAddResult, error) {
+	if p.Provider == "" || p.Model == "" {
+		return nil, fmt.Errorf("ndjson: model.add needs a provider and a model id")
+	}
+	if (p.In == nil) != (p.Out == nil) {
+		return nil, fmt.Errorf("ndjson: model.add needs both prices or neither; " +
+			"one alone would price the other direction at zero")
+	}
+	params := map[string]any{"provider": p.Provider, "model": p.Model}
+	if p.In != nil {
+		params["in"] = *p.In
+		params["out"] = *p.Out
+	}
+	req := protoRequest{ID: "model-add", Type: "model.add", Params: params}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if err := d.enc.Encode(req); err != nil {
+		return nil, fmt.Errorf("ndjson: send model.add: %w", err)
+	}
+	resp, err := d.readResponse(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !resp.OK {
+		return nil, resp.refusal("model.add")
+	}
+	var result ProviderAddResult
+	if err := json.Unmarshal(resp.Result, &result); err != nil {
+		return nil, fmt.Errorf("ndjson: decode model.add result: %w", err)
 	}
 	return &result, nil
 }

@@ -38,11 +38,10 @@ var providerVerbs = []string{"provider.add", "model.list", "model.enable", "mode
 //
 // The three refused states are kept distinct because their remedies differ, the
 // same split requireRunStart draws: a nil hello is a caller ordering bug (the
-// handshake has not run); an undeclared verb means the connected surface is not
-// the v1 vocabulary this host speaks (the wrong kernel); a declared-but-
-// unimplemented verb means the right surface on a build that has not wired the
-// executor -- the one PR #117 wires, so an older core is exactly the build that
-// lands here.
+// handshake has not run); an undeclared verb means a core built before the provider
+// verbs existed; a declared-but-unimplemented verb means a build that declares them
+// but has not wired the executor. Both of the last two are cured the same way -- rebuild
+// the core from its current source -- and the message says so in the command to run.
 func requireProviderVerbs(hello *driver.Hello) error {
 	if hello == nil {
 		return fmt.Errorf(
@@ -61,29 +60,64 @@ func requireProviderVerbs(hello *driver.Hello) error {
 		implemented[t] = true
 	}
 
+	// An undeclared verb means a core built BEFORE the provider verbs existed -- the
+	// same program, an older build -- so the fix is to rebuild it, and the message says
+	// so in the words a person acts on. (It used to say "wrong kernel" and dump the
+	// whole declared list, which sent a user hunting for a different program.) Every
+	// missing verb is named, not just the first, so one rebuild is enough.
+	var missing []string
 	for _, v := range providerVerbs {
 		if !declared[v] {
-			return fmt.Errorf(
-				"cmd/arxi-tui/provider_cmd_gate.go: the connected core does not declare "+
-					"%q; its surface is not the vocabulary this host manages providers "+
-					"over, so it is the wrong kernel. remedy: connect to an arxi build "+
-					"whose surface declares the provider verbs (declared types: %s)",
-				v, strings.Join(hello.Types, ", "))
+			missing = append(missing, v)
 		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("this arxi core is too old to manage providers (it lacks %s); "+
+			"rebuild it from this repository with: git pull, then cd core and go build -o ../arxi ./cmd/arxi (on Windows: -o ..\\arxi.exe)",
+			strings.Join(missing, ", "))
 	}
 
 	for _, v := range providerVerbs {
 		if !implemented[v] {
-			return fmt.Errorf(
-				"cmd/arxi-tui/provider_cmd_gate.go: the connected core declares %q but "+
-					"does not implement it (it answers not_implemented), so this build "+
-					"cannot manage providers from the TUI. not_implemented is permanent "+
-					"for a binary, so retrying will not help. remedy: connect to an arxi "+
-					"build that implements the provider verbs -- the ones PR #117 wires "+
-					"(implemented verbs on this build: %s)",
-				v, strings.Join(hello.Implemented, ", "))
+			return fmt.Errorf("this arxi core declares %q but does not implement it "+
+				"(it answers not_implemented, and that never changes for a given build); "+
+				"rebuild it from this repository with: git pull, then cd core and go build -o ../arxi ./cmd/arxi (on Windows: -o ..\\arxi.exe)", v)
 		}
 	}
 
+	return nil
+}
+
+// loginVerbs are the verbs the /login wizard needs beyond the provider set. They are
+// gated together for the same all-or-nothing reason providerVerbs are: a core that
+// stores keys but cannot list their state would show every provider as unconfigured.
+var loginVerbs = []string{"provider.add", "provider.key", "provider.list", "model.add"}
+
+// requireLoginVerbs decides from the hello whether this core can run the /login
+// wizard. The remedy names the exact rebuild command, because the usual cause is a
+// core binary built before the key verbs existed.
+func requireLoginVerbs(hello *driver.Hello) error {
+	if hello == nil {
+		return fmt.Errorf(
+			"cmd/arxi-tui/provider_cmd_gate.go: no hello to gate on; the handshake " +
+				"must complete before requireLoginVerbs")
+	}
+	implemented := map[string]bool{}
+	for _, t := range hello.Implemented {
+		implemented[t] = true
+	}
+	var missing []string
+	for _, v := range loginVerbs {
+		if !implemented[v] {
+			missing = append(missing, v)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf(
+			"the connected core does not implement %s, so /login cannot store keys. "+
+				"remedy: rebuild it with `cd core && go build -o arxi ./cmd/arxi` "+
+				"and point ARXI_BIN at it",
+			strings.Join(missing, ", "))
+	}
 	return nil
 }

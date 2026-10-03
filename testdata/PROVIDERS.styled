@@ -19,6 +19,6 @@
 
 
 
-«dim:providers: ~/.arxi/providers.toml · credentials named by env var only»
+«dim:providers: one file per provider (arxi core) · /login stores API keys, never shown»
 «dim:↑↓ move · enter toggle · /provider add <name> · esc back»
 «input:┃ »«input.placeholder:/provider add <name> --api-key-env <VAR>»

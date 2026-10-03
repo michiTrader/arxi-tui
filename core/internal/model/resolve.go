@@ -18,6 +18,10 @@ type Resolution struct {
 	Model     string
 	BaseURL   string
 	APIKeyEnv string
+
+	// Price is the operator's declared price for this model, or nil when none
+	// was declared and the shipped table (PriceOf) is the authority.
+	Price *Price
 }
 
 // Ref is how a model is named on a command line or in a blueprint: either a
@@ -120,6 +124,7 @@ func Resolve(ps []Provider, ref string) (Resolution, error) {
 		Model:     h.m.ID,
 		BaseURL:   h.p.BaseURL,
 		APIKeyEnv: h.p.APIKeyEnv,
+		Price:     h.m.Price,
 	}, nil
 }
 

@@ -212,6 +212,14 @@ var signedBinds = map[string]bool{
 	"providers.models":   true,
 	"providers.selected": true,
 
+	// §4.3/§4.7 view state — the /login screen's four binds. Host-composed text and
+	// one list; see fold.State for why the host composes them (the API key must
+	// never be in State, so the form's key row is published already masked).
+	"login.title": true,
+	"login.rows":  true,
+	"login.pager": true,
+	"login.hint":  true,
+
 	// §4.3 view state — the selected community entry's scalar projection (Scene
 	// 7, J3 follow-up). community.selected is an index; these resolve it against
 	// community.matches to the selected entry's own fields, so the installer's
@@ -371,6 +379,9 @@ var rowSchemas = map[string]map[string]bool{
 	// cannot drift from the ref model.list emits; row.disabled is the inverse of
 	// Enabled, gating the "enable" button, because this engine's `when` has no
 	// operator to write `row.enabled == false` with.
+	// The /login screen's list. row.marker is the same fixed-width gutter the
+	// providers screen wears; row.label and row.status are the two columns.
+	"login.rows":       {"row.marker": true, "row.label": true, "row.status": true},
 	"providers.models": {"row.provider": true, "row.model": true, "row.enabled": true, "row.disabled": true, "row.ref": true, "row.marker": true},
 }
 
