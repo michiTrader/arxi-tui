@@ -2,7 +2,7 @@
 
 ## 20.0 What this document is for
 
-`arxi surface` lists the 50 declared capabilities. A list is not a design: it
+`arxi surface` lists the 53 declared capabilities. A list is not a design: it
 tells you what exists and nothing about whether the set is *coherent*. Two
 questions a list cannot answer:
 
@@ -20,9 +20,9 @@ against the registry in both directions, so a capability no scenario reaches and
 a scenario invoking a verb that does not exist each turn the build red and name
 themselves.
 
-**Status of the commands.** All 50 run today. Every capability `arxi surface`
+**Status of the commands.** All 53 run today. Every capability `arxi surface`
 declares has a command behind it, `design` last of them, and the count is
-measured rather than asserted: `cmd/arxi/surface_coverage_test.go` invokes all 50
+measured rather than asserted: `cmd/arxi/surface_coverage_test.go` invokes all 53
 against the built binary and compares the tally with the figure README.md states.
 ADR-0001 explains why declaring the whole surface before building any of it was
 deliberate.
@@ -70,7 +70,41 @@ model gpt-5.1-mini enabled
 `provider add` takes `--api-key-env`, the *name of a variable*, not the key. A
 key passed as an argument lands in the shell history and in the process table of
 every user on the machine. Accepting `--api-key` would make the insecure path the
-short one.
+short one, so the CLI refuses it (exit 2) and names the safe way:
+
+```
+$ arxi provider add openai --api-key sk-...
+arxi provider add: --api-key is refused on the command line (it would be kept in your shell history).
+  register the provider, then give the key on standard input:
+    arxi provider add openai ...
+    arxi provider key openai
+```
+
+A key that must live in the arxi config folder (a user who typed it into the TUI
+rather than exporting a variable) is read from **standard input**, which is
+neither history nor the process table. The key is stored in a private file
+(0600, in a 0700 folder outside any project), is never printed again, and is
+used only when the variable named by `--api-key-env` is not set:
+
+```
+$ printenv MY_KEY | arxi provider key openai
+key for provider openai stored privately (never shown again)
+
+$ arxi provider list
+openai               stored     2 models  https://api.openai.com/v1
+```
+
+The file is **not encrypted**; its protection is the file mode. Anyone who can
+read your home folder can read it, so prefer a variable on a shared machine.
+
+A provider this build does not know serves models it cannot price, and a run
+refuses an unpriced model rather than guess its cost. `model add` states the
+price you pay, in USD per million tokens, both directions or neither:
+
+```
+$ arxi model add local llama3.2 --in 0 --out 0
+model llama3.2 added to local
+```
 
 ```
 $ arxi agent create reviewer --model gpt-5.1 --tools read,grep
@@ -995,12 +1029,12 @@ message type are three **mechanical projections of one registry entry** —
 synonym anywhere would fork the vocabulary and require a hand-maintained mapping
 forever.
 
-Of 50 declared capabilities, **34 are exposed as agent tools**. The 16 that are
+Of 53 declared capabilities, **34 are exposed as agent tools**. The 19 that are
 not are a security boundary, not an oversight:
 
 | not an agent tool | why an agent must not have it |
 |---|---|
-| `provider add`, `model enable`, `model disable` | credentials and model availability are operator decisions; an agent that can enable models can route itself to a more expensive one |
+| `provider add`, `provider key`, `provider list`, `model add`, `model enable`, `model disable` | credentials and model availability are operator decisions; an agent that can enable models can route itself to a more expensive one. `provider key` is the sharpest of them: an agent that could replace a key could redirect every later run's spend to an account of its choosing. `model add` writes the price a run is budgeted against, so an agent that could add a model could add it at zero |
 | `agent tool policy` | an agent that can widen its own tool policy does not have a policy |
 | `role define`, `blueprint create`, `blueprint install` | these define what agents *are* and how they are judged; installing a blueprint is closer to installing code than to doing work |
 | `inbox approve`, `inbox reject`, `inbox reply` | these are the human's side of the conversation. An agent that could approve its own inbox item turns `ToolPolicy: ask` into `allow` |

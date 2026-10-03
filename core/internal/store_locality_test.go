@@ -172,6 +172,7 @@ func TestNoStoreRootsItselfInTheHomeDirectory(t *testing.T) {
 	}
 
 	scanned := 0
+	exempted := 0
 	for _, pkg := range storePackageDirs(t) {
 		for _, file := range storeSourceFiles(t, pkg) {
 			raw, err := os.ReadFile(file)
@@ -179,6 +180,21 @@ func TestNoStoreRootsItselfInTheHomeDirectory(t *testing.T) {
 				t.Fatalf("cannot read %s: %v", file, err)
 			}
 			scanned++
+			// secretstore is the one deliberate exception, and the reason is the
+			// inverse of the one this test enforces. Stores must not follow the
+			// user between repositories because what they hold is RECALL: data
+			// that shapes what an agent does next. A credential is not recall.
+			// It identifies the person paying, not the project being worked on,
+			// so a key typed once has to work in every project or the feature
+			// does not exist -- and it is never read into an agent's context
+			// (arch rules in arch_test.go keep it inside internal/provider).
+			// The exemption is by exact package, so a second store cannot hide
+			// behind it, and it is counted below so deleting the package cannot
+			// leave a stale exemption nobody notices.
+			if filepath.Base(pkg) == "secretstore" {
+				exempted++
+				continue
+			}
 			if loc := homeDerivation.FindString(string(raw)); loc != "" {
 				t.Errorf("%s reaches the home directory via %q to place its data.\n"+
 					"  A store rooted in $HOME follows the user between repositories, so data "+
@@ -194,5 +210,10 @@ func TestNoStoreRootsItselfInTheHomeDirectory(t *testing.T) {
 		t.Fatal("no store source files were read.\n" +
 			"  Consequence: the negative assertion above passed over nothing. Remedy: " +
 			"re-derive the source globs from the layout the stores now use.")
+	}
+	if exempted == 0 {
+		t.Fatal("the secretstore exemption matched no file.\n" +
+			"  Consequence: it is a stale exception. Remedy: delete it, or restore " +
+			"the package it names.")
 	}
 }
