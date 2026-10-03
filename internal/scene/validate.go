@@ -209,7 +209,8 @@ var signedBinds = map[string]bool{
 	// fills it from a model.list round-trip over the serve socket, not from an
 	// arxi-core run event, and a `list` renders one row per model with a
 	// row_template that toggles each through an enable/disable button.
-	"providers.models": true,
+	"providers.models":   true,
+	"providers.selected": true,
 
 	// §4.3 view state — the selected community entry's scalar projection (Scene
 	// 7, J3 follow-up). community.selected is an index; these resolve it against
@@ -370,7 +371,7 @@ var rowSchemas = map[string]map[string]bool{
 	// cannot drift from the ref model.list emits; row.disabled is the inverse of
 	// Enabled, gating the "enable" button, because this engine's `when` has no
 	// operator to write `row.enabled == false` with.
-	"providers.models": {"row.provider": true, "row.model": true, "row.enabled": true, "row.disabled": true, "row.ref": true},
+	"providers.models": {"row.provider": true, "row.model": true, "row.enabled": true, "row.disabled": true, "row.ref": true, "row.marker": true},
 }
 
 // RowSchema returns the signed `row.<field>` names for a list bind, or nil if
@@ -463,6 +464,13 @@ func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bo
 	// a {row.<field>} interpolation inside a template is checked against the row
 	// schema (Q20).
 	if err := d.validateOnPress(n, path, scope); err != nil {
+		return err
+	}
+
+	// A {row.<field>} reference in drawn text is refused with an address: only
+	// on_press interpolates, so anywhere else the braces would be painted
+	// literally (see validateNoRowInterpolationInText).
+	if err := d.validateNoRowInterpolationInText(n, path); err != nil {
 		return err
 	}
 
@@ -1067,4 +1075,50 @@ func (d *Document) collectTokenErrors(n *Node, path string, thm *theme.Theme, er
 	if n.RowTemplate != nil {
 		d.collectTokenErrors(n.RowTemplate, templatePath(path), thm, errs)
 	}
+}
+
+// drawnTextFields names the string fields of a node the engine paints as
+// authored, in the order a refusal reports them. They are the places an author
+// (or a model) is tempted to write `{row.turns}` expecting a value, because
+// on_press accepts exactly that spelling.
+func drawnTextFields(n *Node) []struct{ name, value string } {
+	return []struct{ name, value string }{
+		{"text", n.Text},
+		{"title", n.Title},
+		{"placeholder", n.Placeholder},
+	}
+}
+
+// validateNoRowInterpolationInText refuses a `{row.` reference in a node's drawn
+// text. The substitution exists only for on_press (ExpandRowInterpolation runs at
+// press time); a text node's `text` is painted verbatim, so `"text": "{row.turns}•"`
+// validated clean and drew the braces on screen. That is the accepted-but-not-drawn
+// class this validator exists to close, and the one outcome that reports success
+// while showing the wrong screen: a model told "valid" has nothing to repair, so the
+// eval corpus recorded a missing counter as the model's failure when the engine had
+// let the mistake through.
+//
+// It is refused here, with the file:line of the node, rather than made to work.
+// Interpolating in text is a format change -- a new signed rule, and a decision
+// about escaping a literal brace -- that was deliberately deferred; the refusal
+// names the working spelling (bind: "row.<field>") so the repair is one edit, and
+// docs/DECISIONS-DEFERRED.md records the deferred alternative so the refusal is not
+// mistaken for the final design.
+//
+// The check is a plain substring test on "{row." rather than a parse of
+// well-formed tokens: a malformed `{row.turns` is the same author intent and the
+// same silent literal on screen, and a refusal that required a closing brace would
+// let that variant through. It applies outside templates too, because outside a
+// template there is no row at all and the braces are equally dead.
+func (d *Document) validateNoRowInterpolationInText(n *Node, path string) error {
+	for _, f := range drawnTextFields(n) {
+		if !strings.Contains(f.value, "{row.") {
+			continue
+		}
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("node type %q has %q containing %q, but {row.<field>} is substituted only in on_press; in drawn text the braces would appear literally on screen. To show a row field, bind it instead: a text node with \"bind\": \"row.<field>\" inside the row_template (a decorator such as a bullet goes in a separate text node)", n.Type, f.name, "{row."),
+		}
+	}
+	return nil
 }

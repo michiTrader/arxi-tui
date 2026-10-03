@@ -499,6 +499,18 @@ provenance line names `~/.arxi/providers.toml` and states credentials are named
 by env var only — the wire carries the environment-variable name, never a secret
 key value, and the screen never stores, logs or echoes a key.
 
+**Wired (no longer a fixture only).** `/provider` and `/model`, typed or picked from
+the slash menu, open this document as a replacement screen (`cmd/arxi-tui/
+providers_screen.go`), filled from a real `model.list` round-trip. The host owns two
+view-state fields, `providers.models` and `providers.selected`; the second drives
+`row.marker`, the `"> "` gutter on the highlighted row (a fixed-width value rather than
+a `when`-gated glyph, so the columns never jitter as the highlight moves). Keys: Up/Down
+move (wrapping), Enter on an empty input line toggles the highlighted model, Enter on a
+typed `/provider add ...` or `/model enable|disable ...` runs it, Esc goes back. Plain
+text typed here is refused with the grammar, not sent to the agent. Without a live core
+(`ARXI_BIN` unset) the screen still opens and says so in its banner. Ctrl-C twice still
+exits (invariant 6).
+
 ## Q23 (signed) — how much of the pipeline plugins may touch
 
 The arxi core already has every door inside it: `internal/tool` + `toolrun`,

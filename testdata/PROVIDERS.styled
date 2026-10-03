@@ -1,7 +1,6 @@
 «header:Δr×i v0.1.0 · providers»
-moonshot            kimi-k2             [ disable ]                             
-deepseek            deepseek-chat       [ enable ]                              
-
+>      moonshot   kimi-k2            [ disable ]                                
+       deepseek   deepseek-chat      [ enable ]                                 
 
 
 
@@ -22,3 +21,4 @@ deepseek            deepseek-chat       [ enable ]
 
 «dim:providers: ~/.arxi/providers.toml · credentials named by env var only»
 «dim:↑↓ move · enter toggle · /provider add <name> · esc back»
+«input:┃ »«input.placeholder:/provider add <name> --api-key-env <VAR>»

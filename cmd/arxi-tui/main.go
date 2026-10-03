@@ -620,6 +620,35 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// screen.
 	var browse *installerBrowse
 	var browseBusy bool
+	// providers is the open providers screen (Scene 12), non-nil exactly while it
+	// is showing -- the same shape as browse above, and for the same reason: while
+	// it is open it replaces the scene on display and owns the keyboard, so the
+	// arrows move its highlight instead of the chat input's caret.
+	var providers *providersScreen
+	providersDoc, providersDocErr := loadProvidersScene()
+	// runProviderInput is the one door every `/provider` and `/model` line goes
+	// through, typed or picked from the slash menu, so the two cannot diverge on what
+	// the command does (the menu used to submit the highlighted word to the chat).
+	//
+	// The bare command OPENS the providers screen. When there is no live core the
+	// screen still opens, empty, with the reason in its banner: a user who typed
+	// /provider asked to see the providers, and a one-line refusal at the top of the
+	// chat is the failure that read as "it sent the word to the chat". Every other
+	// command runs on the worker as before.
+	runProviderInput := func(act providerAction, perr error) {
+		if perr == nil && act.OpenScreen {
+			if providersDocErr != nil {
+				sceneNotice = "/provider: " + providersDocErr.Error()
+				return
+			}
+			if refusal := providerCoreRefusal(drv); refusal != "" {
+				providers = &providersScreen{}
+				sceneNotice = refusal
+				return
+			}
+		}
+		sceneNotice = dispatchProviderCmd(ctx, drv, act, perr, &providerCmdBusy, providerCmdDoneCh)
+	}
 	browseDoneCh := make(chan browseOutcome, 1)
 	registryFetchClient := newRegistryFetchClient()
 	liveInstaller, liveInstallerErr := ext.LiveInstallerScene()
@@ -843,6 +872,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// binds to none of the fold state, so the swap is purely which document is
 			// walked.
 			activeDoc = bundleMod.consent.doc
+		case providers != nil:
+			// The providers screen is open: it replaces the scene on display and
+			// its rows and highlight are published onto the fold the renderer
+			// reads, together, so a frame cannot pair rows with another list's
+			// highlight.
+			activeDoc = providersDoc
+			providers.publish(&state)
 		case browse != nil:
 			// The installer is open: it replaces the scene on display and its
 			// community.* triple is published onto the fold the renderer reads, the
@@ -969,6 +1005,36 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// screen on y/r/n/Esc and leaving it standing otherwise.
 						panicGesture.Reset()
 						bundleMod.handleKey(ev.Key)
+					} else if providers != nil {
+						// The providers screen is open and owns the keyboard, like the
+						// installer below. It sits after the Ctrl-C branch so the escape
+						// hatch still reaches HandleCtrlC (invariant 6) and cannot be
+						// captured by the screen, and after the consent modals so an
+						// install started elsewhere still gets its y/n. A keypress here
+						// is intentional input, so it disarms the panic gesture.
+						// routeProvidersKey decides what the key means; the loop only
+						// applies it.
+						panicGesture.Reset()
+						res := routeProvidersKey(providers, input, ev.Key)
+						switch {
+						case res.close:
+							providers = nil
+							sceneNotice = ""
+							input = ""
+							caret = 0
+						case res.dispatch != nil:
+							sceneNotice = dispatchProviderCmd(ctx, drv, *res.dispatch, nil, &providerCmdBusy, providerCmdDoneCh)
+							input = ""
+							caret = 0
+						case res.notice != "":
+							// A refusal keeps the typed line so the user can fix the typo
+							// instead of retyping it.
+							sceneNotice = res.notice
+						case res.edited:
+							if next, nextCaret, ok := applyEdit(input, caret, ev.Key); ok {
+								input, caret = next, nextCaret
+							}
+						}
 					} else if browse != nil {
 						// The installer is open and owns the keyboard, like the consent
 						// modal above. This sits after the Ctrl-C branch so the escape
@@ -1154,7 +1220,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// the gate and busy guard and launches the worker; the loop
 							// only records the pending notice and reacts to the worker's
 							// message in the providerCmdDoneCh case below.
-							sceneNotice = dispatchProviderCmd(ctx, drv, act, perr, &providerCmdBusy, providerCmdDoneCh)
+							runProviderInput(act, perr)
 							input = ""
 							caret = 0
 						} else if act, matched, perr := parseModelCommand(input); ev.Key.Type == term.KeyEnter && matched {
@@ -1162,9 +1228,21 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// and intercepted here for the same reason: a model.list or
 							// model.enable round-trip is not a document transform the patch
 							// surface owns.
-							sceneNotice = dispatchProviderCmd(ctx, drv, act, perr, &providerCmdBusy, providerCmdDoneCh)
+							runProviderInput(act, perr)
 							input = ""
 							caret = 0
+						} else if line, ok := menuHostCommand(input, slashSel); ok && ev.Key.Type == term.KeyEnter {
+							// Enter on a slash-menu row the host implements as a screen.
+							// slashMenuKey would submit the row's NAME as a prompt (the
+							// Phase 0 contract), so picking "provider" sent the word
+							// "provider" to the chat instead of opening the screen the
+							// row advertises. The row resolves to the same line a typed
+							// command is, and takes the same door.
+							act, _, perr := parseProviderOrModel(line)
+							runProviderInput(act, perr)
+							input = ""
+							caret = 0
+							slashSel = 0
 						} else if pane, matched, perr := parseMax(input); ev.Key.Type == term.KeyEnter && matched {
 							// `/max <pane>` writes the host ui.max cursor, Scene 10's
 							// write half, intercepted here before the slash menu for the
@@ -1349,6 +1427,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// no modal -- so the notice is the whole of the result.
 			providerCmdBusy = false
 			sceneNotice = out.notice
+			if out.hasModels {
+				// An opening read creates the screen; a refresh only updates one that
+				// is still showing. A user who pressed Esc while the refresh was in
+				// flight must not have the screen reappear under them.
+				if out.open && providers == nil {
+					providers = &providersScreen{}
+				}
+				if providers != nil {
+					providers.setModels(out.models)
+				}
+			}
 			repaint()
 
 		case out := <-browseDoneCh:

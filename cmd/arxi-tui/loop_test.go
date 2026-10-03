@@ -482,7 +482,9 @@ func TestLoopSlashMenuEscapeCloses(t *testing.T) {
 // General (help, max, focus, surface, ui) and Providers (provider, model) — so
 // down-down lands on "focus" in General, and tab must jump past the rest of
 // General to the first Providers row: enter then runs "provider", not another
-// General command — the exact discrimination the test hinges on.
+// General command — the exact discrimination the test hinges on. "provider"
+// opens the providers screen (it never reaches the chat), so the observable is
+// the screen's header, not a transcript line.
 func TestLoopSlashMenuTabWalksCategories(t *testing.T) {
 	doc, err := scene.ParseDocument([]byte(factorySobria))
 	if err != nil {
@@ -509,16 +511,13 @@ func TestLoopSlashMenuTabWalksCategories(t *testing.T) {
 		t.Fatalf("loop returned error: %v", err)
 	}
 
-	frames := strings.Split(tty.output(), frameBegin)
-	ranProvider := false
-	for _, f := range frames {
-		if frameHasTranscriptLine(f, "┃ provider") && !strings.Contains(f, "Commands 7") {
-			ranProvider = true
-			break
-		}
+	out := tty.output()
+	if !strings.Contains(out, "· providers") {
+		t.Errorf("tab did not walk the highlight to the next category's first row (the providers screen never opened); frames:\n%s", out)
 	}
-	if !ranProvider {
-		t.Errorf("tab did not walk the highlight to the next category's first row ('provider' never ran); frames:\n%s", tty.output())
+	if len(drv.submitted) != 0 {
+		t.Errorf("menu-picked /provider reached the driver as %q; a host command must never be sent to the chat. "+
+			"Intercept it before the slash menu submits its name as a prompt", drv.submitted)
 	}
 }
 
@@ -609,7 +608,9 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	}
 
 	// "/" opens the menu on the first row (index 0 = "help"). Pressing Up at
-	// row 0 wraps to the last row (index 6 = "model"); Enter runs it.
+	// row 0 wraps to the last row (index 6 = "model"); Enter runs it, which
+	// opens the providers screen. Had Up not wrapped, Enter would run "help"
+	// and the screen would stay closed.
 	script := []scheduledEvent{
 		{0, keyEvent('/')},
 		{50 * time.Millisecond, arrowEvent(term.KeyUp)}, // wrap: help(0) → model(6)
@@ -630,18 +631,12 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 
 	frames := strings.Split(tty.output(), frameBegin)
 
-	// Up from "help" (row 0) must have wrapped to "model" (row 6): Enter runs
-	// "model", and "model" appears as a whole transcript line in a frame where
-	// the menu is already closed (no "Commands 7" header above it).
-	ranModel := false
-	for _, f := range frames {
-		if frameHasTranscriptLine(f, "┃ model") && !strings.Contains(f, "Commands 7") {
-			ranModel = true
-			break
-		}
+	_ = frames
+	if !strings.Contains(tty.output(), "· providers") {
+		t.Errorf("Up did not wrap from the first row to the last (the providers screen never opened); frames:\n%s", tty.output())
 	}
-	if !ranModel {
-		t.Errorf("Up did not wrap from the first row to the last ('model' never ran); frames:\n%s", tty.output())
+	if len(drv.submitted) != 0 {
+		t.Errorf("menu-picked /model reached the driver as %q; a host command must never be sent to the chat", drv.submitted)
 	}
 }
 

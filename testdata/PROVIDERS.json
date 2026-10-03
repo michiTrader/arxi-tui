@@ -7,15 +7,19 @@
 
   { "id": "models", "type": "list", "bind": "providers.models", "grow": 1,
     "row_template": { "type": "row", "children": [
-      { "type": "text", "bind": "row.provider", "weight": 2 },
-      { "type": "text", "bind": "row.model", "weight": 4 },
-      { "type": "button", "text": "enable", "on_press": "cmd:/model enable {row.ref}", "when": "row.disabled", "weight": 2 },
-      { "type": "button", "text": "disable", "on_press": "cmd:/model disable {row.ref}", "when": "row.enabled", "weight": 2 }
+      { "type": "text", "bind": "row.marker", "weight": 1 },
+      { "type": "text", "bind": "row.provider", "weight": 4 },
+      { "type": "text", "bind": "row.model", "weight": 8 },
+      { "type": "button", "text": "enable", "on_press": "cmd:/model enable {row.ref}", "when": "row.disabled", "weight": 4 },
+      { "type": "button", "text": "disable", "on_press": "cmd:/model disable {row.ref}", "when": "row.enabled", "weight": 4 }
     ]}},
 
   { "id": "provenance", "type": "text", "style": {"style": "dim"},
     "text": "providers: ~/.arxi/providers.toml · credentials named by env var only" },
 
   { "id": "footer", "type": "text", "style": {"style": "dim"},
-    "text": "↑↓ move · enter toggle · /provider add <name> · esc back" }
+    "text": "↑↓ move · enter toggle · /provider add <name> · esc back" },
+
+  { "id": "prompt", "type": "input", "bind": "user.input",
+    "prefix": "┃ ", "placeholder": "/provider add <name> --api-key-env <VAR>" }
 ]}}

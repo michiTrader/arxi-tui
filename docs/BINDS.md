@@ -176,6 +176,7 @@ written only through registered commands (`cmd:/slash`, `cmd:/max`,
 | `config.categories` | array of `{name}` | the /config screen's left-rail groups (Scene 5); the category `list` binds to it and its `row_template` renders one row per group. Host view state, not an arxi-core projection — the host owns the settings model the way it owns the command registry | when the host loads or edits the settings model | empty array — no categories, so the rail draws nothing |
 | `config.settings` | array of `{label, kind, enabled, value}` | the /config screen's settings (Scene 5); the settings `list` binds to it and its `row_template` mixes a `switch` and an `input` row by `kind`. `label` is the setting name, `enabled` the toggle state a `switch` reads, `value` the text an `input` reads; `kind` (`"toggle"` \| `"text"`) is the discriminator the engine turns into the §4.7 booleans. Host view state, never a run event | when the host loads or edits the settings model | empty array — no settings, so the list draws nothing |
 | `providers.models` | array of `{provider, id, enabled}` | the providers screen's model list (Scene 12, K2 follow-up); the `list` binds to it and its `row_template` renders one row per model with an enable/disable button. Host view state the host fills from a `model.list` round-trip over the serve socket (`SubmitModelList`), never an arxi-core run event. The engine turns each row into the §4.7 fields `row.provider`/`row.model`/`row.enabled` plus the synthesized `row.ref` (the `/model enable` argument) and `row.disabled` (the gate inverse) | when the host runs a provider verb (`provider.add`, `model.enable`, `model.disable`) or refreshes the list | empty array — no provider configured, so the list draws nothing |
+| `providers.selected` | int | the index into `providers.models` of the highlighted row on the providers screen (Scene 12). The host owns it (↑/↓) and clamps it to the list, so the value is always in range; the row template reads it only through the synthesized `row.marker`, never directly | changes when the user moves the highlight or the list changes length | `0` — the first row is highlighted, or there are no rows to highlight |
 
 **The `community.*` installer view state (signed 2026-09-28, J3 follow-up; argued in `docs/DESIGN-BLOCK-J.md` J3).** These three rows are the live half of the community installer (Scene 7): `Registry.InstallerScene` (J3, PR #103) currently bakes the entries as static cards because the live `list`/search-input pair needs exactly this signed vocabulary. They are host view state in the `slash.*` mould — a `query`, its filtered `matches`, and a `selected` cursor — written by the installer's own keystroke loop, never by an arxi-core event, so a stranger's registry can never author them. `community.matches` is the previewed plugin's own entries; it is not the `<plugin-id>.*` preview namespace (J1, §4.4), which carries a *previewed manifest's* mocked binds, not the browse list. The empty-state of each is a no-op — an empty query lists everything, an empty match array draws no cards, a zero cursor highlights the first — so signing these rows moves no golden until the installer loop populates them (the deferred live half, §4.6).
 
@@ -383,7 +384,7 @@ misspelled absolute bind is.
 | `community.matches` | `row.id`, `row.name`, `row.version`, `row.manifest_url`, `row.description`, `row.preview`, `row.selected` |
 | `config.categories` | `row.name` |
 | `config.settings` | `row.label`, `row.enabled`, `row.value`, `row.is_toggle`, `row.is_text` |
-| `providers.models` | `row.provider`, `row.model`, `row.enabled`, `row.disabled`, `row.ref` |
+| `providers.models` | `row.provider`, `row.model`, `row.enabled`, `row.disabled`, `row.ref`, `row.marker` |
 
 `community.matches` carries one row field, **`row.selected`**, that is not an
 element column: it is a boolean the engine synthesizes per row from
@@ -433,8 +434,8 @@ A field declared by the schema but absent or empty in a *particular* element is
 falsy and renders as the `"[…]"` placeholder (§4.6) — never a crash. Misspelled
 is a load-time refusal; absent-in-one-row is a run-time placeholder.
 
-`providers.models` carries **two** synthesized fields, `row.ref` and
-`row.disabled`, the `config.settings` idiom applied to the providers screen
+`providers.models` carries **three** synthesized fields, `row.ref`,
+`row.disabled` and `row.marker`, the `config.settings` idiom applied to the providers screen
 (Scene 12). `row.disabled` is the per-row inverse of `enabled`: this engine's
 `when` has no operator, so a scene cannot write `when: "row.enabled == false"`,
 and the template gates its "enable" button on `when: "row.disabled"` and its
@@ -444,7 +445,11 @@ and only one draws per row, exactly as `row.is_toggle`/`row.is_text` gate the
 argument the enable/disable command interpolates (`cmd:/model enable {row.ref}`),
 built by the projection as `provider/id` (or the bare `id` when no provider is
 set) so the pressed command cannot drift from the ref `model.list` already
-accepts. `row.provider`, `row.model` and `row.enabled` are ordinary element
+accepts. `row.marker` is the selection gutter: `"> "` on the row whose index
+equals `providers.selected` and two spaces on every other row. It is a value
+rather than a `when`-gated glyph (the `community.matches` idiom) because a gated
+glyph shifts the row's columns by two cells as the highlight moves, and this list
+is a table. `row.provider`, `row.model` and `row.enabled` are ordinary element
 columns (`provider`, `id`, `enabled` of the `ProviderModel` the host wrote).
 
 ## 4.8 The `on_press` action namespace (Q18, signed 2026-09-26, H8)
