@@ -177,6 +177,10 @@ written only through registered commands (`cmd:/slash`, `cmd:/max`,
 | `config.settings` | array of `{label, kind, enabled, value}` | the /config screen's settings (Scene 5); the settings `list` binds to it and its `row_template` mixes a `switch` and an `input` row by `kind`. `label` is the setting name, `enabled` the toggle state a `switch` reads, `value` the text an `input` reads; `kind` (`"toggle"` \| `"text"`) is the discriminator the engine turns into the §4.7 booleans. Host view state, never a run event | when the host loads or edits the settings model | empty array — no settings, so the list draws nothing |
 | `providers.models` | array of `{provider, id, enabled}` | the providers screen's model list (Scene 12, K2 follow-up); the `list` binds to it and its `row_template` renders one row per model with an enable/disable button. Host view state the host fills from a `model.list` round-trip over the serve socket (`SubmitModelList`), never an arxi-core run event. The engine turns each row into the §4.7 fields `row.provider`/`row.model`/`row.enabled` plus the synthesized `row.ref` (the `/model enable` argument) and `row.disabled` (the gate inverse) | when the host runs a provider verb (`provider.add`, `model.enable`, `model.disable`) or refreshes the list | empty array — no provider configured, so the list draws nothing |
 | `providers.selected` | int | the index into `providers.models` of the highlighted row on the providers screen (Scene 12). The host owns it (↑/↓) and clamps it to the list, so the value is always in range; the row template reads it only through the synthesized `row.marker`, never directly | changes when the user moves the highlight or the list changes length | `0` — the first row is highlighted, or there are no rows to highlight |
+| `login.title` | text | the prompt line above the `/login` list, composed by the host for the current step ("Select authentication method:", "Select provider to configure:", "Other provider") | on every step change of the `/login` wizard | empty string — no prompt |
+| `login.rows` | array of `{label, status, selected}` | the `/login` screen's visible rows (Scene 13); the `list` binds to it and its `row_template` draws a gutter, a label and a status column. The host composes every row, **including the API key row of the Other form, which it publishes already masked** — the key itself never enters `fold.State`. The host windows a long list around the highlight, so the engine never scrolls it | on every key the `/login` wizard handles | empty list — nothing to choose |
+| `login.pager` | text | the highlight's place in the whole list, e.g. `"(3/42)"`; empty on steps with no pager | on every move of the `/login` highlight | empty string — no pager |
+| `login.hint` | text | the key legend of the current `/login` step (e.g. `"↑↓ navigate · enter select · esc/ctrl+c cancel"`) | on every step change | empty string — no legend |
 
 **The `community.*` installer view state (signed 2026-09-28, J3 follow-up; argued in `docs/DESIGN-BLOCK-J.md` J3).** These three rows are the live half of the community installer (Scene 7): `Registry.InstallerScene` (J3, PR #103) currently bakes the entries as static cards because the live `list`/search-input pair needs exactly this signed vocabulary. They are host view state in the `slash.*` mould — a `query`, its filtered `matches`, and a `selected` cursor — written by the installer's own keystroke loop, never by an arxi-core event, so a stranger's registry can never author them. `community.matches` is the previewed plugin's own entries; it is not the `<plugin-id>.*` preview namespace (J1, §4.4), which carries a *previewed manifest's* mocked binds, not the browse list. The empty-state of each is a no-op — an empty query lists everything, an empty match array draws no cards, a zero cursor highlights the first — so signing these rows moves no golden until the installer loop populates them (the deferred live half, §4.6).
 
@@ -385,6 +389,7 @@ misspelled absolute bind is.
 | `config.categories` | `row.name` |
 | `config.settings` | `row.label`, `row.enabled`, `row.value`, `row.is_toggle`, `row.is_text` |
 | `providers.models` | `row.provider`, `row.model`, `row.enabled`, `row.disabled`, `row.ref`, `row.marker` |
+| `login.rows` | `row.marker`, `row.label`, `row.status` |
 
 `community.matches` carries one row field, **`row.selected`**, that is not an
 element column: it is a boolean the engine synthesizes per row from
@@ -451,6 +456,16 @@ rather than a `when`-gated glyph (the `community.matches` idiom) because a gated
 glyph shifts the row's columns by two cells as the highlight moves, and this list
 is a table. `row.provider`, `row.model` and `row.enabled` are ordinary element
 columns (`provider`, `id`, `enabled` of the `ProviderModel` the host wrote).
+
+`login.rows` carries one synthesized field, `row.marker`, built from the row's
+`selected` flag exactly as `providers.models` builds it (`"> "` or two spaces, a
+value rather than a gated glyph, so columns do not move). `row.label` and
+`row.status` are read verbatim: the host has already decided what each says.
+That includes the one row whose status is a secret. On the Other form the API key
+field's `status` is a run of `•` the length of the key, and the key itself is held
+in the host's own struct. Putting the real value in `fold.State` and masking it in
+the engine was rejected: a masked render of a real value is one `%+v` away from
+a log line, whereas a `State` that never held the key cannot leak it.
 
 ## 4.8 The `on_press` action namespace (Q18, signed 2026-09-26, H8)
 

@@ -1994,6 +1994,20 @@ func rowScopesFor(bind string, state fold.State) []map[string]string {
 			})
 		}
 		return rows
+	case "login.rows":
+		// One scope per visible /login row. row.marker is the providers screen's
+		// fixed-width gutter, derived from the row's Selected flag; label and status
+		// are read verbatim, because the host already composed them (and masked the
+		// API key) before they reached the State.
+		rows := make([]map[string]string, 0, len(state.LoginRows))
+		for _, lr := range state.LoginRows {
+			rows = append(rows, map[string]string{
+				"row.marker": selectionMarker(lr.Selected),
+				"row.label":  lr.Label,
+				"row.status": lr.Status,
+			})
+		}
+		return rows
 	case "providers.models":
 		// One scope per model (Scene 12, BINDS.md §4.7). row.ref and row.disabled
 		// are the two fields not read verbatim off the element, the config.settings
@@ -2255,6 +2269,12 @@ func resolveBind(bind string, state fold.State) string {
 		return fmt.Sprintf("%d", state.SlashSelected)
 	case "community.query":
 		return state.CommunityQuery
+	case "login.title":
+		return state.LoginTitle
+	case "login.pager":
+		return state.LoginPager
+	case "login.hint":
+		return state.LoginHint
 	case "providers.selected":
 		// The highlighted model row's index into providers.models, the analogue of
 		// community.selected. The host clamps it to the list, so the value the
