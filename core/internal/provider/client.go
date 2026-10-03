@@ -73,9 +73,9 @@ type ErrNoCredential struct {
 
 func (e *ErrNoCredential) Error() string {
 	return fmt.Sprintf("provider %s has no API key: $%s is empty and no key is stored for it.\n"+
-		"  fix, in the TUI: /login, then pick the provider and paste the key.\n"+
+		"  fix, in the TUI: /provider, open this provider and set its key.\n"+
 		"  fix, in a shell: export %s=...\n"+
-		"  a key typed into /login is kept in your private arxi configuration folder, "+
+		"  a key typed into /provider is kept in your private arxi configuration folder, "+
 		"never in the project, and is never printed",
 		e.Provider, e.Env, e.Env)
 }

@@ -373,6 +373,12 @@ var protoHandlers = map[string]protoHandler{
 	"model.list":         handleModelList,
 	"model.enable":       handleModelEnable,
 	"model.disable":      handleModelDisable,
+	"provider.update":    handleProviderUpdate,
+	"provider.remove":    handleProviderRemove,
+	"model.discover":     handleModelDiscover,
+	"model.remove":       handleModelRemove,
+	"model.default":      handleModelDefault,
+	"chat.send":          handleChatSend,
 }
 
 // serveConn runs the protocol over one reader/writer pair.

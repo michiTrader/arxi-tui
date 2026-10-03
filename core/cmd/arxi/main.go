@@ -173,6 +173,9 @@ func main() {
 	case "model":
 		cmdModel(args[1:])
 		return
+	case "chat":
+		cmdChat(args[1:])
+		return
 	case "inbox":
 		cmdInbox(args[1:])
 		return
@@ -346,7 +349,13 @@ IMPLEMENTED TODAY
   provider add <name>        register a provider (--base-url, --api-key-env)
   provider key <name>        store its API key, read from standard input
   provider list              providers and where each key comes from
+  provider update <name>     change its endpoint (--base-url) or env var (--api-key-env)
+  provider remove <name>     forget a provider, its models and its stored key
   model add <prov> <model>   add a model by hand (--in, --out USD per M tokens)
+  model discover <prov>      ask the provider which models it serves and add them
+  model remove <model>       remove a model from its provider
+  model default [model]      show or choose the model chat uses
+  chat send <prompt>         one message to the chosen model (--model, --system)
   model list                 see which models may be called, and their status
   run start <bp> <prompt>    run a blueprint file or a stored agent (or --sim)
   run result <run>           the recorded result, and an exit code to gate on
