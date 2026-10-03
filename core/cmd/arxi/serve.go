@@ -1,0 +1,1303 @@
+package main
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/signal"
+	"sort"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	hostv1 "github.com/michiTrader/arxi/host/v1"
+	"github.com/michiTrader/arxi/internal/blueprint"
+	"github.com/michiTrader/arxi/internal/model"
+	"github.com/michiTrader/arxi/internal/modelstore"
+	"github.com/michiTrader/arxi/internal/surface"
+)
+
+// The NDJSON protocol: one JSON object per line, in each direction.
+//
+// NDJSON was chosen over a framed binary protocol for one reason that outweighs
+// the efficiency argument: the transcript of a session is readable with `cat`. A
+// protocol whose traffic can only be inspected by a tool written for it is a
+// protocol nobody debugs, and this project's whole premise is that the expensive
+// failures are the silent ones. `tee` on the socket is a complete debugger.
+//
+// The message type IS the CLI path joined with dots (surface.ProtocolType), so
+// there is no wire vocabulary to keep in step with the command vocabulary. See
+// docs/design/20-use-cases.md §20.12.
+
+// maxLineBytes caps a single request line at 1 MiB.
+//
+// A cap is not optional. A reader that grows to hold whatever arrives makes one
+// client able to exhaust the server's memory by never sending a newline, and the
+// death is an OOM kill with no request in flight to blame. 1 MiB is far above any
+// legitimate request — the largest declared parameter is a prompt — and far below
+// a number that hurts.
+const maxLineBytes = 1 << 20
+
+// protoRequest is one line from a client.
+//
+// `id` is echoed back on the response and is the client's, not ours. A client
+// with several requests in flight, reading replies from a goroutine, cannot pair
+// them up otherwise; and errors about a line we could not even parse have to
+// carry SOMETHING, which is why an empty id is legal rather than rejected.
+type protoRequest struct {
+	ID     string         `json:"id"`
+	Type   string         `json:"type"`
+	Params map[string]any `json:"params"`
+}
+
+// protoResponse is one line back.
+//
+// `ok` is explicit rather than inferred from the presence of `error`. Those two
+// encodings disagree the first time a server omits an empty error object or a
+// client checks the wrong one, and the disagreement reads as success. One boolean
+// is one thing to check and cannot be ambiguous.
+type protoResponse struct {
+	ID     string      `json:"id"`
+	OK     bool        `json:"ok"`
+	Result any         `json:"result,omitempty"`
+	Error  *protoError `json:"error,omitempty"`
+}
+
+// protoError carries a machine code AND a human sentence.
+//
+// The code is what a client branches on; the message is what ends up in
+// somebody's terminal at 2am. Sending only the code makes every client
+// reimplement the English, and they will not agree. `fix` carries the same kind
+// of remedy `run why` prints, for the same reason: a diagnosis that does not say
+// what to do next makes the reader guess.
+type protoError struct {
+	Code      string        `json:"code"`
+	Message   string        `json:"message"`
+	Fix       []string      `json:"fix,omitempty"`
+	Operation string        `json:"operation,omitempty"`
+	JobID     hostv1.JobID  `json:"job_id,omitempty"`
+	ItemID    hostv1.ItemID `json:"item_id,omitempty"`
+	AfterSeq  int64         `json:"after_seq,omitempty"`
+}
+
+// Error codes. These are a closed set on purpose: a client has to be able to tell
+// "you asked wrongly" (its own bug, retrying will not help) from "this build
+// cannot do that yet" (not its bug, and retrying after an upgrade will help).
+// Collapsing them into one generic failure makes every client either retry
+// forever or give up permanently, and both are wrong half the time.
+const (
+	errMalformed      = "malformed"       // not a JSON object
+	errUnknownType    = "unknown_type"    // not a protocol message in this surface
+	errBadParams      = "bad_params"      // the type is real, the arguments are not
+	errNotImplemented = "not_implemented" // declared in the surface, no executor yet
+	errFailed         = "failed"          // the command ran and could not succeed
+	errLineTooLong    = "line_too_long"   // over maxLineBytes; the stream is unusable
+)
+
+// helloMsg is written before the server reads anything.
+//
+// The client needs to know what it is talking to BEFORE it commits to a request,
+// and there is no other way to learn it: `schema` describes the agent tools,
+// which is a different set from the protocol types (`run attach` and the three
+// `inbox` replies are on the wire and are deliberately not tools). So the
+// protocol's own capability set is discoverable here and nowhere else.
+//
+// `implemented` is a subset of `types` and is sent for an honest reason: most of
+// this surface is declared and has no executor yet. Without the list, a client
+// discovers that one type at a time by sending a request and reading a failure,
+// which makes a permanent state look like a transient error.
+type helloMsg struct {
+	Type           string              `json:"type"`
+	Version        string              `json:"version"`
+	SurfaceVersion int                 `json:"surface_version"`
+	Types          []string            `json:"types"`
+	Implemented    []string            `json:"implemented"`
+	Capabilities   []hostv1.Capability `json:"capabilities"`
+}
+
+// protoHandler runs one request. It returns a result to marshal, or an error.
+type protoHandler func(params map[string]any) (any, error)
+
+// lifecycleHost is the host/v1 lifecycle surface used by the transport adapter.
+// Keeping it as an interface makes connection identity and authorization behavior
+// testable without replacing or duplicating lifecycle services.
+type lifecycleHost interface {
+	Submit(context.Context, hostv1.SubmitRequest) (hostv1.SubmitResult, error)
+	Inspect(context.Context, hostv1.InspectRequest) (hostv1.Job, error)
+	Cancel(context.Context, hostv1.CancelRequest) (hostv1.Job, error)
+	Approve(context.Context, hostv1.ApproveRequest) (hostv1.Job, error)
+	Reject(context.Context, hostv1.RejectRequest) (hostv1.Job, error)
+	Answer(context.Context, hostv1.AnswerRequest) (hostv1.Job, error)
+	Wait(context.Context, hostv1.WaitRequest) (hostv1.Job, error)
+	Subscribe(context.Context, hostv1.SubscribeRequest) (hostv1.Subscription, error)
+	Capabilities(context.Context, hostv1.CapabilitiesRequest) (hostv1.CapabilitySet, error)
+}
+
+// protoSession is immutable connection state. Principal comes from the trusted
+// listener, never from request parameters, and is copied into every host request.
+type protoSession struct {
+	principal         hostv1.Principal
+	host              lifecycleHost
+	capabilities      map[hostv1.Capability]bool
+	capabilitiesKnown bool
+	// streams is set only by a live connection loop; it is where run.attach
+	// hands its subscription to the writer (ADR-0016). Nil under direct
+	// handler tests, which answer not_implemented rather than pretending to
+	// stream into nowhere.
+	streams *connStreams
+}
+
+type lifecycleHandler struct {
+	protocolType string
+	capability   hostv1.Capability
+	dispatch     func(context.Context, lifecycleHost, hostv1.Principal, map[string]any) (any, error)
+}
+
+// lifecycleHandlers is the only mapping from the line-oriented vocabulary to
+// host/v1 lifecycle operations (ADR-0015): one capability, one implementation,
+// projected. Every descriptor is a thin parameter mapping under the same
+// capability check the CLI passes, with the principal supplied by the trusted
+// listener.
+//
+// The decision operations carry both the run and the item parameter because
+// host/v1 requires JobID and ItemID for resource authorization: guessing a job
+// by searching every run would duplicate resource selection outside host
+// dispatch and make its reauthorization check run against an invented or
+// ambiguous resource.
+//
+// run.attach lives in streamingHandlers, not here: its dispatch hands a
+// subscription to the connection's writer and its notifications outlive the
+// response, which the sync dispatch signature above cannot express. The
+// framing contract it runs under is ADR-0016's.
+var lifecycleHandlerDescriptors = []lifecycleHandler{
+	{
+		protocolType: "run.start",
+		capability:   hostv1.CapabilitySubmit,
+		dispatch: func(ctx context.Context, host lifecycleHost, principal hostv1.Principal, params map[string]any) (any, error) {
+			// The wire contract takes an actor (stored agent name or blueprint
+			// path), not inline blueprint text: the same resolution `run start`
+			// performs, through the same store, so a protocol client cannot
+			// submit a blueprint the operator never reviewed. The model
+			// parameter rides through as the member's model choice, exactly as
+			// `--model` does on the CLI.
+			actor := stringParam(params, "actor")
+			bp, err := resolveActor(actor)
+			if err != nil {
+				return nil, err
+			}
+			return host.Submit(ctx, hostv1.SubmitRequest{
+				Principal: principal, Actor: actor, Blueprint: string(bp.Raw),
+				Prompt:    stringParam(params, "prompt"),
+				BudgetUSD: numParam(params, "budget"), MaxTurns: intParam(params, "max_turns"),
+				Simulated: boolParam(params, "sim"), Model: stringParam(params, "model"),
+			})
+		},
+	},
+	{
+		protocolType: "run.result",
+		capability:   hostv1.CapabilityWait,
+		dispatch: func(ctx context.Context, host lifecycleHost, principal hostv1.Principal, params map[string]any) (any, error) {
+			return host.Wait(ctx, hostv1.WaitRequest{
+				Principal: principal, JobID: hostv1.JobID(stringParam(params, "run")),
+			})
+		},
+	},
+	{
+		protocolType: "run.show",
+		capability:   hostv1.CapabilityInspect,
+		dispatch: func(ctx context.Context, host lifecycleHost, principal hostv1.Principal, params map[string]any) (any, error) {
+			return host.Inspect(ctx, hostv1.InspectRequest{
+				Principal: principal, JobID: hostv1.JobID(stringParam(params, "run")),
+			})
+		},
+	},
+	{
+		protocolType: "run.cancel",
+		capability:   hostv1.CapabilityCancel,
+		dispatch: func(ctx context.Context, host lifecycleHost, principal hostv1.Principal, params map[string]any) (any, error) {
+			return host.Cancel(ctx, hostv1.CancelRequest{
+				Principal: principal, JobID: hostv1.JobID(stringParam(params, "run")),
+				Reason: stringParam(params, "reason"),
+			})
+		},
+	},
+	{
+		protocolType: "inbox.approve",
+		capability:   hostv1.CapabilityApprove,
+		dispatch: func(ctx context.Context, host lifecycleHost, principal hostv1.Principal, params map[string]any) (any, error) {
+			if err := decisionIdentity(params); err != nil {
+				return nil, err
+			}
+			return host.Approve(ctx, hostv1.ApproveRequest{
+				Principal: principal, JobID: hostv1.JobID(stringParam(params, "run")),
+				ItemID: hostv1.ItemID(itemParam(params)),
+			})
+		},
+	},
+	{
+		protocolType: "inbox.reject",
+		capability:   hostv1.CapabilityReject,
+		dispatch: func(ctx context.Context, host lifecycleHost, principal hostv1.Principal, params map[string]any) (any, error) {
+			if err := decisionIdentity(params); err != nil {
+				return nil, err
+			}
+			return host.Reject(ctx, hostv1.RejectRequest{
+				Principal: principal, JobID: hostv1.JobID(stringParam(params, "run")),
+				ItemID: hostv1.ItemID(itemParam(params)),
+				Reason: stringParam(params, "reason"),
+			})
+		},
+	},
+	{
+		protocolType: "inbox.reply",
+		capability:   hostv1.CapabilityAnswer,
+		dispatch: func(ctx context.Context, host lifecycleHost, principal hostv1.Principal, params map[string]any) (any, error) {
+			if err := decisionIdentity(params); err != nil {
+				return nil, err
+			}
+			return host.Answer(ctx, hostv1.AnswerRequest{
+				Principal: principal, JobID: hostv1.JobID(stringParam(params, "run")),
+				ItemID: hostv1.ItemID(itemParam(params)),
+				Text:   stringParam(params, "text"),
+			})
+		},
+	},
+}
+
+// streamingHandler opens one subscription-backed stream. It is a separate
+// shape from lifecycleHandler because its dispatch needs the session (the
+// writer the pump emits into lives there), and because its response is an
+// ack whose subscription then outlives the dispatch call.
+type streamingHandler struct {
+	capability hostv1.Capability
+	dispatch   func(ctx context.Context, session *protoSession, id string, params map[string]any) (any, error)
+}
+
+var streamingHandlers = map[string]streamingHandler{
+	"run.attach": {capability: hostv1.CapabilitySubscribe, dispatch: dispatchAttach},
+}
+
+// dispatchAttach subscribes and registers the pump; the ack it returns is
+// written by the loop before the pump is released, which is the whole
+// ack-before-events guarantee.
+func dispatchAttach(ctx context.Context, session *protoSession, id string, params map[string]any) (any, error) {
+	if id == "" {
+		return nil, errors.New("run.attach requires a request id: the id is the subscription identity its notifications carry")
+	}
+	after := int64(numParam(params, "after_seq"))
+	sub, err := session.host.Subscribe(ctx, hostv1.SubscribeRequest{
+		Principal: cloneProtoPrincipal(session.principal),
+		JobID:     hostv1.JobID(stringParam(params, "run")),
+		AfterSeq:  after,
+	})
+	if err != nil {
+		return nil, err
+	}
+	// Terminal markers need the inspect capability on the same job; the ack
+	// says whether they will come, because a client waiting for a marker that
+	// was never promised blocks forever.
+	markers := session.capabilities[hostv1.CapabilityInspect]
+	session.streams.register(&subscriptionPump{
+		id: id, jobID: hostv1.JobID(stringParam(params, "run")), after: after, sub: sub,
+		host: session.host, principal: cloneProtoPrincipal(session.principal), markers: markers,
+		release: make(chan struct{}),
+	})
+	return attachAck{Subscription: id, AfterSeq: after, TerminalMarkers: markers}, nil
+}
+
+var lifecycleHandlers = func() map[string]lifecycleHandler {
+	handlers := make(map[string]lifecycleHandler, len(lifecycleHandlerDescriptors))
+	for _, handler := range lifecycleHandlerDescriptors {
+		handlers[handler.protocolType] = handler
+	}
+	return handlers
+}()
+
+func newProtoSession(principal hostv1.Principal, host lifecycleHost) protoSession {
+	return protoSession{principal: cloneProtoPrincipal(principal), host: host}
+}
+
+func cloneProtoPrincipal(principal hostv1.Principal) hostv1.Principal {
+	out := hostv1.Principal{ID: principal.ID}
+	if principal.Attributes != nil {
+		out.Attributes = make(map[string]string, len(principal.Attributes))
+		for key, value := range principal.Attributes {
+			out.Attributes[key] = value
+		}
+	}
+	return out
+}
+
+func defaultProtoHost() (*hostv1.Host, error) {
+	storage := newFilesystemJobStorage(runsDir)
+	coordination, err := openHostCoordination(runsDir)
+	if err != nil {
+		return nil, fmt.Errorf("open durable coordination: %w", err)
+	}
+	storage.(*filesystemJobStorage).coordination = coordination
+	// Without a provider the host can inspect, cancel and decide but cannot
+	// execute a submitted job, and Submit answers capability-unavailable. The
+	// adapter resolves through the operator's modelstore, so a serve with no
+	// providers registered fails each submit with the resolver's remedy
+	// instead of failing to start for an operator who only wants to observe.
+	text, err := newServeTextProvider()
+	if err != nil {
+		return nil, err
+	}
+	return hostv1.New(hostv1.Options{Storage: storage, Coordination: coordination, Provider: text}), nil
+}
+
+// protoHandlers holds the implementations that exist.
+//
+// This map is NOT the set of accepted types — that is derived from the registry
+// by surface.ProtocolCommands, and a type with no entry here is answered
+// `not_implemented` rather than `unknown_type`. The distinction is the whole
+// point: one means the client is wrong, the other means this build is behind, and
+// a client cannot react correctly to a failure that conflates them.
+//
+// Keys are checked against the registry by a test, because a typo here is
+// invisible: the handler simply never runs, and the capability reports itself
+// unimplemented while its code sits in the binary.
+var protoHandlers = map[string]protoHandler{
+	"schema":             handleSchema,
+	"blueprint.validate": handleBlueprintValidate,
+	"provider.add":       handleProviderAdd,
+	"model.list":         handleModelList,
+	"model.enable":       handleModelEnable,
+	"model.disable":      handleModelDisable,
+}
+
+// serveConn runs the protocol over one reader/writer pair.
+//
+// Taking io.Reader and io.Writer rather than a net.Conn is what makes the
+// protocol testable without a socket, and it is also what makes stdio and a unix
+// socket the same code path instead of two implementations that drift. The only
+// difference between `arxi serve` and `arxi serve --listen` is where these two
+// come from.
+//
+// Requests on one connection are handled STRICTLY IN ORDER. Handling them
+// concurrently would let a `state set` and the `state get` after it be answered
+// in the order they finished rather than the order they were sent, so a client
+// that wrote a value could read back the old one — a lost update produced by the
+// server, not by the race the CAS in ADR-0006 was built to catch.
+func serveConn(r io.Reader, w io.Writer) error {
+	host, err := defaultProtoHost()
+	if err != nil {
+		return err
+	}
+	defer host.Close()
+	return serveConnSession(r, w, newProtoSession(hostv1.Principal{ID: "local"}, host))
+}
+
+func serveConnSession(r io.Reader, w io.Writer, session protoSession) error {
+	return serveConnSessionContext(context.Background(), r, w, session)
+}
+
+func serveConnSessionContext(ctx context.Context, r io.Reader, w io.Writer, session protoSession) error {
+	enc := json.NewEncoder(w)
+	// One writer for the whole connection: the loop writes responses, the
+	// subscription pumps write notifications, and the mutex is the entire
+	// arbitration (ADR-0016). Responses keep their strict order because the
+	// loop still writes them one at a time.
+	cw := &connWriter{enc: enc}
+	streams := newConnStreams(ctx, cw)
+	session.streams = streams
+	// closeAll ends every live subscription when the connection ends, which is
+	// the protocol's only cancellation: no detach type exists, by the frozen
+	// surface rule that a new command implements a declared promise and none
+	// was ever declared.
+	defer streams.closeAll()
+
+	hello, err := protoHelloSession(ctx, &session)
+	if err != nil {
+		return fmt.Errorf("resolve effective capabilities: %w", err)
+	}
+	if err := cw.write(hello); err != nil {
+		// Failing to send the hello is fatal for this connection: the client is
+		// entitled to assume the first line tells it the surface version, and one
+		// that never arrives leaves it guessing which vocabulary it may use.
+		return fmt.Errorf("announce the surface: %w", err)
+	}
+
+	sc := bufio.NewScanner(r)
+	// ScanLines needs room for the line ending in addition to the request. The
+	// explicit length check below keeps the content limit at exactly 1 MiB; two
+	// extra bytes admit either LF or CRLF without shifting that boundary.
+	sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes+2)
+
+	for sc.Scan() {
+		if len(sc.Bytes()) > maxLineBytes {
+			writeLineTooLong(cw)
+			return fmt.Errorf("request line over %d bytes", maxLineBytes)
+		}
+		line := strings.TrimSpace(sc.Text())
+		if line == "" {
+			// Blank lines are skipped rather than reported. Plenty of clients emit
+			// one when flushing, and answering it with an error would make every
+			// well-behaved client generate spurious failures in its own logs.
+			continue
+		}
+		if err := cw.write(handleLineSession(ctx, session, line)); err != nil {
+			// A write that fails means the client is gone or the pipe broke. There
+			// is nowhere to report it TO, so it ends the connection.
+			return fmt.Errorf("write a response: %w", err)
+		}
+		// Releasing after the write is the ordering guarantee: an attach's ack
+		// is on the wire before that subscription's first event can be.
+		streams.releasePending()
+	}
+
+	if err := sc.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			// The line is reported and then the connection ENDS, because after a
+			// truncated line the stream position is unknown: the tail of the
+			// oversized request would be read as the next one and dispatched as
+			// whatever it happened to parse as. Continuing would turn one
+			// oversized request into an arbitrary command nobody sent.
+			writeLineTooLong(cw)
+			return fmt.Errorf("request line over %d bytes", maxLineBytes)
+		}
+		return fmt.Errorf("read a request: %w", err)
+	}
+	return nil
+}
+
+func writeLineTooLong(w *connWriter) {
+	_ = w.write(protoResponse{OK: false, Error: &protoError{
+		Code: errLineTooLong,
+		Message: fmt.Sprintf("a request line exceeded %d bytes, so the "+
+			"connection is closing: after a truncated line the rest of it "+
+			"would be read as the next request and dispatched as whatever "+
+			"it parsed as", maxLineBytes),
+		Fix: []string{"send one JSON object per line and keep it under or at 1 MiB"},
+	}})
+}
+
+// handleLine turns one line into one response and never returns an error, because
+// every failure below is the client's and belongs on the wire where the client
+// can read it. A protocol server that drops a connection over a bad request makes
+// one typo cost every other in-flight request on that connection.
+func handleLine(line string) protoResponse {
+	host, err := defaultProtoHost()
+	if err != nil {
+		return protoResponse{OK: false, Error: &protoError{Code: "unavailable", Message: err.Error()}}
+	}
+	defer host.Close()
+	return handleLineSession(context.Background(), newProtoSession(hostv1.Principal{ID: "local"}, host), line)
+}
+
+func handleLineSession(ctx context.Context, session protoSession, line string) protoResponse {
+	var req protoRequest
+	if err := json.Unmarshal([]byte(line), &req); err != nil {
+		// No id is available here — the line did not parse — so the response
+		// carries an empty one. That is why an empty id is legal on the wire.
+		return protoResponse{OK: false, Error: &protoError{
+			Code: errMalformed,
+			Message: fmt.Sprintf("this line is not a JSON object: %v. Every line "+
+				"is one request: {\"id\":..., \"type\":..., \"params\":{...}}", err),
+			Fix: []string{"arxi schema"},
+		}}
+	}
+
+	c := surface.LookupProtocol(req.Type)
+	if c == nil {
+		return protoResponse{ID: req.ID, OK: false, Error: unknownTypeError(req.Type)}
+	}
+
+	if err := validateParams(*c, req.Params); err != nil {
+		return protoResponse{ID: req.ID, OK: false, Error: &protoError{
+			Code:    errBadParams,
+			Message: err.Error(),
+			Fix:     []string{"arxi schema"},
+		}}
+	}
+
+	if handler, lifecycle := lifecycleHandlers[req.Type]; lifecycle {
+		if session.host == nil {
+			return notImplementedResponse(req.ID, *c)
+		}
+		if session.capabilitiesKnown && !session.capabilities[handler.capability] {
+			return notImplementedResponse(req.ID, *c)
+		}
+		res, err := handler.dispatch(ctx, session.host, cloneProtoPrincipal(session.principal), req.Params)
+		if err != nil {
+			return hostErrorResponse(req.ID, err)
+		}
+		return protoResponse{ID: req.ID, OK: true, Result: res}
+	}
+
+	if handler, streaming := streamingHandlers[req.Type]; streaming {
+		if session.host == nil || session.streams == nil {
+			return notImplementedResponse(req.ID, *c)
+		}
+		if session.capabilitiesKnown && !session.capabilities[handler.capability] {
+			return notImplementedResponse(req.ID, *c)
+		}
+		res, err := handler.dispatch(ctx, &session, req.ID, req.Params)
+		if err != nil {
+			return hostErrorResponse(req.ID, err)
+		}
+		return protoResponse{ID: req.ID, OK: true, Result: res}
+	}
+
+	h, ok := protoHandlers[req.Type]
+	if !ok {
+		return notImplementedResponse(req.ID, *c)
+	}
+
+	res, err := h(req.Params)
+	if err != nil {
+		return protoResponse{ID: req.ID, OK: false, Error: &protoError{
+			Code:    errFailed,
+			Message: err.Error(),
+		}}
+	}
+	return protoResponse{ID: req.ID, OK: true, Result: res}
+}
+
+func notImplementedResponse(id string, c surface.Cmd) protoResponse {
+	return protoResponse{ID: id, OK: false, Error: &protoError{
+		Code: errNotImplemented,
+		Message: fmt.Sprintf("%s is declared in surface v%d and this build has "+
+			"no executor for it. The request was well formed; retrying will not "+
+			"help until the capability lands.", c.CLI(), c.Since),
+		Fix: []string{"arxi surface"},
+	}}
+}
+
+func stringParam(params map[string]any, name string) string {
+	value, _ := params[name].(string)
+	return value
+}
+
+// numParam reads a float parameter. JSON numbers decode as float64 through
+// any; an int is coerced because `budget: 5` and `budget: 5.0` are the same
+// thing a user writes.
+func numParam(params map[string]any, name string) float64 {
+	value, _ := params[name].(float64)
+	return value
+}
+
+// intParam reads an integer parameter the same way.
+func intParam(params map[string]any, name string) int {
+	return int(numParam(params, name))
+}
+
+// boolParam reads a boolean parameter.
+func boolParam(params map[string]any, name string) bool {
+	value, _ := params[name].(bool)
+	return value
+}
+
+// itemParam reads the pending-item identity. The protocol spelling is `item`;
+// `id` is the CLI spelling that was already on the wire, and both name the
+// same thing. Refusing `id` would break every existing client for a rename;
+// refusing `item` would publish a parameter the host's own request type uses.
+func itemParam(params map[string]any) string {
+	if item := stringParam(params, "item"); item != "" {
+		return item
+	}
+	return stringParam(params, "id")
+}
+
+// decisionIdentity enforces what the registry cannot express: a decision
+// needs its run and one item spelling. The registry marks run and text as
+// required and item/id as optional individually, because "exactly one of
+// these two" is not a shape it has; this check is the authority for it.
+func decisionIdentity(params map[string]any) error {
+	if stringParam(params, "run") == "" {
+		return errors.New("a decision requires the run it belongs to: host authorization is job-scoped and will not guess")
+	}
+	if itemParam(params) == "" {
+		return errors.New("a decision requires its item identity (item or id)")
+	}
+	return nil
+}
+
+func hostErrorResponse(id string, err error) protoResponse {
+	wireErr := &protoError{Code: string(hostv1.ErrorCodeOf(err)), Message: err.Error()}
+	var hostErr *hostv1.Error
+	if errors.As(err, &hostErr) {
+		wireErr.Message = hostErr.Message
+		wireErr.Operation = hostErr.Operation
+		wireErr.JobID = hostErr.JobID
+		wireErr.ItemID = hostErr.ItemID
+		wireErr.AfterSeq = hostErr.AfterSeq
+	}
+	return protoResponse{ID: id, OK: false, Error: wireErr}
+}
+
+// unknownTypeError distinguishes a type that does not exist from one that exists
+// and is deliberately not on the wire.
+//
+// Answering both with a flat "unknown type" sends the second client hunting for a
+// typo it never made — the same failure main.go's fallthrough exists to prevent
+// on the CLI. The honest answer matters here more, not less: `serve`, `design`
+// and `agent tool policy` are absent from the protocol as a security boundary
+// (§20.12), and a client is entitled to be told that rather than left to conclude
+// the server is broken.
+func unknownTypeError(t string) *protoError {
+	if c := surface.Lookup(strings.Split(t, ".")...); c != nil {
+		return &protoError{
+			Code: errUnknownType,
+			Message: fmt.Sprintf("%q is a real capability (arxi %s) and is not "+
+				"exposed to the protocol. That is deliberate, not missing: the "+
+				"operator-side capabilities are held off the wire so a socket "+
+				"client cannot change the rules a run is judged by.", t, c.CLI()),
+			Fix: []string{"arxi " + c.CLI()},
+		}
+	}
+	return &protoError{
+		Code: errUnknownType,
+		Message: fmt.Sprintf("%q is not a message type in surface v%d. The type is "+
+			"the CLI path with dots: `run why` is `run.why`.", t, surface.SurfaceVersion),
+		Fix: []string{"arxi schema"},
+	}
+}
+
+// validateParams rejects anything the declared schema does not describe.
+//
+// Strict rather than lenient, and the reason is a specific silent failure.
+// `run prompt` carries `if_seq`, the compare-and-swap of ADR-0006. A client that
+// misspells it and is ignored believes its write was conditional when it was
+// last-write-wins, so the lost update the CAS exists to catch happens anyway and
+// the log records the write as intended. Every optional parameter in this surface
+// is a guard of that shape: ignoring an unknown one turns a request the client
+// thought was safe into one that is not.
+//
+// Missing REQUIRED parameters are caught for the cheaper version of the same
+// reason — `budget` absent is a run with no spend ceiling.
+func validateParams(c surface.Cmd, params map[string]any) error {
+	declared := map[string]surface.Param{}
+	for _, pp := range c.WireParams() {
+		declared[pp.Name] = pp
+	}
+
+	// Sorted so the message is the same on every run: an error that names its
+	// offending keys in map order is an error nobody can write a test against.
+	var unknown []string
+	for name := range params {
+		if _, ok := declared[name]; !ok {
+			unknown = append(unknown, name)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		known := make([]string, 0, len(declared))
+		for name := range declared {
+			known = append(known, name)
+		}
+		sort.Strings(known)
+		return fmt.Errorf("%s does not take %s. It takes: %s. "+
+			"Unknown parameters are refused rather than ignored: a misspelled "+
+			"guard (if_seq, budget) that is silently dropped makes a request the "+
+			"client believed was safe unsafe, and the log records it as intended",
+			c.ProtocolType(), strings.Join(unknown, ", "), strings.Join(known, ", "))
+	}
+
+	for _, pp := range c.WireParams() {
+		v, present := params[pp.Name]
+		// A JSON null is treated as absent rather than as a value. Clients that
+		// serialize omitted fields as null are common, and rejecting them would
+		// fail requests that are correct in every way that matters.
+		if v == nil {
+			present = false
+		}
+		if !present {
+			if pp.Required {
+				return fmt.Errorf("%s requires %q (%s)", c.ProtocolType(), pp.Name, pp.Desc)
+			}
+			continue
+		}
+		if err := checkType(c, pp, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkType refuses a value of the wrong JSON type instead of coercing it.
+//
+// Coercion is what makes `{"budget": "2.00"}` a run with a ceiling of zero: the
+// string does not parse as a number, the zero value looks deliberate, and the
+// most cautious-looking request becomes the most dangerous one. The same argument
+// as TestRunStartRefusesANonPositiveBudget, one layer out.
+func checkType(c surface.Cmd, pp surface.Param, v any) error {
+	want := pp.Type
+	var okType bool
+	switch want {
+	case "bool":
+		_, okType = v.(bool)
+	case "number":
+		_, okType = v.(float64)
+	default:
+		want = "string"
+		_, okType = v.(string)
+	}
+	if !okType {
+		return fmt.Errorf("%s: %q must be a %s, got %T. Values are not coerced: "+
+			"a budget of \"2.00\" read as a number would become 0, which looks "+
+			"deliberate and is the one ceiling that cannot have a default",
+			c.ProtocolType(), pp.Name, want, v)
+	}
+
+	// An out-of-enum value must be refused too. Falling back to the default would
+	// silently answer a different question than the one asked: `on_busy: "abort"`
+	// resolving to `queue` means the client asked to reject the injection and got
+	// it applied.
+	if len(pp.Enum) > 0 {
+		s, _ := v.(string)
+		for _, allowed := range pp.Enum {
+			if s == allowed {
+				return nil
+			}
+		}
+		return fmt.Errorf("%s: %q must be one of %s, got %q. An unrecognised value "+
+			"is refused rather than defaulted, because a default answers a "+
+			"different question than the one the client asked",
+			c.ProtocolType(), pp.Name, strings.Join(pp.Enum, ", "), s)
+	}
+	return nil
+}
+
+// handleSchema answers `schema` with the same manifest `arxi schema` prints.
+// Same function, not a second projection: two documents claiming to be the
+// surface is the failure this whole design is arranged to prevent.
+func handleSchema(map[string]any) (any, error) {
+	return surface.BuildManifest(), nil
+}
+
+// handleProviderAdd answers `provider.add` by registering a provider in the
+// same on-disk modelstore the CLI writes, through the same model.New ->
+// store.Add path cmdProviderAdd uses. It is a protoHandler, not a lifecycle
+// verb: it computes a result from the params and the store, with no host,
+// principal or job — the shape blueprint.validate already has.
+//
+// The api_key_env invariant holds here only because model.New enforces it. The
+// wire carries the NAME of an environment variable, never a key, and a
+// secret-shaped value is refused by validateKeyEnv inside model.New before
+// anything touches disk. The TUI adds no second validator: the core is the
+// single enforcement site, so a client that mistakes a key for a var name is
+// refused identically whether the request arrived over the wire or off the
+// command line. That identity is the whole reason this verb reuses model.New
+// rather than reimplementing the registration against the store.
+//
+// It opens the store with modelstore.Open directly rather than through
+// openProviders(), because openProviders() calls fatal() on a store-open error
+// and fatal() exits the process. A protocol handler that cannot open the store
+// must answer the one client with a failed response, not kill the server and
+// every other connection with it.
+func handleProviderAdd(params map[string]any) (any, error) {
+	// Names arrive normalized to underscores: WireParams() maps the surface's
+	// `base-url`/`api-key-env` to `base_url`/`api_key_env`, and validateParams
+	// has already refused any key not in that set, so reading the underscore
+	// spellings is reading exactly what a well-formed request carries.
+	name := stringParam(params, "name")
+	baseURL := stringParam(params, "base_url")
+	keyEnv := stringParam(params, "api_key_env")
+
+	p, err := model.New(name, baseURL, keyEnv, nowFunc().Format(time.RFC3339))
+	if err != nil {
+		return nil, err
+	}
+	store, err := modelstore.Open(providerDir)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.Add(p); err != nil {
+		return nil, err
+	}
+	// model.Provider marshals to exactly the frozen result shape
+	// {name, protocol, base_url, api_key_env, models:[{id, enabled}]}, so the
+	// snapshot the client reads back is the record on disk, not a reprojection
+	// that could drift from it.
+	return p, nil
+}
+
+// handleModelList answers `model.list` with the rows the store holds, flattened
+// to {provider, id, enabled}. It takes no params (Idempotent, no mutation) and
+// an empty store is a valid empty list, not a failure: a user who has registered
+// no provider yet asked a well-formed question and gets a well-formed empty
+// answer.
+//
+// The result emits the model identifier under `id`, deliberately NOT the `name`
+// key the CLI's --json projection uses. The protocol audience is the TUI, whose
+// row model is {provider, id, enabled}; keeping the wire key `id` means the
+// frozen schema and the client agree without a translation layer that could
+// drift. The CLI projection stays as it is for its human-facing `arxi model
+// list --json`; the two audiences differ, so the two projections may.
+func handleModelList(map[string]any) (any, error) {
+	store, err := modelstore.Open(providerDir)
+	if err != nil {
+		return nil, err
+	}
+	ps, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+	type row struct {
+		Provider string `json:"provider"`
+		ID       string `json:"id"`
+		Enabled  bool   `json:"enabled"`
+	}
+	rows := model.Rows(ps)
+	out := make([]row, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, row{Provider: r.Provider, ID: r.Name, Enabled: r.Enabled})
+	}
+	return struct {
+		Models []row `json:"models"`
+	}{Models: out}, nil
+}
+
+// handleModelEnable and handleModelDisable share one implementation differing by
+// a bool, mirroring cmdModelEnable. They resolve the ref with store.Owner, flip
+// SetEnabled and Save, through the same path the CLI uses.
+//
+// store.Owner, not store.Resolve: Resolve refuses a disabled model, which would
+// make `model.enable` structurally unable to enable the one thing it exists to
+// enable. Owner returns the provider regardless of the model's current state and
+// errors only on a genuinely ambiguous ref (two providers offering the id).
+//
+// changed:false is a success, not a failure: a model already in the requested
+// state is the idempotent no-op the Idempotent flag promises, and reporting it
+// as an error would make a client that retries a flip see a failure where
+// nothing is wrong. The result carries changed so the client can tell "I flipped
+// it" from "it was already there" without a second read.
+func handleModelEnable(params map[string]any) (any, error) {
+	return setModelEnabled(params, true)
+}
+
+func handleModelDisable(params map[string]any) (any, error) {
+	return setModelEnabled(params, false)
+}
+
+func setModelEnabled(params map[string]any, on bool) (any, error) {
+	ref := stringParam(params, "model")
+	store, err := modelstore.Open(providerDir)
+	if err != nil {
+		return nil, err
+	}
+	p, id, err := store.Owner(ref)
+	if err != nil {
+		return nil, err
+	}
+	changed, err := p.SetEnabled(id, on)
+	if err != nil {
+		return nil, err
+	}
+	if changed {
+		if err := store.Save(p); err != nil {
+			return nil, err
+		}
+	}
+	return struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+		Enabled  bool   `json:"enabled"`
+		Changed  bool   `json:"changed"`
+	}{Provider: p.Name, Model: id, Enabled: on, Changed: changed}, nil
+}
+
+// handleBlueprintValidate answers `blueprint.validate` with a STRUCTURED result,
+// deliberately unlike the CLI's table.
+//
+// The projection differs because the audience does. A protocol client parsing the
+// human output would break the first time a column widened, and a human reading
+// this JSON would miss the alignment that makes a differing on_timeout jump out
+// of a column. Same capability, same loader, same resolved Config — two
+// renderings of it, which is exactly the relationship cmdSurface has to
+// cmdSchema.
+func handleBlueprintValidate(params map[string]any) (any, error) {
+	path, _ := params["path"].(string)
+	if path == "" {
+		return nil, errors.New("blueprint.validate needs a path to a blueprint file")
+	}
+	bp, err := blueprint.LoadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("the blueprint is not valid: %w", err)
+	}
+
+	c := bp.Config
+	type stageOut struct {
+		Name        string `json:"name"`
+		AdvanceWhen string `json:"advance_when"`
+		OnTimeout   string `json:"on_timeout"`
+		TimeoutMs   int64  `json:"timeout_ms,omitempty"`
+	}
+	type memberOut struct {
+		Name     string   `json:"name"`
+		Tools    []string `json:"tools,omitempty"`
+		Advisory bool     `json:"advisory,omitempty"`
+	}
+	type watcherOut struct {
+		Agent   string `json:"agent"`
+		Pattern string `json:"pattern"`
+		Action  string `json:"action"`
+	}
+
+	out := struct {
+		Name string `json:"name"`
+		SHA  string `json:"sha"`
+		// The workspace is reported WITH the reason it resolved that way, the
+		// same as the CLI. `worktree` alone invites a client to override it as
+		// noise; naming the members that forced it makes the decision reviewable
+		// (§20.4).
+		Workspace       string       `json:"workspace"`
+		WorkspaceReason string       `json:"workspace_reason"`
+		Stages          []stageOut   `json:"stages"`
+		Members         []memberOut  `json:"members"`
+		Watchers        []watcherOut `json:"watchers,omitempty"`
+	}{
+		Name:            bp.Name,
+		SHA:             bp.SHA,
+		Workspace:       c.Workspace,
+		WorkspaceReason: workspaceReason(c),
+		// Non-nil so they marshal as [] rather than null. A client doing
+		// `for s in result.stages` should not have to special-case a blueprint
+		// with no stages; null and [] mean the same thing here and only one of
+		// them is safe to iterate in every language that will read this.
+		Stages:  []stageOut{},
+		Members: []memberOut{},
+	}
+	for _, st := range c.Stages {
+		out.Stages = append(out.Stages, stageOut{
+			Name: st.Name, AdvanceWhen: st.AdvanceWhen,
+			OnTimeout: st.OnTimeout, TimeoutMs: st.TimeoutMs,
+		})
+	}
+	for _, m := range c.Members {
+		out.Members = append(out.Members, memberOut{
+			Name: m.Name, Tools: m.Tools, Advisory: m.Advisory,
+		})
+	}
+	for _, w := range c.Watchers {
+		action := w.Action
+		if action == "" {
+			action = "wake"
+		}
+		out.Watchers = append(out.Watchers, watcherOut{
+			Agent: w.Agent, Pattern: w.Pattern, Action: action,
+		})
+	}
+	return out, nil
+}
+
+// cmdServe implements `arxi serve [--listen <addr>]`.
+func cmdServe(args []string) {
+	args, err := expandShort(surface.Lookup("serve"), args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi serve: %v\n", err)
+		os.Exit(2)
+	}
+
+	listen, err := parseServeFlags(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi serve: %v\n\n"+
+			"usage: arxi serve [--listen unix:///path/to.sock]\n"+
+			"       with no --listen it speaks the protocol over stdin/stdout\n"+
+			"short: -l listen\n", err)
+		os.Exit(2)
+	}
+
+	host, err := defaultProtoHost()
+	if err != nil {
+		fatal(err)
+	}
+	defer func() {
+		if err := host.Close(); err != nil {
+			fmt.Fprintf(os.Stderr, "arxi serve: close host: %v\n", err)
+		}
+	}()
+	session := newProtoSession(hostv1.Principal{ID: "local"}, host)
+	if listen == "" {
+		// stdio is the default because it needs no cleanup and no permissions
+		// decision: the parent process already owns both ends. A socket has a
+		// path, a mode and a stale-file problem, and none of that should be forced
+		// on the common case of a supervisor spawning one server.
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		if err := serveConnSessionContext(ctx, os.Stdin, os.Stdout, session); err != nil {
+			fatal(err)
+		}
+		return
+	}
+	serveSocket(strings.TrimPrefix(listen, "unix://"), session)
+}
+
+// serveSocket listens on a unix socket until interrupted.
+func serveSocket(path string, session protoSession) {
+	// A stale socket file is REFUSED, not removed.
+	//
+	// Unlinking it silently is the convenient behaviour and it steals the address
+	// from a server that is still running: the old process keeps its listener,
+	// every new client connects to the new one, and half the clients are talking
+	// to a process nobody knows is there. Making the operator remove the file
+	// costs one command and cannot do that.
+	if _, err := os.Stat(path); err == nil {
+		fmt.Fprintf(os.Stderr, "arxi serve: %s already exists.\n\n"+
+			"It is not removed automatically: if another arxi is still listening "+
+			"there, unlinking the file would leave it running with its listener "+
+			"while every new client reached this process instead, so half the "+
+			"clients would be talking to a server nobody knows about.\n\n"+
+			"  check:  ss -lx | grep %s\n"+
+			"  remove: rm %s\n", path, path, path)
+		os.Exit(2)
+	}
+
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		fatal(fmt.Errorf("listen on %s: %w", path, err))
+	}
+
+	// 0700: the filesystem IS the authentication.
+	//
+	// There is no handshake and no token in this protocol, and a client that can
+	// connect can start runs that spend money. Unix permissions are what makes
+	// that safe, which is also why a tcp:// address is refused outright in
+	// parseServeFlags: a TCP port would offer the same control to the network with
+	// nothing in front of it.
+	if err := os.Chmod(path, 0o700); err != nil {
+		_ = ln.Close()
+		_ = os.Remove(path)
+		fatal(fmt.Errorf("restrict %s to its owner: %w", path, err))
+	}
+
+	// The socket file is removed on the way out. Because a stale one is refused
+	// rather than clobbered, leaving it behind would make the NEXT start fail over
+	// a server that is no longer running, and the operator would have to know all
+	// of the above to diagnose it.
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(stop)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var connections sync.WaitGroup
+	var connectionMu sync.Mutex
+	activeConnections := map[net.Conn]struct{}{}
+	go func() {
+		<-stop
+		cancel()
+		_ = ln.Close()
+		connectionMu.Lock()
+		for connection := range activeConnections {
+			_ = connection.Close()
+		}
+		connectionMu.Unlock()
+		_ = os.Remove(path)
+	}()
+
+	// The banner goes to stderr, not stdout. stdout is the protocol stream in the
+	// stdio mode, and a server that greeted the operator on the same channel would
+	// make the two modes disagree about what stdout means.
+	fmt.Fprintf(os.Stderr, "arxi serve: listening on unix://%s (surface v%d)\n",
+		path, surface.SurfaceVersion)
+
+	for {
+		conn, err := ln.Accept()
+		if err != nil {
+			// Accept failing means the listener is closed, which is the shutdown
+			// path above. Wait for connection-scoped host calls to observe the
+			// cancelled server context before the composition root closes the host.
+			connections.Wait()
+			return
+		}
+		// One goroutine per connection, and requests WITHIN a connection stay
+		// ordered (see serveConn). Serialising across connections instead would
+		// let one client blocked on a slow validate stall every other client, and
+		// the stall would look exactly like the quiescence ADR-0004 is about.
+		connectionSession := newProtoSession(session.principal, session.host)
+		connectionMu.Lock()
+		activeConnections[conn] = struct{}{}
+		connectionMu.Unlock()
+		connections.Add(1)
+		go func(c net.Conn, connectionSession protoSession) {
+			defer connections.Done()
+			defer func() {
+				connectionMu.Lock()
+				delete(activeConnections, c)
+				connectionMu.Unlock()
+				_ = c.Close()
+			}()
+			connectionCtx, cancel := context.WithCancel(ctx)
+			defer cancel()
+			if err := serveConnSessionContext(connectionCtx, c, c, connectionSession); err != nil && ctx.Err() == nil {
+				fmt.Fprintf(os.Stderr, "arxi serve: connection ended: %v\n", err)
+			}
+		}(conn, connectionSession)
+	}
+}
+
+// parseServeFlags reads --listen and refuses the addresses that are unsafe.
+func parseServeFlags(args []string) (string, error) {
+	listen := ""
+	for i := 0; i < len(args); i++ {
+		name, val, inline := strings.Cut(args[i], "=")
+		switch name {
+		case "--listen":
+			if inline {
+				listen = val
+			} else {
+				if i+1 >= len(args) {
+					return "", errors.New("--listen needs an address")
+				}
+				i++
+				listen = args[i]
+			}
+		case "--json":
+			// Accepted and ignored, for the same reason run start accepts
+			// --attach and ignores it: the surface declares it, and a declared
+			// flag that errors reads like a bug in the binary rather than a
+			// deliberate omission.
+			//
+			// Here it is also already true. WireParams gives --json to every
+			// non-mutating command, and serve's entire output is NDJSON — asking
+			// for JSON output from the JSON protocol is a request that was
+			// already granted. Rejecting it would mean `arxi surface --flags`
+			// advertises -J on serve and serve refuses it, which is the drift
+			// TestEveryShortFlagReachesItsParameter exists to catch. It caught
+			// exactly this.
+		default:
+			return "", fmt.Errorf("unknown flag %s", args[i])
+		}
+	}
+
+	if listen == "" {
+		return "", nil
+	}
+
+	// Anything that is not a unix:// address is REFUSED. One allow-list check,
+	// not a list of banned schemes.
+	//
+	// This protocol has no authentication: a connected client can start runs,
+	// inject prompts and spend the budget. On a unix socket the filesystem
+	// permissions are the authentication (0700 in serveSocket). On a TCP port
+	// there is nothing, so `--listen tcp://0.0.0.0:9000` would hand full control
+	// of the orchestrator to whoever reaches the port. Refusing is not a missing
+	// feature; adding it needs auth first, and the message says so.
+	//
+	// The first version of this check read
+	//
+	//	if strings.HasPrefix(listen, "tcp://") ||
+	//	   (strings.Contains(listen, ":") && !strings.HasPrefix(listen, "unix://"))
+	//
+	// and mutation testing found the tcp:// clause was DEAD: every `tcp://...`
+	// contains the colon of `://`, so the second clause already caught it, and
+	// deleting the first changed no behaviour at all. That is worse than
+	// redundant in a security guard — it reads as two conditions being enforced
+	// when one is doing all the work, so a reader cannot tell which clause
+	// matters and a later edit to the load-bearing one looks harmless.
+	//
+	// Allow-listing removes the question. A scheme nobody has thought of yet
+	// (tcp6://, vsock://, an empty-but-not-empty address) is refused by default
+	// rather than by having been enumerated, which is the same argument as an
+	// undeclared ToolPolicy defaulting to deny.
+	if !strings.HasPrefix(listen, "unix://") {
+		// The message is chosen by what the operator appears to have TRIED, so
+		// that somebody reaching for a TCP port is told why it will never be
+		// supported rather than just told the correct syntax. Being handed
+		// `unix:///path` in answer to `--listen :9000` reads as a formatting nit,
+		// and the operator retries with `unix://0.0.0.0:9000`.
+		if strings.Contains(listen, ":") {
+			return "", fmt.Errorf("--listen %q is not supported: this protocol has "+
+				"no authentication, so the unix socket's file permissions ARE the "+
+				"authentication. A network port would give whoever reaches it the "+
+				"ability to start runs and spend the budget. Use "+
+				"unix:///path/to.sock", listen)
+		}
+		return "", fmt.Errorf("--listen %q must be a unix:// address, "+
+			"for example unix:///tmp/arxi.sock", listen)
+	}
+	if strings.TrimPrefix(listen, "unix://") == "" {
+		return "", errors.New("--listen unix:// has no path")
+	}
+	return listen, nil
+}
+
+// protoHello builds the greeting. It is a function rather than a package-level
+// value so the lists are derived from the registry at call time; a variable would
+// freeze whatever the registry looked like at init and would keep working after
+// somebody changed it.
+func protoHello() helloMsg {
+	host, err := defaultProtoHost()
+	if err != nil {
+		return helloMsg{}
+	}
+	defer host.Close()
+	session := newProtoSession(hostv1.Principal{ID: "local"}, host)
+	hello, _ := protoHelloSession(context.Background(), &session)
+	return hello
+}
+
+func protoHelloSession(ctx context.Context, session *protoSession) (helloMsg, error) {
+	var types, impl []string
+	for _, c := range surface.ProtocolCommands() {
+		types = append(types, c.ProtocolType())
+		if _, ok := protoHandlers[c.ProtocolType()]; ok {
+			impl = append(impl, c.ProtocolType())
+		}
+	}
+
+	capabilities := []hostv1.Capability{}
+	if session.host != nil {
+		set, err := session.host.Capabilities(ctx, hostv1.CapabilitiesRequest{Principal: cloneProtoPrincipal(session.principal)})
+		if err != nil {
+			return helloMsg{}, err
+		}
+		seenCapabilities := make(map[hostv1.Capability]bool, len(set.Capabilities))
+		for _, capability := range set.Capabilities {
+			seenCapabilities[capability] = true
+		}
+		advertised := make(map[hostv1.Capability]bool, len(lifecycleHandlerDescriptors)+len(streamingHandlers))
+		for _, handler := range lifecycleHandlerDescriptors {
+			if advertised[handler.capability] || !seenCapabilities[handler.capability] {
+				continue
+			}
+			advertised[handler.capability] = true
+			capabilities = append(capabilities, handler.capability)
+		}
+		for _, handler := range streamingHandlers {
+			if !advertised[handler.capability] && seenCapabilities[handler.capability] {
+				advertised[handler.capability] = true
+				capabilities = append(capabilities, handler.capability)
+			}
+		}
+		for _, handler := range lifecycleHandlerDescriptors {
+			if advertised[handler.capability] {
+				impl = append(impl, handler.protocolType)
+			}
+		}
+		for ty, handler := range streamingHandlers {
+			if advertised[handler.capability] {
+				impl = append(impl, ty)
+			}
+		}
+		session.capabilities = advertised
+		session.capabilitiesKnown = true
+	}
+	sort.Strings(impl)
+	sort.Slice(capabilities, func(i, j int) bool { return capabilities[i] < capabilities[j] })
+	// Non-nil so both marshal as [] rather than null, for the same reason as the
+	// blueprint result above: a client iterating `implemented` should not have to
+	// special-case a build that implements nothing.
+	if impl == nil {
+		impl = []string{}
+	}
+	if types == nil {
+		types = []string{}
+	}
+	return helloMsg{
+		Type:           "hello",
+		Version:        version,
+		SurfaceVersion: surface.SurfaceVersion,
+		Types:          types,
+		Implemented:    impl,
+		Capabilities:   capabilities,
+	}, nil
+}

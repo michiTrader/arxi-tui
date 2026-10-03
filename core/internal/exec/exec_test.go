@@ -1,0 +1,1568 @@
+package exec
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"reflect"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/michiTrader/arxi/internal/kernel"
+)
+
+// memLog is an in-memory Log. It assigns Seq, because that is the property of
+// the real log the runner depends on: the reducer emits events with Seq 0 and
+// only the single writer numbers them.
+type memLog struct {
+	mu        sync.Mutex
+	events    []kernel.Event
+	head      int64
+	snapshots map[int64]kernel.State
+
+	failAppend   error
+	failAppendAt int
+	appendCalls  int
+	failFold     error
+	failSnapshot error
+
+	// appendOrder records the Type of each appended event so a test can assert
+	// on append ORDER, which is the property that keeps --sim diffable.
+	appendOrder []string
+}
+
+func newMemLog() *memLog {
+	return &memLog{snapshots: map[int64]kernel.State{}}
+}
+
+func (m *memLog) Append(events []kernel.Event) ([]kernel.Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.appendLocked(events)
+}
+
+func (m *memLog) AppendIfSeq(expectedSeq int64, events []kernel.Event) ([]kernel.Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.head != expectedSeq {
+		return nil, fmt.Errorf("log head changed from %d to %d", expectedSeq, m.head)
+	}
+	return m.appendLocked(events)
+}
+
+func (m *memLog) appendLocked(events []kernel.Event) ([]kernel.Event, error) {
+	m.appendCalls++
+	if m.failAppend != nil || (m.failAppendAt > 0 && m.appendCalls == m.failAppendAt) {
+		if m.failAppend != nil {
+			return nil, m.failAppend
+		}
+		return nil, errors.New("injected append failure")
+	}
+	out := make([]kernel.Event, 0, len(events))
+	for _, e := range events {
+		m.head++
+		e.Seq = m.head
+		m.events = append(m.events, e)
+		m.appendOrder = append(m.appendOrder, string(e.Type))
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+func (m *memLog) Fold(c kernel.Config, untilSeq int64) (kernel.State, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.failFold != nil {
+		return kernel.State{}, m.failFold
+	}
+	var upto []kernel.Event
+	for _, e := range m.events {
+		if untilSeq <= 0 || e.Seq <= untilSeq {
+			upto = append(upto, e)
+		}
+	}
+	st, _ := kernel.Fold(kernel.State{}, upto, c)
+	return st, nil
+}
+
+func (m *memLog) WriteSnapshot(st kernel.State, atSeq int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.failSnapshot != nil {
+		return m.failSnapshot
+	}
+	m.snapshots[atSeq] = st
+	return nil
+}
+
+// Read and Head are what the run loop needs on top of the runner's Log, and the
+// boundary handling mirrors logstore.Store exactly rather than approximately.
+//
+// That precision is the point of the fake. "toSeq == 0 means the head" and
+// "fromSeq < 1 clamps to 1" are the conventions the real store implements, so a
+// fake that treated 0 as an empty range would let the loop pass its tests and
+// then read nothing at all against the real log.
+func (m *memLog) Read(fromSeq, toSeq int64) ([]kernel.Event, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if fromSeq < 1 {
+		fromSeq = 1
+	}
+	if toSeq == 0 || toSeq > m.head {
+		toSeq = m.head
+	}
+	var out []kernel.Event
+	for _, e := range m.events {
+		if e.Seq >= fromSeq && e.Seq <= toSeq {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
+func (m *memLog) Head() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.head
+}
+
+func (m *memLog) order() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.appendOrder...)
+}
+
+func newRunner() (*Runner, *memLog, *Fake, *VirtualClock) {
+	log := newMemLog()
+	fake := NewFake()
+	clock := NewVirtualClock()
+	return &Runner{Log: log, Clock: clock, Executor: fake, Config: kernel.Config{}}, log, fake, clock
+}
+
+func testSource(seq int64) kernel.Event {
+	return kernel.Event{Seq: seq, ID: fmt.Sprintf("source-%d", seq), Type: kernel.RunStarted,
+		CorrelationID: "source-1", Source: kernel.SourceHuman}
+}
+
+func typesOf(events []kernel.Event) []kernel.EventType {
+	out := make([]kernel.EventType, len(events))
+	for i := range events {
+		out[i] = events[i].Type
+	}
+	return out
+}
+
+func TestRecoverDerivesCompletedDomainFrontier(t *testing.T) {
+	events := []kernel.Event{
+		{Seq: 1, Type: kernel.RunStarted},
+		{Seq: 2, Type: kernel.ExecWorkPrepared, Payload: map[string]any{"work_id": "w1", "source_seq": int64(1)}},
+		{Seq: 3, Type: kernel.ExecWorkFinished, Payload: map[string]any{"work_id": "w1", "status": "completed"}},
+		{Seq: 4, Type: kernel.ExecStepCompleted, Payload: map[string]any{"source_seq": int64(1)}},
+		{Seq: 5, Type: kernel.StageEntered},
+		{Seq: 6, Type: kernel.ExecStepCompleted, Payload: map[string]any{"source_seq": int64(5)}},
+		{Seq: 7, Type: kernel.RunPrompt},
+	}
+	got, err := Recover(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cursor != 5 || !got.HasProgress {
+		t.Fatalf("recovery = %#v, want cursor 5 with progress", got)
+	}
+
+	bad := append([]kernel.Event(nil), events...)
+	bad[5].Payload = map[string]any{"source_seq": int64(7)}
+	if _, err := Recover(bad); err == nil {
+		t.Fatal("accepted a completion that skipped unfinished domain seq 5")
+	}
+}
+
+func TestRecoverSurfacesUnknownAndMalformedRecords(t *testing.T) {
+	events := []kernel.Event{
+		{Seq: 1, Type: kernel.RunStarted},
+		{Seq: 2, Type: kernel.ExecWorkPrepared, Payload: map[string]any{"work_id": "w", "source_seq": int64(1)}},
+		{Seq: 3, Type: kernel.ExecWorkStarted, Payload: map[string]any{"work_id": "w"}},
+		{Seq: 4, Type: kernel.ExecWorkFinished, Payload: map[string]any{"work_id": "w", "status": "unknown"}},
+	}
+	got, err := Recover(events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Unknown, []string{"w"}) {
+		t.Fatalf("unknown work = %v", got.Unknown)
+	}
+	events[1].Payload["source_seq"] = 1.5
+	if _, err := Recover(events); err == nil {
+		t.Fatal("accepted fractional source_seq")
+	}
+}
+
+func TestDurableManifestIdentityIsCanonical(t *testing.T) {
+	source := testSource(7)
+	a, err := manifest("run-1", source, []kernel.Effect{kernel.CallTool{
+		Agent: "builder", Tool: "write", Args: map[string]any{"z": 1, "a": []any{"x", nil}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := manifest("run-1", source, []kernel.Effect{kernel.CallTool{
+		Agent: "builder", Tool: "write", Args: map[string]any{"a": []any{"x", nil}, "z": 1},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a[0].ID != b[0].ID || a[0].Digest != b[0].Digest {
+		t.Fatalf("map insertion order changed work identity: %s/%s vs %s/%s",
+			a[0].ID, a[0].Digest, b[0].ID, b[0].Digest)
+	}
+
+	empty, _ := manifest("run-1", source, []kernel.Effect{kernel.CallTool{Args: map[string]any{}}})
+	nilArgs, _ := manifest("run-1", source, []kernel.Effect{kernel.CallTool{Args: nil}})
+	if empty[0].Digest == nilArgs[0].Digest {
+		t.Fatal("canonical-effect-v1 collapsed empty and nil tool args")
+	}
+	otherRun, _ := manifest("run-2", source, []kernel.Effect{kernel.CallTool{
+		Agent: "builder", Tool: "write", Args: map[string]any{"a": []any{"x", nil}, "z": 1},
+	}})
+	if a[0].ID == otherRun[0].ID {
+		t.Fatal("work identity did not include run id")
+	}
+}
+
+func TestRunStepCommitsManifestBeforeDispatchAndCompletesEmptyStep(t *testing.T) {
+	r, log, fake, _ := newRunner()
+	r.RunID = "run-1"
+	if _, err := r.RunStep(context.Background(), testSource(1), []kernel.Effect{
+		kernel.SpawnTurn{Agent: "a"}, kernel.SpawnTurn{Agent: "b"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := typesOf(log.events)
+	wantPrefix := []kernel.EventType{kernel.ExecWorkPrepared, kernel.ExecWorkPrepared,
+		kernel.ExecWorkStarted, kernel.ExecWorkStarted}
+	if !reflect.DeepEqual(got[:len(wantPrefix)], wantPrefix) {
+		t.Fatalf("durable order got %v, want prefix %v", got, wantPrefix)
+	}
+	if len(fake.Calls) != 2 {
+		t.Fatalf("dispatched %d effects, want 2", len(fake.Calls))
+	}
+
+	emptySource := testSource(99)
+	if _, err := r.RunStep(context.Background(), emptySource, nil); err != nil {
+		t.Fatal(err)
+	}
+	last := log.events[len(log.events)-1]
+	if last.Type != kernel.ExecStepCompleted || int64(last.Num("source_seq")) != emptySource.Seq {
+		t.Fatalf("empty step ended with %#v, want its exec.step_completed", last)
+	}
+}
+
+func TestRunStepRecoveryDoesNotRepeatFinishedOrAmbiguousWork(t *testing.T) {
+	t.Run("finished without step marker", func(t *testing.T) {
+		r, log, fake, _ := newRunner()
+		r.RunID = "run-1"
+		source := testSource(3)
+		work, _ := manifest(r.RunID, source, []kernel.Effect{kernel.SpawnTurn{Agent: "a"}})
+		_ = r.prepareStep(source, work)
+		_ = r.finishWork(work[0], "completed", nil, nil, &Result{})
+		if _, err := r.RunStep(context.Background(), source, []kernel.Effect{kernel.SpawnTurn{Agent: "a"}}); err != nil {
+			t.Fatal(err)
+		}
+		if len(fake.Calls) != 0 {
+			t.Fatalf("finished work was dispatched %d time(s)", len(fake.Calls))
+		}
+		if log.events[len(log.events)-1].Type != kernel.ExecStepCompleted {
+			t.Fatal("recovery did not close the source step")
+		}
+	})
+
+	t.Run("prepared may dispatch", func(t *testing.T) {
+		r, _, fake, _ := newRunner()
+		r.RunID = "run-1"
+		source := testSource(4)
+		work, _ := manifest(r.RunID, source, []kernel.Effect{kernel.SpawnTurn{Agent: "a"}})
+		_ = r.prepareStep(source, work)
+		if _, err := r.RunStep(context.Background(), source, []kernel.Effect{kernel.SpawnTurn{Agent: "a"}}); err != nil {
+			t.Fatal(err)
+		}
+		if len(fake.Calls) != 1 {
+			t.Fatalf("prepared work dispatched %d time(s), want 1", len(fake.Calls))
+		}
+	})
+
+	t.Run("started becomes unknown", func(t *testing.T) {
+		r, log, fake, _ := newRunner()
+		r.RunID = "run-1"
+		source := testSource(5)
+		work, _ := manifest(r.RunID, source, []kernel.Effect{kernel.SpawnTurn{Agent: "a"}})
+		_ = r.prepareStep(source, work)
+		_, _ = log.Append([]kernel.Event{r.progressEvent(kernel.ExecWorkStarted,
+			map[string]any{"work_id": work[0].ID}, source)})
+		if _, err := r.RunStep(context.Background(), source, []kernel.Effect{kernel.SpawnTurn{Agent: "a"}}); !errors.Is(err, ErrUnknownWork) {
+			t.Fatalf("started recovery error = %v, want ErrUnknownWork", err)
+		}
+		if len(fake.Calls) != 0 {
+			t.Fatalf("ambiguous work was redispatched %d time(s)", len(fake.Calls))
+		}
+		last := log.events[len(log.events)-1]
+		if last.Type != kernel.ExecWorkFinished || last.Str("status") != "unknown" {
+			t.Fatalf("ambiguous work ended with %#v", last)
+		}
+		if _, err := r.RunStep(context.Background(), source, []kernel.Effect{kernel.SpawnTurn{Agent: "a"}}); !errors.Is(err, ErrUnknownWork) {
+			t.Fatalf("durable unknown was not blocking: %v", err)
+		}
+	})
+	t.Run("current ambiguous dispatch blocks the step", func(t *testing.T) {
+		r, log, _, _ := newRunner()
+		r.RunID = "run-1"
+		r.Executor = panicExecutor{}
+		source := testSource(6)
+		res, err := r.RunStep(context.Background(), source, []kernel.Effect{kernel.SpawnTurn{Agent: "a"}})
+		if !errors.Is(err, ErrUnknownWork) {
+			t.Fatalf("ambiguous dispatch error = %v, want ErrUnknownWork", err)
+		}
+		if len(res.Errs) != 1 {
+			t.Fatalf("ambiguous dispatch exposed %d effect errors, want 1", len(res.Errs))
+		}
+		last := log.events[len(log.events)-1]
+		if last.Type != kernel.ExecWorkFinished || last.Str("status") != "unknown" {
+			t.Fatalf("ambiguous dispatch ended with %#v", last)
+		}
+		for _, event := range log.events {
+			if event.Type == kernel.ExecStepCompleted {
+				t.Fatal("ambiguous work incorrectly completed its source step")
+			}
+		}
+	})
+}
+
+func TestRunStepAppendsOutcomeAndFinishAtomically(t *testing.T) {
+	r, log, _, _ := newRunner()
+	r.RunID = "run-1"
+	if _, err := r.RunStep(context.Background(), testSource(6), []kernel.Effect{
+		kernel.Emit{Event: kernel.Event{Type: kernel.StageEntered}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := typesOf(log.events)
+	want := []kernel.EventType{kernel.ExecWorkPrepared, kernel.StageEntered,
+		kernel.ExecWorkFinished, kernel.ExecStepCompleted}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("durable control order got %v, want %v", got, want)
+	}
+}
+
+func emit(t kernel.EventType) kernel.Effect {
+	return kernel.Emit{Event: kernel.Event{ID: string(t), Type: t}}
+}
+
+// TestSimulatedTurnDrivesTheFullLifecycle protects what makes --sim predictive
+// rather than merely quiet.
+//
+// The Fake used to answer a turn with llm.response + agent.turn_done and nothing
+// else, so a simulated member went from idle straight back to idle. Three
+// behaviours silently could not occur in any simulation:
+//
+//   - State.Turns never advanced, so --max-turns was unreachable in --sim;
+//   - m.Busy() was never true, so applyTurnDone never coalesced and each queued
+//     cause opened its own paid turn — the exact 5x the design exists to avoid;
+//   - a steer arriving mid-turn took the not-busy branch instead of queueing.
+//
+// A simulation that skips the turn lifecycle is worse than no simulation: it
+// predicts a run that cannot happen, and it does so confidently.
+//
+// The ORDER is asserted, not just the presence. agent.activated must precede
+// llm.response (it is what marks the member busy) and llm.response must precede
+// agent.turn_done (the reducer charges the budget on it, so a turn_done seen
+// first would let a run look finished and under budget while the money was
+// already spent).
+func TestSimulatedTurnDrivesTheFullLifecycle(t *testing.T) {
+	r, _, _, _ := newRunner()
+
+	res, err := r.Run(context.Background(), []kernel.Effect{
+		kernel.SpawnTurn{Agent: "backend"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var got []kernel.EventType
+	for _, e := range res.Events {
+		got = append(got, e.Type)
+	}
+	// The full lifecycle a real provider produces, in the order it produces it.
+	// The submit sits before turn_done because a real agent submits by calling a
+	// tool while its turn is still open.
+	want := []kernel.EventType{
+		kernel.AgentActivated, kernel.LLMResponse,
+		kernel.StageSubmitted, kernel.AgentTurnDone,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("a simulated turn produced %v, want %v.\n"+
+			"  consequence: without agent.activated the member never becomes busy, so "+
+			"in --sim State.Turns never advances (--max-turns is unreachable), "+
+			"coalescing never engages (every queued cause opens its own paid turn), "+
+			"and a mid-turn steer does not queue. Without stage.submitted no staged "+
+			"blueprint can ever advance, so --sim reports every correct staged "+
+			"blueprint as silently stuck.\n"+
+			"  remedy: Fake.SpawnTurn emits agent.activated, then llm.response, then "+
+			"the submit, then agent.turn_done.",
+			got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("event %d is %q, want %q (full order %v).\n"+
+				"  consequence: agent.activated after llm.response leaves the member idle "+
+				"while it is billed; agent.turn_done before llm.response lets a run look "+
+				"finished and under budget with the money already spent.",
+				i, got[i], want[i], got)
+		}
+	}
+
+	if res.Events[0].Actor != "backend" {
+		t.Errorf("agent.activated names actor %q, want backend; the reducer looks the "+
+			"member up by Actor, so a blank one silently updates nobody",
+			res.Events[0].Actor)
+	}
+}
+
+func TestProductionFakeCanonicalReadLoopPreservesProviderCallIDAndResult(t *testing.T) {
+	log := newMemLog()
+	fake := NewFake()
+	fake.NativeReadTool = "read"
+	fake.ToolResults["read"] = "line one\nline two\n"
+	fake.Submits = false
+	r := &Runner{Log: log, Clock: NewVirtualClock(), Executor: fake, RunID: "run-fake-native"}
+
+	res, err := r.RunStep(context.Background(), testSource(40), []kernel.Effect{kernel.SpawnTurn{Agent: "backend"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []kernel.EventType{kernel.AgentActivated, kernel.ToolCall, kernel.ToolCallCompleted, kernel.LLMResponse, kernel.AgentTurnDone}
+	if got := typesOf(res.Events); !reflect.DeepEqual(got, want) {
+		t.Fatalf("canonical fake events = %v, want %v", got, want)
+	}
+	if res.Events[1].Str("call_id") != "sim-provider-call-1" || res.Events[2].Str("call_id") != "sim-provider-call-1" {
+		t.Fatalf("provider call ID was lost: %#v %#v", res.Events[1].Payload, res.Events[2].Payload)
+	}
+	if res.Events[2].Str("result") != fake.ToolResults["read"] {
+		t.Fatalf("tool result = %q, want exact %q", res.Events[2].Str("result"), fake.ToolResults["read"])
+	}
+	if got := fake.Kinds(); !reflect.DeepEqual(got, []string{"complete_turn", "turn_tool", "complete_turn", "spawn_turn"}) {
+		t.Fatalf("fake calls = %v", got)
+	}
+	var prepared, finished int
+	for _, event := range log.events {
+		if event.Str("work_scope") != "turn_child" {
+			continue
+		}
+		if event.Type == kernel.ExecWorkPrepared {
+			prepared++
+		}
+		if event.Type == kernel.ExecWorkFinished {
+			finished++
+		}
+	}
+	if prepared != 3 || finished != 3 {
+		t.Fatalf("durable child prepared/finished = %d/%d, want 3/3", prepared, finished)
+	}
+}
+
+func TestProductionFakeCanonicalPolicyStopNeverRunsTool(t *testing.T) {
+	fake := NewFake()
+	fake.NativeReadTool = "read"
+	fake.AskTools["read"] = "ask"
+	fake.Submits = false
+	r := &Runner{Log: newMemLog(), Clock: NewVirtualClock(), Executor: fake, RunID: "run-fake-denied"}
+
+	res, err := r.RunStep(context.Background(), testSource(41), []kernel.Effect{kernel.SpawnTurn{Agent: "backend"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fake.Kinds(); !reflect.DeepEqual(got, []string{"complete_turn", "spawn_turn"}) {
+		t.Fatalf("policy stop reached tool runner: %v", got)
+	}
+	if got := typesOf(res.Events); !reflect.DeepEqual(got, []kernel.EventType{kernel.AgentActivated, kernel.ToolCall, kernel.ToolCallDenied, kernel.LLMResponse, kernel.AgentTurnDone}) {
+		t.Fatalf("policy-stop events = %v", got)
+	}
+}
+
+// TestEveryVariantIsDispatched is the counterpart of kernel's
+// TestEffectExhaustive: kernel guarantees no variant is forgotten in the
+// registry, and this guarantees no registered variant is forgotten by the
+// runner.
+//
+// Without it, adding an eighth Effect variant and wiring it nowhere here would
+// produce a run that looks perfectly healthy and silently does not do what the
+// reducer decided, which is unfindable from the log because the log has no
+// entry for something that never happened.
+func TestEveryVariantIsDispatched(t *testing.T) {
+	for _, variant := range kernel.EffectVariants() {
+		r, _, _, _ := newRunner()
+
+		var err error
+		switch variant.Class() {
+		case kernel.ClassControl:
+			var res Result
+			err = r.runControl(context.Background(), variant, &res)
+		case kernel.ClassIndependent:
+			_, err = r.dispatch(context.Background(), variant)
+		default:
+			t.Fatalf("effect %T has class %d, which exec knows nothing about: the "+
+				"runner splits work into a sequential control prefix and a parallel "+
+				"tail, and a third class has no defined placement. Either map it "+
+				"onto one of the two existing classes or extend Runner.Run with an "+
+				"explicit rule for it.", variant, variant.Class())
+		}
+
+		if err != nil && errIsUnhandled(err) {
+			t.Errorf("effect %T is registered in kernel.EffectVariants but the "+
+				"runner does not dispatch it, so the reducer's decision to perform "+
+				"it would be dropped with no trace in the log and the run would "+
+				"look healthy while doing less than it decided. Remedy: add a case "+
+				"for %T in exec.runControl (control) or exec.dispatch plus a method "+
+				"on the Executor interface (independent). Error was: %v",
+				variant, variant, err)
+		}
+	}
+}
+
+func errIsUnhandled(err error) bool {
+	msg := err.Error()
+	for _, needle := range []string{"unhandled control effect", "unhandled independent effect"} {
+		if len(msg) >= len(needle) && contains(msg, needle) {
+			return true
+		}
+	}
+	return false
+}
+
+func contains(hay, needle string) bool {
+	for i := 0; i+len(needle) <= len(hay); i++ {
+		if hay[i:i+len(needle)] == needle {
+			return true
+		}
+	}
+	return false
+}
+
+// TestControlEffectsRunInExactListOrder protects the semantic order of Emits.
+// kernel emits stage.advanced before stage.entered on purpose; if the runner
+// reordered or parallelized them, a reader of the log would see a stage being
+// entered before the previous one advanced, and every causal tool built on
+// caused_by would describe a history that never happened.
+func TestControlEffectsRunInExactListOrder(t *testing.T) {
+	r, log, _, _ := newRunner()
+
+	fx := []kernel.Effect{
+		emit(kernel.StageAdvanced),
+		emit(kernel.StageEntered),
+		emit(kernel.AgentActivated),
+	}
+	if _, err := r.Run(context.Background(), fx); err != nil {
+		t.Fatalf("Run returned an unexpected error: %v", err)
+	}
+
+	want := []string{"stage.advanced", "stage.entered", "agent.activated"}
+	if got := log.order(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("control effects were appended as %v, want %v. Control effects "+
+			"must run one at a time in exact list order: the order of Emits among "+
+			"themselves is semantic, so reordering them writes a log describing a "+
+			"history that never happened. Remedy: keep the sequential loop over "+
+			"fx[:split] in Runner.Run and do not sort or batch it.", got, want)
+	}
+}
+
+// TestSeqIsAssignedByTheLogNotTheReducer pins the invariant from ADR-0002 and
+// event.go: the reducer emits Seq 0 and only the single writer numbers events.
+// If the runner ever assigned Seq itself, two writers would be numbering the
+// same log and a CAS on seq would become meaningless.
+func TestSeqIsAssignedByTheLogNotTheReducer(t *testing.T) {
+	r, _, _, _ := newRunner()
+
+	fx := []kernel.Effect{emit(kernel.StageEntered), emit(kernel.StageAdvanced)}
+	res, err := r.Run(context.Background(), fx)
+	if err != nil {
+		t.Fatalf("Run returned an unexpected error: %v", err)
+	}
+
+	if len(res.Events) != 2 {
+		t.Fatalf("got %d appended events, want 2", len(res.Events))
+	}
+	for i, e := range res.Events {
+		if e.Seq != int64(i+1) {
+			t.Fatalf("event %d came back with Seq %d, want %d. The runner must "+
+				"return the events as the LOG numbered them, never the Seq 0 the "+
+				"reducer produced: callers use these seq values for CAS "+
+				"(if_seq), and a zero or invented seq makes every conditional "+
+				"write either always fail or always pass. Remedy: append "+
+				"res.Events from the slice Log.Append returned, not from the "+
+				"input effects.", i, e.Seq, i+1)
+		}
+	}
+}
+
+// TestIndependentEffectsRunInParallel proves parallelism instead of assuming
+// it, and it does so with a barrier rather than with timing.
+//
+// A timing assertion ("it took less than X") is flaky on a loaded machine and
+// would eventually be deleted. A barrier cannot be satisfied unless the effects
+// genuinely overlap: if the runner serialized them, the first would wait
+// forever for siblings that have not started, and the test fails by timeout
+// with a clear reason.
+//
+// This matters because serializing independent effects removes the entire
+// reason the tool exists: three agents that know nothing about each other would
+// take three times as long and cost the same.
+func TestIndependentEffectsRunInParallel(t *testing.T) {
+	const n = 3
+	arrived := make(chan struct{}, n)
+	release := make(chan struct{})
+
+	r, _, _, _ := newRunner()
+	r.Executor = &barrierExecutor{arrived: arrived, release: release}
+
+	fx := []kernel.Effect{
+		kernel.SpawnTurn{Agent: "a"},
+		kernel.SpawnTurn{Agent: "b"},
+		kernel.SpawnTurn{Agent: "c"},
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := r.Run(context.Background(), fx)
+		done <- err
+	}()
+
+	// Wait for all three to be inside the executor at the same time.
+	for i := 0; i < n; i++ {
+		select {
+		case <-arrived:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d of %d independent effects had started after 2s: they "+
+				"are being executed sequentially. Independent effects exist to run "+
+				"concurrently; serializing them makes three unrelated agent turns "+
+				"take three times as long for the same cost, which removes the "+
+				"reason this tool exists. Remedy: keep the WaitGroup fan-out over "+
+				"fx[split:] in Runner.runIndependent.", i, n)
+		}
+	}
+	close(release)
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Run returned an unexpected error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not finish after releasing the barrier")
+	}
+}
+
+type barrierExecutor struct {
+	arrived chan struct{}
+	release chan struct{}
+}
+
+func (b *barrierExecutor) SpawnTurn(ctx context.Context, e kernel.SpawnTurn) ([]kernel.Event, error) {
+	b.arrived <- struct{}{}
+	<-b.release
+	return []kernel.Event{{ID: e.Agent, Type: kernel.AgentTurnDone, Actor: e.Agent}}, nil
+}
+
+func (b *barrierExecutor) CallTool(ctx context.Context, e kernel.CallTool) ([]kernel.Event, error) {
+	return nil, nil
+}
+
+func (b *barrierExecutor) AskHuman(ctx context.Context, e kernel.AskHuman) ([]kernel.Event, error) {
+	return nil, nil
+}
+
+// TestIndependentResultsAppendInListOrder is the test that keeps --sim useful.
+//
+// The effects finish in reverse order here (the last one returns first). If the
+// runner appended in completion order, the log would depend on which provider
+// answered first, so two runs over identical input would produce different
+// logs and `run diff` could not tell a real change from scheduling noise.
+func TestIndependentResultsAppendInListOrder(t *testing.T) {
+	r, log, _, _ := newRunner()
+	r.Executor = &reverseOrderExecutor{}
+
+	fx := []kernel.Effect{
+		kernel.SpawnTurn{Agent: "first"},
+		kernel.SpawnTurn{Agent: "second"},
+		kernel.SpawnTurn{Agent: "third"},
+	}
+	res, err := r.Run(context.Background(), fx)
+	if err != nil {
+		t.Fatalf("Run returned an unexpected error: %v", err)
+	}
+
+	var got []string
+	for _, e := range res.Events {
+		got = append(got, e.Actor)
+	}
+	want := []string{"first", "second", "third"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("independent results were appended as %v, want %v. Results must "+
+			"be appended in LIST order and never in completion order: otherwise "+
+			"the log depends on which provider answered first, two --sim runs "+
+			"over identical input produce different logs, and `run diff` cannot "+
+			"distinguish a real change from scheduling noise. Remedy: keep the "+
+			"indexed outcomes slice in runIndependent and append while iterating "+
+			"it in order.", got, want)
+	}
+	_ = log
+}
+
+// reverseOrderExecutor makes the LAST effect finish FIRST, so a completion-order
+// bug cannot pass by luck.
+type reverseOrderExecutor struct {
+	mu   sync.Mutex
+	seen int
+}
+
+func (x *reverseOrderExecutor) SpawnTurn(ctx context.Context, e kernel.SpawnTurn) ([]kernel.Event, error) {
+	// A sleep whose length is inverse to arrival order. Sleeping is acceptable
+	// here because the assertion is about ORDER, not duration: the test passes
+	// or fails on the appended sequence, so a slow machine only makes it
+	// slower, never flaky.
+	x.mu.Lock()
+	x.seen++
+	n := x.seen
+	x.mu.Unlock()
+
+	time.Sleep(time.Duration(20*(4-n)) * time.Millisecond)
+	return []kernel.Event{{ID: e.Agent, Type: kernel.AgentTurnDone, Actor: e.Agent}}, nil
+}
+
+func (x *reverseOrderExecutor) CallTool(ctx context.Context, e kernel.CallTool) ([]kernel.Event, error) {
+	return nil, nil
+}
+
+func (x *reverseOrderExecutor) AskHuman(ctx context.Context, e kernel.AskHuman) ([]kernel.Event, error) {
+	return nil, nil
+}
+
+// TestUnorderedListIsRefused makes sure the runner does not paper over a
+// reducer bug. Re-sorting silently would leave an Emit in the parallel group,
+// and the resulting run would finish in two different ways depending on
+// scheduling luck: the hardest failure mode to ever reproduce.
+func TestUnorderedListIsRefused(t *testing.T) {
+	r, log, _, _ := newRunner()
+
+	fx := []kernel.Effect{
+		kernel.CallTool{Agent: "a", Tool: "read"},
+		emit(kernel.StageAdvanced),
+	}
+	_, err := r.Run(context.Background(), fx)
+	if !errors.Is(err, ErrUnorderedEffects) {
+		t.Fatalf("Run accepted a list with a control effect after an independent "+
+			"one (err=%v), want ErrUnorderedEffects. The runner must refuse such a "+
+			"list rather than re-sort it: re-sorting hides a bug in "+
+			"kernel.orderEffects whose symptom is an Emit racing inside the "+
+			"parallel group, so the run ends differently depending on scheduling "+
+			"luck. Remedy: keep the second loop in controlPrefixLen.", err)
+	}
+	if n := len(log.order()); n != 0 {
+		t.Fatalf("%d events were appended from a list that was refused, want 0. A "+
+			"refused list must have no side effects at all, otherwise the log "+
+			"holds half of a step that was never executed and the fold produces a "+
+			"state no code ever decided.", n)
+	}
+}
+
+// TestControlFailureAbortsBeforeSpending: if an Emit cannot be written, the
+// independent tail must not run. The tail was decided assuming the control
+// effects took place, so spawning turns afterwards means paying a provider to
+// act on a state that never existed.
+func TestControlFailureAbortsBeforeSpending(t *testing.T) {
+	r, log, fake, _ := newRunner()
+	log.failAppend = errors.New("disk full")
+
+	fx := []kernel.Effect{
+		emit(kernel.StageEntered),
+		kernel.SpawnTurn{Agent: "worker"},
+	}
+	if _, err := r.Run(context.Background(), fx); err == nil {
+		t.Fatal("Run succeeded even though the control Emit could not be appended; " +
+			"a control failure must abort the step")
+	}
+
+	if n := len(fake.Calls); n != 0 {
+		t.Fatalf("the executor was called %d times after a control effect failed, "+
+			"want 0. The independent tail was decided assuming the control effects "+
+			"happened, so running it after a failed Emit means paying a provider "+
+			"to act on a state that never existed. Remedy: keep the early return "+
+			"inside the fx[:split] loop in Runner.Run.", n)
+	}
+}
+
+// TestFailingEffectDoesNotDiscardSiblings: by the time one turn errors, the
+// others have already spent real money and the tool call has already touched
+// the filesystem. Dropping their events would leave the log describing a world
+// that does not exist, which is the one thing the log may never do.
+func TestFailingEffectDoesNotDiscardSiblings(t *testing.T) {
+	r, _, fake, _ := newRunner()
+	fake.BreakTools["broken"] = errors.New("connection reset")
+
+	fx := []kernel.Effect{
+		kernel.SpawnTurn{Agent: "a"},
+		kernel.CallTool{Agent: "a", Tool: "broken"},
+		kernel.CallTool{Agent: "a", Tool: "ok"},
+	}
+	res, err := r.Run(context.Background(), fx)
+	if err != nil {
+		t.Fatalf("Run returned a step-level error for a per-effect failure: %v. A "+
+			"broken independent effect is reported in Result.Errs, not by failing "+
+			"the whole step, because its siblings succeeded and their events are "+
+			"real.", err)
+	}
+
+	if len(res.Errs) != 1 {
+		t.Fatalf("got %d errors, want exactly 1 (the broken tool). Errs is a slice "+
+			"so a partial failure does not hide the other failures: with two of "+
+			"five effects broken the operator needs both reasons, not the first "+
+			"one.", len(res.Errs))
+	}
+
+	// The turn produced the full lifecycle (activated, llm.response, submit,
+	// turn_done) and the working tool one tool.call_completed. The broken one
+	// produced nothing, by design.
+	if len(res.Events) != 5 {
+		var got []string
+		for _, e := range res.Events {
+			got = append(got, string(e.Type))
+		}
+		t.Fatalf("got %d events (%v), want 5: the successful siblings' events must "+
+			"survive a sibling's failure. They already spent money and touched the "+
+			"filesystem, so discarding them leaves the log describing a world "+
+			"that does not exist. Remedy: in runIndependent, append events "+
+			"unconditionally before recording the error.", len(res.Events), got)
+	}
+}
+
+// TestDomainFailureBecomesAnEventAndTransportFailureDoesNot pins the
+// distinction that keeps the log honest: a tool that ran and refused is a fact,
+// a call that never landed is not.
+func TestDomainFailureBecomesAnEventAndTransportFailureDoesNot(t *testing.T) {
+	r, _, fake, _ := newRunner()
+	fake.FailTools["refuses"] = "exit status 1"
+	fake.BreakTools["unreachable"] = errors.New("no route to host")
+
+	res, err := r.Run(context.Background(), []kernel.Effect{
+		kernel.CallTool{Agent: "a", Tool: "refuses"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected step error: %v", err)
+	}
+	if len(res.Events) != 1 || len(res.Errs) != 0 {
+		t.Fatalf("a DOMAIN failure produced %d events and %d errors, want 1 and 0. "+
+			"A tool that ran and refused is something that HAPPENED, so it belongs "+
+			"in the log as tool.call_completed carrying the trouble in its result; "+
+			"reporting it only as a Go error erases it from history and `run why` "+
+			"can no longer explain why the agent stopped.",
+			len(res.Events), len(res.Errs))
+	}
+
+	r2, _, _, _ := newRunner()
+	r2.Executor = fake
+	res2, err := r2.Run(context.Background(), []kernel.Effect{
+		kernel.CallTool{Agent: "a", Tool: "unreachable"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected step error: %v", err)
+	}
+	if len(res2.Events) != 0 || len(res2.Errs) != 1 {
+		t.Fatalf("a TRANSPORT failure produced %d events and %d errors, want 0 and "+
+			"1. When the call never landed nothing can be said about what "+
+			"happened, so writing an event would put a guess into the log, and "+
+			"the log is the one place that may not contain guesses.",
+			len(res2.Events), len(res2.Errs))
+	}
+}
+
+// TestASimulatedToolCallWritesTheCatalogueSPayload pins the one thing this fake
+// got wrong for its whole life: the keys.
+//
+// It wrote `ok` with `output` or `error`, while the catalogue (spec/events.md:109)
+// and the live executor wrote {tool, result?}. Nothing ever failed over it,
+// because the reducer reads no payload key on this event -- so the only reader
+// that noticed was `run attach`, which carried a branch per executor to cover the
+// disagreement. A divergence that costs nothing at the time is the kind that
+// survives, which is why the spelling is asserted here rather than left for the
+// next reader to rediscover. The live half is pinned in internal/provider by
+// TestAnAllowedToolRunsAndReportsWhatHappened, on the same two keys.
+func TestASimulatedToolCallWritesTheCatalogueSPayload(t *testing.T) {
+	r, _, fake, _ := newRunner()
+	fake.ToolResults["read"] = "exit 0 (success)\n\nok\n"
+	fake.FailTools["build"] = "exit status 1"
+
+	res, err := r.Run(context.Background(), []kernel.Effect{
+		kernel.CallTool{Agent: "a", Tool: "read"},
+		kernel.CallTool{Agent: "a", Tool: "build"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected step error: %v", err)
+	}
+	if len(res.Events) != 2 {
+		t.Fatalf("got %d events, want 2 (one per call)", len(res.Events))
+	}
+
+	want := map[string]string{
+		"read":  "exit 0 (success)\n\nok\n",
+		"build": "failed: exit status 1",
+	}
+	for _, e := range res.Events {
+		tool, _ := e.Payload["tool"].(string)
+		if _, known := want[tool]; !known {
+			t.Fatalf("an event names tool %q: the payload must carry `tool`, which is "+
+				"what matches a completed call to the call it answers", tool)
+		}
+		if got := e.Payload["result"]; got != want[tool] {
+			t.Errorf("%s: result = %q, want %q\n"+
+				"  a failed call must not be indistinguishable from a successful one "+
+				"in the only key a reader has", tool, got, want[tool])
+		}
+		for _, dead := range []string{"ok", "output", "error"} {
+			if v, present := e.Payload[dead]; present {
+				t.Errorf("%s: the payload still carries %s=%v. The catalogue declares "+
+					"{tool, result?}, and a key no reader is written against is a key "+
+					"that silently stops being read", tool, dead, v)
+			}
+		}
+	}
+}
+
+// TestPanicInAnEffectDoesNotLoseSiblings: a panicking provider client must not
+// take down the run, and above all must not take down the events its siblings
+// already produced.
+//
+// The panicking effect is a SpawnTurn, so the log gets an event of its own for
+// it too: a panic strands a commissioned turn exactly as a 503 does (see
+// turnFailure), and the member the reducer believes owes a turn has to be told
+// otherwise by the log or it stays Busy() forever. Asserting the two events by
+// type and actor rather than by count is what keeps that distinguishable: a
+// count of 2 would also be satisfied by the sibling's event appended twice,
+// which is the failure a naive fix for this very case would produce.
+func TestPanicInAnEffectDoesNotLoseSiblings(t *testing.T) {
+	r, _, _, _ := newRunner()
+	r.Executor = &panicExecutor{}
+
+	res, err := r.Run(context.Background(), []kernel.Effect{
+		kernel.SpawnTurn{Agent: "panics"},
+		kernel.CallTool{Agent: "a", Tool: "fine"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected step error: %v", err)
+	}
+	if len(res.Errs) != 1 {
+		t.Fatalf("got %d errors, want 1: the panic must be converted into an error, "+
+			"not propagated, otherwise a bug in one provider client aborts the "+
+			"whole process and the sibling events already produced are never "+
+			"appended. Remedy: keep the recover() in runIndependent's goroutine.",
+			len(res.Errs))
+	}
+	got := map[kernel.EventType]string{}
+	for _, e := range res.Events {
+		if prev, dup := got[e.Type]; dup {
+			t.Fatalf("%s was appended twice (%q then %q): each effect owes the log "+
+				"at most one event of each kind, and a duplicate is a double "+
+				"attribution the caused_by graph cannot represent.", e.Type, prev, e.Actor)
+		}
+		got[e.Type] = e.Actor
+	}
+	if len(res.Events) != 2 {
+		t.Fatalf("got %d events (%v), want 2: the sibling that succeeded must still "+
+			"have its event appended after another effect panicked, AND the "+
+			"panicking spawn must close the turn the reducer already recorded on "+
+			"its member.", len(res.Events), got)
+	}
+	if a := got[kernel.ToolCallCompleted]; a != "a" {
+		t.Fatalf("tool.call_completed is attributed to %q, want %q: the sibling's "+
+			"event must survive the panic unchanged, not merely survive.", a, "a")
+	}
+	if a := got[kernel.AgentFailed]; a != "panics" {
+		t.Fatalf("agent.failed is attributed to %q, want %q: a panic leaves the "+
+			"member owing a turn that will never arrive, and only an event naming "+
+			"that member clears it. Without it, Busy() stays true and quiescence "+
+			"can never fire again for the rest of the run.", a, "panics")
+	}
+}
+
+type panicExecutor struct{}
+
+func (panicExecutor) SpawnTurn(ctx context.Context, e kernel.SpawnTurn) ([]kernel.Event, error) {
+	panic("provider client dereferenced nil")
+}
+
+func (panicExecutor) CallTool(ctx context.Context, e kernel.CallTool) ([]kernel.Event, error) {
+	return []kernel.Event{{ID: "t1", Type: kernel.ToolCallCompleted, Actor: e.Agent}}, nil
+}
+
+func (panicExecutor) AskHuman(ctx context.Context, e kernel.AskHuman) ([]kernel.Event, error) {
+	return nil, nil
+}
+
+// TestSnapshotIsRefoldedFromTheLog protects ADR-0002 the practical way: the
+// snapshot must reflect the state AFTER the control Emits that preceded it,
+// because a cache that disagrees with the log is a wrong answer served fast.
+func TestSnapshotMatchesTheConfirmedHeadAfterPrecedingEmits(t *testing.T) {
+	r, log, _, _ := newRunner()
+
+	fx := []kernel.Effect{
+		kernel.Emit{Event: kernel.Event{
+			ID: "e1", Type: kernel.RunStarted,
+			Payload: map[string]any{"run_id": "r1", "actor": "me", "budget_usd": 1.0},
+		}},
+		kernel.Emit{Event: kernel.Event{
+			ID: "e2", Type: kernel.RunPaused,
+		}},
+		kernel.Snapshot{},
+	}
+	if _, err := r.Run(context.Background(), fx); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	at := log.Head()
+	st, ok := log.snapshots[at]
+	if !ok {
+		t.Fatalf("no snapshot was written at confirmed head %d; snapshots: %v", at, log.snapshots)
+	}
+	want, err := log.Fold(r.Config, at)
+	if err != nil {
+		t.Fatalf("fold confirmed head %d: %v", at, err)
+	}
+	if !reflect.DeepEqual(st, want) {
+		t.Fatalf("snapshot at seq %d differs from Fold(config, seq):\n snapshot: %#v\n fold: %#v\n"+
+			"the snapshot must capture the head after every preceding control Emit, or the cache serves a state the log does not justify",
+			at, st, want)
+	}
+}
+
+// TestSnapshotFailureDoesNotFailTheRun: a snapshot is a cache (ADR-0002). A run
+// that could not write one is still entirely correct, only slower to inspect.
+// Aborting would invert the ADR and make an optimization mandatory.
+func TestSnapshotFailureDoesNotFailTheRun(t *testing.T) {
+	for name, setup := range map[string]func(*memLog){
+		"fold fails":     func(m *memLog) { m.failFold = errors.New("corrupt log tail") },
+		"snapshot fails": func(m *memLog) { m.failSnapshot = errors.New("read-only fs") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, log, _, _ := newRunner()
+			setup(log)
+
+			res, err := r.Run(context.Background(), []kernel.Effect{kernel.Snapshot{}})
+			if err != nil {
+				t.Fatalf("Run failed because a SNAPSHOT could not be written: %v. The "+
+					"snapshot is a cache and the log is the truth (ADR-0002): the run "+
+					"is still correct, only slower to inspect. Failing here inverts "+
+					"the ADR and turns an optimization into a requirement, so a "+
+					"read-only disk would kill runs that are otherwise fine. Remedy: "+
+					"keep runSnapshot returning nothing and counting into "+
+					"SnapshotSkipped.", err)
+			}
+			if res.SnapshotSkipped != 1 {
+				t.Fatalf("SnapshotSkipped is %d, want 1. A skipped snapshot must be "+
+					"REPORTED even though it is not fatal, otherwise a permanently "+
+					"failing cache is invisible and `run show` stays mysteriously "+
+					"slow forever with nothing to point at.", res.SnapshotSkipped)
+			}
+		})
+	}
+}
+
+// TestCancelledContextStopsSpending: a cancelled run must stop paying, not
+// finish paying for turns whose results will be thrown away.
+//
+// STOPS PAYING, NOT STOPS WRITING, and the difference is the whole assertion
+// below. This test used to demand an empty log ("a turn refused for cancellation
+// never happened, so it must leave nothing in the log"), which reads as
+// obviously right and is wrong for the one case where a cancellation is not the
+// end of the run. Ctrl-C and a wall-clock deadline cancel the context WITHOUT
+// making the run terminal, and such a run is meant to be resumed.
+//
+// What resume does with it is the problem. The loop advances its cursor past an
+// event whose effects failed (internal/exec/loop.go: `out.Cursor = cursor` after
+// a non-fatal res.Errs), on the deliberate ground that re-executing a spawn
+// costs money twice. So the commissioning event is never decided again -- but the
+// resumed state is folded FROM the log up to that cursor, which runs spawnFor
+// again and sets TurnOpen again. The member would come back owing a turn that
+// nothing in the log can ever close: Busy() true forever, checkQuiescence
+// silenced forever, and the run hangs with no diagnosis. ADR-0004 rates that
+// false negative as the expensive direction, and it is exactly the shape of
+// failure the quiescent event exists to report.
+//
+// Writing agent.failed costs nothing, because the cost is in the provider call
+// that did not happen. The two assertions therefore separate: no llm.response
+// and no turn cost (nothing was paid for), and one agent.failed (the
+// commissioned turn was closed).
+func TestCancelledContextStopsSpending(t *testing.T) {
+	r, _, fake, _ := newRunner()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	res, err := r.Run(ctx, []kernel.Effect{kernel.SpawnTurn{Agent: "a"}})
+	if err != nil {
+		t.Fatalf("unexpected step error: %v", err)
+	}
+	if len(res.Errs) != 1 {
+		t.Fatalf("got %d errors, want 1: a spawn on a cancelled context must fail "+
+			"instead of silently succeeding.", len(res.Errs))
+	}
+	if len(res.Events) != 1 {
+		var got []kernel.EventType
+		for _, e := range res.Events {
+			got = append(got, e.Type)
+		}
+		t.Fatalf("got %d events (%v), want exactly 1: the refused turn still owes "+
+			"the log the agent.failed that closes it, because the reducer marked "+
+			"the member as owing a turn the moment the spawn was commissioned.",
+			len(res.Events), got)
+	}
+	if got := res.Events[0].Type; got != kernel.AgentFailed {
+		t.Fatalf("the event written is %q, want %q: a cancelled turn produced no "+
+			"llm.response and no cost, so the only thing there is to record is "+
+			"that the turn will not happen. Spend enters the state only through "+
+			"llm.response (kernel.applyCost), so a log without one is a run that "+
+			"paid nothing -- which is this test's other half.", got, kernel.AgentFailed)
+	}
+	if got := res.Events[0].Actor; got != "a" {
+		t.Fatalf("agent.failed is attributed to %q, want %q: the reducer clears "+
+			"TurnOpen on the member named by the actor, so a misattributed failure "+
+			"leaves the real one busy forever.", got, "a")
+	}
+	// Nothing was even dispatched: Fake.SpawnTurn checks ctx.Err() BEFORE it
+	// records the call, which is what "stops spending" means at the provider
+	// boundary. So the log's one event is not a record of an attempt -- it is the
+	// runner discharging a debt the reducer took on when it commissioned the turn.
+	if len(fake.Calls) != 0 {
+		t.Fatalf("the fake recorded %v, want nothing: a cancelled context must be "+
+			"refused before the provider is touched, or the run keeps paying for "+
+			"turns whose results it will throw away.", fake.Calls)
+	}
+}
+
+// TestEmptyListIsANoOp. The reducer legitimately returns no effects for events
+// that only change state, and that must not be an error: if it were, every
+// caller would need a length check before every step and the one that forgets
+// it turns a normal fold into a failed run.
+func TestEmptyListIsANoOp(t *testing.T) {
+	r, log, fake, _ := newRunner()
+
+	res, err := r.Run(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("Run(nil) failed: %v. An event that only changes state produces no "+
+			"effects, which is normal; erroring here would force a length check at "+
+			"every call site.", err)
+	}
+	if len(res.Events) != 0 || len(res.Errs) != 0 || len(log.order()) != 0 || len(fake.Calls) != 0 {
+		t.Fatal("Run(nil) had side effects, want none")
+	}
+}
+
+// TestRunnerIsRaceFree exercises the parallel path under -race. It is here
+// because the concurrency in runIndependent is normal operation, not an edge
+// case: every step with more than one independent effect hits it.
+func TestRunnerIsRaceFree(t *testing.T) {
+	r, _, _, _ := newRunner()
+
+	var fx []kernel.Effect
+	for i := 0; i < 16; i++ {
+		fx = append(fx, kernel.SpawnTurn{Agent: fmt.Sprintf("agent-%02d", i)})
+		fx = append(fx, kernel.CallTool{Agent: fmt.Sprintf("agent-%02d", i), Tool: "read"})
+	}
+
+	res, err := r.Run(context.Background(), fx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := res.Err(); err != nil {
+		t.Fatalf("unexpected effect errors: %v", err)
+	}
+	// 16 turns * 4 events (activated, llm.response, submit, turn_done) + 16 tool
+	// calls * 1 event.
+	if want := 80; len(res.Events) != want {
+		t.Fatalf("got %d events, want %d", len(res.Events), want)
+	}
+}
+
+// TestEmittedEventsGetAnIdBecauseCausalityDependsOnIt closes a gap that was
+// found by the author of internal/logstore while implementing against the same
+// ADRs, and confirmed here by reading kernel.derived().
+//
+// kernel.derived() sets CausedBy and CorrelationID but leaves ID and Ts empty,
+// which is correct for the reducer: it has no clock and no randomness, on
+// purpose. event.go documents who owns Seq (the log) and names no owner for ID
+// or Ts, so neither half filled them and the events reached the log anonymous.
+//
+// The consequence is not a blank field. `run why` answers "why did this happen"
+// by walking caused_by backwards, and caused_by holds event IDs. An event with
+// no id cannot be the target of a link, so the chain terminates at the first
+// derived event: the question the tool exists to answer becomes unanswerable
+// for every event the reducer itself produced.
+func TestEmittedEventsGetAnIdBecauseCausalityDependsOnIt(t *testing.T) {
+	r, log, _, _ := newRunner()
+	r.Now = func() string { return "2026-01-01T00:00:00Z" }
+
+	// An event as the reducer hands it over: typed and caused, but anonymous.
+	fx := []kernel.Effect{kernel.Emit{Event: kernel.Event{
+		Type:     kernel.StageEntered,
+		CausedBy: []string{"root-1"},
+	}}}
+
+	if _, err := r.Run(context.Background(), fx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(log.events) != 1 {
+		t.Fatalf("expected 1 event in the log, got %d", len(log.events))
+	}
+
+	got := log.events[0]
+	if got.ID == "" {
+		t.Fatalf("event %s reached the log with an empty ID.\n"+
+			"Consequence: caused_by holds event IDs, so nothing can ever reference "+
+			"this event and `run why` cannot walk a chain through it. Every event "+
+			"the reducer derives is affected, which is most of the log.\n"+
+			"Remedy: Runner.stamp must assign an ID to any event arriving without "+
+			"one, and both Append call sites must route through it.", got.Type)
+	}
+	if got.Ts == "" {
+		t.Fatalf("event %s reached the log with an empty Ts.\n"+
+			"Consequence: the log cannot be read chronologically and no duration "+
+			"can be computed from it, so a run's cost over time is unreportable.\n"+
+			"Remedy: Runner.stamp must set Ts from the injected Now when the event "+
+			"arrives without one.", got.Type)
+	}
+}
+
+// TestAnUnstampedEventPoisonsItsDescendants is the reason the gap above is
+// severe rather than cosmetic, and it is the part that a "field is empty" check
+// does not express.
+//
+// kernel.derived() builds a child as CausedBy: []string{cause.ID} and inherits
+// CorrelationID from the cause. So an unstamped parent does not merely lack an
+// id: it hands "" down as the identity of the cause, and the child inherits a
+// blank correlation too. The damage therefore spreads along the causal graph
+// instead of staying on one event, and it spreads silently, because a chain of
+// events all claiming to be caused by "" is structurally valid JSON that folds
+// without complaint.
+//
+// The test asserts the fix is upstream of derivation: the parent must already
+// have an id by the time anything is derived from it.
+func TestAnUnstampedEventPoisonsItsDescendants(t *testing.T) {
+	r, log, _, _ := newRunner()
+	r.Now = func() string { return "2026-01-01T00:00:00Z" }
+
+	parent := kernel.Event{Type: kernel.StageEntered, Scope: "run:r1"}
+	if _, err := r.Run(context.Background(), []kernel.Effect{kernel.Emit{Event: parent}}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	stamped := log.events[0]
+
+	// Derive from the event AS THE LOG HOLDS IT, which is how a real step works:
+	// the reducer folds the log and derives from what it read there.
+	child := kernel.Event{
+		Type:          kernel.StageAdvanced,
+		CausedBy:      []string{stamped.ID},
+		CorrelationID: stamped.ID,
+	}
+	if _, err := r.Run(context.Background(), []kernel.Effect{kernel.Emit{Event: child}}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	got := log.events[1]
+	if len(got.CausedBy) != 1 || got.CausedBy[0] == "" {
+		t.Fatalf("derived event %s has caused_by %v.\n"+
+			"Consequence: an empty cause id means the causal graph collapses to a "+
+			"single anonymous node that every event claims as its parent. The log "+
+			"stays valid and folds cleanly, so nothing reports the damage, and "+
+			"`run why` returns a chain that is plausible and wrong.\n"+
+			"Remedy: stamp events on the way IN to the log, so anything derived "+
+			"from them later reads a real id.", got.Type, got.CausedBy)
+	}
+	if got.CausedBy[0] != stamped.ID {
+		t.Fatalf("derived event points at %q but its parent is %q: the chain does "+
+			"not lead back to the event that caused it, so `run why` walks to the "+
+			"wrong ancestor", got.CausedBy[0], stamped.ID)
+	}
+}
+
+// TestExecutorSuppliedIdsAreNotOverwritten protects the other direction of the
+// same fix.
+//
+// The Fake derives its ids from the effect's content, and a real provider
+// returns ids that identify the call on the provider's side. Both are more
+// specific than anything the runner could mint, and the provider's is the only
+// handle support has when reconciling a bill. Stamping unconditionally would
+// discard exactly the identifier worth keeping.
+func TestExecutorSuppliedIdsAreNotOverwritten(t *testing.T) {
+	r, log, _, _ := newRunner()
+	r.Now = func() string { return "2026-01-01T00:00:00Z" }
+
+	fx := []kernel.Effect{kernel.SpawnTurn{Agent: "writer"}}
+	if _, err := r.Run(context.Background(), fx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(log.events) == 0 {
+		t.Fatal("the turn produced no events")
+	}
+	for _, e := range log.events {
+		if !contains(e.ID, "sim-writer") {
+			t.Fatalf("event %s has id %q, want the Fake's own id preserved.\n"+
+				"Consequence: overwriting an executor-supplied id throws away the "+
+				"identifier that ties the event to the provider call it records, "+
+				"which is what a cost dispute is reconciled against.\n"+
+				"Remedy: stamp only when ID is empty.", e.Type, e.ID)
+		}
+	}
+}
+
+// TestMintedIdsAreUniqueAcrossAStep guards the boring failure that would make
+// the fix worse than the bug: ids that exist but repeat.
+//
+// A duplicate id is harder to detect than a missing one, because every
+// consumer accepts it. caused_by would then resolve to two different events and
+// `run why` would report a causal graph containing a fork that never happened.
+func TestMintedIdsAreUniqueAcrossAStep(t *testing.T) {
+	r, log, _, _ := newRunner()
+	r.Now = func() string { return "2026-01-01T00:00:00Z" }
+
+	var fx []kernel.Effect
+	for i := 0; i < 5; i++ {
+		fx = append(fx, kernel.Emit{Event: kernel.Event{Type: kernel.StageEntered}})
+	}
+	// Two steps, because the counter must survive across Run calls: a run is
+	// many steps and ids must not restart at each one.
+	if _, err := r.Run(context.Background(), fx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if _, err := r.Run(context.Background(), fx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	seen := map[string]int{}
+	for _, e := range log.events {
+		seen[e.ID]++
+		if seen[e.ID] > 1 {
+			t.Fatalf("id %q was assigned to %d events.\n"+
+				"Consequence: caused_by resolves to more than one event, so the "+
+				"causal graph gains branches that never existed. A duplicate id is "+
+				"worse than a missing one because every reader accepts it.\n"+
+				"Remedy: the id counter must be monotonic for the life of the "+
+				"runner, not per step.", e.ID, seen[e.ID])
+		}
+	}
+	if len(seen) != 10 {
+		t.Fatalf("got %d distinct ids over 10 events, want 10", len(seen))
+	}
+}
+
+// TestSeedIDsPreventsCollisionsOnResume covers the case where the run did not
+// start from an empty log.
+//
+// On resume the runner is new but the log is not. A counter starting at zero
+// re-issues ids the earlier half already wrote, so caused_by stops identifying
+// one event and starts identifying two — and the collision is between the two
+// halves of the same run, which is where causal questions are actually asked.
+func TestSeedIDsPreventsCollisionsOnResume(t *testing.T) {
+	r, log, _, _ := newRunner()
+	r.Now = func() string { return "2026-01-01T00:00:00Z" }
+
+	fx := []kernel.Effect{kernel.Emit{Event: kernel.Event{Type: kernel.StageEntered}}}
+	for i := 0; i < 3; i++ {
+		if _, err := r.Run(context.Background(), fx); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+	}
+	before := map[string]bool{}
+	for _, e := range log.events {
+		before[e.ID] = true
+	}
+	tip := log.events[len(log.events)-1].Seq
+
+	// A fresh runner over the same log: this is resume.
+	resumed := &Runner{Log: log, Clock: NewVirtualClock(), Executor: NewFake(),
+		Now: func() string { return "2026-01-01T00:00:01Z" }}
+	resumed.SeedIDs(tip)
+
+	if _, err := resumed.Run(context.Background(), fx); err != nil {
+		t.Fatalf("Run after resume: %v", err)
+	}
+	got := log.events[len(log.events)-1]
+	if before[got.ID] {
+		t.Fatalf("the resumed runner re-issued id %q, which the log already holds.\n"+
+			"Consequence: two distinct events share an id inside one run, so any "+
+			"caused_by pointing at it is ambiguous exactly where causality is "+
+			"most often questioned — across a crash and a resume.\n"+
+			"Remedy: call SeedIDs with the log tip before the first step of a "+
+			"resumed run.", got.ID)
+	}
+}
+
+// ----------------------------------------------------------------- provenance
+
+// TestExecutorEventsCarryTheCauseOfTheirEffect is the producer half of what
+// `arxi event trace` reads.
+//
+// kernel.derived writes the causality triple on what the REDUCER emits, and for
+// a while it was the only thing in the tree writing it: stamp filled ID and Ts
+// and nothing else, so every event an agent turn produced arrived with no cause.
+// Measured on a real 21-event --sim log, 5 events carried a cause and 16 did
+// not. An agent turn -- the part of a run anybody actually asks about -- was a
+// hole in the chain, every correlation group was rooted at an executor event
+// instead of at run.started, and depth 0 on all sixteen cleared the MaxDepth
+// brake in wakeWatchers as if each were a root cause.
+//
+// The depth assertion is also the flatness one: all of this turn's events sit at
+// the effect's depth, not at 3, 4, 5, 6. One effect is one causal step. See the
+// note on attribute for what chaining them would cost a cascade.
+func TestExecutorEventsCarryTheCauseOfTheirEffect(t *testing.T) {
+	r, log, _, _ := newRunner()
+	r.Now = func() string { return "2026-01-01T00:00:00Z" }
+
+	cause := kernel.Cause{Events: []string{"e1"}, CorrelationID: "c1", Depth: 3}
+	fx := []kernel.Effect{kernel.SpawnTurn{Agent: "writer", Cause: cause}}
+	if _, err := r.Run(context.Background(), fx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(log.events) < 2 {
+		t.Fatalf("the turn produced %d events, want the whole lifecycle",
+			len(log.events))
+	}
+	for _, e := range log.events {
+		if !reflect.DeepEqual(e.CausedBy, cause.Events) {
+			t.Errorf("%s (%s) records caused_by %v, want %v.\n"+
+				"Consequence: the event is a root of its own causal thread, so "+
+				"`arxi event trace` cannot reach it from run.started and the agent "+
+				"turn is a hole in the chain.\n"+
+				"Remedy: copy the effect's Provenance onto its events before "+
+				"stamping them.", e.Type, e.ID, e.CausedBy, cause.Events)
+		}
+		if e.CorrelationID != cause.CorrelationID {
+			t.Errorf("%s (%s) records correlation_id %q, want %q.\n"+
+				"Consequence: the event forms a correlation group of its own, so one "+
+				"run's history reads as many unrelated threads.\n"+
+				"Remedy: the same one.", e.Type, e.ID, e.CorrelationID,
+				cause.CorrelationID)
+		}
+		if e.Depth != cause.Depth {
+			t.Errorf("%s (%s) records depth %d, want %d.\n"+
+				"Consequence: at depth 0 every executor event clears the MaxDepth "+
+				"brake in wakeWatchers as if it were a root cause, so a watcher "+
+				"cascade has no bottom and every generation of it is billed.\n"+
+				"Remedy: the same one -- and flat, one depth for the whole turn.",
+				e.Type, e.ID, e.Depth, cause.Depth)
+		}
+	}
+}
+
+// TestEachEffectsEventsCarryItsOwnCause guards the pairing, which is how this
+// can be wrong while looking right.
+//
+// Two turns open in the same step, in parallel, from different causes and at
+// different depths. If attribution read a shared cause -- or the wrong element
+// of the effect slice, the same class of bug as appending in completion order --
+// every event would still carry a plausible triple and every footer count in
+// `arxi event log` would still add up. The chain would simply attach one
+// member's turn to the reason a DIFFERENT member was woken, and nothing
+// downstream can detect that: it reads as a run where the wrong agent reacted.
+func TestEachEffectsEventsCarryItsOwnCause(t *testing.T) {
+	r, log, _, _ := newRunner()
+	r.Now = func() string { return "2026-01-01T00:00:00Z" }
+
+	fx := []kernel.Effect{
+		kernel.SpawnTurn{Agent: "writer", Cause: kernel.Cause{
+			Events: []string{"e-writer"}, CorrelationID: "c1", Depth: 1}},
+		kernel.SpawnTurn{Agent: "editor", Cause: kernel.Cause{
+			Events: []string{"e-editor"}, CorrelationID: "c1", Depth: 7}},
+	}
+	if _, err := r.Run(context.Background(), fx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// The Fake stamps every event of a turn with the agent as Actor, so who each
+	// event belongs to is readable without reconstructing the split.
+	wantCause := map[string]string{"writer": "e-writer", "editor": "e-editor"}
+	wantDepth := map[string]int{"writer": 1, "editor": 7}
+	seen := map[string]int{}
+	for _, e := range log.events {
+		seen[e.Actor]++
+		if len(e.CausedBy) != 1 || e.CausedBy[0] != wantCause[e.Actor] {
+			t.Errorf("%s's %s records caused_by %v, want [%s].\n"+
+				"Consequence: the turn is attributed to the reason another member was "+
+				"woken, which reads as a run where the wrong agent reacted -- a shape "+
+				"no consumer can tell from a correct one.\n"+
+				"Remedy: attribute outcomes[i] from fx[i], never from a cause shared "+
+				"across the step.", e.Actor, e.Type, e.CausedBy, wantCause[e.Actor])
+		}
+		if e.Depth != wantDepth[e.Actor] {
+			t.Errorf("%s's %s records depth %d, want %d.\n"+
+				"Consequence: a turn inherits another turn's distance from the root, so "+
+				"MaxDepth brakes a shallow cascade and lets a deep one run.\n"+
+				"Remedy: the same one.", e.Actor, e.Type, e.Depth, wantDepth[e.Actor])
+		}
+	}
+	if seen["writer"] == 0 || seen["editor"] == 0 {
+		t.Fatalf("events per actor = %v; both turns must have produced some, or "+
+			"this test asserts nothing", seen)
+	}
+}
+
+// TestAProducerNamedCauseIsNotOverwritten protects the other direction, on the
+// same rule stamp follows for an id it did not mint.
+//
+// An executor that fills the triple itself knows something the effect's Cause
+// does not -- a provider that ran a nested cascade can say which of its own
+// steps produced which event, and that is finer than "everything this turn
+// wrote came from the reason the turn was opened". Overwriting it would flatten
+// exactly the detail worth having, and it would make Apply destructive on an
+// event built by kernel.derived, which arrives already attributed.
+func TestAProducerNamedCauseIsNotOverwritten(t *testing.T) {
+	r, log, _, _ := newRunner()
+	r.Now = func() string { return "2026-01-01T00:00:00Z" }
+	r.Executor = &attributingExecutor{}
+
+	fx := []kernel.Effect{kernel.SpawnTurn{Agent: "writer", Cause: kernel.Cause{
+		Events: []string{"e1"}, CorrelationID: "c1", Depth: 3}}}
+	if _, err := r.Run(context.Background(), fx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(log.events) != 1 {
+		t.Fatalf("got %d events, want the 1 this executor returns", len(log.events))
+	}
+
+	got := log.events[0]
+	want := kernel.Cause{Events: []string{"nested-step"},
+		CorrelationID: "other-thread", Depth: 9}
+	if !reflect.DeepEqual(got.CausedBy, want.Events) ||
+		got.CorrelationID != want.CorrelationID || got.Depth != want.Depth {
+		t.Fatalf("the event kept caused_by %v / corr %q / depth %d, want %v / %q / %d.\n"+
+			"Consequence: attribution overwrites a producer that named its own "+
+			"parents, so the finer causality a provider reported is replaced by the "+
+			"turn's -- and the same overwrite would blank the triple kernel.derived "+
+			"already wrote.\n"+
+			"Remedy: Cause.Apply returns early on a non-empty CausedBy.",
+			got.CausedBy, got.CorrelationID, got.Depth,
+			want.Events, want.CorrelationID, want.Depth)
+	}
+}
+
+// attributingExecutor is a provider that reports its own causality, which a real
+// one legitimately can: it ran the steps and knows which produced what.
+type attributingExecutor struct{}
+
+func (attributingExecutor) SpawnTurn(ctx context.Context, e kernel.SpawnTurn) ([]kernel.Event, error) {
+	return []kernel.Event{{
+		ID: "x1", Type: kernel.AgentTurnDone, Actor: e.Agent,
+		CausedBy: []string{"nested-step"}, CorrelationID: "other-thread", Depth: 9,
+	}}, nil
+}
+
+func (attributingExecutor) CallTool(ctx context.Context, e kernel.CallTool) ([]kernel.Event, error) {
+	return nil, nil
+}
+
+func (attributingExecutor) AskHuman(ctx context.Context, e kernel.AskHuman) ([]kernel.Event, error) {
+	return nil, nil
+}

@@ -1,0 +1,39 @@
+# CI job for the imported core (to be pasted into .github/workflows/ci.yml)
+#
+# The automation account that prepares pull requests has no permission to edit
+# workflow files, so this job is kept here. Append it under 'jobs:' in ci.yml.
+# Without it, 'go test ./...' at the repo root does NOT test core/ (a nested module).
+
+jobs:
+  # The arxi core lives in core/ as its OWN Go module (its own go.mod, its own
+  # toolchain floor, no third-party dependencies). The root `go test ./...` above does
+  # not descend into it, because a nested module is excluded from the parent's
+  # patterns -- so without this job the core would be imported and never tested.
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # The core's tests run on Linux only for now: its architecture tests shell out to
+      # grep and go list, and its Windows-specific branches are covered by the vet step
+      # above (which type-checks them) until a Windows test run is proven green.
+      - name: Test
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -count=1 ./...

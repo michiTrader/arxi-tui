@@ -1,0 +1,118 @@
+{
+  "state": {
+    "run_id": "r1",
+    "actor": "team",
+    "status": "running",
+    "seq": 7,
+    "blueprint_sha": "abc123",
+    "stage": "execute",
+    "stage_index": 0,
+    "members": [
+      {
+        "name": "backend",
+        "role": "coordinator",
+        "state": "waiting",
+        "detail": "approval",
+        "blocked_on": {
+          "inbox_id": "inbox-1",
+          "policy": "ask",
+          "tool": "bash"
+        },
+        "since_seq": 5,
+        "spent_usd": 0,
+        "turns": 1,
+        "turn_open": true
+      },
+      {
+        "name": "designer",
+        "state": "submitted",
+        "since_seq": 7,
+        "spent_usd": 0.42,
+        "turns": 0,
+        "submitted": true,
+        "turn_open": true
+      },
+      {
+        "name": "frontend",
+        "state": "idle",
+        "since_seq": 1,
+        "spent_usd": 0,
+        "turns": 0,
+        "turn_open": true
+      },
+      {
+        "name": "mediator",
+        "advisory": true,
+        "state": "inactive",
+        "since_seq": 1,
+        "spent_usd": 0,
+        "turns": 0
+      }
+    ],
+    "spent_usd": 0.42,
+    "budget_usd": 5,
+    "turns": 1,
+    "tree_spent_usd": 0.42,
+    "spawn_depth": 0,
+    "inbox": [
+      {
+        "id": "inbox-1",
+        "kind": "tool_approval",
+        "question": "approve bash for backend?",
+        "agent": "backend",
+        "on_timeout": "deny"
+      }
+    ],
+    "active_timer": "stage:execute",
+    "next_inbox_id": 2
+  },
+  "why": {
+    "run_id": "r1",
+    "lines": [
+      {
+        "depth": 0,
+        "text": "run r1: running"
+      },
+      {
+        "depth": 1,
+        "text": "stage \"execute\" advances when: all"
+      },
+      {
+        "depth": 2,
+        "text": "missing the submit of: backend, frontend"
+      },
+      {
+        "depth": 1,
+        "text": "backend: waiting (approval) since seq 5"
+      },
+      {
+        "depth": 2,
+        "text": "waits for approval of the tool \"bash\" (inbox inbox-1)"
+      },
+      {
+        "depth": 2,
+        "text": "to avoid being asked about this tool again:"
+      },
+      {
+        "depth": 1,
+        "text": "designer is in fact working (submitted) since seq 7"
+      },
+      {
+        "depth": 1,
+        "text": "frontend has a turn opening that has not started yet (idle since seq 1)"
+      },
+      {
+        "depth": 1,
+        "text": "question inbox-1 (tool_approval) waits on you: approve bash for backend? -- asked by backend"
+      },
+      {
+        "depth": 1,
+        "text": "budget: 0.4200 of 5.0000 USD spent in the tree"
+      }
+    ],
+    "fix": [
+      "arxi inbox approve inbox-1",
+      "arxi agent tool policy --agent backend --allow bash"
+    ]
+  }
+}
