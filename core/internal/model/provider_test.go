@@ -410,3 +410,69 @@ func TestAHostThatMerelyLooksLocalStillGetsAVariable(t *testing.T) {
 			"its owner points it at, so a credential would be sent to a stranger")
 	}
 }
+
+func TestAddModelRegistersAnEnabledPricedModel(t *testing.T) {
+	p, err := New("together", "https://api.together.xyz/v1", "", "t")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.AddModel("meta/llama-3-70b", &Price{InUSDPerMTok: 0.9, OutUSDPerMTok: 0.9}); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Models) != 1 || !p.Models[0].Enabled || p.Models[0].Price == nil {
+		t.Fatalf("models = %+v; want one enabled model carrying its price", p.Models)
+	}
+	if err := p.Validate(); err != nil {
+		t.Fatalf("a provider with a hand-added model must validate: %v", err)
+	}
+}
+
+func TestAddModelRefusesWhatCannotBeCalled(t *testing.T) {
+	p, _ := New("together", "https://api.together.xyz/v1", "", "t")
+	_ = p.AddModel("m1", nil)
+	cases := map[string]struct {
+		id    string
+		price *Price
+	}{
+		"empty id":       {"  ", nil},
+		"whitespace id":  {"two words", nil},
+		"duplicate id":   {"m1", nil},
+		"negative input": {"m2", &Price{InUSDPerMTok: -1, OutUSDPerMTok: 1}},
+		"negative out":   {"m3", &Price{InUSDPerMTok: 1, OutUSDPerMTok: -1}},
+	}
+	for name, c := range cases {
+		if err := p.AddModel(c.id, c.price); err == nil {
+			t.Errorf("%s: AddModel accepted it", name)
+		}
+	}
+	if len(p.Models) != 1 {
+		t.Errorf("a refused model was added anyway: %+v", p.Models)
+	}
+}
+
+func TestADeclaredPriceBeatsTheTableAndAZeroPriceIsAPrice(t *testing.T) {
+	declared := Price{InUSDPerMTok: 7, OutUSDPerMTok: 9}
+	got, ok := PriceFor(Resolution{Model: "gpt-5.1", Price: &declared})
+	if !ok || got != declared {
+		t.Errorf("PriceFor = %+v, %v; want the operator's declaration over the table", got, ok)
+	}
+	zero := Price{}
+	if _, ok := PriceFor(Resolution{Model: "my-local-thing", Price: &zero}); !ok {
+		t.Error("a declared price of zero was treated as no price; a free local model could never run")
+	}
+	if _, ok := PriceFor(Resolution{Model: "my-local-thing"}); ok {
+		t.Error("an undeclared, unknown model was priced; the budget would never move")
+	}
+	if got, ok := PriceFor(Resolution{Model: "gpt-5.1"}); !ok || got.InUSDPerMTok != 1.25 {
+		t.Errorf("table price lost: %+v, %v", got, ok)
+	}
+}
+
+func TestResolveCarriesTheDeclaredPrice(t *testing.T) {
+	p, _ := New("together", "https://api.together.xyz/v1", "", "t")
+	_ = p.AddModel("m1", &Price{InUSDPerMTok: 2, OutUSDPerMTok: 3})
+	res, err := Resolve([]Provider{p}, "together/m1")
+	if err != nil || res.Price == nil || res.Price.OutUSDPerMTok != 3 {
+		t.Fatalf("Resolve = %+v, %v; want the declared price carried through", res, err)
+	}
+}

@@ -154,7 +154,7 @@ func effectiveArtifact(f startFlags, bpSHA string, cfg kernel.Config) (runconfig
 		if err != nil {
 			return runconfig.Artifact{}, err
 		}
-		price, ok := model.PriceOf(res.Model)
+		price, ok := model.PriceFor(res)
 		if !ok {
 			return runconfig.Artifact{}, &model.ErrNoPrice{Ref: res.Model}
 		}

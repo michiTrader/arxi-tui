@@ -77,6 +77,14 @@ type Provider struct {
 type Model struct {
 	ID      string `json:"id"`
 	Enabled bool   `json:"enabled"`
+
+	// Price is the operator's own declaration of what this model costs. It is
+	// set only for a model the user added by hand (`model add`), because that is
+	// the only kind this build has no published price for. A model from the
+	// shipped table leaves it nil and is priced from the table, so a vendor
+	// price change still reaches it; a declared price wins, because the
+	// operator who typed it knows their own contract.
+	Price *Price `json:"price,omitempty"`
 }
 
 const (
@@ -283,6 +291,9 @@ func (p Provider) Validate() error {
 				"status would never appear to change", p.Name, m.ID)
 		}
 		seen[m.ID] = true
+		if err := validatePrice(m.ID, m.Price); err != nil {
+			return fmt.Errorf("provider %q: %w", p.Name, err)
+		}
 	}
 	return nil
 }
@@ -456,6 +467,64 @@ func looksLikeASecret(v string) bool {
 		return true
 	}
 	return false
+}
+
+// AddModel registers a model by hand, for an endpoint this build cannot ask what
+// it serves. A provider added with --base-url starts with no models (see New),
+// so without this the user could register an endpoint and never call it.
+//
+// The model arrives ENABLED: the person who typed its id wants to use it, and
+// the "first model only" rule exists to protect against an expensive model the
+// user never named. A price is optional; without one the model is listed but a
+// run refuses it (see PriceFor), which is the safe state for a cost nobody
+// declared.
+func (p *Provider) AddModel(id string, price *Price) error {
+	id = strings.TrimSpace(id)
+	if err := validateModelID(id); err != nil {
+		return err
+	}
+	if err := validatePrice(id, price); err != nil {
+		return err
+	}
+	for _, m := range p.Models {
+		if m.ID == id {
+			return fmt.Errorf("provider %q already offers a model called %q.\n"+
+				"  see what it offers: arxi model list", p.Name, id)
+		}
+	}
+	p.Models = append(p.Models, Model{ID: id, Enabled: true, Price: price})
+	return nil
+}
+
+// validateModelID refuses an id that could not be sent as a model name. A
+// qualified ref ("provider/id") is split at the FIRST slash, so an id may itself
+// contain slashes (openrouter ids do) but never whitespace.
+func validateModelID(id string) error {
+	if id == "" {
+		return fmt.Errorf("a model needs an id: it is the name sent to the provider")
+	}
+	if len(id) > 200 {
+		return fmt.Errorf("model id is %d characters long; no provider names a model that way", len(id))
+	}
+	for _, r := range id {
+		if r <= ' ' || r == 0x7f {
+			return fmt.Errorf("model id %q contains whitespace or a control character", id)
+		}
+	}
+	return nil
+}
+
+// validatePrice refuses a price that cannot be real. A negative rate would make
+// a run CREDIT the budget for every token it spends.
+func validatePrice(id string, price *Price) error {
+	if price == nil {
+		return nil
+	}
+	if price.InUSDPerMTok < 0 || price.OutUSDPerMTok < 0 {
+		return fmt.Errorf("model %q has a negative price: a negative rate would "+
+			"credit the budget for every token the run spends", id)
+	}
+	return nil
 }
 
 // SetEnabled turns one model on or off, reporting whether anything changed.

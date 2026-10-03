@@ -591,7 +591,7 @@ func (x *Executor) resolve(agent string) (model.Resolution, model.Price, error) 
 	}
 	price, ok := x.Prices[res.Model]
 	if x.Prices == nil {
-		price, ok = model.PriceOf(res.Model)
+		price, ok = model.PriceFor(res)
 	}
 	if !ok {
 		return model.Resolution{}, model.Price{}, &model.ErrNoPrice{Ref: res.Model}
@@ -603,7 +603,7 @@ func (x *Executor) newClient(res model.Resolution) *Client {
 	if x.NewClient != nil {
 		return x.NewClient(res)
 	}
-	return &Client{BaseURL: res.BaseURL, APIKeyEnv: res.APIKeyEnv}
+	return &Client{BaseURL: res.BaseURL, APIKeyEnv: res.APIKeyEnv, Provider: res.Provider}
 }
 
 // id mints an event id.
