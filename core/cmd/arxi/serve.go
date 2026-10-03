@@ -800,9 +800,9 @@ func handleProviderAdd(params map[string]any) (any, error) {
 	// `base-url`/`api-key-env` to `base_url`/`api_key_env`, and validateParams
 	// has already refused any key not in that set.
 	//
-	// api_key is the key itself. It goes straight to addProvider, which stores
+	// api_key is the key itself. It goes straight to registerProvider, which stores
 	// it in the private secrets folder; the result carries only key_stored.
-	res, err := addProvider(
+	res, err := registerProvider(
 		stringParam(params, "name"), stringParam(params, "base_url"),
 		stringParam(params, "api_key_env"), stringParam(params, "api_key"))
 	if err != nil {

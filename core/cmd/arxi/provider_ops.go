@@ -33,6 +33,13 @@ var secretsOpen = secretstore.OpenDefault
 // creating the folder. A variable for the same reason as secretsOpen.
 var secretsLookup = secretstore.Lookup
 
+// badInvocation marks an error that is the caller's doing (a malformed name, a
+// key that is not a key) as opposed to the machine's (a full disk). The CLI
+// exits 2 for the first and 1 for the second.
+type badInvocation struct{ error }
+
+func (b badInvocation) Unwrap() error { return b.error }
+
 // providerAdded is the result of registering a provider: the record exactly as
 // stored, plus whether a key was stored alongside it. It embeds Provider so the
 // frozen result shape {name, protocol, base_url, api_key_env, models} is intact
@@ -42,20 +49,20 @@ type providerAdded struct {
 	KeyStored bool `json:"key_stored"`
 }
 
-// addProvider registers a provider and, when apiKey is not empty, stores its key.
+// registerProvider registers a provider and, when apiKey is not empty, stores its key.
 //
 // Order: validate the key, write the record, write the key, and if the key
 // write fails remove the record again. The reverse order would be wrong in the
 // common failure: a name that is already taken would have its EXISTING key
 // overwritten by the new one before the store refused the duplicate record.
-func addProvider(name, baseURL, keyEnv, apiKey string) (providerAdded, error) {
+func registerProvider(name, baseURL, keyEnv, apiKey string) (providerAdded, error) {
 	p, err := model.New(name, baseURL, keyEnv, nowFunc().Format(time.RFC3339))
 	if err != nil {
-		return providerAdded{}, err
+		return providerAdded{}, badInvocation{err}
 	}
 	if apiKey != "" {
 		if err := secretstore.CheckKey(apiKey); err != nil {
-			return providerAdded{}, fmt.Errorf("provider %q was not registered: %w", p.Name, err)
+			return providerAdded{}, badInvocation{fmt.Errorf("provider %q was not registered: %w", p.Name, err)}
 		}
 	}
 	store, err := modelstore.Open(providerDir)
