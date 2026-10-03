@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -20,7 +21,11 @@ func buildCore(t *testing.T) string {
 	if testing.Short() {
 		t.Skip("builds the core; skipped with -short")
 	}
-	bin := filepath.Join(t.TempDir(), "arxi")
+	name := "arxi"
+	if runtime.GOOS == "windows" {
+		name += ".exe" // Windows will not execute a file without its extension
+	}
+	bin := filepath.Join(t.TempDir(), name)
 	cmd := exec.Command("go", "build", "-o", bin, "./cmd/arxi")
 	cmd.Dir = "../../core"
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -89,8 +94,12 @@ func TestLoginAgainstTheRealCore(t *testing.T) {
 	if strings.TrimSpace(string(got)) != testKey {
 		t.Errorf("the key file holds %q", got)
 	}
-	if fi, _ := os.Stat(keyFile); fi == nil || fi.Mode().Perm() != 0o600 {
-		t.Errorf("key file mode = %v; want 0600", fi.Mode().Perm())
+	// Windows has no Unix permission bits; Stat reports 0666 there whatever the
+	// core asked for, so the mode is only a claim on Unix.
+	if runtime.GOOS != "windows" {
+		if fi, err := os.Stat(keyFile); err != nil || fi.Mode().Perm() != 0o600 {
+			t.Errorf("key file mode/stat = %v / %v; want 0600", fi, err)
+		}
 	}
 
 	rec, err := os.ReadFile(filepath.Join(work, "providers", "openrouter.json"))
