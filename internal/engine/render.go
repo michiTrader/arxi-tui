@@ -847,7 +847,14 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 				turnToken = errorTurnToken
 				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(errorTurnMarker)), Style: errorTurnToken}}
 			}
-			lines = append(lines, ui.WrapText(text, turnToken, r.Width, cont)...)
+			if h.Role == "assistant" {
+				// The agent's answer is Markdown: headings, lists, tables, fenced code and
+				// inline emphasis are laid out, not shown as raw punctuation. The user's own
+				// words and a failure stay literal, because what a person typed is not markup.
+				lines = append(lines, ui.RenderMarkdown(text, r.Width, turnToken)...)
+			} else {
+				lines = append(lines, ui.WrapText(text, turnToken, r.Width, cont)...)
+			}
 			lines = append(lines, ui.Line{}) // one blank row between turns
 		}
 		if len(lines) > 0 {

@@ -76,3 +76,25 @@ func TestWorkingSpinnerCyclesBrailleFrames(t *testing.T) {
 		t.Errorf("nothing is working, yet the indicator shows: %q", got)
 	}
 }
+
+// An assistant reply is Markdown; the user's own line and an error stay literal.
+func TestChatRendersAssistantMarkdownOnly(t *testing.T) {
+	doc := mustDoc(t, `{"root":{"type":"stack","children":[
+	  {"id":"chat","type":"markdown","bind":"chat.history","grow":1}]}}`)
+	state := fold.Fold([]fold.Event{
+		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "show **me** a table"}},
+		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "# Result\n\n| a | b |\n|--|--|\n| 1 | 2 |\n\n- **x**"}},
+	})
+	r := Renderer{Width: 60, Height: 20}
+	got := r.RenderFrame(doc, state).Plain()
+	for _, want := range []string{"┃ show **me** a table", "Result", "a │ b", "──┼──", "• x"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	for _, bad := range []string{"# Result", "|--|", "- **x**"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("raw markup %q leaked into:\n%s", bad, got)
+		}
+	}
+}
