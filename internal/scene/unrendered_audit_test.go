@@ -101,19 +101,6 @@ var acceptedUnreadFields = map[string]string{
 	// scene itself predates. When list filtering becomes scene-directed
 	// (more than one filter source), this entry is what should fail.
 	"FilterBy": "the host always filters; the field names a behaviour that happens without it",
-
-	// Measured: declared tabs never reach the screen — a list declaring a
-	// category nobody else uses renders no tab for it. Unlike FilterBy this
-	// one IS a silent drop, and unlike row_template it cannot be refused:
-	// SOBRIA ships eleven of them, so refusing would break the default
-	// interface at boot, which invariant 1 forbids more strongly than this
-	// audit demands.
-	//
-	// The honest state is therefore: known gap, no refusal available,
-	// recorded here so it is not rediscovered as a surprise. Category tabs
-	// are Scene 5 / Phase 3 work alongside row_template; when they land,
-	// this entry fails and that is the signal to delete it.
-	"Categories": "declared by SOBRIA and not yet drawn; refusing would break the factory scene (invariant 1)",
 }
 
 type nodeField struct {

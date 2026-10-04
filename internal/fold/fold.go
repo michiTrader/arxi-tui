@@ -215,6 +215,11 @@ type State struct {
 	// reopens. A list bound to slash.matches renders this row bright and every
 	// other row dim (docs/BINDS.md §4.3).
 	SlashSelected int `json:"slash.selected"`
+	// SlashCategory is the menu's active category tab ("All" or empty = every
+	// command) and SlashTabs the tabs on offer. The host owns both; they are view
+	// state for the list node, not binds, so they are never addressed by name.
+	SlashCategory string   `json:"-"`
+	SlashTabs     []string `json:"-"`
 	// CommunityQuery, CommunityMatches and CommunitySelected are the community
 	// installer's live view state (Scene 7, BINDS.md §4.3, signed in the J3
 	// follow-up). They are the slash.* triple's analogue for a registry browse:
@@ -1454,7 +1459,8 @@ var Commands = []SlashMatch{
 	// import would be a cycle, and a fold that imported the patch surface
 	// would stop being the pure host-owned fold ADR-0002 requires.
 	{"ui", "General", "Mutate the scene and its view state (add, move, set, style, hide, show, plugin)"},
-	{"clear", "General", "Start a new session"},
+	// /clear is a host command: it ends the conversation and starts a new one.
+	{"clear", "Session", "Start a new session"},
 	// The provider/model management commands (K2). They are host-intercepted
 	// round-trips over the serve protocol, not patch verbs, so they are NOT held
 	// to patch.Verbs() the way `ui` is -- their subcommands are backed by the
@@ -1463,11 +1469,14 @@ var Commands = []SlashMatch{
 	// subcommands in parentheses are the real ones the parsers accept; keeping
 	// them honest is the same accepted-but-not-drawn discipline the `ui` entry
 	// documents, one layer out in the chrome.
-	{"provider", "Providers", "Add providers, set keys and URLs, manage their models"},
-	{"models", "Providers", "Choose the model to chat with"},
+	{"provider", "Account", "Add providers, set keys and URLs, manage their models"},
+	{"models", "Model", "Choose the model to chat with"},
 	// /login is a host-owned screen like /provider: it round-trips the serve
 	// protocol (provider.add / provider.key / model.add), so it is not a patch verb.
 }
+
+// SlashAll is the name of the tab that shows every category.
+const SlashAll = "All"
 
 // FilterSlashMatches returns the commands matching the typed substring after
 // "/". An empty typed string returns all commands (the menu is open but
@@ -1483,4 +1492,58 @@ func FilterSlashMatches(typed string) []SlashMatch {
 		}
 	}
 	return out
+}
+
+// SlashCategories returns the tabs of the command menu for what is typed after "/":
+// "All" first, then every category that still has a match, in registry order. A
+// category with no match is not offered, so Tab never lands on an empty list.
+func SlashCategories(typed string) []string {
+	tabs := []string{SlashAll}
+	seen := map[string]bool{}
+	for _, m := range FilterSlashMatches(typed) {
+		if !seen[m.Category] {
+			seen[m.Category] = true
+			tabs = append(tabs, m.Category)
+		}
+	}
+	return tabs
+}
+
+// FilterSlashCategory narrows the typed-text matches to one category. "" and
+// "All" mean no narrowing.
+func FilterSlashCategory(typed, category string) []SlashMatch {
+	all := FilterSlashMatches(typed)
+	if category == "" || category == SlashAll {
+		return all
+	}
+	var out []SlashMatch
+	for _, m := range all {
+		if m.Category == category {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// NormalizeSlashCategory returns category if it is still a tab for the typed text,
+// and "All" otherwise (the filter moved on and the category has no match left).
+func NormalizeSlashCategory(typed, category string) string {
+	for _, t := range SlashCategories(typed) {
+		if t == category {
+			return category
+		}
+	}
+	return SlashAll
+}
+
+// NextSlashCategory steps dir (+1 or -1) through the tabs, wrapping at both ends.
+func NextSlashCategory(typed, category string, dir int) string {
+	tabs := SlashCategories(typed)
+	cur := 0
+	for i, t := range tabs {
+		if t == category {
+			cur = i
+		}
+	}
+	return tabs[((cur+dir)%len(tabs)+len(tabs))%len(tabs)]
 }

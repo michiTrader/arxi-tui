@@ -401,7 +401,7 @@ func TestLoopSlashMenuNavigateAndRun(t *testing.T) {
 	frames := strings.Split(tty.output(), frameBegin)
 
 	// The menu must have been open with every command.
-	if !strings.Contains(tty.output(), fmt.Sprintf("Commands %d · type to filter", len(fold.Commands))) {
+	if !strings.Contains(tty.output(), fmt.Sprintf("Commands %d", len(fold.Commands))) {
 		t.Errorf("menu header never rendered; output:\n%s", tty.output())
 	}
 
@@ -450,7 +450,7 @@ func TestLoopSlashMenuEscapeCloses(t *testing.T) {
 	}
 
 	out := tty.output()
-	if !strings.Contains(out, "Commands 1 · type to filter") {
+	if !strings.Contains(out, "Commands 1") {
 		t.Errorf("filtered menu (\"/h\" → help) never rendered; output:\n%s", out)
 	}
 
@@ -494,8 +494,10 @@ func TestLoopSlashMenuTabWalksCategories(t *testing.T) {
 
 	script := []scheduledEvent{
 		{0, keyEvent('/')},
-		{10 * time.Millisecond, arrowEvent(term.KeyDown)},
-		{10 * time.Millisecond, arrowEvent(term.KeyDown)},
+		// Tabs: All -> General -> Session -> Account; the first row of Account is
+		// /provider, a host command that opens the providers screen.
+		{10 * time.Millisecond, arrowEvent(term.KeyTab)},
+		{10 * time.Millisecond, arrowEvent(term.KeyTab)},
 		{10 * time.Millisecond, arrowEvent(term.KeyTab)},
 		{30 * time.Millisecond, enterEvent()},
 		{100 * time.Millisecond, ctrlCharEvent('c')},
@@ -706,7 +708,7 @@ func TestLoopSlashMenuSwapsStatusForHint(t *testing.T) {
 	hintRendered := false
 	for i, f := range frames {
 		stripped := stripANSI(f)
-		if strings.Contains(stripped, "navigate · enter use · esc close") {
+		if strings.Contains(stripped, "navigate · tab category · enter open · esc close") {
 			hintRendered = true
 			// The hint frame must not carry the status bar on the same screen.
 			if strings.Contains(stripped, "openai/gpt-4o") {

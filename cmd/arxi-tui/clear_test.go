@@ -25,15 +25,15 @@ func TestClearCommandMatching(t *testing.T) {
 		{"clear", false},
 		{"", false},
 	} {
-		if got := clearCommand(tc.in, 0); got != tc.want {
+		if got := clearCommand(tc.in, 0, ""); got != tc.want {
 			t.Errorf("clearCommand(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
 	// A menu pick: "/cle" filters to one row, "clear".
-	if !clearCommand("/cle", 0) {
+	if !clearCommand("/cle", 0, "") {
 		t.Error("the highlighted menu row 'clear' should count as /clear")
 	}
-	if clearCommand("/hel", 0) {
+	if clearCommand("/hel", 0, "") {
 		t.Error("the 'help' row must not clear")
 	}
 }

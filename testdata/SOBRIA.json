@@ -32,14 +32,15 @@
 
   { "id": "menu", "type": "overlay", "anchor": "bottom", "when": "slash.active",
     "children": [
-      { "type": "rule" },
+      { "type": "rule", "style": {"style": "menu.rule"} },
       { "id": "cmds", "type": "list", "bind": "slash.matches",
         "filter_by": "typed", "count": true,
         "categories": ["All","General","Session","Account","Model",
-                       "Appearance","Security","Workspace","Media","Extensions","Product"] } ] },
+                       "Appearance","Security","Workspace","Media","Extensions","Product"] },
+      { "type": "rule", "style": {"style": "menu.rule"} } ] },
 
   { "id": "status", "type": "row", "children": [
-    { "type": "text", "bind": "slash.hint", "style": {"style": "dim"},
+    { "type": "text", "bind": "slash.hint", "style": {"style": "menu.hint"},
       "when": "slash.hint" },
     { "type": "text", "bind": "host.run.actor", "style": {"style": "dim"},
       "when": "host.run.actor" },
