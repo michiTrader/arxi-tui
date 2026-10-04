@@ -40,8 +40,8 @@ func TestNeitherSourceNamesTheFixAndNeverALeakedKey(t *testing.T) {
 	if !errors.As(err, &nc) {
 		t.Fatalf("err = %v; want *ErrNoCredential", err)
 	}
-	if !strings.Contains(err.Error(), "/login") {
-		t.Errorf("the message does not point at /login: %v", err)
+	if !strings.Contains(err.Error(), "/provider") {
+		t.Errorf("the message does not point at /provider: %v", err)
 	}
 }
 

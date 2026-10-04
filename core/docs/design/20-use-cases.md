@@ -2,7 +2,7 @@
 
 ## 20.0 What this document is for
 
-`arxi surface` lists the 53 declared capabilities. A list is not a design: it
+`arxi surface` lists the 59 declared capabilities. A list is not a design: it
 tells you what exists and nothing about whether the set is *coherent*. Two
 questions a list cannot answer:
 
@@ -20,9 +20,9 @@ against the registry in both directions, so a capability no scenario reaches and
 a scenario invoking a verb that does not exist each turn the build red and name
 themselves.
 
-**Status of the commands.** All 53 run today. Every capability `arxi surface`
+**Status of the commands.** All 59 run today. Every capability `arxi surface`
 declares has a command behind it, `design` last of them, and the count is
-measured rather than asserted: `cmd/arxi/surface_coverage_test.go` invokes all 53
+measured rather than asserted: `cmd/arxi/surface_coverage_test.go` invokes all 59
 against the built binary and compares the tally with the figure README.md states.
 ADR-0001 explains why declaring the whole surface before building any of it was
 deliberate.
@@ -105,6 +105,38 @@ price you pay, in USD per million tokens, both directions or neither:
 $ arxi model add local llama3.2 --in 0 --out 0
 model llama3.2 added to local
 ```
+
+**Not typing the models at all.** Almost every endpoint can say what it
+serves, so a person who has just registered a provider should not have to look
+its model ids up. `model discover` asks the endpoint and adds what it lists,
+enabled, leaving any model already there (its price, its enabled flag) exactly
+as it was:
+
+```
+$ arxi model discover openrouter
+openrouter serves 312 models; 312 new added
+```
+
+A provider that moves (a new endpoint, a rotated variable name) is changed in
+place with `provider update`, which never touches its models; one that is no
+longer wanted is forgotten with `provider remove`, which also deletes its stored
+key and any default that pointed into it, because a key nobody can see in a list
+is a secret left lying around. A single model goes with `model remove`.
+
+**Talking to it.** A person who only wants to ask a question needs no agent, no
+blueprint and no budget flag. `model default` chooses the model that answers when
+none is named, `chat send` sends one message, and the TUI's chat is this same
+call with the earlier turns attached:
+
+```
+$ arxi model default openrouter/anthropic/claude-sonnet-4.5
+default model: openrouter/anthropic/claude-sonnet-4.5
+$ arxi chat send "say hi"
+Hi! How can I help?
+```
+
+With nothing chosen and more than one model enabled, it refuses and says so
+instead of guessing which one to bill.
 
 ```
 $ arxi agent create reviewer --model gpt-5.1 --tools read,grep
@@ -1029,12 +1061,12 @@ message type are three **mechanical projections of one registry entry** —
 synonym anywhere would fork the vocabulary and require a hand-maintained mapping
 forever.
 
-Of 53 declared capabilities, **34 are exposed as agent tools**. The 19 that are
+Of 59 declared capabilities, **34 are exposed as agent tools**. The 25 that are
 not are a security boundary, not an oversight:
 
 | not an agent tool | why an agent must not have it |
 |---|---|
-| `provider add`, `provider key`, `provider list`, `model add`, `model enable`, `model disable` | credentials and model availability are operator decisions; an agent that can enable models can route itself to a more expensive one. `provider key` is the sharpest of them: an agent that could replace a key could redirect every later run's spend to an account of its choosing. `model add` writes the price a run is budgeted against, so an agent that could add a model could add it at zero |
+| `provider add`, `provider key`, `provider list`, `provider update`, `provider remove`, `model add`, `model discover`, `model remove`, `model default`, `model enable`, `model disable`, `chat send` | credentials and model availability are operator decisions; an agent that can enable models can route itself to a more expensive one. `provider key` is the sharpest of them: an agent that could replace a key could redirect every later run's spend to an account of its choosing. `model add` writes the price a run is budgeted against, so an agent that could add a model could add it at zero. `chat send` spends the operator's money with no run, no budget ceiling and no log, so it is the operator's call and never a tool |
 | `agent tool policy` | an agent that can widen its own tool policy does not have a policy |
 | `role define`, `blueprint create`, `blueprint install` | these define what agents *are* and how they are judged; installing a blueprint is closer to installing code than to doing work |
 | `inbox approve`, `inbox reject`, `inbox reply` | these are the human's side of the conversation. An agent that could approve its own inbox item turns `ToolPolicy: ask` into `allow` |

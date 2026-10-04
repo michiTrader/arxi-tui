@@ -1,0 +1,24 @@
+«header:Δr×i v0.1.0 · providers»
+Choose the model to chat with (type to filter):
+«text:3»«text: »«text:models»«text: »«text:available.»«text: »«text:Enter»«text: »«text:makes»«text: »«text:the»«text: »«text:highlighted»«text: »«text:one»«text: »«text:the»«text: »«text:model»«text: »«text:the»«text: »«text:chat»«text: »«text:uses.»
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+«input:┃ »«input.placeholder:»
+«rule:────────────────────────────────────────────────────────────────────────────────»
+  gemini-3.1-flash-lite [google]                                                
+→ ✓ gemini-3.6-flash [google] · default                                         
+  gpt-4o [openai]                                                               
+  Other…                                                                        
+«dim:type to filter · ↑↓ move · enter select · esc back»                              

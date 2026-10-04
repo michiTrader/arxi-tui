@@ -1,0 +1,24 @@
+Δr×i v0.1.0 · providers
+Choose the model to chat with (type to filter):
+3 models available. Enter makes the highlighted one the model the chat uses.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+┃ 
+────────────────────────────────────────────────────────────────────────────────
+  gemini-3.1-flash-lite [google]                                                
+→ ✓ gemini-3.6-flash [google] · default                                         
+  gpt-4o [openai]                                                               
+  Other…                                                                        
+type to filter · ↑↓ move · enter select · esc back                              

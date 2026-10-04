@@ -204,21 +204,13 @@ var signedBinds = map[string]bool{
 	"config.categories": true,
 	"config.settings":   true,
 
-	// §4.3/§4.7 view state — the providers screen's one list (Scene 12, K2
-	// follow-up). Host-owned view state in the config.settings mould: the host
-	// fills it from a model.list round-trip over the serve socket, not from an
-	// arxi-core run event, and a `list` renders one row per model with a
-	// row_template that toggles each through an enable/disable button.
-	"providers.models":   true,
-	"providers.selected": true,
-
-	// §4.3/§4.7 view state — the /login screen's four binds. Host-composed text and
-	// one list; see fold.State for why the host composes them (the API key must
-	// never be in State, so the form's key row is published already masked).
-	"login.title": true,
-	"login.rows":  true,
-	"login.pager": true,
-	"login.hint":  true,
+	// §4.3/§4.7 view state — the provider hub (/provider and /models). Host-composed
+	// text and one list; see fold.State for why the host composes them (the API key
+	// must never be in State, so a form's key row is published already masked).
+	"hub.title":  true,
+	"hub.rows":   true,
+	"hub.hint":   true,
+	"hub.detail": true,
 
 	// §4.3 view state — the selected community entry's scalar projection (Scene
 	// 7, J3 follow-up). community.selected is an index; these resolve it against
@@ -381,8 +373,7 @@ var rowSchemas = map[string]map[string]bool{
 	// operator to write `row.enabled == false` with.
 	// The /login screen's list. row.marker is the same fixed-width gutter the
 	// providers screen wears; row.label and row.status are the two columns.
-	"login.rows":       {"row.marker": true, "row.label": true, "row.status": true},
-	"providers.models": {"row.provider": true, "row.model": true, "row.enabled": true, "row.disabled": true, "row.ref": true, "row.marker": true},
+	"hub.rows": {"row.line": true, "row.status": true},
 }
 
 // RowSchema returns the signed `row.<field>` names for a list bind, or nil if

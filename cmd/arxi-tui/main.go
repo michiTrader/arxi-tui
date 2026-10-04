@@ -471,19 +471,21 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 	}
 
 	sd := &serveDriver{
-		rs:        nd,
-		inbox:     nd,
-		providers: nd,
-		getenv:    os.Getenv,
-		runsRoot:  runsRoot,
-		follow:    driver.LogFollow,
-		relay:     make(chan fold.Event, 64),
+		rs:       nd,
+		inbox:    nd,
+		hub:      nd,
+		getenv:   os.Getenv,
+		runsRoot: runsRoot,
+		follow:   driver.LogFollow,
+		relay:    make(chan fold.Event, 64),
+		notes:    make(chan string, 8),
 		closer: func() error {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
 			return nil
 		},
 	}
+	sd.chat = newChatSession(nd, sd.relay, sd.notes)
 	return sd, sd.relay, nil
 }
 
@@ -611,16 +613,6 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	installDoneCh := make(chan installOutcome, 1)
 	mountedPlugins := map[string]*supervisor.Supervisor{}
 
-	// The K2 provider/model command surface: `/provider add|list` and `/model
-	// list|enable|disable` round-trip the serve protocol on a worker so a slow or
-	// hung core never freezes the loop or the panic gesture (invariant 6).
-	// providerCmdBusy refuses a second command while one is in flight -- the one
-	// response reader on the driver is serialized by its mutex, so two in flight
-	// would interleave their notices -- and providerCmdDoneCh carries the worker's
-	// one formatted notice back to the select, the same bridge installDoneCh is.
-	var providerCmdBusy bool
-	providerCmdDoneCh := make(chan providerCmdOutcome, 1)
-
 	// The bundle install surface (J4): `/ui plugin bundle <url>` fetches a bundle
 	// document, lays out and decides each referenced plugin, shows ONE consent
 	// screen, and on a grant composes the bundle's scene, theme and plugins together.
@@ -649,63 +641,53 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// screen.
 	var browse *installerBrowse
 	var browseBusy bool
-	// providers is the open providers screen (Scene 12), non-nil exactly while it
-	// is showing -- the same shape as browse above, and for the same reason: while
-	// it is open it replaces the scene on display and owns the keyboard, so the
-	// arrows move its highlight instead of the chat input's caret.
-	var providers *providersScreen
-	providersDoc, providersDocErr := loadProvidersScene()
-	// runProviderInput is the one door every `/provider` and `/model` line goes
-	// through, typed or picked from the slash menu, so the two cannot diverge on what
-	// the command does (the menu used to submit the highlighted word to the chat).
-	//
-	// The bare command OPENS the providers screen. When there is no live core the
-	// screen still opens, empty, with the reason in its banner: a user who typed
-	// /provider asked to see the providers, and a one-line refusal at the top of the
-	// chat is the failure that read as "it sent the word to the chat". Every other
-	// command runs on the worker as before.
-	runProviderInput := func(act providerAction, perr error) {
-		if perr == nil && act.OpenScreen {
-			if providersDocErr != nil {
-				sceneNotice = "/provider: " + providersDocErr.Error()
-				return
-			}
-			if refusal := providerCoreRefusal(drv); refusal != "" {
-				providers = &providersScreen{}
-				sceneNotice = refusal
-				return
-			}
-		}
-		sceneNotice = dispatchProviderCmd(ctx, drv, act, perr, &providerCmdBusy, providerCmdDoneCh)
+	// hub is the open provider hub, non-nil exactly while it is showing. It replaces
+	// the scene on display and owns the keyboard (like browse above), so the arrows
+	// move its highlight and every typed character goes to its filter or its masked
+	// field -- never to the chat. hubBusy refuses a second request while one is in
+	// flight, and hubDoneCh carries the worker's answer back to the select.
+	var hub *providerHub
+	var hubWant hubOpen
+	var hubBusy bool
+	// hubDefault is the default model the core last reported ("provider/id"); the
+	// status bar shows it until a reply names the model that really answered.
+	var hubDefault string
+	// chatNotes carries chat failures from the chat session; nil (never ready) when
+	// the driver has none.
+	var chatNotes <-chan string
+	if nn, ok := drv.(interface{ Notices() <-chan string }); ok {
+		chatNotes = nn.Notices()
 	}
-	// login is the open /login wizard (Scene 13), non-nil exactly while it is
-	// showing, like providers above: it replaces the scene on display and owns the
-	// keyboard. The API key a user types lives only inside it (loginField.value) and
-	// is published as bullets; see login_wizard.go. loginBusy refuses a second
-	// round-trip while one is in flight, and loginDoneCh carries the worker's answer
-	// back to the select.
-	var login *loginWizard
-	var loginBusy bool
-	loginDoneCh := make(chan loginOutcome, 1)
-	loginDoc, loginDocErr := loadLoginScene()
-	// runLogin is the one door a typed `/login` and a slash-menu pick both take.
-	// It reads the provider list on a worker first, so the wizard opens with the
-	// credential state already known and a hung core never freezes the loop.
-	runLogin := func() {
-		switch {
-		case loginDocErr != nil:
-			sceneNotice = "/login: " + loginDocErr.Error()
-		case loginBusy:
-			sceneNotice = "/login: another login step is still running"
-		default:
-			if refusal := loginOpenRefusal(drv); refusal != "" {
-				sceneNotice = refusal
-				return
-			}
-			loginBusy = true
-			sceneNotice = "/login: reading providers …"
-			startLoginOpen(ctx, drv.(loginManager), loginDoneCh)
+	hubDoneCh := make(chan hubOutcome, 1)
+	hubDoc, hubDocErr := loadHubScene()
+	// openHub is the one door a typed command and a slash-menu pick both take. It
+	// reads the core's state on a worker first so a hung core never freezes the loop.
+	// With no live core the hub still opens, empty, with the reason in the banner: a
+	// user who asked to see the providers must see a screen, not a vanished word.
+	openHub := func(open hubOpen) {
+		hubWant = open
+		if hubDocErr != nil {
+			sceneNotice = "/provider: " + hubDocErr.Error()
+			return
 		}
+		hc, _ := drv.(interface{ Hub() hubCore })
+		if hc == nil || hc.Hub() == nil {
+			hub = newOfflineHub(noLiveCoreNotice)
+			sceneNotice = noLiveCoreNotice
+			return
+		}
+		if err := requireHubVerbs(hc.Hub().Hello()); err != nil {
+			hub = newOfflineHub(err.Error())
+			sceneNotice = err.Error()
+			return
+		}
+		if hubBusy {
+			sceneNotice = "the providers screen is still working; wait a moment"
+			return
+		}
+		hubBusy = true
+		sceneNotice = "reading providers …"
+		startHubOpen(ctx, hc.Hub(), hubDoneCh)
 	}
 	browseDoneCh := make(chan browseOutcome, 1)
 	registryFetchClient := newRegistryFetchClient()
@@ -799,6 +781,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	repaint := func() {
 		state := fold.Fold(collected)
 		state.UserInput = input // view state: the host owns the input buffer
+		if hubDefault != "" {
+			// Chat always uses the default model, so the status bar shows it.
+			state.ModelName = hubDefault
+		}
 		state.UserInputCaret = caret
 		// ui.hidden is host-owned view state the loop keeps across frames, so it
 		// is re-attached on every repaint for the same reason the input buffer
@@ -930,19 +916,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// binds to none of the fold state, so the swap is purely which document is
 			// walked.
 			activeDoc = bundleMod.consent.doc
-		case login != nil:
-			// The /login wizard is open: it replaces the scene on display. Its
-			// rows are published as display text only -- the key is bullets by the
-			// time it reaches the fold (loginWizard.publish).
-			activeDoc = loginDoc
-			login.publish(&state)
-		case providers != nil:
-			// The providers screen is open: it replaces the scene on display and
-			// its rows and highlight are published onto the fold the renderer
-			// reads, together, so a frame cannot pair rows with another list's
-			// highlight.
-			activeDoc = providersDoc
-			providers.publish(&state)
+		case hub != nil:
+			// The provider hub is open: it replaces the scene on display. Its rows
+			// are published as display text only -- a typed key is bullets by the
+			// time it reaches the fold (providerHub.publish).
+			activeDoc = hubDoc
+			hub.publish(&state)
 		case browse != nil:
 			// The installer is open: it replaces the scene on display and its
 			// community.* triple is published onto the fold the renderer reads, the
@@ -1069,61 +1048,36 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// screen on y/r/n/Esc and leaving it standing otherwise.
 						panicGesture.Reset()
 						bundleMod.handleKey(ev.Key)
-					} else if login != nil {
-						// The /login wizard owns the keyboard, after the Ctrl-C
-						// branch so the escape hatch still reaches HandleCtrlC
-						// (invariant 6). Every key here, printable or not, goes to
-						// the wizard and never to the chat input: a key typed into
-						// the API-key field must not become a prompt.
+					} else if hub != nil {
+						// The provider hub owns the keyboard, after the Ctrl-C branch
+						// so the escape hatch still reaches HandleCtrlC (invariant 6).
+						// Every key here, printable or not, goes to the hub and never
+						// to the chat input: a key typed into the API-key field must
+						// not become a prompt.
 						panicGesture.Reset()
-						res := routeLoginKey(login, ev.Key)
+						res := routeHubKey(hub, ev.Key)
 						switch {
 						case res.close:
-							login.wipe()
-							login = nil
+							hub.wipe()
+							hub = nil
 							sceneNotice = ""
-						case res.dispatch != nil:
-							if loginBusy {
-								sceneNotice = "/login: another login step is still running"
+							input = ""
+							caret = 0
+						case res.work != nil:
+							if hubBusy {
+								sceneNotice = "the providers screen is still working; wait a moment"
+							} else if hc, _ := drv.(interface{ Hub() hubCore }); hc == nil || hc.Hub() == nil {
+								sceneNotice = noLiveCoreNotice
 							} else {
-								loginBusy = true
-								sceneNotice = "/login: saving …"
-								startLoginSave(ctx, drv.(loginManager), *res.dispatch, loginDoneCh)
+								hubBusy = true
+								hub.working = res.work.Op.String()
+								sceneNotice = hub.working + " …"
+								startHubWork(ctx, hc.Hub(), *res.work, hubDoneCh)
 							}
 						case res.notice != "":
 							sceneNotice = res.notice
 						case res.clear:
 							sceneNotice = ""
-						}
-					} else if providers != nil {
-						// The providers screen is open and owns the keyboard, like the
-						// installer below. It sits after the Ctrl-C branch so the escape
-						// hatch still reaches HandleCtrlC (invariant 6) and cannot be
-						// captured by the screen, and after the consent modals so an
-						// install started elsewhere still gets its y/n. A keypress here
-						// is intentional input, so it disarms the panic gesture.
-						// routeProvidersKey decides what the key means; the loop only
-						// applies it.
-						panicGesture.Reset()
-						res := routeProvidersKey(providers, input, ev.Key)
-						switch {
-						case res.close:
-							providers = nil
-							sceneNotice = ""
-							input = ""
-							caret = 0
-						case res.dispatch != nil:
-							sceneNotice = dispatchProviderCmd(ctx, drv, *res.dispatch, nil, &providerCmdBusy, providerCmdDoneCh)
-							input = ""
-							caret = 0
-						case res.notice != "":
-							// A refusal keeps the typed line so the user can fix the typo
-							// instead of retyping it.
-							sceneNotice = res.notice
-						case res.edited:
-							if next, nextCaret, ok := applyEdit(input, caret, ev.Key); ok {
-								input, caret = next, nextCaret
-							}
 						}
 					} else if browse != nil {
 						// The installer is open and owns the keyboard, like the consent
@@ -1302,46 +1256,22 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						} else if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens); handled {
 							input = next
 							caret = clampCaret(input, caret)
-						} else if isLoginCommand(input) && ev.Key.Type == term.KeyEnter {
-							// `/login` is host-owned: it opens the API-key wizard.
-							// It takes no arguments on purpose, so a key can never
-							// be typed on (and echoed from) the command line.
-							runLogin()
+						} else if open, isHub := hubCommand(input); isHub && ev.Key.Type == term.KeyEnter {
+							// `/provider`, `/providers`, `/login`, `/model` and `/models`
+							// are host-owned and all open the one provider hub. They take
+							// no arguments on purpose, so a key can never be typed on (and
+							// echoed from) the command line.
+							openHub(open)
 							input = ""
 							caret = 0
 							slashSel = 0
-						} else if act, matched, perr := parseProviderCommand(input); ev.Key.Type == term.KeyEnter && matched {
-							// `/provider add|list` is host-owned, not a patch: it
-							// round-trips the serve protocol (SubmitProviderAdd /
-							// SubmitModelList), which the pure patch surface cannot do, so
-							// it is intercepted here before the slash menu. dispatch runs
-							// the gate and busy guard and launches the worker; the loop
-							// only records the pending notice and reacts to the worker's
-							// message in the providerCmdDoneCh case below.
-							runProviderInput(act, perr)
-							input = ""
-							caret = 0
-						} else if act, matched, perr := parseModelCommand(input); ev.Key.Type == term.KeyEnter && matched {
-							// `/model list|enable|disable`, the sibling of /provider above
-							// and intercepted here for the same reason: a model.list or
-							// model.enable round-trip is not a document transform the patch
-							// surface owns.
-							runProviderInput(act, perr)
-							input = ""
-							caret = 0
 						} else if line, ok := menuHostCommand(input, slashSel); ok && ev.Key.Type == term.KeyEnter {
 							// Enter on a slash-menu row the host implements as a screen.
-							// slashMenuKey would submit the row's NAME as a prompt (the
-							// Phase 0 contract), so picking "provider" sent the word
-							// "provider" to the chat instead of opening the screen the
-							// row advertises. The row resolves to the same line a typed
-							// command is, and takes the same door.
-							if isLoginCommand(line) {
-								runLogin()
-							} else {
-								act, _, perr := parseProviderOrModel(line)
-								runProviderInput(act, perr)
-							}
+							// The row resolves to the same line a typed command is, and
+							// takes the same door (the menu used to send the word to the
+							// chat instead).
+							open, _ := hubCommand(line)
+							openHub(open)
 							input = ""
 							caret = 0
 							slashSel = 0
@@ -1413,10 +1343,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					// control byte so a stray ESC in the clipboard cannot inject
 					// an escape sequence into the line the host re-emits.
 					panicGesture.Reset()
-					if login != nil {
-						// A pasted key goes to the wizard's focused field, never
-						// to the chat input.
-						login.paste(ev.Text)
+					if hub != nil {
+						// A pasted key goes to the hub's focused field or filter,
+						// never to the chat input.
+						hub.paste(ev.Text)
 						break
 					}
 					input, caret = insertText(input, caret, cleanPaste(ev.Text))
@@ -1527,43 +1457,35 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			repaint()
 
-		case out := <-providerCmdDoneCh:
-			// The provider/model worker finished its round-trip. Clear busy so a
-			// next command may start, show its formatted notice (a success line or
-			// the core's refusal, already composed off the loop) and repaint. There
-			// is no screen to tear down -- unlike install, a provider command drives
-			// no modal -- so the notice is the whole of the result.
-			providerCmdBusy = false
+		case out := <-hubDoneCh:
+			// The hub worker finished. Clear busy, then apply the answer: an opening
+			// read creates the hub; any other answer only updates one still showing,
+			// so a user who pressed Esc meanwhile does not see it reappear. The notice
+			// was scrubbed of the key on the worker.
+			hubBusy = false
 			sceneNotice = out.notice
-			if out.hasModels {
-				// An opening read creates the screen; a refresh only updates one that
-				// is still showing. A user who pressed Esc while the refresh was in
-				// flight must not have the screen reappear under them.
-				if out.open && providers == nil {
-					providers = &providersScreen{}
-				}
-				if providers != nil {
-					providers.setModels(out.models)
+			if out.hasData {
+				hubDefault = out.data.def
+			}
+			if out.opened && hub == nil {
+				var why string
+				hub, why = newHub(out.data, hubWant)
+				sceneNotice = why
+			} else if hub != nil {
+				n, closeIt := hub.apply(out)
+				sceneNotice = n
+				if closeIt {
+					hub.wipe()
+					hub = nil
 				}
 			}
 			repaint()
 
-		case out := <-loginDoneCh:
-			// The login worker finished. Clear busy, show its notice (already
-			// scrubbed of the key on the worker) and apply the answer: an opening
-			// read creates the wizard; a refresh only updates one still showing, so
-			// a user who pressed Esc meanwhile does not see it reappear.
-			loginBusy = false
-			sceneNotice = out.notice
-			if out.open && login == nil && out.hasRows {
-				login = newLoginWizard(out.rows)
-				sceneNotice = ""
-			} else if login != nil && out.hasRows {
-				login.setProviders(out.rows)
-			}
-			if out.saved && login != nil {
-				login.finishSave()
-			}
+		case msg := <-chatNotes:
+			// A chat turn failed (no provider, no model, the provider refused, the
+			// network is down): say so where the user is looking instead of leaving
+			// a silent dead end.
+			sceneNotice = msg
 			repaint()
 
 		case out := <-browseDoneCh:

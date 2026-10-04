@@ -480,7 +480,7 @@ func TestLoopSlashMenuEscapeCloses(t *testing.T) {
 
 // TestLoopSlashMenuTabWalksCategories verifies tab jumps the highlight to the
 // first match of the next category. The registry now has two categories —
-// General (help, max, focus, surface, ui) and Providers (provider, model) — so
+// General (help, max, focus, surface, ui) and Providers (provider, models) — so
 // down-down lands on "focus" in General, and tab must jump past the rest of
 // General to the first Providers row: enter then runs "provider", not another
 // General command — the exact discrimination the test hinges on. "provider"
@@ -513,7 +513,7 @@ func TestLoopSlashMenuTabWalksCategories(t *testing.T) {
 	}
 
 	out := tty.output()
-	if !strings.Contains(out, "· providers") {
+	if !strings.Contains(out, noLiveCoreNotice) {
 		t.Errorf("tab did not walk the highlight to the next category's first row (the providers screen never opened); frames:\n%s", out)
 	}
 	if len(drv.submitted) != 0 {
@@ -632,14 +632,12 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	}
 
 	out := tty.output()
-	// provider/model open their screen even without a core; login has no screen to
-	// show without one, so it answers with the same no-core refusal in the banner.
+	// provider/models open the hub even without a core, and explain in the banner
+	// why there is nothing to show.
 	var want string
 	switch last {
-	case "login":
+	case "provider", "models":
 		want = noLiveCoreNotice
-	case "provider", "model":
-		want = "· providers"
 	default:
 		t.Fatalf("the last registry row is %q; teach this test what picking it does", last)
 	}

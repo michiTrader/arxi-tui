@@ -474,72 +474,43 @@ transition and vanishes the moment the run does anything else. Decided: Q22
 hit-testing runs on the final frame's cells; the engine resolves
 marquee/cursor collisions, not the scene.
 
-## Scene 12 — PROVIDERS (the visual face of the K2 provider verbs)
+## Scene 12 — HUB (providers, keys, URLs and models in one place)
 
-The deferred K2 follow-up, built on the Scene 5 CONFIG pattern: one `list` over
-`providers.models` whose `row_template` draws each model as provider + id plus a
-single state-mixed action button — `enable` gated on `when: row.disabled`,
-`disable` gated on `when: row.enabled`, pressing either into
-`cmd:/model enable {row.ref}` / `cmd:/model disable {row.ref}`. The screen is the
-front end for the provider plumbing K2 shipped (the `provider.add`,
-`model.list`, `model.enable`, `model.disable` verbs over the serve socket):
-`providers.models` is host view state (§4.3) filled from a `model.list`
-round-trip, no event folds it, so the host builds it the way it builds
-`config.settings`. The two per-row booleans are synthesized by `rowScopesFor`
-(`row.enabled` = `boolField(m.Enabled)`, `row.disabled` its negation) because
-this engine's `when` is a bare truthiness test with no comparison operator — the
-same derived-bool mechanism Scene 5's `row.is_toggle`/`row.is_text` uses, so a
-row shows exactly one of the two actions. `row.ref` is the `provider/id` form the
-`model.enable` verb accepts, interpolated into `on_press` and validated against
-the row schema. Decided: the gated action button carries the model's state in
-place of a standalone `switch`, so each row is two text columns and one trailing
-button that pads cleanly (a `switch` plus two buttons concatenated tightly under
-the weighted-column layout rule). **Security invariant preserved:** the
-provenance line says providers live one file per provider in the core and that
-`/login` stores API keys, never shown — this screen itself never stores, logs or
-echoes a key; keys are entered only in Scene 13.
+The screen `/provider` opens, and also `/providers`, `/login`, `/model` and `/models`
+(typed, or picked from the `/` menu); `/models` lands directly on the model picker.
+It replaces the earlier PROVIDERS and LOGIN screens: adding a provider, setting its
+URL and key, fetching or adding models by hand, enabling, disabling, removing and
+choosing the default all happen here.
 
-**Wired (no longer a fixture only).** `/provider` and `/model`, typed or picked from
-the slash menu, open this document as a replacement screen (`cmd/arxi-tui/
-providers_screen.go`), filled from a real `model.list` round-trip. The host owns two
-view-state fields, `providers.models` and `providers.selected`; the second drives
-`row.marker`, the `"> "` gutter on the highlighted row (a fixed-width value rather than
-a `when`-gated glyph, so the columns never jitter as the highlight moves). Keys: Up/Down
-move (wrapping), Enter on an empty input line toggles the highlighted model, Enter on a
-typed `/provider add ...` or `/model enable|disable ...` runs it, Esc goes back. Plain
-text typed here is refused with the grammar, not sent to the agent. Without a live core
-(`ARXI_BIN` unset) the screen still opens and says so in its banner. Ctrl-C twice still
-exits (invariant 6).
+It is a replacement document: while open it owns the keyboard, after the Ctrl-C
+branch, so the escape hatch still works (invariant 6). Its layout puts the choices at
+the **bottom**, exactly like the slash menu: a header, a banner for notices, a title,
+a markdown detail pane that grows, the input line, and then an `overlay` anchored to
+the bottom holding a rule, the `list` of choices and a dim hint. Four host view-state
+fields feed it: `hub.title`, `hub.rows` (label, status, selected), `hub.hint` and
+`hub.detail`. The list's `row_template` binds `row.line` (the selection marker plus
+the label) and `row.status`; the marker is `→ ` on the highlighted row and two spaces
+elsewhere, so columns never jitter as the highlight moves.
 
-## Scene 13 — LOGIN (the API-key wizard)
+Levels: provider list (with a sticky "+ Add a provider…"), service catalog (17
+services plus a sticky "Other…" for any OpenAI-compatible service), a provider's
+actions, its models, one model's actions, a confirmation, a form, and the model
+picker. Typing filters whatever list is showing (typing `other` or `otro` finds
+"Other…"). Model rows read `  id [provider]`; the default reads
+`→ ✓ id [provider] · default`. Choosing a model in the picker makes it the default
+that the chat uses and the status bar shows.
 
-The screen `/login` opens (typed, or picked from the `/` menu). It is a replacement
-document like Scene 12: while open it owns the keyboard, after the Ctrl-C branch, so
-the escape hatch still works (invariant 6). Three steps share one document, bound to
-four host view-state fields: `login.title`, `login.rows` (label, status, selected),
-`login.pager` and `login.hint`.
+**Security invariants.** The API key lives only in a form field and is published as
+bullets (capped at 40, so even the length is bounded). Refusals name the field, never
+its value. A field meant for an env var NAME that holds something not shaped like a
+name is shown as bullets too, because it is probably a key pasted in the wrong box.
+The worker scrubs the key out of every message it returns. The commands take no
+arguments, so a key can never be typed on a command line or reach the chat. The core
+stores the key in `<name>.key` (0600, in a 0700 directory) and never returns it.
+Without a core that implements the provider and model verbs the screen still opens
+and says exactly how to rebuild the core.
 
-1. **Select authentication method:** "Sign in with an account" (answers that it is
-   not available yet; there is no account service) and "Sign in with an API key".
-2. **Select provider to configure:** a 17-entry catalog plus any provider the core
-   already knows, then "Other". The status column reads the core's `provider.list`
-   (`✓ env: NAME`, `✓ key stored`, `• unconfigured`), a window of 10 rows is shown
-   and the pager reads `(n/total)`.
-3. **The form:** one masked "API key" field for a catalog provider; for "Other",
-   Name, Base URL, API key and an optional env var NAME, plus an optional model id
-   and prices (both or neither).
-
-**Security invariants.** The key lives only in the wizard's field and is published as
-bullets (`publish` writes `•` characters, capped at 40, so even the length is bounded).
-Refusals name the field, never its value. A field meant for an env var NAME that holds
-something not shaped like a name is shown as bullets too, because it is probably a key
-pasted in the wrong box. The worker scrubs the key out of every message it returns.
-`/login` takes no arguments, so a key can never be typed on a command line or reach the
-chat. The core stores the key in `<name>.key` (0600, in a 0700 directory) and never
-returns it. Without a core that implements `provider.key`, `provider.list` and
-`model.add` the command is refused with the exact rebuild command.
-
-Golden: `testdata/LOGIN.frame` / `.styled`, pinned by `internal/engine/login_screen_test.go`.
+Golden: `testdata/HUB.frame` / `.styled`, pinned by `internal/engine/hub_screen_test.go`.
 
 ## Q23 (signed) — how much of the pipeline plugins may touch
 

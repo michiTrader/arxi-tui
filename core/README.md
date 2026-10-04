@@ -171,7 +171,7 @@ sync:
 |---|---|---|---|
 | `["run","start"]` | `run start` | `arxi_run_start` | `run.start` |
 
-There are **53 declared capabilities**, of which **34 are exposed as tools** to
+There are **59 declared capabilities**, of which **34 are exposed as tools** to
 the agents. The difference is not an oversight: there are things a human can do
 from the terminal that an agent should not be able to do to itself. `arxi
 surface` shows all of them; `arxi schema` emits the manifest an agent consumes.
@@ -473,7 +473,7 @@ declare something before it is built — for a command that is declared and not
 implemented the CLI tells you so, with its tool name and its protocol type,
 instead of lying with "unknown command".
 
-**53 of 53 declared capabilities are wired — 100.0%.** That figure is measured,
+**59 of 59 declared capabilities are wired — 100.0%.** That figure is measured,
 not estimated, and it is measured *by the suite* rather than by hand: `TestTheReadmeCapabilityCountIsWhatTheBinaryActuallyDoes` walks
 `surface.Registry`, invokes every declared path against the built binary, and
 counts the ones that do not answer *"is declared in the surface but not
@@ -486,7 +486,7 @@ moved it to 26, `run why` to 27, `run prompt` to 28, `run tree` to 29,
 `run steer` to 38, `event trace` to 39, `state set` to 40, `state get` to 41,
 `state lock` to 42 and `state unlock` to 43, `agent create`, `agent list`
 and `agent show` took it to 46 in one step, `role define` to 47, and
-`blueprint create` to 48 and `blueprint install` to 49, and `design` to 50, and `provider key`, `provider list` and `model add` to 53 — and
+`blueprint create` to 48 and `blueprint install` to 49, and `design` to 50, and `provider key`, `provider list` and `model add` to 53, and the provider-management verbs (`provider update` / `remove`, `model discover` / `remove` / `default`, `chat send`) to 59 — and
 every time the number above was
 corrected because **the suite failed**, not because anybody remembered to check.
 
@@ -494,11 +494,11 @@ The number has run out of room to be unflattering, so here is what it does not
 say. It counts *declared* capabilities, and the surface is a list this project
 wrote: reaching the end of it means every verb `arxi surface` publishes runs, not
 that there is nothing left to build. It says nothing about how much of that
-surface an agent may reach either — **34 of the 53** are exposed as tools, and the
-other nineteen are the operator's alone on purpose, `design` loudest among them: a
+surface an agent may reach either — **34 of the 59** are exposed as tools, and the
+other twenty-five are the operator's alone on purpose, `design` loudest among them: a
 socket client that could open a full-screen designer on somebody's terminal is
-not a feature. All fifty-three are
-`provider add` / `key` / `list`, `model add`, `model list` /
+not a feature. All fifty-nine are
+`provider add` / `key` / `list` / `update` / `remove`, `model add` / `discover` / `remove` / `default`, `chat send`, `model list` /
 `enable` / `disable`, `run start`, `run list`, `run show`, `run why`, `run tree`, `run prompt`, `run steer`, `run result`, `run pause`, `run unpause`, `run cancel`, `run fork`, `run replay`, `run attach`, `agent create` / `list` / `show`, `agent tool policy`, `role define`,
 `blueprint validate`, `blueprint create`, `blueprint install`, `state set`, `state get`, `state lock`, `state unlock`, `event emit`, `event log`, `event trace`, `trigger create` /
 `list` / `show` / `pause` / `run`, `inbox` / `approve` / `reject` / `reply`,
@@ -526,7 +526,7 @@ unwired commands do not appear in an afternoon.
 
 The lesson generalises past this one number. **A verification tool that cannot
 fail reports total success**, and it reports it in the flattering direction —
-which at 53 of 53 is the direction of the truth. The same broken sentinel today
+which at 59 of 59 is the direction of the truth. The same broken sentinel today
 prints the right answer for the wrong reason, and nobody stops to diagnose a
 number that agrees with the README.
 
@@ -549,7 +549,7 @@ directions. Four things are being built, and they are at very different stages:
 | the engine — event types the reducer folds | **48 / 48 — 100%** | every `EventType` constant appears in a `Decide` switch arm |
 | effects dispatched by the run loop | **7 / 7 — 100%** | every `kernel.Effect` has a case in `internal/exec` |
 | effects a **real** executor performs | **3 / 3 — 100%** | `SpawnTurn` calls models; `CallTool` runs tools in a confined workspace; `AskHuman` writes the question to the log |
-| the CLI surface | **53 / 53 — 100.0%** | every declared path probed against the built binary, by a test that also verifies its own sentinel |
+| the CLI surface | **59 / 59 — 100.0%** | every declared path probed against the built binary, by a test that also verifies its own sentinel |
 
 Read together they say something a single percentage cannot: **what is declared
 is finished, and what is declared is not everything a person could want.** The

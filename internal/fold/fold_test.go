@@ -273,16 +273,3 @@ func TestSlashSelectedFromUIState(t *testing.T) {
 		t.Errorf("slash.selected: got %d, want 2; a lost selection leaves the menu with no bright row and ↑/↓ look dead", s.SlashSelected)
 	}
 }
-
-// TestProviderModelRefIsTheStringTheVerbsAccept pins the one place a model's ref is
-// built. model.enable / model.disable take "provider/id", or a bare id when the row
-// has no provider; the pressed button and the Enter toggle both use this, so a
-// drift here would make the two name different models.
-func TestProviderModelRefIsTheStringTheVerbsAccept(t *testing.T) {
-	if got := (ProviderModel{Provider: "moonshot", ID: "kimi-k2"}).Ref(); got != "moonshot/kimi-k2" {
-		t.Errorf("Ref() = %q, want moonshot/kimi-k2", got)
-	}
-	if got := (ProviderModel{ID: "llama3.1"}).Ref(); got != "llama3.1" {
-		t.Errorf("Ref() = %q, want the bare id llama3.1 when there is no provider", got)
-	}
-}

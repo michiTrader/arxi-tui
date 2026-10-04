@@ -375,47 +375,49 @@ UPDATE_GOLDEN=1 go test ./internal/...   # regenerate golden fixtures
 ARXI_BIN=/path/to/arxi ./arxi-tui
 ```
 
-### Signing in with an API key (`/login`)
+### Providers, keys and models (`/provider`, `/models`)
 
-Type `/login` (or pick it in the `/` menu). A short wizard asks how to sign in, then
-which provider to configure, and shows for each one whether it already has a key:
+Everything about providers lives in one screen. Type `/provider` (also `/providers`,
+`/login`, `/model`, or pick it in the `/` menu). The choices appear at the bottom,
+like the command menu. Type to filter any list; type `other` to jump to "Other…".
 
 | Key | Does |
 |---|---|
-| Up / Down | move the `>` highlight |
-| Enter | select / go to the next field / save |
-| Tab / Shift-Tab | next / previous field |
+| Up / Down, PgUp / PgDn | move the `→` marker |
+| type | filter the list (or fill the focused form field) |
+| Enter | choose / next field / save |
+| Tab / Shift-Tab | next / previous form field |
 | Esc | back one step (then close) |
 | Ctrl-C | the escape hatch, as everywhere |
 
-Paste the key into the API key field. It is shown as `••••` and never printed back,
-logged or sent to the chat. "Sign in with an account" is not available yet.
+From there you can:
+
+- **Add a provider**: pick one of 17 services (OpenAI, Anthropic, OpenRouter, Gemini,
+  Groq, Ollama, ...) or "Other…" for any OpenAI-compatible service. Give the key once
+  (and, for "Other…", the name and base URL). The model list is fetched for you; if the
+  service has no list endpoint, type the model ids by hand instead.
+- **Edit a provider**: change its base URL, key or key variable name.
+- **Manage models**: fetch the list again, add several models by hand (comma or space
+  separated, with optional prices), enable, disable or remove them.
+- **Choose the model to chat with**: `/models` lists `  id [provider]`; the chosen one
+  reads `→ ✓ id [provider] · default`. The status bar shows it, and every chat message
+  goes to it.
+
+The key is pasted into a masked field, shown as `••••`, and never printed back, logged
+or sent to the chat. If sending a message fails (no provider, no model, a refused key,
+no network) the reason appears in the banner instead of nothing happening.
 
 Where the key goes: the core writes it to `<name>.key` in its secrets directory
 (mode 0600, directory 0700; override with `ARXI_SECRETS_DIR`). **It is not encrypted**,
 only protected by file permissions. An environment variable named by the provider
-(for example `OPENROUTER_API_KEY`) wins over a stored key. `/login` takes no
+(for example `OPENROUTER_API_KEY`) wins over a stored key. The commands take no
 arguments on purpose, so a key is never typed on a command line.
 
-`/login` needs a core that implements `provider.key`, `provider.list` and `model.add`.
-If yours is older, rebuild it: `cd core && go build -o ../arxi ./cmd/arxi`
-(Windows PowerShell: `cd core; go build -o ..\arxi.exe .\cmd\arxi`) and point
-`ARXI_BIN` at it.
-
-### Managing providers and models (`/provider`, `/model`)
-
-Type `/provider` (or `/model`), or pick it in the `/` menu and press Enter. The
-providers screen opens with the real list from the core:
-
-| Key | Does |
-|---|---|
-| Up / Down | move the `>` highlight |
-| Enter (empty input line) | enable or disable the highlighted model |
-| Enter after typing `/provider add <name> --api-key-env <VAR>` | register a provider |
-| Esc | back to the chat |
-
-Credentials are named by environment variable only; the key itself is never typed here.
-This needs a live core (`ARXI_BIN` set). Without one the screen still opens and says so.
+This needs a core that implements the provider, model and `chat.send` verbs. If yours
+is older the screen says so with the exact rebuild command:
+`cd core && go build -o ../arxi ./cmd/arxi`
+(Windows PowerShell: `cd core; go build -o ..\arxi.exe .\cmd\arxi`), then point
+`ARXI_BIN` at it. Without a core (`ARXI_BIN` unset) the screen still opens and says so.
 
 **Windows PowerShell:**
 
@@ -434,7 +436,7 @@ screen opens but cannot reach a core).
 
 `testdata/*.json` are scene documents: the JSON that describes one whole screen. They
 are the fixtures the tests render and compare against `*.frame` / `*.styled` goldens.
-Open one with `./arxi-tui -scene testdata/PROVIDERS.json`. That shows the screen as a
+Open one with `./arxi-tui -scene testdata/HUB.json`. That shows the screen as a
 **static picture with fake data**: nothing is connected behind it, so `SUBAGENTS.json`
 shows a frozen chat and only reacts when a live run emits sub-agent events. Seeing
 "nothing happens" there is expected. The real, working screens are the ones you reach

@@ -47,7 +47,7 @@ func openProviders() *modelstore.Store {
 func cmdProvider(args []string) {
 	if len(args) == 0 {
 		fmt.Fprintf(os.Stderr, "usage: arxi provider add <name> "+
-			"[--base-url URL] [--api-key-env VAR] | key <name> | list\n")
+			"[--base-url URL] [--api-key-env VAR] | key <name> | update <name> | remove <name> | list\n")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -57,6 +57,10 @@ func cmdProvider(args []string) {
 		cmdProviderKey(args[1:])
 	case "list":
 		cmdProviderList(args[1:])
+	case "update":
+		cmdProviderUpdate(args[1:])
+	case "remove":
+		cmdProviderRemove(args[1:])
 	default:
 		// notImplemented rather than "unknown command", because the surface may
 		// declare a provider subcommand this build has not written yet, and
@@ -67,7 +71,7 @@ func cmdProvider(args []string) {
 
 func cmdModel(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "usage: arxi model list | add <provider> <model> | enable <model> | disable <model>\n")
+		fmt.Fprintf(os.Stderr, "usage: arxi model list | add <provider> <model> | discover <provider> | remove <model> | default [model] | enable <model> | disable <model>\n")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -79,6 +83,12 @@ func cmdModel(args []string) {
 		cmdModelEnable(args[1:], true)
 	case "disable":
 		cmdModelEnable(args[1:], false)
+	case "discover":
+		cmdModelDiscover(args[1:])
+	case "remove":
+		cmdModelRemove(args[1:])
+	case "default":
+		cmdModelDefault(args[1:])
 	default:
 		notImplemented(append([]string{"model"}, args...))
 	}
