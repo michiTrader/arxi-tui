@@ -66,6 +66,10 @@ the `input` node.
 
   { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
 
+  { "id": "working", "type": "row", "when": "agent.working", "children": [
+    { "id": "working_spin", "type": "spinner", "bind": "agent.working", "style": "dim" },
+    { "type": "text", "text": " working", "style": "dim" } ] },
+
   { "id": "thinking", "type": "marquee", "when": "agent.working",
     "bind": "thinking.text", "prefix": { "text": "• Thinking · ", "style": "dim" },
     "suffix": { "bind": "usage.delta", "style": "dim" } },

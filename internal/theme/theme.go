@@ -341,6 +341,7 @@ func SOBRIA() *Theme {
 		// it reads as emphasis on the terminals whose default text is already a
 		// light grey.
 		"chat.user":          {FG: ui.Idx(ui.White + ui.Bright)},
+		"chat.error":         {FG: ui.Idx(ui.Red + ui.Bright)},
 		"markdown.heading":   {Attrs: ui.AttrBold},
 		"markdown.emphasis":  {Attrs: ui.AttrItalic},
 		"markdown.strong":    {Attrs: ui.AttrBold},

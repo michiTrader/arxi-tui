@@ -93,6 +93,10 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
 
   { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
 
+  { "id": "working", "type": "row", "when": "agent.working", "children": [
+    { "id": "working_spin", "type": "spinner", "bind": "agent.working", "style": {"style": "dim"} },
+    { "type": "text", "text": " working", "style": {"style": "dim"} } ] },
+
   { "id": "thinking", "type": "marquee", "when": "agent.working",
     "bind": "thinking.text",
     "prefix": { "text": "• Thinking · ", "style": {"style": "dim"} },
@@ -478,14 +482,13 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 		runsRoot: runsRoot,
 		follow:   driver.LogFollow,
 		relay:    make(chan fold.Event, 64),
-		notes:    make(chan string, 8),
 		closer: func() error {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
 			return nil
 		},
 	}
-	sd.chat = newChatSession(nd, sd.relay, sd.notes)
+	sd.chat = newChatSession(nd, sd.relay)
 	return sd, sd.relay, nil
 }
 
@@ -652,12 +655,6 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// hubDefault is the default model the core last reported ("provider/id"); the
 	// status bar shows it until a reply names the model that really answered.
 	var hubDefault string
-	// chatNotes carries chat failures from the chat session; nil (never ready) when
-	// the driver has none.
-	var chatNotes <-chan string
-	if nn, ok := drv.(interface{ Notices() <-chan string }); ok {
-		chatNotes = nn.Notices()
-	}
 	hubDoneCh := make(chan hubOutcome, 1)
 	hubDoc, hubDocErr := loadHubScene()
 	// openHub is the one door a typed command and a slash-menu pick both take. It
@@ -1479,13 +1476,6 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					hub = nil
 				}
 			}
-			repaint()
-
-		case msg := <-chatNotes:
-			// A chat turn failed (no provider, no model, the provider refused, the
-			// network is down): say so where the user is looking instead of leaving
-			// a silent dead end.
-			sceneNotice = msg
 			repaint()
 
 		case out := <-browseDoneCh:

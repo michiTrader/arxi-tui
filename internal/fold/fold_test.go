@@ -273,3 +273,26 @@ func TestSlashSelectedFromUIState(t *testing.T) {
 		t.Errorf("slash.selected: got %d, want 2; a lost selection leaves the menu with no bright row and ↑/↓ look dead", s.SlashSelected)
 	}
 }
+
+// A failed request becomes an "error" line of the transcript, in order, and does
+// not disturb the working flag of a turn that is still pending.
+func TestChatErrorLandsInHistory(t *testing.T) {
+	s := Fold([]Event{
+		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hi"}},
+		{Type: "agent.activated", Seq: 2, Payload: map[string]any{"agent": "assistant"}},
+		{Type: "chat.error", Seq: 3, Payload: map[string]any{"text": "still waiting"}},
+	})
+	if len(s.History) != 2 || s.History[1].Role != "error" || s.History[1].Text != "still waiting" {
+		t.Fatalf("history = %+v", s.History)
+	}
+	if !s.AgentWorking {
+		t.Error("a refused extra line must not stop the working indicator")
+	}
+	f := Fold([]Event{{Type: "agent.failed", Seq: 1, Payload: map[string]any{"agent": "a", "error": "503 from the provider"}}})
+	if f.AgentWorking || len(f.History) != 1 || f.History[0].Role != "error" {
+		t.Errorf("agent.failed with a cause: working=%v history=%+v", f.AgentWorking, f.History)
+	}
+	if !Handles("chat.error") {
+		t.Error("chat.error must be in the handled set")
+	}
+}

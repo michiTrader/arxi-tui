@@ -797,6 +797,14 @@ const userTurnMarker = "┃ "
 // than failing to render.
 const userTurnToken = "chat.user"
 
+// errorTurnMarker and errorTurnToken dress a failed request in the transcript. A
+// theme that does not define the token resolves it to the zero style, so the line
+// still reads (it falls back to the pane's colour) rather than failing to render.
+const (
+	errorTurnMarker = "✗ "
+	errorTurnToken  = "chat.error"
+)
+
 // renderMarkdown renders a bound markdown pane, wrapped to the frame width.
 // Wrapping goes through the ported Line/Span machinery, so a row can never end
 // in bare air or overflow the frame no matter what the fold hands it.
@@ -831,6 +839,13 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 				text = userTurnMarker + text
 				turnToken = userTurnToken
 				cont = ui.Line{{Text: userTurnMarker, Style: userTurnToken}}
+			} else if h.Role == "error" {
+				// A failed request is a line of the conversation, not a banner: it is
+				// drawn in the flow under its own token, with a marker that keeps it
+				// from being mistaken for an answer.
+				text = errorTurnMarker + text
+				turnToken = errorTurnToken
+				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(errorTurnMarker)), Style: errorTurnToken}}
 			}
 			lines = append(lines, ui.WrapText(text, turnToken, r.Width, cont)...)
 			lines = append(lines, ui.Line{}) // one blank row between turns
@@ -1388,6 +1403,9 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 	return ui.Frame{Live: lines, Width: width, Height: len(lines), Cursor: caret}
 }
 
+// spinnerFrames is the Braille cycle a live spinner steps through.
+var spinnerFrames = [...]string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+
 // renderSpinner renders a spinner node, which shows an active indicator glyph
 // when its bind is truthy and a dim placeholder when it is not. Used by Scene 9
 // for subagent state indicators (thinking/waiting/idle).
@@ -1398,7 +1416,17 @@ func (r *Renderer) renderSpinner(n *scene.Node, state fold.State) ui.Frame {
 	}
 	var glyph string
 	if active {
-		glyph = "⠋"
+		glyph = spinnerFrames[0]
+		// A spinner that has an id turns: the frame follows the host clock, one
+		// step per tick, and the node reports itself as animating so the loop keeps
+		// ticking while it is on screen. The pure/golden path (nil AnimTicks) holds
+		// the first frame, so a frozen frame is deterministic.
+		if n.ID != "" && r.active != nil {
+			*r.active = append(*r.active, AnimActivity{NodeID: n.ID})
+		}
+		if n.ID != "" && r.AnimTicks != nil {
+			glyph = spinnerFrames[r.AnimTicks[n.ID]%len(spinnerFrames)]
+		}
 	} else {
 		glyph = "·"
 	}

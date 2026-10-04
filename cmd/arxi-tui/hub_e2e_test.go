@@ -95,13 +95,22 @@ func TestProviderToChatAgainstTheRealCore(t *testing.T) {
 	if err := sd.SubmitPrompt(ctx, "hi"); err != nil {
 		t.Fatalf("SubmitPrompt: %v", err)
 	}
-	select {
-	case msg := <-sd.Notices():
-		if !strings.Contains(msg, "provider") {
-			t.Errorf("the no-provider notice does not mention a provider: %q", msg)
+	{
+		deadline := time.After(10 * time.Second)
+		for got := false; !got; {
+			select {
+			case ev := <-evCh:
+				if ev.Type != "chat.error" {
+					continue
+				}
+				got = true
+				if msg, _ := ev.Payload["text"].(string); !strings.Contains(msg, "provider") {
+					t.Errorf("the no-provider error does not mention a provider: %q", msg)
+				}
+			case <-deadline:
+				t.Fatal("chatting with no provider produced no message at all")
+			}
 		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("chatting with no provider produced no message at all")
 	}
 	drainEvents(evCh)
 
@@ -133,12 +142,13 @@ func TestProviderToChatAgainstTheRealCore(t *testing.T) {
 	for answered == "" {
 		select {
 		case ev := <-evCh:
+			if ev.Type == "chat.error" {
+				t.Fatalf("chat failed: %v", ev.Payload["text"])
+			}
 			if ev.Type == "llm.response" {
 				answered, _ = ev.Payload["text"].(string)
 				model, _ = ev.Payload["model"].(string)
 			}
-		case msg := <-sd.Notices():
-			t.Fatalf("chat failed: %s", msg)
 		case <-deadline:
 			t.Fatal("no answer arrived")
 		}
