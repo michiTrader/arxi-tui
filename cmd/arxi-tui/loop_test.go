@@ -638,7 +638,10 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	// why there is nothing to show.
 	var want string
 	switch last {
-	case "provider", "models":
+	case "provider":
+		want = noLiveCoreNotice
+	case "model":
+		// /model opens the model menu; with no core it says why there is nothing to pick.
 		want = noLiveCoreNotice
 	default:
 		t.Fatalf("the last registry row is %q; teach this test what picking it does", last)

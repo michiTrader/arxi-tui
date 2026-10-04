@@ -1832,6 +1832,9 @@ func (r *Renderer) renderList(n *scene.Node, state fold.State, budget int) ui.Fr
 	case "slash.matches":
 		lines = r.slashMenuLines(n, state, rowToken)
 
+	case "model.matches":
+		lines = r.modelMenuLines(n, state)
+
 	default:
 		// Unknown bind: render placeholder.
 		//
@@ -2098,6 +2101,80 @@ func (r *Renderer) slashMenuLines(n *scene.Node, state fold.State, rowToken stri
 	return lines
 }
 
+// modelMenuRows is how many models the `/model ` menu shows at once; the window
+// follows the highlight, so a provider with hundreds of models stays one short block.
+const modelMenuRows = 8
+
+// modelMenuLines draws the `/model ` menu: no title, no help text, one row per model
+// (`  name  provider`, a check mark on the model in use) and, when the list is longer
+// than the window, a last dim line with the position. The margin matches the input's
+// prefix, so the rows line up with what is being typed.
+func (r *Renderer) modelMenuLines(n *scene.Node, state fold.State) []ui.Line {
+	ms := state.ModelMatches
+	// A token the scene declares replaces the resting tokens, like the command menu;
+	// the highlighted row keeps its own look.
+	declared := styleName(n.Style)
+	restName, restDesc := tokMenuName, tokMenuDesc
+	if declared != "" {
+		restName, restDesc = declared, declared
+	}
+	if len(ms) == 0 {
+		return []ui.Line{{ui.Span{Text: slashMenuMargin + "no models", Style: restDesc}}}
+	}
+	sel := state.ModelSelected
+	if sel >= len(ms) {
+		sel = len(ms) - 1
+	}
+	if sel < 0 {
+		sel = 0
+	}
+	start := 0
+	if len(ms) > modelMenuRows {
+		start = sel - modelMenuRows/2
+		if start < 0 {
+			start = 0
+		}
+		if start > len(ms)-modelMenuRows {
+			start = len(ms) - modelMenuRows
+		}
+	}
+	end := start + modelMenuRows
+	if end > len(ms) {
+		end = len(ms)
+	}
+	nameW := 0
+	for _, m := range ms[start:end] {
+		if w := ansiStringWidth(m.Name); w > nameW {
+			nameW = w
+		}
+	}
+	var lines []ui.Line
+	for i := start; i < end; i++ {
+		m := ms[i]
+		nt, dt := restName, restDesc
+		if i == sel {
+			nt, dt = tokMenuNameSel, tokMenuDescSel
+			if declared != "" {
+				nt, dt = "text", "text"
+			}
+		}
+		row := ui.Line{{Text: slashMenuMargin, Style: nt}, {Text: m.Name, Style: nt}}
+		if gap := nameW - ansiStringWidth(m.Name); gap > 0 {
+			row = append(row, ui.Span{Text: strings.Repeat(" ", gap), Style: nt})
+		}
+		tail := "  " + m.Provider
+		if m.Current {
+			tail += "  ✓"
+		}
+		row = append(row, ui.Span{Text: tail, Style: dt})
+		lines = append(lines, cutLine(row, 0, r.Width))
+	}
+	if len(ms) > modelMenuRows {
+		lines = append(lines, ui.Line{ui.Span{Text: fmt.Sprintf("%s%d of %d", slashMenuMargin, sel+1, len(ms)), Style: restDesc}})
+	}
+	return lines
+}
+
 // slashRow is one menu row: the margin, the "/name" padded to the name column, two
 // spaces, and the description cut to what is left of the line.
 func slashRow(m fold.SlashMatch, nameW, width int, nameTok, descTok string) ui.Line {
@@ -2226,6 +2303,11 @@ func resolveBind(bind string, state fold.State) string {
 		return state.UserInput
 	case "slash.active":
 		if state.SlashActive {
+			return "true"
+		}
+		return "false"
+	case "model.active":
+		if state.ModelActive {
 			return "true"
 		}
 		return "false"

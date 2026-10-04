@@ -238,9 +238,6 @@ func (h *providerHub) enter() hubKeyResult {
 			return hubKeyResult{work: &hubWork{Op: opRemove, Name: h.prov}}
 		}
 		return h.back()
-
-	case lvPick:
-		return hubKeyResult{work: &hubWork{Op: opDefault, Ref: it.id, Close: true}}
 	}
 	return hubKeyResult{clear: true}
 }

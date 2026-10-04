@@ -97,6 +97,10 @@ the `input` node.
                        "Appearance","Security","Workspace","Media","Extensions","Product"] },
       { "type": "rule", "style": {"style": "menu.rule"} } ] },
 
+  { "id": "model_menu", "type": "overlay", "anchor": "bottom", "when": "model.active",
+    "children": [
+      { "id": "models", "type": "list", "bind": "model.matches" } ] },
+
   { "id": "status", "type": "row", "children": [
     { "type": "text", "bind": "slash.hint", "style": {"style": "menu.hint"},
       "when": "slash.hint" },
@@ -490,8 +494,8 @@ marquee/cursor collisions, not the scene.
 
 ## Scene 12 — HUB (providers, keys, URLs and models in one place)
 
-The screen `/provider` opens, and also `/providers`, `/login`, `/model` and `/models`
-(typed, or picked from the `/` menu); `/models` lands directly on the model picker.
+The screen `/provider` opens, and also `/providers` and `/login` (typed, or picked
+from the `/` menu). The chat model is chosen with `/model `, not here.
 It replaces the earlier PROVIDERS and LOGIN screens: adding a provider, setting its
 URL and key, fetching or adding models by hand, enabling, disabling, removing and
 choosing the default all happen here.

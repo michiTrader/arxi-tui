@@ -285,7 +285,7 @@ func runHubWork(ctx context.Context, core hubCore, w hubWork) hubOutcome {
 		}
 	}
 	if d.def == "" && len(d.enabledModels()) > 0 {
-		out.notice += ". Choose the model to chat with: /models"
+		out.notice += ". Choose the model to chat with: /model"
 	}
 	out.data, out.hasData = d, true
 	return out

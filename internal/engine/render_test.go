@@ -456,7 +456,7 @@ func TestSlashMenuSelectionColours(t *testing.T) {
 	if !strings.Contains(styled, "«menu.name.selected:/focus»") || !strings.Contains(styled, "«menu.desc.selected:  Focus a node by id»") {
 		t.Errorf("selected row is not drawn with the selected tokens:\n%s", styled)
 	}
-	for _, name := range []string{"help", "max", "surface", "ui", "clear", "provider", "models"} {
+	for _, name := range []string{"help", "max", "surface", "ui", "clear", "provider", "model"} {
 		if !strings.Contains(styled, "«menu.name:/"+name+"»") {
 			t.Errorf("unselected row %q is not drawn with the resting name token:\n%s", name, styled)
 		}

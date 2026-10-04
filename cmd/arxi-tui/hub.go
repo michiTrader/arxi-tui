@@ -10,9 +10,9 @@ import (
 )
 
 // This file is the state machine of the provider hub: the one screen behind
-// /provider and /models. /provider manages everything (add a provider, edit its URL
-// and key, add or fetch its models, make one the default, remove); /models is the same
-// screen opened straight on the model picker.
+// /provider. /provider manages everything (add a provider, edit its URL
+// and key, add or fetch its models, make one the default, remove). Choosing the chat
+// model is `/model `, which has its own menu (model_menu.go).
 //
 // While open it owns the keyboard (after the Ctrl-C branch, invariant 6): Up/Down move
 // the highlight instead of walking the chat input, and Enter selects instead of
@@ -30,7 +30,6 @@ const (
 	lvModelActions                 // what to do with one model
 	lvConfirm                      // are you sure (remove a provider)
 	lvForm                         // typed fields
-	lvPick                         // /models: choose the default model
 )
 
 const hubPageSize = 8
@@ -124,21 +123,12 @@ type hubOpen int
 
 const (
 	hubOpenProviders hubOpen = iota
-	hubOpenModels
 )
 
-// newHub builds the hub for an entry point. /models with nothing to pick lands on the
-// provider list instead, with the reason, rather than on an empty picker.
+// newHub builds the hub for an entry point. Choosing the chat model is not part of the
+// hub: `/model ` has its own minimal menu (model_menu.go).
 func newHub(data hubData, open hubOpen) (*providerHub, string) {
-	h := &providerHub{data: data}
-	if open == hubOpenModels {
-		if len(data.enabledModels()) == 0 {
-			return h, "no models yet: add a provider here and its models are fetched for you"
-		}
-		h.setLevel(lvPick)
-		h.selectDefault()
-	}
-	return h, ""
+	return &providerHub{data: data}, ""
 }
 
 // newOfflineHub is the hub when there is no core to talk to: it opens, explains why,
@@ -149,16 +139,6 @@ func newOfflineHub(reason string) *providerHub {
 
 func (h *providerHub) setLevel(l hubLevel) {
 	h.level, h.filter, h.sel = l, "", 0
-}
-
-// selectDefault puts the highlight on the default model of the picker.
-func (h *providerHub) selectDefault() {
-	for i, it := range h.items() {
-		if it.id == h.data.def {
-			h.sel = i
-			return
-		}
-	}
 }
 
 // setData replaces the core's state and re-clamps the highlight: a list that shrank
@@ -274,15 +254,6 @@ func (h *providerHub) allItems() []hubItem {
 			hubItem{id: "yes", label: "Yes, remove " + h.prov},
 			hubItem{id: "no", label: "No, keep it"},
 		)
-
-	case lvPick:
-		for _, m := range d.enabledModels() {
-			label := modelName(m)
-			if modelRef(m) == d.def {
-				label = "✓ " + label + " · default"
-			}
-			out = append(out, hubItem{id: modelRef(m), label: label})
-		}
 	}
 	return out
 }
@@ -385,8 +356,6 @@ func (h *providerHub) title() string {
 		return "Remove " + h.prov + "?"
 	case lvForm:
 		return h.form.title + ":"
-	case lvPick:
-		return "Choose the model to chat with (type to filter):"
 	}
 	return ""
 }
@@ -417,14 +386,14 @@ func (h *providerHub) detail() string {
 			b.WriteString("No providers yet.\n\n" +
 				"Choose “+ Add a provider…” to connect OpenAI, Anthropic, OpenRouter, Gemini and more,\n" +
 				"or your own service. Paste the key once; the models are fetched for you.\n" +
-				"Then pick the model to chat with using /models.")
+				"Then pick the model to chat with using /model.")
 			break
 		}
 		fmt.Fprintf(&b, "%s configured.\n", plural(len(d.providers), "provider", "providers"))
 		if d.def != "" {
 			fmt.Fprintf(&b, "Chat model: %s\n", d.def)
 		} else {
-			b.WriteString("No chat model chosen yet: use /models to pick one.\n")
+			b.WriteString("No chat model chosen yet: use /model to pick one.\n")
 		}
 		b.WriteString("\nEnter on a provider to fetch or add models, edit its URL and key, or remove it.")
 	case lvCatalog:
@@ -452,16 +421,10 @@ func (h *providerHub) detail() string {
 		r, _ := d.provider(h.prov)
 		fmt.Fprintf(&b, "This deletes %s, its %s and its stored API key.", h.prov, plural(r.Models, "model", "models"))
 		if strings.HasPrefix(d.def, h.prov+"/") {
-			b.WriteString("\nIt holds the chat model, so you will have to choose another with /models.")
+			b.WriteString("\nIt holds the chat model, so you will have to choose another with /model.")
 		}
 	case lvForm:
 		b.WriteString(h.form.help)
-	case lvPick:
-		fmt.Fprintf(&b, "%s available. Enter makes the highlighted one the model the chat uses.",
-			plural(len(d.enabledModels()), "model", "models"))
-		if dis := len(d.models) - len(d.enabledModels()); dis > 0 {
-			fmt.Fprintf(&b, "\n%s hidden: enable them in /provider.", plural(dis, "disabled model is", "disabled models are"))
-		}
 	}
 	return b.String()
 }
