@@ -442,6 +442,14 @@ Keep typing to filter live (every word must match: `/model deeps flash`). Up / D
 move (wrapping), Enter picks, Esc closes. Nothing else is printed; the status bar
 shows the new model. With no provider yet, the notice points you to `/provider`.
 
+### Thinking level (`/effort `)
+
+Type `/effort` followed by a space and a menu lists `auto`, `minimal`, `low`, `medium`
+and `high` (same keys as the model menu; a check marks the one in use). The status bar
+shows it. `auto` sends nothing and lets the model decide; any other level is sent with
+every chat message as `reasoning_effort`. `/clear` keeps it. Providers that ignore the
+field simply answer as usual.
+
 The key is pasted into a masked field, shown as `••••`, and never printed back, logged
 or sent to the chat. If sending a message fails (no provider, no model, a refused key,
 no network) the reason appears in the banner instead of nothing happening.

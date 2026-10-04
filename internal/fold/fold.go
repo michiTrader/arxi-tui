@@ -1487,6 +1487,7 @@ var Commands = []SlashMatch{
 	// documents, one layer out in the chrome.
 	{"provider", "Account", "Add providers, set keys and URLs, manage their models"},
 	{"model", "Model", "Choose the model"},
+	{"effort", "Model", "Set how much the model thinks"},
 	// /login is a host-owned screen like /provider: it round-trips the serve
 	// protocol (provider.add / provider.key / model.add), so it is not a patch verb.
 }

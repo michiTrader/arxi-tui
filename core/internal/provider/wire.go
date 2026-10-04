@@ -44,6 +44,10 @@ type chatRequest struct {
 	// while appearing to honour it.
 	Temperature *float64 `json:"temperature,omitempty"`
 
+	// ReasoningEffort is the thinking level ("minimal" .. "high"). Empty is
+	// omitted so a provider that does not know the field never sees it.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+
 	// Stream stays false. Streaming would deliver the reply in fragments and
 	// the usage block last, which means the cost of a turn would be unknown
 	// until the end of it -- and a turn whose cost is unknown cannot be charged

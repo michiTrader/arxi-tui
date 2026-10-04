@@ -690,6 +690,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// modelMenu is the `/model ` menu's state; modelCh carries its worker's answers.
 	var modelMn modelMenu
 	modelCh := make(chan modelRead, 2)
+	// effortMn is the `/effort ` menu: the same shape as the model menu over a fixed
+	// list, so it needs no worker.
+	var effortMn modelMenu
 	hubDoc, hubDocErr := loadHubScene()
 	// openHub is the one door a typed command and a slash-menu pick both take. It
 	// reads the core's state on a worker first so a hung core never freezes the loop.
@@ -866,7 +869,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					}
 				}
 			}
+		} else if filter, open := effortMenuOpen(input); open && hub == nil {
+			// `/effort ` borrows the model menu's overlay: same rows, same keys.
+			if !effortMn.loaded {
+				effortMn.setRows(effortMenuData(effort))
+			}
+			state.ModelActive = true
+			state.ModelMatches, state.ModelSelected = effortMn.view(filter)
 		} else if strings.HasPrefix(input, "/") {
+			effortMn.loaded = false
 			modelMn.loaded = false // the next opening reads the core again
 			state.SlashActive = true
 			state.SlashTyped = input[1:]
@@ -887,6 +898,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.SlashSelected = slashSel
 		} else {
 			modelMn.loaded = false
+			effortMn.loaded = false
 			state.SlashActive = false
 			state.SlashTyped = ""
 			state.SlashMatches = nil
@@ -1342,6 +1354,24 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 									sceneNotice = noLiveCoreNotice
 								}
 							}
+						} else if _, open := effortMenuOpen(input); open {
+							// The `/effort ` menu: same keys as the model menu; a pick
+							// sets the thinking level the next requests ask for.
+							var pick string
+							input, caret, pick = choiceMenuKey(&effortMn, effortPrefix, input, caret, ev.Key)
+							if pick != "" {
+								effort = pick
+								if s, ok := drv.(effortSetter); ok {
+									s.SetEffort(pick)
+								}
+								effortMn.loaded = false
+								sceneNotice = ""
+							}
+						} else if ev.Key.Type == term.KeyEnter && effortCommand(input, slashSel, slashCat) {
+							input = effortPrefix
+							caret = len([]rune(input))
+							slashSel = 0
+							effortMn.loaded = false
 						} else if ev.Key.Type == term.KeyEnter && modelCommand(input, slashSel, slashCat) {
 							// `/model` picked from the command menu (or typed whole)
 							// opens the model menu: the buffer becomes `/model `.

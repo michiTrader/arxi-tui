@@ -213,6 +213,14 @@ func (d *serveDriver) ActorLabel() string {
 	return d.actorLabel
 }
 
+// SetEffort chooses the thinking level the next chat turns ask for ("auto" or "" lets
+// the model decide). It is a setting, so ClearSession leaves it alone.
+func (d *serveDriver) SetEffort(level string) {
+	if d.chat != nil {
+		d.chat.setEffort(level)
+	}
+}
+
 // ClearSession ends the conversation the driver is following and leaves it ready
 // for a fresh one: the chat history is forgotten, a run being followed is no
 // longer relayed, and anything already queued for the loop is dropped. Nothing

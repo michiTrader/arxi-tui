@@ -93,8 +93,13 @@ func clearCommand(input string, sel int, cat string) bool {
 // `/model` with nothing after it. The command menu uses it to open the model menu
 // instead of sending the word to the chat.
 func modelCommand(input string, sel int, cat string) bool {
+	return menuCommand("model", input, sel, cat)
+}
+
+// menuCommand is modelCommand for any command whose menu opens on a trailing space.
+func menuCommand(name, input string, sel int, cat string) bool {
 	body := strings.TrimSpace(input)
-	if body == "/model" {
+	if body == "/"+name {
 		return true
 	}
 	if !strings.HasPrefix(body, "/") || strings.ContainsAny(body, " \t") {
@@ -108,5 +113,5 @@ func modelCommand(input string, sel int, cat string) bool {
 	if sel < 0 || sel >= len(matches) {
 		sel = len(matches) - 1
 	}
-	return matches[sel].Name == "model"
+	return matches[sel].Name == name
 }

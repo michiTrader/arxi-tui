@@ -22,6 +22,7 @@ type fakeLLM struct {
 	mu       sync.Mutex
 	auth     []string
 	messages [][]map[string]any
+	efforts  []string // reasoning_effort of each chat request ("" when absent)
 	models   []string
 	status   int
 }
@@ -48,10 +49,12 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 			json.NewEncoder(w).Encode(map[string]any{"data": data})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/chat/completions"):
 			var body struct {
-				Messages []map[string]any `json:"messages"`
+				Messages        []map[string]any `json:"messages"`
+				ReasoningEffort string           `json:"reasoning_effort"`
 			}
 			json.NewDecoder(r.Body).Decode(&body)
 			f.messages = append(f.messages, body.Messages)
+			f.efforts = append(f.efforts, body.ReasoningEffort)
 			last, _ := body.Messages[len(body.Messages)-1]["content"].(string)
 			json.NewEncoder(w).Encode(map[string]any{
 				"id":      "x",
@@ -320,5 +323,43 @@ func TestTheNewVerbsAnswerOverTheProtocol(t *testing.T) {
 		if _, err := h(step.params); err != nil {
 			t.Fatalf("%s: %v", step.typ, err)
 		}
+	}
+}
+
+func TestChatSendsTheThinkingLevelOnlyWhenAsked(t *testing.T) {
+	isolate(t)
+	f := newFakeLLM(t, "fake-small")
+	if _, err := registerProvider("fake", f.url(), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverModels(context.Background(), "fake"); err != nil {
+		t.Fatal(err)
+	}
+	for _, effort := range []string{"", "auto", "AUTO", "high", " Low ", "minimal", "medium"} {
+		if _, err := chatSendEffort(context.Background(), "hi", "", "", "", effort); err != nil {
+			t.Fatalf("effort %q: %v", effort, err)
+		}
+	}
+	want := []string{"", "", "", "high", "low", "minimal", "medium"}
+	if strings.Join(f.efforts, ",") != strings.Join(want, ",") {
+		t.Errorf("reasoning_effort on the wire = %q, want %q", f.efforts, want)
+	}
+}
+
+func TestChatRefusesAnUnknownThinkingLevelBeforeBilling(t *testing.T) {
+	isolate(t)
+	f := newFakeLLM(t, "fake-small")
+	if _, err := registerProvider("fake", f.url(), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverModels(context.Background(), "fake"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := chatSendEffort(context.Background(), "hi", "", "", "", "ultra")
+	if err == nil || !strings.Contains(err.Error(), "ultra") {
+		t.Fatalf("err = %v; want a refusal naming the bad level", err)
+	}
+	if len(f.efforts) != 0 {
+		t.Errorf("the provider was called %d times for a refused request", len(f.efforts))
 	}
 }

@@ -237,6 +237,31 @@ type chatResult struct {
 // reply. It bills the provider directly; it starts no run, needs no agent and
 // writes nothing to disk.
 func chatSend(ctx context.Context, prompt, historyJSON, system, ref string) (chatResult, error) {
+	return chatSendEffort(ctx, prompt, historyJSON, system, ref, "")
+}
+
+// chatEfforts are the thinking levels a caller may ask for. "auto" and the empty
+// string both mean "send nothing and let the model decide".
+var chatEfforts = map[string]bool{"minimal": true, "low": true, "medium": true, "high": true}
+
+// normalizeEffort maps what a caller typed to what goes on the wire.
+func normalizeEffort(effort string) (string, error) {
+	e := strings.ToLower(strings.TrimSpace(effort))
+	if e == "" || e == "auto" {
+		return "", nil
+	}
+	if !chatEfforts[e] {
+		return "", badInvocation{fmt.Errorf("effort %q is not one of auto, minimal, low, medium, high", effort)}
+	}
+	return e, nil
+}
+
+// chatSendEffort is chatSend with a thinking level.
+func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effort string) (chatResult, error) {
+	level, err := normalizeEffort(effort)
+	if err != nil {
+		return chatResult{}, err
+	}
 	if strings.TrimSpace(prompt) == "" {
 		return chatResult{}, badInvocation{errors.New("there is nothing to send: the message is empty")}
 	}
@@ -299,7 +324,7 @@ func chatSend(ctx context.Context, prompt, historyJSON, system, ref string) (cha
 	resp, err := exec.CompleteTurn(ctx, turn.Request{
 		Schema: turn.Schema, Provider: res.Provider, Protocol: res.Protocol,
 		BaseURL: res.BaseURL, APIKeyEnv: res.APIKeyEnv, Model: res.Model,
-		MaxTokens: 4096, Messages: messages,
+		MaxTokens: 4096, Messages: messages, Effort: level,
 	})
 	if err != nil {
 		return chatResult{}, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, err)
@@ -402,6 +427,6 @@ func handleModelDefault(params map[string]any) (any, error) {
 }
 
 func handleChatSend(params map[string]any) (any, error) {
-	return chatSend(context.Background(), stringParam(params, "prompt"), stringParam(params, "history"),
-		stringParam(params, "system"), stringParam(params, "model"))
+	return chatSendEffort(context.Background(), stringParam(params, "prompt"), stringParam(params, "history"),
+		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))
 }
