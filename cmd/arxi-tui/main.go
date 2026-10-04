@@ -1611,8 +1611,9 @@ func typeKey(input string, caret int, k term.Key, ctx context.Context, drv Drive
 // applyEdit is the caret-aware line editor shared by the ordinary input path and
 // the slash line: it is the one place the buffer and the caret move together, so
 // the two paths cannot disagree about what Left or Backspace mean. It handles
-// caret motion (Left/Right/Home/End), deletion on both sides of the caret
-// (Backspace before, Delete under), and insertion of a printable run at the
+// caret motion (Left/Right/Home/End, and by word with Ctrl/Alt+Left/Right),
+// deletion on both sides of the caret (Backspace before, Alt+Backspace a whole
+// word before, Delete under), and insertion of a printable run at the
 // caret. It returns ok=false for any key it does not act on (Enter, the menu's
 // Up/Down/Tab, and so on) so the caller keeps its own handling for those.
 //
@@ -1631,6 +1632,12 @@ func applyEdit(input string, caret int, k term.Key) (string, int, bool) {
 	switch {
 	case k.Type == term.KeyLeft && k.Mod&(term.ModCtrl|term.ModAlt) != 0:
 		return input, wordLeft(r, caret), true
+	case k.Type == term.KeyRunes && k.Mod&term.ModAlt != 0 && string(k.Runes) == "b":
+		// ESC b is how macOS Terminal and readline-style terminals spell Option+Left.
+		return input, wordLeft(r, caret), true
+	case k.Type == term.KeyRunes && k.Mod&term.ModAlt != 0 && string(k.Runes) == "f":
+		// ESC f is the Option+Right counterpart.
+		return input, wordRight(r, caret), true
 	case k.Type == term.KeyLeft:
 		if caret > 0 {
 			caret--
@@ -1647,6 +1654,13 @@ func applyEdit(input string, caret int, k term.Key) (string, int, bool) {
 		return input, 0, true
 	case k.Type == term.KeyEnd:
 		return input, len(r), true
+	case k.Type == term.KeyBackspace && k.Mod&(term.ModCtrl|term.ModAlt) != 0:
+		// Alt+Backspace (ESC DEL on the wire) deletes the word before the caret: the
+		// span the matching Alt+Left would cross. Ctrl+Backspace, where a terminal
+		// can tell it apart, does the same.
+		start := wordLeft(r, caret)
+		r = append(r[:start], r[caret:]...)
+		return string(r), start, true
 	case k.Type == term.KeyBackspace:
 		if caret == 0 {
 			return input, caret, true
