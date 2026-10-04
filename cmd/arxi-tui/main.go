@@ -309,6 +309,13 @@ type actorLabeler interface {
 	ActorLabel() string
 }
 
+// sessionClearer is the optional capability a Driver has when it owns a
+// conversation that /clear can end (serveDriver). The mock keeps no state beyond
+// the loop's own event list, so it does not implement it.
+type sessionClearer interface {
+	ClearSession()
+}
+
 // openDriver decides whether to spawn the arxi core subprocess or fall back to
 // the Phase 0 mock. The mock is used when ARXI_BIN is unset: the binary path
 // is optional, and the mock lets the engine run daily without the core present.
@@ -1253,6 +1260,28 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						} else if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens); handled {
 							input = next
 							caret = clampCaret(input, caret)
+						} else if ev.Key.Type == term.KeyEnter && clearCommand(input, slashSel) {
+							// `/clear` starts a new session: the transcript, the
+							// chat history the driver sends along, any run being
+							// followed and the scroll position are all dropped.
+							// The provider, the model and the thinking level
+							// are settings, not conversation, so they stay.
+							if c, ok := drv.(sessionClearer); ok {
+								c.ClearSession()
+							}
+							collected = nil
+							for drained := false; !drained; {
+								select {
+								case <-eventCh:
+								default:
+									drained = true
+								}
+							}
+							sceneNotice = ""
+							chatScroll = 0
+							input = ""
+							caret = 0
+							slashSel = 0
 						} else if open, isHub := hubCommand(input); isHub && ev.Key.Type == term.KeyEnter {
 							// `/provider`, `/providers`, `/login`, `/model` and `/models`
 							// are host-owned and all open the one provider hub. They take

@@ -1447,6 +1447,7 @@ var Commands = []SlashMatch{
 	// import would be a cycle, and a fold that imported the patch surface
 	// would stop being the pure host-owned fold ADR-0002 requires.
 	{"ui", "General", "Mutate the scene and its view state (add, move, set, style, hide, show, plugin)"},
+	{"clear", "General", "Start a new session"},
 	// The provider/model management commands (K2). They are host-intercepted
 	// round-trips over the serve protocol, not patch verbs, so they are NOT held
 	// to patch.Verbs() the way `ui` is -- their subcommands are backed by the

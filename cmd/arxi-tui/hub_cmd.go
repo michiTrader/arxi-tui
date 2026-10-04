@@ -67,3 +67,24 @@ func menuHostCommand(input string, sel int) (line string, ok bool) {
 	}
 	return "", false
 }
+
+// clearCommand reports whether Enter on this line (or on the highlighted menu row)
+// is `/clear`. It takes no arguments: `/clear now` is not a clear, so a typo can
+// never wipe a conversation by accident.
+func clearCommand(input string, sel int) bool {
+	body := strings.TrimSpace(input)
+	if body == "/clear" {
+		return true
+	}
+	if !strings.HasPrefix(body, "/") || strings.ContainsAny(body, " \t") {
+		return false
+	}
+	matches := fold.FilterSlashMatches(strings.TrimPrefix(body, "/"))
+	if len(matches) == 0 {
+		return false
+	}
+	if sel < 0 || sel >= len(matches) {
+		sel = len(matches) - 1
+	}
+	return matches[sel].Name == "clear"
+}
