@@ -229,8 +229,8 @@ func (h *providerHub) allItems() []hubItem {
 			out = append(out, hubItem{id: e.ID, label: e.Display, status: st})
 		}
 		label := "Other…"
-		if q := strings.TrimSpace(h.filter); q != "" && !h.anyCatalogMatch(q) {
-			label = fmt.Sprintf("Other: %q…", sanitizeProviderName(q))
+		if name := h.otherName(); name != "" {
+			label = fmt.Sprintf("Other: %q…", name)
 		}
 		out = append(out, hubItem{id: "other", label: label, status: "any OpenAI-compatible service", sticky: true})
 
@@ -294,6 +294,26 @@ func (h *providerHub) modelEnabled(ref string) bool {
 		}
 	}
 	return false
+}
+
+// isOtherWord reports whether the user typed the word for the Other… row itself
+// ("other", "others", "otro", "otros"), which selects it rather than naming a service.
+func isOtherWord(q string) bool {
+	switch strings.ToLower(strings.TrimSpace(q)) {
+	case "other", "others", "otro", "otros", "otra", "otras":
+		return true
+	}
+	return false
+}
+
+// otherName is the provider name the Other… row offers to create: what the user
+// typed, when it matches no listed service and is not the word "other" itself.
+func (h *providerHub) otherName() string {
+	q := strings.TrimSpace(h.filter)
+	if q == "" || isOtherWord(q) || h.anyCatalogMatch(q) {
+		return ""
+	}
+	return sanitizeProviderName(q)
 }
 
 // anyCatalogMatch reports whether the filter text matches a catalog service, so the
@@ -379,4 +399,130 @@ func (h *providerHub) hint() string {
 		return "↑↓ move · enter choose · esc back"
 	}
 	return "type to filter · ↑↓ move · enter select · esc back"
+}
+
+func (h *providerHub) detail() string {
+	var b strings.Builder
+	if h.working != "" {
+		b.WriteString("⏳ " + h.working + "\n\n")
+	}
+	if h.offline != "" {
+		b.WriteString(h.offline + "\n\nPress esc to go back to the chat.")
+		return b.String()
+	}
+	d := h.data
+	switch h.level {
+	case lvProviders:
+		if len(d.providers) == 0 {
+			b.WriteString("No providers yet.\n\n" +
+				"Choose “+ Add a provider…” to connect OpenAI, Anthropic, OpenRouter, Gemini and more,\n" +
+				"or your own service. Paste the key once; the models are fetched for you.\n" +
+				"Then pick the model to chat with using /models.")
+			break
+		}
+		fmt.Fprintf(&b, "%s configured.\n", plural(len(d.providers), "provider", "providers"))
+		if d.def != "" {
+			fmt.Fprintf(&b, "Chat model: %s\n", d.def)
+		} else {
+			b.WriteString("No chat model chosen yet: use /models to pick one.\n")
+		}
+		b.WriteString("\nEnter on a provider to fetch or add models, edit its URL and key, or remove it.")
+	case lvCatalog:
+		b.WriteString("Pick a service, or type to filter the list. “Other…” adds any service\n" +
+			"that speaks the OpenAI chat API: you give its name, base URL and key.")
+	case lvActions:
+		h.writeProviderSummary(&b)
+	case lvModels:
+		if len(d.modelsOf(h.prov)) == 0 {
+			b.WriteString("This provider has no models yet.\nGo back and choose “Fetch models from the service” or “Add models by hand…”.")
+		} else {
+			b.WriteString("Enter on a model to make it the default, enable or disable it, or remove it.")
+		}
+	case lvModelActions:
+		fmt.Fprintf(&b, "Model: %s\n", h.model)
+		switch {
+		case h.model == d.def:
+			b.WriteString("It is the model the chat uses now.")
+		case h.modelEnabled(h.model):
+			b.WriteString("Enabled.")
+		default:
+			b.WriteString("Disabled: enable it before using it.")
+		}
+	case lvConfirm:
+		r, _ := d.provider(h.prov)
+		fmt.Fprintf(&b, "This deletes %s, its %s and its stored API key.", h.prov, plural(r.Models, "model", "models"))
+		if strings.HasPrefix(d.def, h.prov+"/") {
+			b.WriteString("\nIt holds the chat model, so you will have to choose another with /models.")
+		}
+	case lvForm:
+		b.WriteString(h.form.help)
+	case lvPick:
+		fmt.Fprintf(&b, "%s available. Enter makes the highlighted one the model the chat uses.",
+			plural(len(d.enabledModels()), "model", "models"))
+		if dis := len(d.models) - len(d.enabledModels()); dis > 0 {
+			fmt.Fprintf(&b, "\n%s hidden: enable them in /provider.", plural(dis, "disabled model is", "disabled models are"))
+		}
+	}
+	return b.String()
+}
+
+func (h *providerHub) writeProviderSummary(b *strings.Builder) {
+	r, ok := h.data.provider(h.prov)
+	if !ok {
+		fmt.Fprintf(b, "%s is not registered.", h.prov)
+		return
+	}
+	fmt.Fprintf(b, "URL:     %s\n", r.BaseURL)
+	fmt.Fprintf(b, "Key:     %s\n", keyStatus(r))
+	fmt.Fprintf(b, "Models:  %s", plural(r.Models, "model", "models"))
+	if strings.HasPrefix(h.data.def, h.prov+"/") {
+		fmt.Fprintf(b, " · chat model: %s", strings.TrimPrefix(h.data.def, h.prov+"/"))
+	}
+}
+
+// publish writes the hub's view onto the folded state the renderer reads. It is the
+// only thing that does, and it writes only masked text.
+func (h *providerHub) publish(st *fold.State) {
+	var rows []fold.HubRow
+	if h.level == lvForm {
+		lo, hi := window(h.form.focus, len(h.form.fields), hubPageSize)
+		for i := lo; i < hi; i++ {
+			f := h.form.fields[i]
+			rows = append(rows, fold.HubRow{Label: f.label, Status: f.shown(), Selected: i == h.form.focus})
+		}
+		st.UserInput = h.form.fields[h.form.focus].masked()
+	} else {
+		items := h.items()
+		lo, hi := window(h.sel, len(items), hubPageSize)
+		for i := lo; i < hi; i++ {
+			rows = append(rows, fold.HubRow{Label: items[i].label, Status: items[i].status, Selected: i == h.sel})
+		}
+		st.UserInput = h.filter
+	}
+	st.UserInputCaret = len([]rune(st.UserInput))
+	st.HubTitle, st.HubRows, st.HubHint, st.HubDetail = h.title(), rows, h.hint(), h.detail()
+}
+
+// window is the [lo,hi) slice of a list of n rows, size rows tall, that keeps the
+// highlight visible and does not move until the highlight reaches an edge.
+func window(sel, n, size int) (lo, hi int) {
+	if n <= size {
+		return 0, n
+	}
+	lo = sel - size/2
+	if lo < 0 {
+		lo = 0
+	}
+	if lo+size > n {
+		lo = n - size
+	}
+	return lo, lo + size
+}
+
+// wipe drops any open form and every secret typed into it.
+func (h *providerHub) wipe() {
+	if h.form != nil {
+		h.form.wipe()
+		h.form = nil
+	}
 }
