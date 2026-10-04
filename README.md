@@ -38,6 +38,23 @@ The thinking level is `auto` until you choose one with `/effort`. The directory 
 where the TUI was started (home shown as `~`). While the `/` menu is open the bar
 shows only the navigation hint.
 
+### Sessions and `/clear`
+
+A *session* is the conversation on screen plus the history sent to the model with
+each prompt. `/clear` (typed, or picked in the `/` menu) starts a new one:
+
+| dropped | kept |
+|---|---|
+| the transcript and its scroll position | providers and their keys |
+| the chat history sent with the next prompt | the selected model |
+| a reply still in flight (its answer is discarded, never shown in the new session) | the thinking level (`/effort`) |
+| the run being followed, if any, and its actor label | the scene, theme and hidden/maximized panes |
+| the notice line | |
+
+`/clear` takes no arguments, so `/clear now` is not a clear. Managed processes (the
+arxi core and plugins) are not restarted: the core keeps no chat state (`chat.send`
+is stateless), so forgetting the history on the TUI side is the whole reset.
+
 **Phase 0 — Scene engine:** Complete and running.
 
 - ✅ Scene document parser and validator (`internal/scene`)

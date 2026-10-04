@@ -39,6 +39,10 @@ type chatSession struct {
 	history []driver.ChatTurn
 	busy    bool
 	seq     int64
+	// gen counts sessions. A turn remembers the generation it started in and
+	// drops everything it would report once /clear has bumped it, so an answer
+	// that was in flight cannot land in the fresh conversation.
+	gen int64
 }
 
 func newChatSession(core chatSender, out chan<- fold.Event) *chatSession {
@@ -75,13 +79,33 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 		return errChatBusy
 	}
 	c.busy = true
+	gen := c.gen
 	hist := append([]driver.ChatTurn(nil), c.history...)
 	if len(hist) > chatMaxHistory {
 		hist = hist[len(hist)-chatMaxHistory:]
 	}
 	c.mu.Unlock()
-	go c.run(ctx, text, hist)
+	go c.run(ctx, text, hist, gen)
 	return nil
+}
+
+// reset starts a new conversation: the history is forgotten, a turn still in
+// flight is orphaned (its result is discarded), and the next line may be sent
+// at once. The core keeps no chat state of its own (chat.send is stateless, the
+// history rides along with each prompt), so forgetting it here is the whole job.
+func (c *chatSession) reset() {
+	c.mu.Lock()
+	c.gen++
+	c.history = nil
+	c.busy = false
+	c.mu.Unlock()
+}
+
+// current reports whether gen is still the live session.
+func (c *chatSession) current(gen int64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.gen == gen
 }
 
 func (c *chatSession) nextSeq() int64 {
@@ -91,7 +115,10 @@ func (c *chatSession) nextSeq() int64 {
 	return c.seq
 }
 
-func (c *chatSession) emit(ctx context.Context, typ string, payload map[string]any) {
+func (c *chatSession) emit(ctx context.Context, gen int64, typ string, payload map[string]any) {
+	if !c.current(gen) {
+		return
+	}
 	ev := fold.Event{Type: typ, Seq: c.nextSeq(), Actor: "assistant", Payload: payload}
 	select {
 	case c.out <- ev:
@@ -102,7 +129,10 @@ func (c *chatSession) emit(ctx context.Context, typ string, payload map[string]a
 // fail puts an error in the conversation. It never blocks the caller: the relay
 // channel is buffered, and if it is momentarily full the event waits on its own
 // goroutine rather than being dropped.
-func (c *chatSession) fail(ctx context.Context, msg string) {
+func (c *chatSession) fail(ctx context.Context, gen int64, msg string) {
+	if !c.current(gen) {
+		return
+	}
 	ev := fold.Event{Type: "chat.error", Seq: c.nextSeq(), Actor: "assistant", Payload: map[string]any{"text": msg}}
 	select {
 	case c.out <- ev:
@@ -116,32 +146,38 @@ func (c *chatSession) fail(ctx context.Context, msg string) {
 	}
 }
 
-func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn) {
+func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64) {
 	defer func() {
 		c.mu.Lock()
-		c.busy = false
+		if c.gen == gen {
+			c.busy = false
+		}
 		c.mu.Unlock()
 	}()
-	c.emit(ctx, "run.prompt", map[string]any{"text": text})
-	c.emit(ctx, "agent.activated", map[string]any{"agent": "assistant"})
+	c.emit(ctx, gen, "run.prompt", map[string]any{"text": text})
+	c.emit(ctx, gen, "agent.activated", map[string]any{"agent": "assistant"})
 	res, err := c.core.SubmitChatSend(ctx, driver.ChatSendParams{Prompt: text, System: chatSystemPrompt, History: hist})
 	if err != nil {
-		c.emit(ctx, "agent.failed", map[string]any{"agent": "assistant"})
-		c.fail(ctx, chatErrorText(err))
+		c.emit(ctx, gen, "agent.failed", map[string]any{"agent": "assistant"})
+		c.fail(ctx, gen, chatErrorText(err))
 		return
 	}
 	c.mu.Lock()
+	if c.gen != gen {
+		c.mu.Unlock()
+		return
+	}
 	c.history = append(c.history, driver.ChatTurn{Role: "user", Text: text}, driver.ChatTurn{Role: "assistant", Text: res.Text})
 	c.mu.Unlock()
 	model := res.Model
 	if res.Provider != "" && !strings.Contains(model, "/") {
 		model = res.Provider + "/" + res.Model
 	}
-	c.emit(ctx, "llm.response", map[string]any{
+	c.emit(ctx, gen, "llm.response", map[string]any{
 		"text": res.Text, "model": model, "agent": "assistant",
 		"tokens_in": float64(res.InputTokens), "tokens_out": float64(res.OutputTokens),
 	})
-	c.emit(ctx, "agent.turn_done", map[string]any{"agent": "assistant"})
+	c.emit(ctx, gen, "agent.turn_done", map[string]any{"agent": "assistant"})
 }
 
 // chatErrorText is the sentence the user reads when a turn fails: the core's own

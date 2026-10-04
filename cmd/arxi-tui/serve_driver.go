@@ -213,6 +213,32 @@ func (d *serveDriver) ActorLabel() string {
 	return d.actorLabel
 }
 
+// ClearSession ends the conversation the driver is following and leaves it ready
+// for a fresh one: the chat history is forgotten, a run being followed is no
+// longer relayed, and anything already queued for the loop is dropped. Nothing
+// the core owns is touched: providers, keys and the selected model survive.
+func (d *serveDriver) ClearSession() {
+	if d.chat != nil {
+		d.chat.reset()
+	}
+	d.mu.Lock()
+	cancel := d.runCancel
+	d.runCancel = nil
+	d.logPath = ""
+	d.actorLabel = ""
+	d.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	for d.relay != nil {
+		select {
+		case <-d.relay:
+		default:
+			return
+		}
+	}
+}
+
 func (d *serveDriver) Close() error {
 	d.mu.Lock()
 	cancel := d.runCancel
