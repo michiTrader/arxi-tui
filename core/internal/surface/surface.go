@@ -198,6 +198,7 @@ var Registry = []Cmd{
 		Params: []Param{pos(p("prompt", "string", "the message")),
 			p("model", "string", "model id or provider/id; defaults to the chosen model"),
 			p("system", "string", "instructions for the model"),
+			p("effort", "string", "thinking level: minimal, low, medium or high; omit to let the model decide"),
 			p("history", "string", "earlier turns as a JSON list of {role,text} (wire only)")}},
 	{Path: []string{"model", "list"}, Desc: "list available models",
 		Kind: CLIOnly | AgentTool | Protocol, ToolPolicy: PolicyAllow, Idempotent: true, Since: 1},

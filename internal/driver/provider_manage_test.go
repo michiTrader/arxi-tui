@@ -130,3 +130,26 @@ func TestChatSendRefusesAnEmptyPromptLocally(t *testing.T) {
 		t.Fatal("an empty prompt was sent")
 	}
 }
+
+func TestChatSendCarriesTheThinkingLevelOnlyWhenSet(t *testing.T) {
+	for _, tc := range []struct {
+		effort string
+		want   bool
+	}{{"", false}, {"high", true}} {
+		var sent bytes.Buffer
+		d := sessionWithWriter(t, &sent, `{"id":"chat-send","ok":true,"result":{"text":"hi","model":"m","provider":"p","input_tokens":1,"output_tokens":1}}`)
+		if _, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "hello", Effort: tc.effort}); err != nil {
+			t.Fatalf("SubmitChatSend: %v", err)
+		}
+		var req struct {
+			Params map[string]any `json:"params"`
+		}
+		if err := json.Unmarshal(bytes.TrimSpace(sent.Bytes()), &req); err != nil {
+			t.Fatalf("request is not JSON: %v", err)
+		}
+		got, has := req.Params["effort"]
+		if has != tc.want || (has && got != tc.effort) {
+			t.Errorf("effort %q: params[effort] = %v (present %v)", tc.effort, got, has)
+		}
+	}
+}

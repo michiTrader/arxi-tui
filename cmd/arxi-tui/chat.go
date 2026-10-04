@@ -43,6 +43,9 @@ type chatSession struct {
 	// drops everything it would report once /clear has bumped it, so an answer
 	// that was in flight cannot land in the fresh conversation.
 	gen int64
+	// effort is the thinking level sent with each turn ("" = the model decides).
+	// It is a setting, not conversation: reset() leaves it alone.
+	effort string
 }
 
 func newChatSession(core chatSender, out chan<- fold.Event) *chatSession {
@@ -60,6 +63,18 @@ func chatRequires(h *driver.Hello) error {
 		}
 	}
 	return fmt.Errorf("this arxi core is too old to chat (it lacks chat.send); %s", rebuildRemedy)
+}
+
+// setEffort chooses the thinking level for the turns that start from now on. "auto"
+// and "" both mean "send nothing". A turn already in flight keeps the level it began
+// with.
+func (c *chatSession) setEffort(level string) {
+	if level == effortAuto {
+		level = ""
+	}
+	c.mu.Lock()
+	c.effort = level
+	c.mu.Unlock()
 }
 
 // send starts one turn. It returns an error immediately for anything that can be
@@ -80,12 +95,13 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	}
 	c.busy = true
 	gen := c.gen
+	effort := c.effort
 	hist := append([]driver.ChatTurn(nil), c.history...)
 	if len(hist) > chatMaxHistory {
 		hist = hist[len(hist)-chatMaxHistory:]
 	}
 	c.mu.Unlock()
-	go c.run(ctx, text, hist, gen)
+	go c.run(ctx, text, hist, gen, effort)
 	return nil
 }
 
@@ -146,7 +162,7 @@ func (c *chatSession) fail(ctx context.Context, gen int64, msg string) {
 	}
 }
 
-func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64) {
+func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64, effort string) {
 	defer func() {
 		c.mu.Lock()
 		if c.gen == gen {
@@ -156,7 +172,7 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 	}()
 	c.emit(ctx, gen, "run.prompt", map[string]any{"text": text})
 	c.emit(ctx, gen, "agent.activated", map[string]any{"agent": "assistant"})
-	res, err := c.core.SubmitChatSend(ctx, driver.ChatSendParams{Prompt: text, System: chatSystemPrompt, History: hist})
+	res, err := c.core.SubmitChatSend(ctx, driver.ChatSendParams{Prompt: text, System: chatSystemPrompt, History: hist, Effort: effort})
 	if err != nil {
 		c.emit(ctx, gen, "agent.failed", map[string]any{"agent": "assistant"})
 		c.fail(ctx, gen, chatErrorText(err))

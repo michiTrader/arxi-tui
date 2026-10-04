@@ -74,6 +74,10 @@ type Request struct {
 	MaxTokens   int              `json:"max_tokens"`
 	Temperature *float64         `json:"temperature,omitempty"`
 	Stream      bool             `json:"stream,omitempty"`
+	// Effort is the thinking level the caller asked for: "minimal", "low",
+	// "medium" or "high". Empty means the model decides. Only the OpenAI
+	// Chat Completions wire carries it (as reasoning_effort).
+	Effort string `json:"effort,omitempty"`
 }
 
 type FinishReason string

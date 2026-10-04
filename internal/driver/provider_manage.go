@@ -166,6 +166,9 @@ type ChatSendParams struct {
 	Model   string
 	System  string
 	History []ChatTurn
+	// Effort is the thinking level: "minimal", "low", "medium" or "high". Empty
+	// sends nothing, and the model decides.
+	Effort string
 }
 
 // ChatSendResult is the model's answer with the usage the core measured.
@@ -189,6 +192,9 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 	}
 	if p.System != "" {
 		params["system"] = p.System
+	}
+	if p.Effort != "" {
+		params["effort"] = p.Effort
 	}
 	if len(p.History) > 0 {
 		b, err := json.Marshal(p.History)

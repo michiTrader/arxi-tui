@@ -16,10 +16,16 @@ const modelPrefix = "/model "
 // modelMenuOpen reports whether the buffer opens the model menu, and the text typed
 // after the prefix (the filter).
 func modelMenuOpen(input string) (filter string, open bool) {
-	if !strings.HasPrefix(input, modelPrefix) {
+	return menuOpen(modelPrefix, input)
+}
+
+// menuOpen reports whether the buffer opens the menu of the command `prefix` (the
+// command and one space), and the text typed after it.
+func menuOpen(prefix, input string) (filter string, open bool) {
+	if !strings.HasPrefix(input, prefix) {
 		return "", false
 	}
-	return strings.TrimLeft(input[len(modelPrefix):], " "), true
+	return strings.TrimLeft(input[len(prefix):], " "), true
 }
 
 // modelMenu is the host-owned state of the `/model ` menu between frames: the models
@@ -67,6 +73,19 @@ func modelMatchesFrom(d hubData) []fold.ModelMatch {
 	return out
 }
 
+// setRows replaces the rows with a fixed list and moves the highlight onto the one
+// marked in use. The effort menu uses it; it has nothing to read from the core.
+func (mm *modelMenu) setRows(rows []fold.ModelMatch) {
+	mm.models, mm.loaded, mm.loading, mm.err = rows, true, false, ""
+	mm.sel = 0
+	for i, m := range rows {
+		if m.Current {
+			mm.sel = i
+			break
+		}
+	}
+}
+
 // setData replaces the model list and moves the highlight onto the model in use.
 func (mm *modelMenu) setData(d hubData) {
 	mm.models, mm.loaded, mm.loading, mm.err = modelMatchesFrom(d), true, false, ""
@@ -98,7 +117,13 @@ func (mm *modelMenu) view(filter string) (rows []fold.ModelMatch, sel int) {
 // down wrap; Esc clears the line; everything else edits the line like the normal
 // input, and any change to the filter puts the highlight back on the first row.
 func modelMenuKey(mm *modelMenu, input string, caret int, k term.Key) (next string, nextCaret int, pick string) {
-	filter, _ := modelMenuOpen(input)
+	return choiceMenuKey(mm, modelPrefix, input, caret, k)
+}
+
+// choiceMenuKey is modelMenuKey for any menu opened by `<command> `: the model menu
+// and the effort menu share the keys, the filter and the wrap-around.
+func choiceMenuKey(mm *modelMenu, prefix, input string, caret int, k term.Key) (next string, nextCaret int, pick string) {
+	filter, _ := menuOpen(prefix, input)
 	rows := filterModels(mm.models, filter)
 	switch k.Type {
 	case term.KeyUp:

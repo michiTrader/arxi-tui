@@ -19,6 +19,7 @@ func openAIRequest(req turn.Request) (chatRequest, error) {
 	out := chatRequest{
 		Model: req.Model, MaxTokens: req.MaxTokens,
 		Temperature: req.Temperature, Stream: req.Stream,
+		ReasoningEffort: req.Effort,
 	}
 	for i, msg := range req.Messages {
 		wire, err := openAIMessage(msg)

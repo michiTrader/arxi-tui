@@ -107,7 +107,7 @@ func cmdModelDefault(args []string) {
 	}
 }
 
-// cmdChat implements `arxi chat send <prompt> [--model M] [--system S]`.
+// cmdChat implements `arxi chat send <prompt> [--model M] [--system S] [--effort E]`.
 func cmdChat(args []string) {
 	if len(args) == 0 || args[0] != "send" {
 		if len(args) > 0 {
@@ -121,7 +121,7 @@ func cmdChat(args []string) {
 		fmt.Fprintf(os.Stderr, "arxi chat send: %v\n", err)
 		os.Exit(2)
 	}
-	res, err := chatSend(context.Background(), vals["prompt"], vals["history"], vals["system"], vals["model"])
+	res, err := chatSendEffort(context.Background(), vals["prompt"], vals["history"], vals["system"], vals["model"], vals["effort"])
 	if err != nil {
 		cliFail("chat send", err)
 	}

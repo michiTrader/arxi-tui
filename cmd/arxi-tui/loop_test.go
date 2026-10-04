@@ -643,6 +643,9 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	case "model":
 		// /model opens the model menu; with no core it says why there is nothing to pick.
 		want = noLiveCoreNotice
+	case "effort":
+		// /effort opens its own menu; it needs no core, so its first row shows.
+		want = "let the model decide"
 	default:
 		t.Fatalf("the last registry row is %q; teach this test what picking it does", last)
 	}
