@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -87,66 +86,23 @@ type serveDriver struct {
 	// known rather than recomputed later.
 	actorLabel string
 
-	// providers is the K2 provider/model seam of the same NDJSON driver rs is: the
-	// four verbs dispatchProviderCmd round-trips. It is a narrow seam (the
-	// providerManager interface) rather than *driver.NDJSONDriver for the same
-	// reason rs and inbox are -- so a test can drive the command surface against a
-	// fake that returns a chosen hello and result without a subprocess. serveDriver
-	// exposes it to the loop by forwarding the four methods below, so the loop's
-	// `drv.(providerManager)` assertion finds the capability on the one Driver it
-	// holds.
-	providers providerManager
+	// chat answers plain chat lines with chat.send; hub is the provider/model
+	// management seam; notes carries chat failures to the loop's banner. All three
+	// are nil on a connection that was built without them (tests, the mock).
+	chat  *chatSession
+	hub   hubCore
+	notes chan string
 }
 
-// Hello, SubmitProviderAdd, SubmitModelList and SubmitModelEnable forward the
-// providerManager capability to the driver seam. They exist so *serveDriver --
-// the concrete Driver the loop holds -- satisfies providerManager, which the loop
-// asserts before dispatching a /provider or /model command. The run surface gates
-// on the same hello through rs.Hello(); both reach the one NDJSONDriver, so there
-// is no second greeting to drift.
-func (d *serveDriver) Hello() *driver.Hello { return d.providers.Hello() }
+// Hub is the provider/model management seam, or nil when this connection has none.
+func (d *serveDriver) Hub() hubCore { return d.hub }
 
-func (d *serveDriver) SubmitProviderAdd(ctx context.Context, p driver.ProviderAddParams) (*driver.ProviderAddResult, error) {
-	return d.providers.SubmitProviderAdd(ctx, p)
-}
-
-func (d *serveDriver) SubmitModelList(ctx context.Context) (*driver.ModelListResult, error) {
-	return d.providers.SubmitModelList(ctx)
-}
-
-func (d *serveDriver) SubmitModelEnable(ctx context.Context, ref string, on bool) (*driver.ModelEnableResult, error) {
-	return d.providers.SubmitModelEnable(ctx, ref, on)
-}
-
-// errNoLoginCore is what the key verbs answer when the provider seam is a fake that
-// only manages providers. The loop gates on the hello first, so a real user never
-// sees it; it keeps the forwarders total instead of panicking on a bad seam.
-var errNoLoginCore = errors.New("serve driver: this connection cannot store API keys")
-
-// SubmitProviderKey, SubmitProviderList and SubmitModelAdd forward the loginManager
-// capability the same way the provider verbs above are forwarded.
-func (d *serveDriver) SubmitProviderKey(ctx context.Context, name, apiKey string) (*driver.ProviderKeyResult, error) {
-	lm, ok := d.providers.(loginManager)
-	if !ok {
-		return nil, errNoLoginCore
+// Notices is the channel chat failures arrive on, or nil.
+func (d *serveDriver) Notices() <-chan string {
+	if d.notes == nil {
+		return nil
 	}
-	return lm.SubmitProviderKey(ctx, name, apiKey)
-}
-
-func (d *serveDriver) SubmitProviderList(ctx context.Context) (*driver.ProviderListResult, error) {
-	lm, ok := d.providers.(loginManager)
-	if !ok {
-		return nil, errNoLoginCore
-	}
-	return lm.SubmitProviderList(ctx)
-}
-
-func (d *serveDriver) SubmitModelAdd(ctx context.Context, p driver.ModelAddParams) (*driver.ProviderAddResult, error) {
-	lm, ok := d.providers.(loginManager)
-	if !ok {
-		return nil, errNoLoginCore
-	}
-	return lm.SubmitModelAdd(ctx, p)
+	return d.notes
 }
 
 // SubmitPrompt begins a run for the user's line and follows its event log.
@@ -158,6 +114,9 @@ func (d *serveDriver) SubmitModelAdd(ctx context.Context, p driver.ModelAddParam
 // before any follow is attempted, so the failure is a named error at submit
 // rather than a follow that waits forever on a log no run creates.
 func (d *serveDriver) SubmitPrompt(ctx context.Context, text string) error {
+	if d.chat != nil {
+		return d.chat.send(ctx, text)
+	}
 	logPath, actorLabel, err := startRun(ctx, d.rs, d.getenv, d.runsRoot, text)
 	if err != nil {
 		return err
@@ -332,8 +291,7 @@ func (d *serveDriver) ReplyInboxItem(ctx context.Context, itemID, text string) e
 var (
 	_ runStarter      = (*driver.NDJSONDriver)(nil)
 	_ inboxSubmitter  = (*driver.NDJSONDriver)(nil)
-	_ providerManager = (*driver.NDJSONDriver)(nil)
-	_ providerManager = (*serveDriver)(nil)
+	_ chatSender      = (*driver.NDJSONDriver)(nil)
 	_ Driver          = (*serveDriver)(nil)
 	_ inboxDecider    = (*serveDriver)(nil)
 )
