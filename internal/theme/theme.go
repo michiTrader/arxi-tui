@@ -340,13 +340,31 @@ func SOBRIA() *Theme {
 		// lifting the questions. bright-white (index 15) rather than plain white so
 		// it reads as emphasis on the terminals whose default text is already a
 		// light grey.
-		"chat.user":          {FG: ui.Idx(ui.White + ui.Bright)},
-		"chat.error":         {FG: ui.Idx(ui.Red + ui.Bright)},
-		"markdown.heading":   {Attrs: ui.AttrBold},
-		"markdown.emphasis":  {Attrs: ui.AttrItalic},
-		"markdown.strong":    {Attrs: ui.AttrBold},
-		"markdown.code":      {}, // no style: same as surrounding text
-		"markdown.codeblock": {Attrs: ui.AttrDim},
+		"chat.user":  {FG: ui.Idx(ui.White + ui.Bright)},
+		"chat.error": {FG: ui.Idx(ui.Red + ui.Bright)},
+		// Assistant replies are Markdown (internal/ui/markdown.go). Structure is carried
+		// by weight and a restrained palette: headings bright and bold, inline code and
+		// links cyan, code blocks syntax-tinted behind a dim gutter, and every frame
+		// (list bullets, quote bars, table rules) dim so it recedes behind the words.
+		"markdown.heading":      {FG: ui.Idx(ui.White + ui.Bright), Attrs: ui.AttrBold},
+		"markdown.emphasis":     {Attrs: ui.AttrItalic},
+		"markdown.strong":       {Attrs: ui.AttrBold},
+		"markdown.code":         {FG: ui.Idx(ui.Cyan)},
+		"markdown.codeblock":    {},
+		"markdown.code.fence":   {Attrs: ui.AttrDim},
+		"markdown.code.comment": {Attrs: ui.AttrDim | ui.AttrItalic},
+		"markdown.code.keyword": {FG: ui.Idx(ui.Magenta)},
+		"markdown.code.type":    {FG: ui.Idx(ui.Cyan)},
+		"markdown.code.func":    {FG: ui.Idx(ui.Blue + ui.Bright)},
+		"markdown.code.string":  {FG: ui.Idx(ui.Green)},
+		"markdown.code.number":  {FG: ui.Idx(ui.Yellow)},
+		"markdown.bullet":       {Attrs: ui.AttrDim},
+		"markdown.quote":        {Attrs: ui.AttrItalic | ui.AttrDim},
+		"markdown.quote.bar":    {Attrs: ui.AttrDim},
+		"markdown.link":         {FG: ui.Idx(ui.Cyan), Attrs: ui.AttrUnderline},
+		"markdown.link.url":     {Attrs: ui.AttrDim},
+		"markdown.table.frame":  {Attrs: ui.AttrDim},
+		"markdown.table.header": {Attrs: ui.AttrBold},
 		// The change-diff view (PLAN.md ADR-0003) is a host-generated scene,
 		// so its three tokens are signed here like any other. They stay
 		// colourless to keep sobria's identity -- the meaning is carried by

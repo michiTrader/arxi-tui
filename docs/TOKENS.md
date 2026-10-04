@@ -48,6 +48,17 @@ Token names are arbitrary strings. Namespacing with dots is conventional but
 not required (`"input.placeholder"`, `"markdown.code"`). Names are
 case-sensitive.
 
+### Markdown tokens
+
+Assistant replies are rendered as Markdown (headings, lists, quotes, tables, fenced
+code with light syntax colour). The tokens a theme may restyle are:
+`markdown.heading`, `markdown.strong`, `markdown.emphasis`, `markdown.code`,
+`markdown.codeblock`, `markdown.code.{fence,comment,keyword,type,func,string,number}`,
+`markdown.bullet`, `markdown.quote`, `markdown.quote.bar`, `markdown.link`,
+`markdown.link.url`, `markdown.table.frame`, `markdown.table.header`. A token a theme
+does not define resolves to the plain style, so the text still reads. The user's own
+lines and error lines are never interpreted as Markdown.
+
 ### Color values
 
 Three spellings are legal:
