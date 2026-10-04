@@ -2460,7 +2460,7 @@ counterfactual test).
   `requireRunStart` hello gate (the M1b lesson — `types` is not `implemented`) —
   three refusals, all-or-nothing, pinned. **The design was signed into
   `docs/DESIGN-BLOCK-K2-PROVIDERS.md` + PLAN.md (PR #146),** recording the
-  no-capability divergence. **Scene 12 PROVIDERS (PR #152)** is the visual face:
+  no-capability divergence. **Scene 12 PROVIDERS (PR #152; since replaced by the Scene 12 HUB, which also absorbed /login)** was the visual face:
   `testdata/PROVIDERS.{json,frame,styled}` freeze a `list` over `providers.models`
   (host view state from a `model.list` round-trip, SCENES.md §12) whose
   `row_template` draws provider + id and one state-mixed action button
