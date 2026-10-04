@@ -2,7 +2,7 @@ package main
 
 import "strings"
 
-// This file is the list of providers /login offers by name.
+// This file is the list of providers /provider offers by name.
 //
 // # Why a list at all
 //
@@ -15,11 +15,11 @@ import "strings"
 //
 // # What the list is NOT
 //
-// It is not a statement about which models exist. The core cannot ask an endpoint
-// what it serves, so a provider outside its own table registers with no models and
-// the form asks for one (and its price). Guessing model ids here would put names in
-// the product that go stale without a test noticing, and a stale model id fails at
-// the first run, far from the screen that caused it.
+// It is not a statement about which models exist. A provider outside the core's own
+// table registers with no models, and the hub then asks the service for its list
+// (model.discover). Guessing model ids here would put names in
+// the product that go stale without a test noticing. The models come from the
+// service itself (model.discover) or from the user (Add models by hand).
 //
 // BaseURL is the root the core appends "/chat/completions" to (client.go), so each
 // entry is the documented OpenAI-compatible base, not the full path. An entry whose
@@ -44,7 +44,7 @@ type catalogEntry struct {
 	NoKey bool
 }
 
-var loginCatalog = []catalogEntry{
+var providerCatalog = []catalogEntry{
 	{ID: "anthropic", Display: "Anthropic", CoreKnown: true},
 	{ID: "openai", Display: "OpenAI", CoreKnown: true},
 	{ID: "local", Display: "Local server (Ollama)", CoreKnown: true, NoKey: true},
@@ -67,7 +67,7 @@ var loginCatalog = []catalogEntry{
 // catalogByID finds an entry by provider name, case-insensitively.
 func catalogByID(id string) (catalogEntry, bool) {
 	id = strings.ToLower(strings.TrimSpace(id))
-	for _, e := range loginCatalog {
+	for _, e := range providerCatalog {
 		if e.ID == id {
 			return e, true
 		}
