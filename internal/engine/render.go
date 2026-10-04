@@ -1830,69 +1830,7 @@ func (r *Renderer) renderList(n *scene.Node, state fold.State, budget int) ui.Fr
 		}
 
 	case "slash.matches":
-		// slash.matches is an array of SlashMatch from the host's command
-		// registry, filtered by the typed substring.
-		matches := state.SlashMatches
-		if len(matches) == 0 && state.SlashTyped != "" {
-			matches = nil
-		}
-
-		// Count header: the menu's orientation line. It is chrome, so it is
-		// dim — sobria emphasizes by brightening text, and nothing about a
-		// count is emphasis.
-		if n.Count && len(matches) > 0 {
-			lines = append(lines, ui.Line{ui.Span{
-				Text:  fmt.Sprintf("Commands %d · type to filter", len(matches)),
-				Style: "dim",
-			}})
-			// A blank row separates the count header from the command rows so
-			// the orientation line does not read as the first option. The row
-			// inherits the list's style (dim) through the pad, not its own token.
-			lines = append(lines, ui.Line{ui.Span{Text: ""}})
-		}
-
-		// The name column is padded from the longest name in the current
-		// match set, not from a global one: descriptions line up without
-		// reserving width for a word nobody is looking at.
-		nameW := 0
-		for _, m := range matches {
-			if w := ansiStringWidth(m.Name); w > nameW {
-				nameW = w
-			}
-		}
-
-		// The selected row is the bright one and every other row is dim.
-		// Sobria has no color and paints no backgrounds: emphasis is
-		// brightening text, so the highlighted command is the only row at
-		// full brightness (docs/BINDS.md §4.3, slash.selected). An index the
-		// filter shrank past clamps to the last row, never to nothing: Enter
-		// will submit the clamped row, so the menu has to show it — a menu
-		// with no highlight while Enter still acts is a menu that lies.
-		selected := state.SlashSelected
-		if selected >= len(matches) {
-			selected = len(matches) - 1
-		}
-		if selected < 0 || !state.SlashActive {
-			selected = -1 // no row is the bright one
-		}
-
-		for i, m := range matches {
-			// The resting rows take the declared token when there is one and
-			// "dim" when there is not. The selected row stays "text"
-			// unconditionally: it answers "what does Enter do", and a scene
-			// dimming its menu must still be able to say which row is live.
-			style := styleNameOr(n.Style, "dim")
-			if i == selected {
-				style = "text"
-			}
-			lines = append(lines, slashRow(m, nameW, r.Width, style))
-		}
-
-		if len(lines) == 0 {
-			if state.SlashActive {
-				lines = append(lines, ui.Line{ui.Span{Text: "no matches", Style: styleNameOr(n.Style, "dim")}})
-			}
-		}
+		lines = r.slashMenuLines(n, state, rowToken)
 
 	default:
 		// Unknown bind: render placeholder.
@@ -2069,28 +2007,110 @@ func boolField(b bool) string {
 	return "false"
 }
 
-// slashRow builds one menu row: name, two spaces, description, and the
-// category right-aligned at the frame's edge. The row comes out exactly width
-// columns wide, so the overlay's pad pass is a no-op and the category stays
-// flush right. On a narrow overlay the description is the column that gives
-// up ground, never the category: a category that jumps column to column as
-// the filter narrows is unreadable, and a clipped description still says more
-// than a missing one.
-func slashRow(m fold.SlashMatch, nameW, width int, style string) ui.Line {
-	catW := ansiStringWidth(m.Category)
+// Menu tokens. The menu is drawn in explicit greys instead of the terminal's
+// "dim" attribute because faint text is rendered very differently from one
+// terminal to the next and is unreadable on some black backgrounds. Each is a
+// theme token, so a theme can restyle the menu; a theme that defines none of
+// them still gets a plain, legible menu (an unknown token is the zero style).
+const (
+	tokMenuName     = "menu.name"          // a command name at rest
+	tokMenuNameSel  = "menu.name.selected" // the highlighted command name: pure white
+	tokMenuDesc     = "menu.desc"          // a description at rest
+	tokMenuDescSel  = "menu.desc.selected" // the highlighted description: light grey, a step below the name's white
+	tokMenuTab      = "menu.tab"           // a category tab at rest, and the count
+	tokMenuTabSel   = "menu.tab.selected"  // the active category tab
+	slashMenuMargin = "  "                 // left margin of every menu line
+)
+
+// slashMenuLines draws the command menu: a header (the match count and the category
+// tabs), then one `  /name  description` row per match with the highlighted row in
+// white. The categories are drawn when the list declares them, from the tabs the
+// host publishes (State.SlashTabs), so the scene decides *whether* there are tabs
+// and the registry decides *which*.
+func (r *Renderer) slashMenuLines(n *scene.Node, state fold.State, rowToken string) []ui.Line {
+	matches := state.SlashMatches
+	var lines []ui.Line
+
+	// A declared style on the list replaces the resting tokens (the established
+	// rule for rows a scene styled); the highlighted row never loses its look.
+	declared := styleName(n.Style) != ""
+	nameTok, descTok := tokMenuName, tokMenuDesc
+	if declared {
+		nameTok, descTok = rowToken, rowToken
+	}
+
+	// Header: "Commands 34  [All]  General  Session ...". The count is chrome and
+	// stays dim; the active tab is white and bracketed, the rest dim.
+	if n.Count && len(matches) > 0 {
+		header := ui.Line{ui.Span{Text: slashMenuMargin + fmt.Sprintf("Commands %d", len(matches)), Style: tokMenuTab}}
+		if len(n.Categories) > 0 && len(state.SlashTabs) > 0 {
+			active := state.SlashCategory
+			if active == "" {
+				active = fold.SlashAll
+			}
+			for _, tab := range state.SlashTabs {
+				header = append(header, ui.Span{Text: "  ", Style: tokMenuTab})
+				if tab == active {
+					header = append(header, ui.Span{Text: "[" + tab + "]", Style: tokMenuTabSel})
+				} else {
+					header = append(header, ui.Span{Text: tab, Style: tokMenuTab})
+				}
+			}
+		}
+		lines = append(lines, cutLine(header, 0, r.Width), ui.Line{ui.Span{Text: ""}})
+	}
+
+	// The name column is padded from the longest name in the current match set,
+	// not from a global one: descriptions line up without reserving width for a
+	// word nobody is looking at. The "/" is part of the name.
+	nameW := 0
+	for _, m := range matches {
+		if w := ansiStringWidth("/" + m.Name); w > nameW {
+			nameW = w
+		}
+	}
+
+	// The highlighted row is the white one. An index the filter shrank past
+	// clamps to the last row, never to nothing: Enter submits the clamped row, so
+	// the menu has to show it (a menu with no highlight while Enter still acts is a
+	// menu that lies, BINDS.md §4.3).
+	selected := state.SlashSelected
+	if selected >= len(matches) {
+		selected = len(matches) - 1
+	}
+	if selected < 0 || !state.SlashActive {
+		selected = -1
+	}
+	for i, m := range matches {
+		nt, dt := nameTok, descTok
+		if i == selected {
+			nt, dt = tokMenuNameSel, tokMenuDescSel
+			if declared {
+				nt, dt = "text", "text"
+			}
+		}
+		lines = append(lines, slashRow(m, nameW, r.Width, nt, dt))
+	}
+
+	if len(lines) == 0 && state.SlashActive {
+		lines = append(lines, ui.Line{ui.Span{Text: slashMenuMargin + "no matches", Style: styleNameOr(n.Style, "dim")}})
+	}
+	return lines
+}
+
+// slashRow is one menu row: the margin, the "/name" padded to the name column, two
+// spaces, and the description cut to what is left of the line.
+func slashRow(m fold.SlashMatch, nameW, width int, nameTok, descTok string) ui.Line {
+	name := "/" + m.Name
+	row := ui.Line{{Text: slashMenuMargin, Style: nameTok}, {Text: name, Style: nameTok}}
+	if gap := nameW - ansiStringWidth(name); gap > 0 {
+		row = append(row, ui.Span{Text: strings.Repeat(" ", gap), Style: nameTok})
+	}
 	desc := m.Description
-	if room := width - nameW - 2 - 1 - catW; room >= 0 && ansiStringWidth(desc) > room {
-		desc = truncateText(desc, room)
+	if room := width - len(slashMenuMargin) - nameW - 2; room > 0 && ansiStringWidth(desc) > room {
+		desc = truncateText(desc, room-1) + "…"
 	}
-	row := ui.Line{{Text: m.Name, Style: style}}
-	if gap := nameW - ansiStringWidth(m.Name); gap > 0 {
-		row = append(row, ui.Span{Text: strings.Repeat(" ", gap), Style: style})
-	}
-	row = append(row, ui.Span{Text: "  " + desc, Style: style})
-	if pad := width - nameW - 2 - ansiStringWidth(desc) - catW; pad > 0 {
-		row = append(row, ui.Span{Text: strings.Repeat(" ", pad), Style: style})
-	}
-	return append(row, ui.Span{Text: m.Category, Style: style})
+	return append(row, ui.Span{Text: "  " + desc, Style: descTok})
 }
 
 // resolveBind resolves a bind string into its current value from fold.State.

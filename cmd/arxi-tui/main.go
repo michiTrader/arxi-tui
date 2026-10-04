@@ -119,14 +119,15 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
 
   { "id": "menu", "type": "overlay", "anchor": "bottom", "when": "slash.active",
     "children": [
-      { "type": "rule" },
+      { "type": "rule", "style": {"style": "menu.rule"} },
       { "id": "cmds", "type": "list", "bind": "slash.matches",
         "filter_by": "typed", "count": true,
         "categories": ["All","General","Session","Account","Model",
-                       "Appearance","Security","Workspace","Media","Extensions","Product"] } ] },
+                       "Appearance","Security","Workspace","Media","Extensions","Product"] },
+      { "type": "rule", "style": {"style": "menu.rule"} } ] },
 
   { "id": "status", "type": "row", "children": [
-    { "type": "text", "bind": "slash.hint", "style": {"style": "dim"},
+    { "type": "text", "bind": "slash.hint", "style": {"style": "menu.hint"},
       "when": "slash.hint" },
     { "type": "text", "bind": "agent.mode", "style": {"style": "header"},
       "when": "status.active" },
@@ -553,6 +554,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// the way it owns the input buffer: the fold is rebuilt per frame and
 	// carries it, but the state of the menu is not the scene's business.
 	slashSel := 0
+	// slashCat is the menu's active category tab ("" or "All" = every command),
+	// host-owned like slashSel. Tab and Shift-Tab step it; it falls back to "All"
+	// when the typed filter leaves its category with no match.
+	slashCat := fold.SlashAll
 	// uiHidden is the `ui.hidden` set (BINDS.md §4.3): the ids the user has
 	// hidden with `/ui hide`. It is host-owned view state held across frames
 	// like the input buffer and slashSel, because no core event produces it —
@@ -832,7 +837,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		if strings.HasPrefix(input, "/") {
 			state.SlashActive = true
 			state.SlashTyped = input[1:]
-			state.SlashMatches = fold.FilterSlashMatches(state.SlashTyped)
+			slashCat = fold.NormalizeSlashCategory(state.SlashTyped, slashCat)
+			state.SlashCategory = slashCat
+			state.SlashTabs = fold.SlashCategories(state.SlashTyped)
+			state.SlashMatches = fold.FilterSlashCategory(state.SlashTyped, slashCat)
 			// The selection indexes the filtered list, so a keystroke that
 			// shrinks it must not leave the highlight past the last row: the
 			// menu would show no bright row while Enter would still submit
@@ -848,6 +856,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.SlashActive = false
 			state.SlashTyped = ""
 			state.SlashMatches = nil
+			slashCat = fold.SlashAll
 		}
 
 		// The bottom line is either the live status row or the menu's
@@ -856,7 +865,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// The scene gates each row with `when`, so the host only has to publish
 		// the two view-state binds that drive it (BINDS.md §4.3).
 		if state.SlashActive {
-			state.SlashHint = "↑↓ navigate · enter use · esc close"
+			state.SlashHint = "  ↑↓ navigate · tab category · enter open · esc close"
 			state.StatusActive = "false"
 		} else {
 			state.SlashHint = ""
@@ -1284,7 +1293,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						} else if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens); handled {
 							input = next
 							caret = clampCaret(input, caret)
-						} else if ev.Key.Type == term.KeyEnter && clearCommand(input, slashSel) {
+						} else if ev.Key.Type == term.KeyEnter && clearCommand(input, slashSel, slashCat) {
 							// `/clear` starts a new session: the transcript, the
 							// chat history the driver sends along, any run being
 							// followed and the scroll position are all dropped.
@@ -1315,7 +1324,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							input = ""
 							caret = 0
 							slashSel = 0
-						} else if line, ok := menuHostCommand(input, slashSel); ok && ev.Key.Type == term.KeyEnter {
+						} else if line, ok := menuHostCommand(input, slashSel, slashCat); ok && ev.Key.Type == term.KeyEnter {
 							// Enter on a slash-menu row the host implements as a screen.
 							// The row resolves to the same line a typed command is, and
 							// takes the same door (the menu used to send the word to the
@@ -1345,7 +1354,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// and never reaches the buffer. Ctrl-C never gets
 							// here, so the escape hatch stays uncapturable
 							// (invariant 6) no matter what the menu does.
-							input, caret, slashSel = slashMenuKey(input, caret, ev.Key, slashSel, ctx, drv)
+							input, caret, slashSel, slashCat = slashMenuKey(input, caret, ev.Key, slashSel, slashCat, ctx, drv)
 						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, ctx, drv); handled {
 							// H8 press routing: Tab/Shift-Tab move the ui.focus
 							// cursor over the pressable nodes (ordinary buttons and
@@ -2012,48 +2021,40 @@ func isCtrlC(k term.Key) bool {
 // what the menu's footer promises. The selection comes back because it lives
 // across frames in the loop, the way the input buffer does; any key that
 // changes the filter puts it back on the first row.
-func slashMenuKey(input string, caret int, k term.Key, sel int, ctx context.Context, drv Driver) (string, int, int) {
-	matches := fold.FilterSlashMatches(strings.TrimPrefix(input, "/"))
+func slashMenuKey(input string, caret int, k term.Key, sel int, cat string, ctx context.Context, drv Driver) (string, int, int, string) {
+	typed := strings.TrimPrefix(input, "/")
+	cat = fold.NormalizeSlashCategory(typed, cat)
+	matches := fold.FilterSlashCategory(typed, cat)
 	switch k.Type {
 	case term.KeyUp:
 		if len(matches) == 0 {
-			return input, caret, sel
+			return input, caret, sel, cat
 		}
 		// Wrap at both ends: the highlight is the only thing the keyboard moves,
 		// so the user must always feel a row under it no matter how far up they
 		// spin the wheel (rotary, as requested).
 		sel = (sel - 1 + len(matches)) % len(matches)
-		return input, caret, sel
+		return input, caret, sel, cat
 	case term.KeyDown:
 		if len(matches) == 0 {
-			return input, caret, sel
+			return input, caret, sel, cat
 		}
 		sel = (sel + 1) % len(matches)
-		return input, caret, sel
+		return input, caret, sel, cat
 	case term.KeyTab:
-		// Walk to the first match of the next distinct category, wrapping to
-		// the top. With a single category this lands on row 0, which is also
-		// the sane thing for tab to do there.
-		if len(matches) == 0 {
-			return input, caret, sel
+		// Tab steps to the next category tab (All, General, Session, ...) and
+		// Shift-Tab to the previous one, wrapping at both ends. The highlight goes
+		// back to the first row of the new tab.
+		dir := 1
+		if k.Mod&term.ModShift != 0 {
+			dir = -1
 		}
-		if sel >= len(matches) {
-			sel = 0
-		}
-		cur := matches[sel].Category
-		next := 0
-		for i := sel + 1; i < len(matches); i++ {
-			if matches[i].Category != cur {
-				next = i
-				break
-			}
-		}
-		return input, caret, next
+		return input, caret, 0, fold.NextSlashCategory(typed, cat, dir)
 	case term.KeyEscape:
-		return "", 0, 0
+		return "", 0, 0, fold.SlashAll
 	case term.KeyEnter:
 		if len(matches) == 0 {
-			return input, caret, sel
+			return input, caret, sel, cat
 		}
 		if sel >= len(matches) {
 			sel = len(matches) - 1
@@ -2061,7 +2062,7 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, ctx context.Cont
 		// Phase 0: a command submits as a prompt (typeKey's contract); Phase 2
 		// routes /ui to the mutation surface.
 		_ = drv.SubmitPrompt(ctx, matches[sel].Name)
-		return "", 0, 0
+		return "", 0, 0, fold.SlashAll
 	default:
 		// The same caret-aware editor the ordinary path uses, so editing the
 		// slash line (Left/Right/Home/End/Delete/Backspace/insert) behaves
@@ -2069,12 +2070,12 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, ctx context.Cont
 		// because the previously highlighted row may no longer exist.
 		next, nextCaret, ok := applyEdit(input, caret, k)
 		if !ok {
-			return input, caret, sel
+			return input, caret, sel, cat
 		}
 		if next != input {
-			return next, nextCaret, 0
+			return next, nextCaret, 0, cat
 		}
-		return next, nextCaret, sel
+		return next, nextCaret, sel, cat
 	}
 }
 

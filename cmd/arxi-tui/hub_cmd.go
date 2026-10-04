@@ -50,11 +50,12 @@ func hubCommand(line string) (open hubOpen, ok bool) {
 
 // menuHostCommand resolves the slash menu's highlighted row to the line a host
 // command should run, so a menu pick and a typed command take the same path.
-func menuHostCommand(input string, sel int) (line string, ok bool) {
+func menuHostCommand(input string, sel int, cat string) (line string, ok bool) {
 	if !strings.HasPrefix(input, "/") {
 		return "", false
 	}
-	matches := fold.FilterSlashMatches(strings.TrimPrefix(input, "/"))
+	typed := strings.TrimPrefix(input, "/")
+	matches := fold.FilterSlashCategory(typed, fold.NormalizeSlashCategory(typed, cat))
 	if len(matches) == 0 {
 		return "", false
 	}
@@ -71,7 +72,7 @@ func menuHostCommand(input string, sel int) (line string, ok bool) {
 // clearCommand reports whether Enter on this line (or on the highlighted menu row)
 // is `/clear`. It takes no arguments: `/clear now` is not a clear, so a typo can
 // never wipe a conversation by accident.
-func clearCommand(input string, sel int) bool {
+func clearCommand(input string, sel int, cat string) bool {
 	body := strings.TrimSpace(input)
 	if body == "/clear" {
 		return true
@@ -79,7 +80,8 @@ func clearCommand(input string, sel int) bool {
 	if !strings.HasPrefix(body, "/") || strings.ContainsAny(body, " \t") {
 		return false
 	}
-	matches := fold.FilterSlashMatches(strings.TrimPrefix(body, "/"))
+	typed := strings.TrimPrefix(body, "/")
+	matches := fold.FilterSlashCategory(typed, fold.NormalizeSlashCategory(typed, cat))
 	if len(matches) == 0 {
 		return false
 	}
