@@ -335,3 +335,26 @@ func (h *providerHub) apply(o hubOutcome) (notice string, closeHub bool) {
 	}
 	return o.notice, false
 }
+
+// String is the progress sentence shown while the request runs.
+func (o hubOp) String() string {
+	switch o {
+	case opAdd:
+		return "adding the provider"
+	case opUpdate:
+		return "saving the provider"
+	case opAddModels:
+		return "adding models"
+	case opDiscover:
+		return "fetching the model list"
+	case opDefault:
+		return "setting the default model"
+	case opToggle:
+		return "updating the model"
+	case opRemoveModel:
+		return "removing the model"
+	case opRemove:
+		return "removing the provider"
+	}
+	return "working"
+}

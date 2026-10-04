@@ -273,4 +273,3 @@ func TestSlashSelectedFromUIState(t *testing.T) {
 		t.Errorf("slash.selected: got %d, want 2; a lost selection leaves the menu with no bright row and ↑/↓ look dead", s.SlashSelected)
 	}
 }
-

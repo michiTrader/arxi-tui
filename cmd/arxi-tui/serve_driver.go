@@ -114,6 +114,19 @@ func (d *serveDriver) Notices() <-chan string {
 // before any follow is attempted, so the failure is a named error at submit
 // rather than a follow that waits forever on a log no run creates.
 func (d *serveDriver) SubmitPrompt(ctx context.Context, text string) error {
+	err := d.submitPrompt(ctx, text)
+	if err != nil && d.notes != nil {
+		// Callers on the typing path cannot show an error, and a swallowed one is
+		// the silent dead end this replaces: the banner always hears about it.
+		select {
+		case d.notes <- err.Error():
+		default:
+		}
+	}
+	return err
+}
+
+func (d *serveDriver) submitPrompt(ctx context.Context, text string) error {
 	if d.chat != nil {
 		return d.chat.send(ctx, text)
 	}
@@ -289,9 +302,9 @@ func (d *serveDriver) ReplyInboxItem(ctx context.Context, itemID, text string) e
 // openServeDriver passes the real driver through unchanged), and serveDriver
 // satisfies Driver (so the loop never knows which path it is on).
 var (
-	_ runStarter      = (*driver.NDJSONDriver)(nil)
-	_ inboxSubmitter  = (*driver.NDJSONDriver)(nil)
-	_ chatSender      = (*driver.NDJSONDriver)(nil)
-	_ Driver          = (*serveDriver)(nil)
-	_ inboxDecider    = (*serveDriver)(nil)
+	_ runStarter     = (*driver.NDJSONDriver)(nil)
+	_ inboxSubmitter = (*driver.NDJSONDriver)(nil)
+	_ chatSender     = (*driver.NDJSONDriver)(nil)
+	_ Driver         = (*serveDriver)(nil)
+	_ inboxDecider   = (*serveDriver)(nil)
 )
