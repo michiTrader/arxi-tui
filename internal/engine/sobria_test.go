@@ -68,9 +68,10 @@ func TestSobriaSceneRenders(t *testing.T) {
 		t.Errorf("the placeholder text was removed but 'ask anything' still renders; got:\n%s", got)
 	}
 
-	// The status bar must show agent mode, model name, and spark.
-	if !strings.Contains(got, "live · openai/gpt-4o · ⚡︎") {
-		t.Errorf("expected status bar 'live · openai/gpt-4o · ⚡︎'; got:\n%s", got)
+	// The status bar shows the mode, the model, and (host view state, empty here so
+	// absent) the thinking level and cwd. The old spark glyph is gone for good.
+	if !strings.Contains(got, "live · openai/gpt-4o") || strings.Contains(got, "⚡︎") {
+		t.Errorf("expected status bar 'live · openai/gpt-4o' and no spark; got:\n%s", got)
 	}
 
 	// The thinking marquee must NOT render when agent.working is false.
@@ -145,8 +146,8 @@ func TestSobriaSceneShowsRunActor(t *testing.T) {
 	}
 	r := Renderer{Width: 80, Height: 24}
 	got := r.RenderFrame(doc, withActor).Plain()
-	if !strings.Contains(got, "planner · live · openai/gpt-4o · ⚡︎") {
-		t.Errorf("expected status bar to lead with the actor 'planner · live · openai/gpt-4o · ⚡︎'; got:\n%s", got)
+	if !strings.Contains(got, "planner · live · openai/gpt-4o") {
+		t.Errorf("expected status bar to lead with the actor 'planner · live · openai/gpt-4o'; got:\n%s", got)
 	}
 
 	// Counterfactual: the same state with no actor must not draw the label or its
@@ -257,5 +258,60 @@ func TestSobriaSceneMatchesGolden(t *testing.T) {
 	}
 	if got != string(want) {
 		t.Errorf("sobria scene does not match golden:\n--- got ---\n%s\n--- want ---\n%s", got, string(want))
+	}
+}
+
+// The first row is the product mark over a blank row; only the four letters of
+// "Δr×i" carry colour (one token each, forming the orange-yellow-pink gradient),
+// and the rest of the row stays dim.
+func TestSobriaBannerGradientAndGap(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/SOBRIA.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := scene.ParseDocument(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Renderer{Width: 80, Height: 24}
+	f := r.RenderFrame(doc, fold.Fold(nil))
+	lines := strings.Split(f.Plain(), "\n")
+	if !strings.HasPrefix(lines[0], "Δr×i v0.1.0 · Run /help for commands") {
+		t.Errorf("banner row = %q", lines[0])
+	}
+	if strings.TrimSpace(lines[1]) != "" {
+		t.Errorf("a blank row must follow the banner, got %q", lines[1])
+	}
+	styles := map[string]string{}
+	for _, sp := range f.Live[0] {
+		styles[sp.Text] = sp.Style
+	}
+	for text, want := range map[string]string{"Δ": "brand.1", "r": "brand.2", "×": "brand.3", "i": "brand.4"} {
+		if styles[text] != want {
+			t.Errorf("letter %q styled %q, want %q", text, styles[text], want)
+		}
+	}
+	if styles[" v0.1.0 · Run /help for commands"] != "dim" {
+		t.Errorf("the tagline must stay dim, got %q", styles[" v0.1.0 · Run /help for commands"])
+	}
+}
+
+// The bottom bar carries the thinking level and the cwd instead of the old spark.
+func TestSobriaStatusShowsEffortAndCwd(t *testing.T) {
+	data, _ := os.ReadFile("../../testdata/SOBRIA.json")
+	doc, err := scene.ParseDocument(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := fold.State{AgentMode: "idle", ModelName: "p/m", StatusActive: "true", HostEffort: "high", HostCwd: "~/proj"}
+	r := Renderer{Width: 80, Height: 24}
+	got := r.RenderFrame(doc, st).Plain()
+	if !strings.Contains(got, "idle · p/m · high · ~/proj") {
+		t.Errorf("status bar wrong:\n%s", got)
+	}
+	// With the menu open the bar must not also show them.
+	st.StatusActive, st.HostEffort, st.HostCwd = "false", "", ""
+	if got := r.RenderFrame(doc, st).Plain(); strings.Contains(got, "~/proj") {
+		t.Errorf("cwd leaked while the menu hides the bar:\n%s", got)
 	}
 }

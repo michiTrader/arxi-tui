@@ -2220,6 +2220,10 @@ func resolveBind(bind string, state fold.State) string {
 		return "false"
 	case "host.scene.error":
 		return state.SceneError
+	case "host.cwd":
+		return state.HostCwd
+	case "host.effort":
+		return state.HostEffort
 	case "host.run.actor":
 		// Host view state, not a projection: the loop resolves the actor from the
 		// run.start config and re-attaches it each frame (BINDS.md §4.3, M2). It

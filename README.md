@@ -23,6 +23,21 @@ published, by handing arxi a link.
 
 ## Status
 
+## Status bar and operating modes
+
+The bottom bar reads `mode · model · thinking level · directory`, for example
+`idle · deepseek/deepseek-chat · auto · ~/projects/app`.
+
+| mode | meaning |
+|---|---|
+| `idle` | **No run has started.** This is the state of a plain chat: you type, the model answers, and nothing is being orchestrated, so the bar stays on `idle` even while a reply streams in (the animated `working` line above the prompt is what shows a reply is pending). It is also what you see right after start and after `/clear`. |
+| `sim` | A *simulated* run (`run.started` with `simulated: true`): agents are replayed without spending money. |
+| `live` | A real run (`run.started` with `simulated: false`): agents call real providers and the budget is spent. |
+
+The thinking level is `auto` until you choose one with `/effort`. The directory is
+where the TUI was started (home shown as `~`). While the `/` menu is open the bar
+shows only the navigation hint.
+
 **Phase 0 — Scene engine:** Complete and running.
 
 - ✅ Scene document parser and validator (`internal/scene`)

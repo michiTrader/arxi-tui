@@ -582,7 +582,7 @@ func TestLoopSobriaSlashMenu(t *testing.T) {
 
 	out := tty.output()
 	// The header must render.
-	if !strings.Contains(out, "Δr×i v0.1.0") {
+	if !strings.Contains(stripANSI(out), "Δr×i v0.1.0") {
 		t.Errorf("sobria header not rendered; output:\n%s", out)
 	}
 	// The slash menu must activate (the "no matches" or command list should appear).
@@ -768,7 +768,7 @@ func TestLoopSobriaStatusbarRenders(t *testing.T) {
 	// The status row splits "live" (bright, the agent.mode bind under the
 	// "header" token) from the dim separators and model — stripANSI collapses
 	// the SGR resets between spans so the visible text is one contiguous line.
-	if !strings.Contains(out, "live · openai/gpt-4o · ⚡︎") {
+	if !strings.Contains(out, "live · openai/gpt-4o · auto") {
 		t.Errorf("status bar not rendered correctly; output:\n%s", out)
 	}
 }

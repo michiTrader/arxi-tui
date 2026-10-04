@@ -19,8 +19,15 @@ func Factory() *Theme {
 		"header":            {Attrs: ui.AttrBold},
 		"input.placeholder": {Attrs: ui.AttrDim},
 		"banner":            {Attrs: ui.AttrBold},
-		"diff.context":      {Attrs: ui.AttrDim},
-		"diff.del":          {Attrs: ui.AttrStrike},
-		"diff.add":          {Attrs: ui.AttrBold},
+		// The product mark "Δr×i" is the one coloured thing on the first row: an
+		// orange -> yellow -> pink gradient spread over its four letters, one token per
+		// letter so no node needs gradient support and the rest of the row stays dim.
+		"brand.1":      {FG: ui.MustHex("#ff8a1f"), Attrs: ui.AttrBold},
+		"brand.2":      {FG: ui.MustHex("#ffc933"), Attrs: ui.AttrBold},
+		"brand.3":      {FG: ui.MustHex("#ff7a8a"), Attrs: ui.AttrBold},
+		"brand.4":      {FG: ui.MustHex("#ff4fa3"), Attrs: ui.AttrBold},
+		"diff.context": {Attrs: ui.AttrDim},
+		"diff.del":     {Attrs: ui.AttrStrike},
+		"diff.add":     {Attrs: ui.AttrBold},
 	}).withAnim(factoryAnim())
 }

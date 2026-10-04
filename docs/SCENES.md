@@ -61,8 +61,13 @@ the `input` node.
 
 ```json
 { "root": { "type": "stack", "children": [
-  { "type": "text", "style": "dim",
-    "text": "Δr×i v0.1.0 · Run /help for commands" },
+  { "id": "banner", "type": "row", "children": [
+    { "type": "text", "text": "Δ", "style": "brand.1" },
+    { "type": "text", "text": "r", "style": "brand.2" },
+    { "type": "text", "text": "×", "style": "brand.3" },
+    { "type": "text", "text": "i", "style": "brand.4" },
+    { "type": "text", "text": " v0.1.0 · Run /help for commands", "style": "dim" } ] },
+  { "id": "banner_gap", "type": "text", "text": "" },
 
   { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
 
@@ -96,11 +101,15 @@ the `input` node.
       "when": "slash.hint" },
     { "type": "text", "bind": "agent.mode", "style": {"style": "header"},
       "when": "status.active" },
-    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "status.active" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "model.name" },
     { "type": "text", "bind": "model.name", "style": {"style": "dim"},
-      "when": "status.active" },
-    { "type": "text", "text": " · ⚡︎", "style": {"style": "dim"},
-      "when": "status.active" } ] }
+      "when": "model.name" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.effort" },
+    { "type": "text", "bind": "host.effort", "style": {"style": "dim"},
+      "when": "host.effort" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.cwd" },
+    { "type": "text", "bind": "host.cwd", "style": {"style": "dim"},
+      "when": "host.cwd" } ] }
 ]}}
 ```
 
