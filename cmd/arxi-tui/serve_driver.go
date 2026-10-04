@@ -87,23 +87,14 @@ type serveDriver struct {
 	actorLabel string
 
 	// chat answers plain chat lines with chat.send; hub is the provider/model
-	// management seam; notes carries chat failures to the loop's banner. All three
-	// are nil on a connection that was built without them (tests, the mock).
-	chat  *chatSession
-	hub   hubCore
-	notes chan string
+	// management seam. Both are nil on a connection that was built without them
+	// (tests, the mock).
+	chat *chatSession
+	hub  hubCore
 }
 
 // Hub is the provider/model management seam, or nil when this connection has none.
 func (d *serveDriver) Hub() hubCore { return d.hub }
-
-// Notices is the channel chat failures arrive on, or nil.
-func (d *serveDriver) Notices() <-chan string {
-	if d.notes == nil {
-		return nil
-	}
-	return d.notes
-}
 
 // SubmitPrompt begins a run for the user's line and follows its event log.
 //
@@ -115,11 +106,13 @@ func (d *serveDriver) Notices() <-chan string {
 // rather than a follow that waits forever on a log no run creates.
 func (d *serveDriver) SubmitPrompt(ctx context.Context, text string) error {
 	err := d.submitPrompt(ctx, text)
-	if err != nil && d.notes != nil {
+	if err != nil && d.relay != nil {
 		// Callers on the typing path cannot show an error, and a swallowed one is
-		// the silent dead end this replaces: the banner always hears about it.
+		// a silent dead end: the failure joins the conversation as a chat line, the
+		// same place a failed request is shown.
+		ev := fold.Event{Type: "chat.error", Actor: "assistant", Payload: map[string]any{"text": err.Error()}}
 		select {
-		case d.notes <- err.Error():
+		case d.relay <- ev:
 		default:
 		}
 	}

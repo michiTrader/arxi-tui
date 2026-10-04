@@ -591,6 +591,7 @@ var handled = map[string]bool{
 	"agent.activated": true,
 	"agent.turn_done": true,
 	"agent.failed":    true,
+	"chat.error":      true,
 	"run.started":     true,
 	"agent.blocked":   true,
 	"agent.unblocked": true,
@@ -787,9 +788,23 @@ func (s *State) apply(e Event) {
 			}
 		}
 
+	case "chat.error":
+		// A request failed. The failure is part of the conversation, so it lands in
+		// the transcript as an ordinary turn (role "error") instead of in a banner
+		// above the chat. It does not touch AgentWorking: a refused second line
+		// (a turn is still pending) must not stop the indicator of the first.
+		if text, _ := e.Payload["text"].(string); text != "" {
+			s.History = append(s.History, ChatLine{Role: "error", Text: text})
+		}
+
 	case "agent.failed":
 		// The turn failed: no longer busy.
 		s.AgentWorking = false
+		// A core that names the cause (payload "error") has it shown in the chat
+		// too, for the same reason chat.error is: the failure belongs to the flow.
+		if text, _ := e.Payload["error"].(string); text != "" {
+			s.History = append(s.History, ChatLine{Role: "error", Text: text})
+		}
 
 		if agent, ok := e.Payload["agent"].(string); ok {
 			if m, exists := s.members[agent]; exists {

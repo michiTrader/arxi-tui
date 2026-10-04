@@ -28,12 +28,12 @@ type chatSender interface {
 }
 
 // chatSession turns each typed line into one chat.send round-trip and feeds the
-// answer (or a clear error) back to the loop. Failures are never swallowed: they go
-// to the notices channel, which the loop shows in the banner.
+// answer (or a clear error) back to the loop. Failures are never swallowed and never
+// pushed into a banner: they become a chat.error event, which the fold turns into an
+// ordinary line of the conversation.
 type chatSession struct {
-	core  chatSender
-	out   chan<- fold.Event
-	notes chan<- string
+	core chatSender
+	out  chan<- fold.Event
 
 	mu      sync.Mutex
 	history []driver.ChatTurn
@@ -41,8 +41,8 @@ type chatSession struct {
 	seq     int64
 }
 
-func newChatSession(core chatSender, out chan<- fold.Event, notes chan<- string) *chatSession {
-	return &chatSession{core: core, out: out, notes: notes}
+func newChatSession(core chatSender, out chan<- fold.Event) *chatSession {
+	return &chatSession{core: core, out: out}
 }
 
 // chatRequires says why this core cannot chat, or nil when it can.
@@ -60,7 +60,7 @@ func chatRequires(h *driver.Hello) error {
 
 // send starts one turn. It returns an error immediately for anything that can be
 // decided up front (old core, a turn already running); everything that happens on
-// the network is reported through the notices channel.
+// the network is reported in the chat as a chat.error event.
 func (c *chatSession) send(ctx context.Context, text string) error {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -99,10 +99,20 @@ func (c *chatSession) emit(ctx context.Context, typ string, payload map[string]a
 	}
 }
 
-func (c *chatSession) note(msg string) {
+// fail puts an error in the conversation. It never blocks the caller: the relay
+// channel is buffered, and if it is momentarily full the event waits on its own
+// goroutine rather than being dropped.
+func (c *chatSession) fail(ctx context.Context, msg string) {
+	ev := fold.Event{Type: "chat.error", Seq: c.nextSeq(), Actor: "assistant", Payload: map[string]any{"text": msg}}
 	select {
-	case c.notes <- msg:
+	case c.out <- ev:
 	default:
+		go func() {
+			select {
+			case c.out <- ev:
+			case <-ctx.Done():
+			}
+		}()
 	}
 }
 
@@ -117,7 +127,7 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 	res, err := c.core.SubmitChatSend(ctx, driver.ChatSendParams{Prompt: text, System: chatSystemPrompt, History: hist})
 	if err != nil {
 		c.emit(ctx, "agent.failed", map[string]any{"agent": "assistant"})
-		c.note(chatErrorText(err))
+		c.fail(ctx, chatErrorText(err))
 		return
 	}
 	c.mu.Lock()

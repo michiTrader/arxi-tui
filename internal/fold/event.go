@@ -40,7 +40,7 @@ type Event struct {
 
 // ChatLine is one entry in chat.history: the speaker and the text.
 type ChatLine struct {
-	Role string // "user" or "assistant"
+	Role string // "user", "assistant" or "error" (a failed request, shown in the flow)
 	Text string
 }
 

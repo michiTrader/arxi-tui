@@ -117,26 +117,37 @@ func (f fakeChat) SubmitChatSend(ctx context.Context, p driver.ChatSendParams) (
 
 func TestChatFailureIsReportedNotSwallowed(t *testing.T) {
 	out := make(chan fold.Event, 16)
-	notes := make(chan string, 4)
 	c := newChatSession(fakeChat{hello: &driver.Hello{Implemented: []string{"chat.send"}},
-		err: &driver.Refusal{Code: "failed", Message: "no provider is set up yet: add one with /provider"}}, out, notes)
+		err: &driver.Refusal{Code: "failed", Message: "no provider is set up yet: add one with /provider"}}, out)
 	if err := c.send(context.Background(), "hi"); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case m := <-notes:
-		if !strings.Contains(m, "/provider") {
-			t.Errorf("note %q", m)
+	// The failure is a line of the conversation (a chat.error event), not a banner.
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case ev := <-out:
+			if ev.Type != "chat.error" {
+				continue
+			}
+			if m, _ := ev.Payload["text"].(string); !strings.Contains(m, "/provider") {
+				t.Errorf("error text %q", m)
+			}
+			st := fold.Fold([]fold.Event{ev})
+			if len(st.History) != 1 || st.History[0].Role != "error" {
+				t.Errorf("the error did not land in the chat history: %+v", st.History)
+			}
+			return
+		case <-deadline:
+			t.Fatal("no error reached the conversation")
 		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("no message")
 	}
 }
 
 func TestChatAnswerBecomesEvents(t *testing.T) {
 	out := make(chan fold.Event, 16)
 	c := newChatSession(fakeChat{hello: &driver.Hello{Implemented: []string{"chat.send"}},
-		res: &driver.ChatSendResult{Text: "ok", Model: "m", Provider: "p", InputTokens: 1, OutputTokens: 2}}, out, make(chan string, 1))
+		res: &driver.ChatSendResult{Text: "ok", Model: "m", Provider: "p", InputTokens: 1, OutputTokens: 2}}, out)
 	if err := c.send(context.Background(), "hi"); err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +166,7 @@ func TestChatAnswerBecomesEvents(t *testing.T) {
 }
 
 func TestChatRefusesAnOldCoreWithTheRemedy(t *testing.T) {
-	c := newChatSession(fakeChat{hello: &driver.Hello{}}, make(chan fold.Event, 1), make(chan string, 1))
+	c := newChatSession(fakeChat{hello: &driver.Hello{}}, make(chan fold.Event, 1))
 	err := c.send(context.Background(), "hi")
 	if err == nil || !strings.Contains(err.Error(), "rebuild") {
 		t.Errorf("err = %v", err)

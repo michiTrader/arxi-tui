@@ -110,7 +110,7 @@ events from the log file the core writes.
 
 | bind | type | source events / payload | update timing | empty-state |
 |---|---|---|---|---|
-| `chat.history` | markdown text stream | fold of `run.prompt.text` + `llm.response.text` | on every `run.prompt` or `llm.response` | empty string — the prompt line renders alone |
+| `chat.history` | markdown text stream | fold of `run.prompt.text` + `llm.response.text` + `chat.error.text` (a failed request is a line of the conversation with role `error`, drawn with a `✗ ` marker under the `chat.error` token; `agent.failed.error` lands the same way) | on every `run.prompt`, `llm.response` or `chat.error` | empty string — the prompt line renders alone |
 | `thinking.text` | text | `llm.response` payload `text` (accumulated; consecutive `llm.response` events append) | on each `llm.response` while `agent.activated` has not been followed by `agent.turn_done` | empty string — the marquee does not render (`when` is false) |
 | `agent.working` | bool | `agent.activated` (→true), `agent.turn_done` (→false), `agent.failed` (→false) | on `agent.activated`/`turn_done`/`failed` | `false` — no member is active |
 | `agent.mode` | text | derived: `"live"` or `"sim"` from `run.started.simulated`, plus stage state from `stage.entered`/`stage.advanced` | on `run.started`, `stage.entered`, `stage.advanced` | `"idle"` before `run.started` lands |
