@@ -1994,41 +1994,16 @@ func rowScopesFor(bind string, state fold.State) []map[string]string {
 			})
 		}
 		return rows
-	case "login.rows":
-		// One scope per visible /login row. row.marker is the providers screen's
-		// fixed-width gutter, derived from the row's Selected flag; label and status
-		// are read verbatim, because the host already composed them (and masked the
-		// API key) before they reached the State.
-		rows := make([]map[string]string, 0, len(state.LoginRows))
-		for _, lr := range state.LoginRows {
+	case "hub.rows":
+		// One scope per visible hub row. row.line is the arrow gutter plus the label,
+		// built here from the row's Selected flag so the columns stay put as the
+		// highlight moves; row.status is read verbatim, because the host already
+		// composed it (and masked any secret) before it reached the State.
+		rows := make([]map[string]string, 0, len(state.HubRows))
+		for _, hr := range state.HubRows {
 			rows = append(rows, map[string]string{
-				"row.marker": selectionMarker(lr.Selected),
-				"row.label":  lr.Label,
-				"row.status": lr.Status,
-			})
-		}
-		return rows
-	case "providers.models":
-		// One scope per model (Scene 12, BINDS.md §4.7). row.ref and row.disabled
-		// are the two fields not read verbatim off the element, the config.settings
-		// synthesis applied to the providers screen. row.ref is the enable/disable
-		// command's argument — provider/id, or the bare id when no provider is set —
-		// built once here so the on_press interpolation (`cmd:/model enable {row.ref}`)
-		// cannot drift from the model.list ref the verb already accepts. row.disabled
-		// is the inverse of Enabled: this engine's `when` has no operator, so the
-		// template gates its "enable" button on `when: row.disabled` and its "disable"
-		// button on `when: row.enabled`, the row.is_toggle/row.is_text idiom, and the
-		// two never both draw on one row.
-		rows := make([]map[string]string, 0, len(state.ProviderModels))
-		for i, m := range state.ProviderModels {
-			ref := m.Ref()
-			rows = append(rows, map[string]string{
-				"row.provider": m.Provider,
-				"row.model":    m.ID,
-				"row.enabled":  boolField(m.Enabled),
-				"row.disabled": boolField(!m.Enabled),
-				"row.ref":      ref,
-				"row.marker":   selectionMarker(i == state.ProviderSelected),
+				"row.line":   selectionMarker(hr.Selected) + hr.Label,
+				"row.status": hr.Status,
 			})
 		}
 		return rows
@@ -2045,7 +2020,7 @@ func rowScopesFor(bind string, state fold.State) []map[string]string {
 // same width, so the columns never move.
 func selectionMarker(selected bool) string {
 	if selected {
-		return "> "
+		return "→ "
 	}
 	return "  "
 }
@@ -2269,17 +2244,12 @@ func resolveBind(bind string, state fold.State) string {
 		return fmt.Sprintf("%d", state.SlashSelected)
 	case "community.query":
 		return state.CommunityQuery
-	case "login.title":
-		return state.LoginTitle
-	case "login.pager":
-		return state.LoginPager
-	case "login.hint":
-		return state.LoginHint
-	case "providers.selected":
-		// The highlighted model row's index into providers.models, the analogue of
-		// community.selected. The host clamps it to the list, so the value the
-		// renderer receives is always in range.
-		return fmt.Sprintf("%d", state.ProviderSelected)
+	case "hub.title":
+		return state.HubTitle
+	case "hub.hint":
+		return state.HubHint
+	case "hub.detail":
+		return state.HubDetail
 	case "community.selected":
 		// The highlighted card's index into community.matches, the direct
 		// analogue of slash.selected. A list bound to community.matches reads it

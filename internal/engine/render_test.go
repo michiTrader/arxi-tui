@@ -455,11 +455,11 @@ func TestSlashMenuListRendersHeaderColumnsAndSelection(t *testing.T) {
 	}
 
 	// The description column starts two past the longest name in the set, which
-	// is now "provider" (8) rather than "surface" (7): the longest name is
+	// is "provider" (8) rather than "surface" (7): the longest name is
 	// followed by exactly two spaces, and every shorter name is padded to the
 	// same column, so descriptions line up without a global width nobody asked
 	// for.
-	if !strings.Contains(got, "provider  Manage model providers") {
+	if !strings.Contains(got, "provider  Add providers") {
 		t.Errorf("the longest name is not two past its description; got:\n%s", got)
 	}
 	if !strings.Contains(got, "surface   Switch active surface") {
@@ -522,7 +522,7 @@ func TestSlashMenuRowsAreDimExceptSelection(t *testing.T) {
 
 	// Every command row except the selection is dim, including the two Providers
 	// rows added for the K2 provider/model commands.
-	for _, name := range []string{"help", "max", "surface", "ui", "provider", "model"} {
+	for _, name := range []string{"help", "max", "surface", "ui", "provider", "models"} {
 		if !strings.Contains(styled, "«dim:"+name+"»") {
 			t.Errorf("unselected row %q is not dim; styled output:\n%s", name, styled)
 		}

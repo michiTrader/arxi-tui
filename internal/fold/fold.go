@@ -254,42 +254,21 @@ type State struct {
 	ConfigCategories []ConfigCategory `json:"config.categories"`
 	ConfigSettings   []ConfigSetting  `json:"config.settings"`
 
-	// ProviderModels is the providers screen's one list (Scene 12, K2 follow-up):
-	// every model a configured provider offers and whether it is enabled. Host
-	// view state like config.settings — the host fills it from a model.list
-	// round-trip over the serve socket (SubmitModelList), never from an arxi-core
-	// run event — so a run the TUI is following never writes it and an empty slice
-	// is the honest "no providers configured yet" state. The row_template over it
-	// reads row.provider/row.model/row.enabled and gates an enable/disable button
-	// on the enabled flag; see BINDS.md §4.3/§4.7.
-	ProviderModels []ProviderModel `json:"providers.models"`
-
-	// ProviderSelected is the providers screen's highlighted row, an index into
-	// ProviderModels. Host view state like CommunitySelected: no log event moves it,
-	// the host owns it across frames (↑/↓) and clamps it to the list, so the engine
-	// always receives an in-range value. It exists so the template can mark one row
-	// (row.marker) with only signed mechanism -- `when` has no comparison operator,
-	// so a scene cannot ask "is this row the selected one" itself.
-	ProviderSelected int `json:"providers.selected"`
-
-	// The /login screen's four view-state fields. The screen is a small wizard
-	// (authentication method, provider, then a form), and the HOST composes what
-	// each step shows into these strings, so the scene stays a dumb list.
+	// The provider hub's four view-state fields (/provider and /models share one
+	// screen). The HOST composes what each level shows into these, so the scene stays a
+	// dumb list and the API key never has to be near the render path: a key typed into
+	// a form field is published as a row of bullets (HubRow.Status), and the key itself
+	// lives in the host's own struct, never in State. A State that held it would be one
+	// `%+v` in a debug line away from a log file.
 	//
-	// That choice is what keeps a pasted API key out of the render path: the form's
-	// key field is published as a row of bullets (LoginRow.Status), never as the
-	// key, and the key itself lives in the host's own struct, not in State. A State
-	// that held the key would be one `%+v` in a debug line away from a log file.
-	//
-	// LoginTitle is the prompt above the list ("Select provider to configure:").
-	// LoginRows are the visible rows only -- the host windows a long list around
-	// the highlight, so the engine never has to scroll it.
-	// LoginPager is "(3/42)": the highlight's place in the whole list. LoginHint is
-	// the key legend for the current step.
-	LoginTitle string     `json:"login.title"`
-	LoginRows  []LoginRow `json:"login.rows"`
-	LoginPager string     `json:"login.pager"`
-	LoginHint  string     `json:"login.hint"`
+	// HubTitle is the question above the choices ("Choose a provider to add:").
+	// HubRows are the visible choices only -- the host windows a long list around the
+	// highlight, so the engine never scrolls it. HubHint is the key legend for the
+	// current level and HubDetail the explanation shown where the chat usually sits.
+	HubTitle  string   `json:"hub.title"`
+	HubRows   []HubRow `json:"hub.rows"`
+	HubHint   string   `json:"hub.hint"`
+	HubDetail string   `json:"hub.detail"`
 
 	UIFocus   string `json:"ui.focus"`
 	UIMax     string `json:"ui.max"`
@@ -1422,48 +1401,15 @@ type ConfigSetting struct {
 	Value   string `json:"value"`
 }
 
-// ProviderModel is one row of the providers screen (Scene 12, K2 follow-up): a
-// model a configured provider offers and whether it is enabled. It mirrors
-// driver.ModelRow — the shape model.list returns over the serve socket — so the
-// host can write a round-trip's result straight into providers.models without a
-// second model.
-//
-// Provider is the registered provider name, ID the model's own id. The engine
-// synthesizes row.ref (provider/id) for the enable/disable on_press and row.disabled
-// (the inverse of Enabled) for the enable button's gate, the config.settings
-// row.is_toggle idiom: this engine's `when` is a bare truthiness test with no
-// comparison operator, so a scene gates its "disable" button on `when: row.enabled`
-// and its "enable" button on `when: row.disabled`, the two never both drawing on one
-// row. Enabled is read directly by the `switch` and by the disable button's gate.
-type ProviderModel struct {
-	Provider string `json:"provider"`
-	ID       string `json:"id"`
-	Enabled  bool   `json:"enabled"`
-}
-
-// LoginRow is one visible row of the /login screen. Label is the row's name (a
-// provider, a form field), Status its right-hand column ("✓ env: OPENAI_API_KEY",
-// "• unconfigured", or a form field's value -- masked, for the key). Selected marks
-// the highlighted row; the engine turns it into the same fixed-width gutter the
-// providers screen uses, so columns do not shift as the highlight moves.
-type LoginRow struct {
+// HubRow is one visible choice of the provider hub. Label is the row's text (a
+// provider, a model as "id [provider]", a form field), Status its right-hand column
+// ("✓ key stored", "• needs a key", or a form field's value -- masked for secrets).
+// Selected marks the highlighted row; the engine turns it into a fixed-width arrow
+// gutter so the columns do not shift as the highlight moves.
+type HubRow struct {
 	Label    string `json:"label"`
 	Status   string `json:"status"`
 	Selected bool   `json:"selected"`
-}
-
-// Ref is the model's address in the form the model.enable / model.disable verbs
-// accept: "provider/id", or the bare id when no provider is set. It is a method on
-// the type so the one place the form is decided serves both consumers -- the engine
-// projecting row.ref into a row's on_press, and the host building the same command
-// when a row is toggled from the keyboard -- which would otherwise each own a copy
-// that could drift, leaving a pressed button and a typed Enter naming different
-// models.
-func (m ProviderModel) Ref() string {
-	if m.Provider == "" {
-		return m.ID
-	}
-	return m.Provider + "/" + m.ID
 }
 
 // Commands is the host's command registry, the source for slash.matches.
@@ -1494,11 +1440,10 @@ var Commands = []SlashMatch{
 	// subcommands in parentheses are the real ones the parsers accept; keeping
 	// them honest is the same accepted-but-not-drawn discipline the `ui` entry
 	// documents, one layer out in the chrome.
-	{"provider", "Providers", "Manage model providers (add, list)"},
-	{"model", "Providers", "Manage models under a provider (list, enable, disable)"},
+	{"provider", "Providers", "Add providers, set keys and URLs, manage their models"},
+	{"models", "Providers", "Choose the model to chat with"},
 	// /login is a host-owned screen like /provider: it round-trips the serve
 	// protocol (provider.add / provider.key / model.add), so it is not a patch verb.
-	{"login", "Providers", "Sign in: add an API key for a provider"},
 }
 
 // FilterSlashMatches returns the commands matching the typed substring after
