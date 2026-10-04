@@ -229,6 +229,8 @@ var signedBinds = map[string]bool{
 	"user.input.submitted": true,
 	"host.escape.armed":    true,
 	"host.scene.error":     true,
+	"host.cwd":             true,
+	"host.effort":          true,
 }
 
 // SignedBinds returns the §4.5 inventory: every bind path a scene may
