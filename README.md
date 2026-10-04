@@ -407,10 +407,10 @@ UPDATE_GOLDEN=1 go test ./internal/...   # regenerate golden fixtures
 ARXI_BIN=/path/to/arxi ./arxi-tui
 ```
 
-### Providers, keys and models (`/provider`, `/models`)
+### Providers and keys (`/provider`)
 
 Everything about providers lives in one screen. Type `/provider` (also `/providers`,
-`/login`, `/model`, or pick it in the `/` menu). The choices appear at the bottom,
+`/login`, or pick it in the `/` menu). The choices appear at the bottom,
 like the command menu. Type to filter any list; type `other` to jump to "Other…".
 
 | Key | Does |
@@ -431,9 +431,16 @@ From there you can:
 - **Edit a provider**: change its base URL, key or key variable name.
 - **Manage models**: fetch the list again, add several models by hand (comma or space
   separated, with optional prices), enable, disable or remove them.
-- **Choose the model to chat with**: `/models` lists `  id [provider]`; the chosen one
-  reads `→ ✓ id [provider] · default`. The status bar shows it, and every chat message
-  goes to it.
+- **Choose the model to chat with**: use `/model` (next section). The status bar shows
+  the chosen one, and every chat message goes to it.
+
+### Choosing the model (`/model `)
+
+Type `/model` followed by a space and a small menu opens right above the input, one
+row per enabled model: `  name  provider`, with a `✓` on the model the chat uses.
+Keep typing to filter live (every word must match: `/model deeps flash`). Up / Down
+move (wrapping), Enter picks, Esc closes. Nothing else is printed; the status bar
+shows the new model. With no provider yet, the notice points you to `/provider`.
 
 The key is pasted into a masked field, shown as `••••`, and never printed back, logged
 or sent to the chat. If sending a message fails (no provider, no model, a refused key,

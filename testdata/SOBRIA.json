@@ -39,6 +39,10 @@
                        "Appearance","Security","Workspace","Media","Extensions","Product"] },
       { "type": "rule", "style": {"style": "menu.rule"} } ] },
 
+  { "id": "model_menu", "type": "overlay", "anchor": "bottom", "when": "model.active",
+    "children": [
+      { "id": "models", "type": "list", "bind": "model.matches" } ] },
+
   { "id": "status", "type": "row", "children": [
     { "type": "text", "bind": "slash.hint", "style": {"style": "menu.hint"},
       "when": "slash.hint" },

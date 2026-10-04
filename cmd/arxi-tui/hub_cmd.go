@@ -26,8 +26,8 @@ func stripLeadingVerb(line, verb string) (rest string, matched bool) {
 }
 
 // hubCommand recognises the commands that open the provider hub. Everything about
-// providers lives in one place, so the old spellings (/login, /model, /provider add
-// ...) all open it; /models and /model land on the model picker. Arguments are
+// providers lives in one place, so the old spellings (/login, /provider add ...) all
+// open it. Choosing the chat model is not here: `/model ` opens its own menu. Arguments are
 // ignored on purpose: an API key typed after a command would be echoed and kept in
 // the input buffer, so keys are only ever typed into the hub's masked field.
 func hubCommand(line string) (open hubOpen, ok bool) {
@@ -42,8 +42,6 @@ func hubCommand(line string) (open hubOpen, ok bool) {
 	switch name {
 	case "provider", "providers", "login":
 		return hubOpenProviders, true
-	case "model", "models":
-		return hubOpenModels, true
 	}
 	return 0, false
 }
@@ -89,4 +87,26 @@ func clearCommand(input string, sel int, cat string) bool {
 		sel = len(matches) - 1
 	}
 	return matches[sel].Name == "clear"
+}
+
+// modelCommand reports whether Enter on this line (or on the highlighted menu row) is
+// `/model` with nothing after it. The command menu uses it to open the model menu
+// instead of sending the word to the chat.
+func modelCommand(input string, sel int, cat string) bool {
+	body := strings.TrimSpace(input)
+	if body == "/model" {
+		return true
+	}
+	if !strings.HasPrefix(body, "/") || strings.ContainsAny(body, " \t") {
+		return false
+	}
+	typed := strings.TrimPrefix(body, "/")
+	matches := fold.FilterSlashCategory(typed, fold.NormalizeSlashCategory(typed, cat))
+	if len(matches) == 0 {
+		return false
+	}
+	if sel < 0 || sel >= len(matches) {
+		sel = len(matches) - 1
+	}
+	return matches[sel].Name == "model"
 }

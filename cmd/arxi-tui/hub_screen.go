@@ -6,7 +6,7 @@ import (
 	"github.com/michiTrader/arxi_tui/internal/scene"
 )
 
-// factoryHub is the Scene 12 document: the one screen behind /provider and /models.
+// factoryHub is the Scene 12 document: the one screen behind /provider.
 //
 // The layout follows the slash menu on purpose. The explanation and the title sit
 // where the chat sits, the input line is where the user already types, and the

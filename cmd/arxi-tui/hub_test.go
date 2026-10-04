@@ -44,49 +44,6 @@ func TestTypingOtherFindsTheOtherRow(t *testing.T) {
 	}
 }
 
-func TestModelPickerFormatAndDefault(t *testing.T) {
-	d := hubData{
-		models: []driver.ModelRow{
-			{Provider: "google", ID: "gemini-3.1-flash-lite", Enabled: true},
-			{Provider: "google", ID: "gemini-3.6-flash", Enabled: true},
-			{Provider: "google", ID: "off", Enabled: false},
-		},
-		def: "google/gemini-3.6-flash",
-	}
-	h, _ := newHub(d, hubOpenModels)
-	var st fold.State
-	h.publish(&st)
-	var lines []string
-	for _, r := range st.HubRows {
-		m := "  "
-		if r.Selected {
-			m = "→ "
-		}
-		lines = append(lines, m+r.Label)
-	}
-	got := strings.Join(lines, "\n")
-	for _, want := range []string{"  gemini-3.1-flash-lite [google]", "→ ✓ gemini-3.6-flash [google] · default"} {
-		if !strings.Contains(got, want) {
-			t.Errorf("picker lacks %q:\n%s", want, got)
-		}
-	}
-	if strings.Contains(got, "off [google]") {
-		t.Error("a disabled model is offered in the picker")
-	}
-	h.sel = 0
-	res := routeHubKey(h, term.Key{Type: term.KeyEnter})
-	if res.work == nil || res.work.Op != opDefault || res.work.Ref != "google/gemini-3.1-flash-lite" || !res.work.Close {
-		t.Errorf("Enter in the picker asked for %+v", res.work)
-	}
-}
-
-func TestEmptyModelsOpensProvidersWithAReason(t *testing.T) {
-	h, why := newHub(hubData{}, hubOpenModels)
-	if h.level != lvProviders || why == "" {
-		t.Errorf("level %v, reason %q", h.level, why)
-	}
-}
-
 func TestTheKeyIsOnlyEverShownAsBullets(t *testing.T) {
 	h, _ := newHub(hubData{}, hubOpenProviders)
 	e, _ := catalogByID("openrouter")
@@ -177,9 +134,14 @@ func TestChatRefusesAnOldCoreWithTheRemedy(t *testing.T) {
 }
 
 func TestHubCommands(t *testing.T) {
-	for line, want := range map[string]hubOpen{"/provider": hubOpenProviders, "/providers": hubOpenProviders, "/login": hubOpenProviders, "/models": hubOpenModels, "/model": hubOpenModels} {
+	for line, want := range map[string]hubOpen{"/provider": hubOpenProviders, "/providers": hubOpenProviders, "/login": hubOpenProviders} {
 		if got, ok := hubCommand(line); !ok || got != want {
 			t.Errorf("%s -> %v %v", line, got, ok)
+		}
+	}
+	for _, line := range []string{"/model", "/models", "/model deepseek"} {
+		if _, ok := hubCommand(line); ok {
+			t.Errorf("%s must not open the provider hub", line)
 		}
 	}
 	if _, ok := hubCommand("hello"); ok {

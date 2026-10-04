@@ -220,6 +220,13 @@ type State struct {
 	// state for the list node, not binds, so they are never addressed by name.
 	SlashCategory string   `json:"-"`
 	SlashTabs     []string `json:"-"`
+	// ModelActive is true while the input holds `/model ` (with the space): the
+	// minimal model menu is open instead of the command menu. ModelMatches are the
+	// models the typed text after it leaves, and ModelSelected the highlighted one.
+	// The host owns all three (the models come from the core, never from an event).
+	ModelActive   bool         `json:"model.active"`
+	ModelMatches  []ModelMatch `json:"model.matches"`
+	ModelSelected int          `json:"-"`
 	// CommunityQuery, CommunityMatches and CommunitySelected are the community
 	// installer's live view state (Scene 7, BINDS.md §4.3, signed in the J3
 	// follow-up). They are the slash.* triple's analogue for a registry browse:
@@ -259,7 +266,7 @@ type State struct {
 	ConfigCategories []ConfigCategory `json:"config.categories"`
 	ConfigSettings   []ConfigSetting  `json:"config.settings"`
 
-	// The provider hub's four view-state fields (/provider and /models share one
+	// The provider hub's four view-state fields (the /provider
 	// screen). The HOST composes what each level shows into these, so the scene stays a
 	// dumb list and the API key never has to be near the render path: a key typed into
 	// a form field is published as a row of bullets (HubRow.Status), and the key itself
@@ -1372,6 +1379,15 @@ type SlashMatch struct {
 	Description string `json:"description"`
 }
 
+// ModelMatch is one row of the `/model ` menu: a model the chat can use. Ref is
+// "provider/id", the form the core accepts; Current marks the model the chat uses now.
+type ModelMatch struct {
+	Ref      string `json:"ref"`
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+	Current  bool   `json:"current"`
+}
+
 // CommunityMatch is one row in community.matches: a registry entry the installer
 // browse can install. Its json tags are the bare field names rowScopesFor maps
 // to the `row.<field>` schema signed for community.matches (BINDS.md §4.7) —
@@ -1470,7 +1486,7 @@ var Commands = []SlashMatch{
 	// them honest is the same accepted-but-not-drawn discipline the `ui` entry
 	// documents, one layer out in the chrome.
 	{"provider", "Account", "Add providers, set keys and URLs, manage their models"},
-	{"models", "Model", "Choose the model to chat with"},
+	{"model", "Model", "Choose the model"},
 	// /login is a host-owned screen like /provider: it round-trips the serve
 	// protocol (provider.add / provider.key / model.add), so it is not a patch verb.
 }

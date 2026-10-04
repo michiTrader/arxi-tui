@@ -172,6 +172,8 @@ var signedBinds = map[string]bool{
 	"slash.matches":  true,
 	"slash.selected": true,
 	"slash.hint":     true,
+	"model.active":   true,
+	"model.matches":  true,
 	"status.active":  true,
 	"ui.focus":       true,
 	"ui.max":         true,
@@ -204,7 +206,7 @@ var signedBinds = map[string]bool{
 	"config.categories": true,
 	"config.settings":   true,
 
-	// §4.3/§4.7 view state — the provider hub (/provider and /models). Host-composed
+	// §4.3/§4.7 view state — the provider hub (/provider). Host-composed
 	// text and one list; see fold.State for why the host composes them (the API key
 	// must never be in State, so a form's key row is published already masked).
 	"hub.title":  true,

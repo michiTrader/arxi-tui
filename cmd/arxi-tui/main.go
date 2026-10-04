@@ -126,6 +126,10 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
                        "Appearance","Security","Workspace","Media","Extensions","Product"] },
       { "type": "rule", "style": {"style": "menu.rule"} } ] },
 
+  { "id": "model_menu", "type": "overlay", "anchor": "bottom", "when": "model.active",
+    "children": [
+      { "id": "models", "type": "list", "bind": "model.matches" } ] },
+
   { "id": "status", "type": "row", "children": [
     { "type": "text", "bind": "slash.hint", "style": {"style": "menu.hint"},
       "when": "slash.hint" },
@@ -683,6 +687,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	cwd, _ := os.Getwd()
 	effort := "auto"
 	hubDoneCh := make(chan hubOutcome, 1)
+	// modelMenu is the `/model ` menu's state; modelCh carries its worker's answers.
+	var modelMn modelMenu
+	modelCh := make(chan modelRead, 2)
 	hubDoc, hubDocErr := loadHubScene()
 	// openHub is the one door a typed command and a slash-menu pick both take. It
 	// reads the core's state on a worker first so a hung core never freezes the loop.
@@ -834,7 +841,33 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// slash.* view-state: when the buffer starts with "/", the slash
 		// menu is active and the typed substring filters the command list.
 		// This is arxi-tui's own contract (BINDS.md §4.3), not a core event.
-		if strings.HasPrefix(input, "/") {
+		if filter, open := modelMenuOpen(input); open && hub == nil {
+			// The `/model ` menu replaces the command menu while the buffer holds
+			// the command and a space. It is the whole of the model picker: no
+			// title, no help text.
+			state.ModelActive = true
+			state.ModelMatches, state.ModelSelected = modelMn.view(filter)
+			if !modelMn.loaded && !modelMn.loading {
+				// Read the models once per opening, on a worker, so a slow core
+				// never freezes the loop. The rows already known stay on screen
+				// meanwhile.
+				hc, _ := drv.(interface{ Hub() hubCore })
+				switch {
+				case hc == nil || hc.Hub() == nil:
+					modelMn.loaded = true
+					sceneNotice = noLiveCoreNotice
+				default:
+					if err := requireHubVerbs(hc.Hub().Hello()); err != nil {
+						modelMn.loaded = true
+						sceneNotice = err.Error()
+					} else {
+						modelMn.loading = true
+						startModelRead(ctx, hc.Hub(), modelCh)
+					}
+				}
+			}
+		} else if strings.HasPrefix(input, "/") {
+			modelMn.loaded = false // the next opening reads the core again
 			state.SlashActive = true
 			state.SlashTyped = input[1:]
 			slashCat = fold.NormalizeSlashCategory(state.SlashTyped, slashCat)
@@ -853,6 +886,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			state.SlashSelected = slashSel
 		} else {
+			modelMn.loaded = false
 			state.SlashActive = false
 			state.SlashTyped = ""
 			state.SlashMatches = nil
@@ -1293,6 +1327,28 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						} else if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens); handled {
 							input = next
 							caret = clampCaret(input, caret)
+						} else if _, open := modelMenuOpen(input); open {
+							// The `/model ` menu owns the keys while it is open: the
+							// arrows move its highlight, typing filters it and Enter
+							// switches the chat model. Ctrl-C never gets here
+							// (invariant 6).
+							var pick string
+							input, caret, pick = modelMenuKey(&modelMn, input, caret, ev.Key)
+							if pick != "" {
+								if hc, _ := drv.(interface{ Hub() hubCore }); hc != nil && hc.Hub() != nil {
+									startModelPick(ctx, hc.Hub(), pick, modelCh)
+									sceneNotice = "switching to " + pick + " …"
+								} else {
+									sceneNotice = noLiveCoreNotice
+								}
+							}
+						} else if ev.Key.Type == term.KeyEnter && modelCommand(input, slashSel, slashCat) {
+							// `/model` picked from the command menu (or typed whole)
+							// opens the model menu: the buffer becomes `/model `.
+							input = modelPrefix
+							caret = len([]rune(input))
+							slashSel = 0
+							modelMn.loaded = false
 						} else if ev.Key.Type == term.KeyEnter && clearCommand(input, slashSel, slashCat) {
 							// `/clear` starts a new session: the transcript, the
 							// chat history the driver sends along, any run being
@@ -1316,8 +1372,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							caret = 0
 							slashSel = 0
 						} else if open, isHub := hubCommand(input); isHub && ev.Key.Type == term.KeyEnter {
-							// `/provider`, `/providers`, `/login`, `/model` and `/models`
-							// are host-owned and all open the one provider hub. They take
+							// `/provider`, `/providers` and `/login` are host-owned and
+							// all open the one provider hub. They take
 							// no arguments on purpose, so a key can never be typed on (and
 							// echoed from) the command line.
 							openHub(open)
@@ -1536,6 +1592,25 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				if closeIt {
 					hub.wipe()
 					hub = nil
+				}
+			}
+			repaint()
+
+		case out := <-modelCh:
+			// The model worker finished: a read refreshes the menu; a pick reports
+			// the new chat model in the status bar, or why it failed.
+			modelMn.loading = false
+			switch {
+			case out.err != "":
+				sceneNotice = out.err
+				modelMn.loaded = true
+			default:
+				if out.hasData || out.picked == "" {
+					modelMn.setData(out.data)
+					hubDefault = out.data.def
+				}
+				if out.picked != "" {
+					sceneNotice = out.notice
 				}
 			}
 			repaint()
