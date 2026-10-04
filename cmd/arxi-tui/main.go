@@ -86,8 +86,14 @@ const factoryRAW = `{ "root": { "type": "stack", "children": [
 // factorySobria is the Scene 2 sobria default, embedded as a fallback constant
 // so the interface boots even when testdata/SOBRIA.json is missing.
 const factorySobria = `{ "root": { "type": "stack", "children": [
-  { "type": "text", "style": {"style": "dim"},
-    "text": "Δr×i v0.1.0 · Run /help for commands" },
+  { "id": "banner", "type": "row", "children": [
+    { "type": "text", "text": "Δ", "style": {"style": "brand.1"} },
+    { "type": "text", "text": "r", "style": {"style": "brand.2"} },
+    { "type": "text", "text": "×", "style": {"style": "brand.3"} },
+    { "type": "text", "text": "i", "style": {"style": "brand.4"} },
+    { "type": "text", "text": " v0.1.0 · Run /help for commands", "style": {"style": "dim"} } ] },
+
+  { "id": "banner_gap", "type": "text", "text": "" },
 
   ` + factoryNoticeNode + `,
 
@@ -124,11 +130,15 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
       "when": "slash.hint" },
     { "type": "text", "bind": "agent.mode", "style": {"style": "header"},
       "when": "status.active" },
-    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "status.active" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "model.name" },
     { "type": "text", "bind": "model.name", "style": {"style": "dim"},
-      "when": "status.active" },
-    { "type": "text", "text": " · ⚡︎", "style": {"style": "dim"},
-      "when": "status.active" } ] }
+      "when": "model.name" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.effort" },
+    { "type": "text", "bind": "host.effort", "style": {"style": "dim"},
+      "when": "host.effort" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.cwd" },
+    { "type": "text", "bind": "host.cwd", "style": {"style": "dim"},
+      "when": "host.cwd" } ] }
 ]}}`
 
 // version is the build's version string, stamped by the release build
@@ -655,6 +665,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// hubDefault is the default model the core last reported ("provider/id"); the
 	// status bar shows it until a reply names the model that really answered.
 	var hubDefault string
+	// cwd is where the TUI was started, shown in the bottom bar. effort is the
+	// thinking level the next request asks for; "auto" leaves the choice to the model
+	// until the user sets one with /effort.
+	cwd, _ := os.Getwd()
+	effort := "auto"
 	hubDoneCh := make(chan hubOutcome, 1)
 	hubDoc, hubDocErr := loadHubScene()
 	// openHub is the one door a typed command and a slash-menu pick both take. It
@@ -859,6 +874,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.RunActor = labeler.ActorLabel()
 		} else {
 			state.RunActor = ""
+		}
+
+		// host.cwd / host.effort: the working directory and the thinking level, shown
+		// in the bottom bar. They (and the model name) are blanked while the slash menu is
+		// open, like the actor above, so the bar carries the menu hint alone.
+		if state.SlashActive {
+			state.HostEffort, state.HostCwd, state.ModelName = "", "", ""
+		} else {
+			state.HostEffort, state.HostCwd = effort, shortCwd(cwd)
 		}
 
 		var r engine.Renderer
@@ -2301,4 +2325,26 @@ func runNonInteractive(doc *scene.Document, theme *theme.Theme, sceneNotice stri
 	// No terminal: plain output. ANSI escapes in a pipe would pollute greps.
 	fmt.Print(f.Plain())
 	return nil
+}
+
+// shortCwd is the working directory as the bottom bar shows it: the home directory
+// collapses to "~" and a path too long for a status bar keeps its tail, which is the
+// part that tells projects apart.
+func shortCwd(p string) string {
+	if p == "" {
+		return ""
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if p == home {
+			return "~"
+		}
+		if rest, ok := strings.CutPrefix(p, home+string(os.PathSeparator)); ok {
+			p = "~" + string(os.PathSeparator) + rest
+		}
+	}
+	const keep = 40
+	if r := []rune(p); len(r) > keep {
+		return "…" + string(r[len(r)-keep+1:])
+	}
+	return p
 }

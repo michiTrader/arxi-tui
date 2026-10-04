@@ -299,6 +299,13 @@ type State struct {
 	// default and a no-op: the when-gated status node does not render at boot.
 	RunActor string `json:"host.run.actor"`
 
+	// HostCwd is the directory the TUI was started in, and HostEffort the thinking
+	// level the next request will ask for ("auto" until the user picks one with
+	// /effort). Both are host view state like RunActor: no event carries them, the
+	// loop re-attaches them each frame, and an empty value simply draws nothing.
+	HostCwd    string `json:"host.cwd"`
+	HostEffort string `json:"host.effort"`
+
 	// BudgetMicrounits is run.started.budget_usd × 1000, captured when the run
 	// starts. Combined with CostMicrounits it produces session.tokens_used.
 	BudgetMicrounits uint64
