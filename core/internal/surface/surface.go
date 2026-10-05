@@ -203,6 +203,8 @@ var Registry = []Cmd{
 			p("stream-thinking", "bool", "send the model's thinking as chat.thinking notifications before the reply (wire only)"),
 			p("workdir", "string", "a folder the model may look into with read-only tools; each call is sent as a chat.tool notification (wire only)"),
 			enum(def(p("edits", "string", "whether the model may change files in the workdir: deny offers it no tool that does, ask shows each change as a chat.approval notification and waits for a chat.decision line, allow lets it change files unasked (wire only)"),
+				"deny"), "deny", "ask", "allow"),
+			enum(def(p("runs", "string", "whether the model may run shell commands in the workdir: deny offers it no such tool, ask shows each command as a chat.approval notification and waits for a chat.decision line, allow runs them unasked (wire only)"),
 				"deny"), "deny", "ask", "allow")}},
 	{Path: []string{"model", "list"}, Desc: "list available models",
 		Kind: CLIOnly | AgentTool | Protocol, ToolPolicy: PolicyAllow, Idempotent: true, Since: 1},
