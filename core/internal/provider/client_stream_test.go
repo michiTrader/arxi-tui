@@ -103,3 +103,47 @@ func TestCompleteStreamNilCallback(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+const toolStream = `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_a","type":"function","function":{"name":"read","arguments":""}}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":1,"id":"call_b","type":"function","function":{"name":"list"}}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a.go\"}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}
+
+data: [DONE]
+
+`
+
+func TestCompleteStreamAssemblesFragmentedToolCalls(t *testing.T) {
+	c, _ := sse(t, 200, "text/event-stream", toolStream)
+	resp, err := c.CompleteStream(context.Background(), chatRequest{Model: "m"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := canonicalOpenAIResponse(resp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	for _, b := range got.Content {
+		if b.ToolCall != nil {
+			calls = append(calls, b.ToolCall.ID+" "+b.ToolCall.Name+" "+string(b.ToolCall.Arguments))
+		}
+	}
+	want := `call_a read {"path":"a.go"}|call_b list {}`
+	if strings.Join(calls, "|") != want {
+		t.Errorf("tool calls = %q, want %q", strings.Join(calls, "|"), want)
+	}
+	if resp.finishReason() != "tool_calls" || resp.Usage.PromptTokens != 3 {
+		t.Errorf("finish/usage lost: %q %+v", resp.finishReason(), resp.Usage)
+	}
+}
+
+func TestCompleteStreamRefusesAWildToolCallIndex(t *testing.T) {
+	c, _ := sse(t, 200, "text/event-stream", `data: {"choices":[{"delta":{"tool_calls":[{"index":9999,"id":"x"}]}}]}`+"\n\n")
+	if _, err := c.CompleteStream(context.Background(), chatRequest{Model: "m"}, nil); err == nil {
+		t.Fatal("an absurd tool call index must be refused")
+	}
+}

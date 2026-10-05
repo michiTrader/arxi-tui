@@ -74,6 +74,18 @@ type streamChunk struct {
 			Content          *string `json:"content"`
 			ReasoningContent string  `json:"reasoning_content"`
 			Reasoning        string  `json:"reasoning"`
+			// ToolCalls arrive in fragments: the first carries index, id and
+			// name, later ones carry slices of the arguments text, all under
+			// the same index.
+			ToolCalls []struct {
+				Index    int    `json:"index"`
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
 		} `json:"delta"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
