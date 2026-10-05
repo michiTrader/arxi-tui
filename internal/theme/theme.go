@@ -342,6 +342,13 @@ func SOBRIA() *Theme {
 		// light grey.
 		"chat.user":  {FG: ui.Idx(ui.White + ui.Bright)},
 		"chat.error": {FG: ui.Idx(ui.Red + ui.Bright)},
+		// A warning (the turn went on), a cancelled turn and the usage line under an
+		// answer. The warning borrows the product's amber so it reads as "look here"
+		// without the alarm of red; the cancellation and the usage are quiet greys
+		// because neither is news, only a record.
+		"chat.warn":   {FG: ui.MustHex("#ffb454")},
+		"chat.cancel": {FG: ui.MustHex("#a0a0a0")},
+		"chat.usage":  {FG: ui.MustHex("#6f6f6f")},
 		// The product mark "Δr×i" is the one coloured thing on the first row: an
 		// orange -> yellow -> pink gradient spread over its four letters, one token per
 		// letter so no node needs gradient support and the rest of the row stays dim.

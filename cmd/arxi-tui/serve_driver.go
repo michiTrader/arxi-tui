@@ -221,6 +221,11 @@ func (d *serveDriver) SetEffort(level string) {
 	}
 }
 
+// CancelTurn stops the chat turn in flight and reports whether there was one.
+func (d *serveDriver) CancelTurn() bool {
+	return d.chat != nil && d.chat.cancelTurn()
+}
+
 // ClearSession ends the conversation the driver is following and leaves it ready
 // for a fresh one: the chat history is forgotten, a run being followed is no
 // longer relayed, and anything already queued for the loop is dropped. Nothing
@@ -333,5 +338,6 @@ var (
 	_ inboxSubmitter = (*driver.NDJSONDriver)(nil)
 	_ chatSender     = (*driver.NDJSONDriver)(nil)
 	_ Driver         = (*serveDriver)(nil)
+	_ turnCanceller  = (*serveDriver)(nil)
 	_ inboxDecider   = (*serveDriver)(nil)
 )

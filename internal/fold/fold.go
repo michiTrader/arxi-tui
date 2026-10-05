@@ -611,6 +611,8 @@ var handled = map[string]bool{
 	"agent.turn_done": true,
 	"agent.failed":    true,
 	"chat.error":      true,
+	"chat.warn":       true,
+	"chat.cancelled":  true,
 	"run.started":     true,
 	"agent.blocked":   true,
 	"agent.unblocked": true,
@@ -704,6 +706,20 @@ func (s *State) apply(e Event) {
 		}
 		if out, ok := e.Payload["tokens_out"].(float64); ok {
 			s.UsageOut += uint64(out)
+		}
+		// The same figures ride on the answer they belong to, so the transcript
+		// can show what each reply cost (streaming deltas add up like the text).
+		if n := len(s.History); n > 0 && s.History[n-1].Role == "assistant" {
+			last := &s.History[n-1]
+			if in, ok := e.Payload["tokens_in"].(float64); ok {
+				last.TokensIn += int64(in)
+			}
+			if out, ok := e.Payload["tokens_out"].(float64); ok {
+				last.TokensOut += int64(out)
+			}
+			if ms, ok := e.Payload["duration_ms"].(float64); ok {
+				last.DurationMS += int64(ms)
+			}
 		}
 		// Accumulate cost in microunits (USD × 1000) for session.tokens_used
 		if cost, ok := e.Payload["cost_usd"].(float64); ok {
@@ -815,6 +831,24 @@ func (s *State) apply(e Event) {
 		if text, _ := e.Payload["text"].(string); text != "" {
 			s.History = append(s.History, ChatLine{Role: "error", Text: text})
 		}
+
+	case "chat.warn":
+		// Something worth knowing that did not stop the turn: a line of the
+		// conversation under its own role, never a banner.
+		if text, _ := e.Payload["text"].(string); text != "" {
+			s.History = append(s.History, ChatLine{Role: "warn", Text: text})
+		}
+
+	case "chat.cancelled":
+		// The user stopped the turn in flight. The cancelled prompt stays in the
+		// transcript (it was sent), followed by a line that says it was stopped.
+		// Nothing is working any more, and a member that was thinking is not.
+		s.AgentWorking = false
+		for _, m := range s.members {
+			m.State = "idle"
+			m.Busy = false
+		}
+		s.History = append(s.History, ChatLine{Role: "cancelled", Text: stringPayload(e.Payload, "text")})
 
 	case "agent.failed":
 		// The turn failed: no longer busy.
@@ -1563,4 +1597,10 @@ func NextSlashCategory(typed, category string, dir int) string {
 		}
 	}
 	return tabs[((cur+dir)%len(tabs)+len(tabs))%len(tabs)]
+}
+
+// stringPayload reads a string field of an event payload, or "" when it is absent.
+func stringPayload(p map[string]any, key string) string {
+	v, _ := p[key].(string)
+	return v
 }
