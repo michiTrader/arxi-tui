@@ -148,3 +148,56 @@ func TestToolWithoutADiffDrawsNoDiff(t *testing.T) {
 		}
 	}
 }
+
+func approvalEv(seq int64) fold.Event {
+	return fold.Event{Type: "chat.approval", Seq: seq, Payload: map[string]any{
+		"name": "edit", "arg": "main.go", "summary": "Added 1 line, removed 1 line", "diff": sampleDiff}}
+}
+
+// A change waiting for the user shows the diff and the question; the answer takes
+// the question away.
+func TestAWaitingChangeShowsTheDiffAndTheQuestion(t *testing.T) {
+	text := strings.Join(tallRows(t, []fold.Event{approvalEv(1)}), "\n")
+	for _, want := range []string{"● Edit(main.go)", "3 -func main() {}", "3 +func main() { println(1) }", "Allow this change?  y yes · n no (Esc)"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q:\n%s", want, text)
+		}
+	}
+	after := strings.Join(tallRows(t, []fold.Event{approvalEv(1),
+		{Type: "chat.decided", Seq: 2, Payload: map[string]any{"allow": true}}, editEv(3, sampleDiff)}), "\n")
+	if strings.Contains(after, "Allow this change?") || strings.Count(after, "● Edit(main.go)") != 1 {
+		t.Errorf("the question must go once it is answered, leaving one Edit line:\n%s", after)
+	}
+}
+
+func TestAWaitingChangeShowsMoreOfTheDiffThanADoneOne(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&b, "%5d + line %d\n", i, i)
+	}
+	ev := approvalEv(1)
+	ev.Payload["diff"] = b.String()
+	text := strings.Join(tallRows(t, []fold.Event{ev}), "\n")
+	if !strings.Contains(text, "line 30") || strings.Contains(text, "more lines") {
+		t.Errorf("the user must see the whole change before allowing it:\n%s", text)
+	}
+}
+
+func TestADeclinedChangeLeavesNoQuestionBehind(t *testing.T) {
+	text := strings.Join(tallRows(t, []fold.Event{approvalEv(1), {Type: "chat.cancelled", Seq: 2}}), "\n")
+	if strings.Contains(text, "Allow this change?") {
+		t.Errorf("a cancelled turn must not keep asking:\n%s", text)
+	}
+}
+
+// tallRows is plainRows on a frame tall enough for a whole change.
+func tallRows(t *testing.T, events []fold.Event) []string {
+	t.Helper()
+	r, js := chatDoc(t)
+	r.Height = 80
+	rows := strings.Split(strings.TrimRight(r.RenderFrame(mustDoc(t, js), fold.Fold(events)).Plain(), "\n"), "\n")
+	for i := range rows {
+		rows[i] = strings.TrimRight(rows[i], " ")
+	}
+	return rows
+}

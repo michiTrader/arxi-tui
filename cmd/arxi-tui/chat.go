@@ -60,6 +60,11 @@ type chatSession struct {
 	// workdir is the folder the model may look into with read-only tools ("" =
 	// none). Like effort it is a setting: reset() leaves it alone.
 	workdir string
+	// edits is what the model may do to files in workdir: "deny" (look only),
+	// "ask" (each change waits for the user) or "allow". It follows the agent mode.
+	edits string
+	// approval is the change the core is holding for the user, nil when none.
+	approval *pendingApproval
 
 	// dial gives each turn its own connection (nil = every turn shares core, which
 	// is what the tests and the mock use; cancelling then only abandons the answer).
@@ -101,6 +106,62 @@ func (c *chatSession) setWorkdir(dir string) {
 	c.mu.Unlock()
 }
 
+// setEdits chooses what the model may do to files from the next turn on.
+func (c *chatSession) setEdits(policy string) {
+	c.mu.Lock()
+	c.edits = policy
+	c.mu.Unlock()
+}
+
+// pendingApproval is a change on its way to the user: the turn blocks on reply.
+type pendingApproval struct{ reply chan bool }
+
+// askUser puts one change to the user and blocks the turn until they decide, or the
+// turn ends (cancelled, or /clear), which counts as a no.
+func (c *chatSession) askUser(ctx context.Context, gen int64, a driver.Approval) bool {
+	p := &pendingApproval{reply: make(chan bool, 1)}
+	c.mu.Lock()
+	c.approval = p
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		if c.approval == p {
+			c.approval = nil
+		}
+		c.mu.Unlock()
+	}()
+	c.post(ctx, gen, "chat.approval", map[string]any{
+		"name": a.Name, "arg": a.Arg, "summary": a.Summary, "diff": a.Diff,
+	})
+	select {
+	case allow := <-p.reply:
+		return allow
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// pendingApproval reports whether a change is waiting for the user's answer.
+func (c *chatSession) pendingNow() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.approval != nil
+}
+
+// decide answers the change that is waiting. It reports whether there was one.
+func (c *chatSession) decide(allow bool) bool {
+	c.mu.Lock()
+	p, gen := c.approval, c.gen
+	c.approval = nil
+	c.mu.Unlock()
+	if p == nil {
+		return false
+	}
+	p.reply <- allow
+	c.post(context.Background(), gen, "chat.decided", map[string]any{"allow": allow})
+	return true
+}
+
 // send starts one turn. It returns an error immediately for anything that can be
 // decided up front (old core, a turn already running); everything that happens on
 // the network is reported in the chat as a chat.error event.
@@ -121,6 +182,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	gen := c.gen
 	effort := c.effort
 	workdir := c.workdir
+	edits := c.edits
 	hist := append([]driver.ChatTurn(nil), c.history...)
 	if len(hist) > chatMaxHistory {
 		hist = hist[len(hist)-chatMaxHistory:]
@@ -130,7 +192,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	turnCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.mu.Unlock()
-	go c.run(turnCtx, text, hist, gen, effort, workdir, turn)
+	go c.run(turnCtx, text, hist, gen, effort, workdir, edits, turn)
 	return nil
 }
 
@@ -228,7 +290,7 @@ func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload m
 	}
 }
 
-func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64, effort, workdir string, turn int64) {
+func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64, effort, workdir, edits string, turn int64) {
 	defer func() {
 		c.mu.Lock()
 		// Only the turn that is still current frees the session: a cancelled turn
@@ -262,14 +324,22 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 			c.post(ctx, gen, "chat.thinking", map[string]any{"text": fragment})
 		},
 		// What it looks at while answering is shown as it happens.
-		Workdir: workdir,
+		Workdir: workdir, Edits: edits,
+		OnApproval: func(ctx context.Context, a driver.Approval) bool { return c.askUser(ctx, gen, a) },
 		OnTool: func(t driver.ToolCall) {
 			c.post(ctx, gen, "chat.tool", map[string]any{
-				"name": t.Name, "arg": t.Arg, "ok": t.OK, "summary": t.Summary, "output": t.Output,
+				"name": t.Name, "arg": t.Arg, "ok": t.OK, "summary": t.Summary, "output": t.Output, "diff": t.Diff,
 			})
 		},
 	}
 	res, err := core.SubmitChatSend(ctx, params)
+	if errors.Is(err, driver.ErrEditsUnsupported) && ctx.Err() == nil {
+		// A core that can look but not change files: say so, and go on looking.
+		c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model change files, " +
+			"so it may only look; " + rebuildRemedy})
+		params.Edits, params.OnApproval = "", nil
+		res, err = core.SubmitChatSend(ctx, params)
+	}
 	if errors.Is(err, driver.ErrToolsUnsupported) && ctx.Err() == nil {
 		// An older core cannot give the model tools. Say so, and answer the
 		// plain way: the user asked a question and still gets an answer.

@@ -221,6 +221,19 @@ func (d *serveDriver) SetEffort(level string) {
 	}
 }
 
+// SetMode applies an agent mode: what the model may do to files follows it.
+func (d *serveDriver) SetMode(name string) {
+	if m, ok := modeByName(name); ok && d.chat != nil {
+		d.chat.setEdits(m.policy(classEdit))
+	}
+}
+
+// PendingApproval reports whether a change waits for the user's answer.
+func (d *serveDriver) PendingApproval() bool { return d.chat != nil && d.chat.pendingNow() }
+
+// Decide answers the change that waits and reports whether there was one.
+func (d *serveDriver) Decide(allow bool) bool { return d.chat != nil && d.chat.decide(allow) }
+
 // CancelTurn stops the chat turn in flight and reports whether there was one.
 func (d *serveDriver) CancelTurn() bool {
 	return d.chat != nil && d.chat.cancelTurn()
