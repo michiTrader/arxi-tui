@@ -831,6 +831,7 @@ const (
 	diffAddToken    = "chat.diff.add"
 	diffDelToken    = "chat.diff.del"
 	diffCtxToken    = "chat.diff.ctx"
+	askToken        = "chat.approval"
 	toolDot         = "● "
 	toolElbow       = "└ "
 )
@@ -881,7 +882,24 @@ func toolLines(h fold.ChatLine, width int) []ui.Line {
 	}
 	hangResult := strings.Repeat(" ", dotW+ansi.StringWidth(toolElbow))
 	out := append(head, ui.WrapText(hang+toolElbow+h.ToolSummary, style, width, ui.Line{{Text: hangResult}})...)
-	return append(out, diffLines(h.ToolDiff, hangResult, width)...)
+	rows := maxDiffRows
+	if h.Role == "approval" {
+		// What the user is asked to allow is shown in full, or nearly: a change
+		// approved from a summary is not really approved.
+		rows = maxApprovalRows
+	}
+	return append(out, diffLines(h.ToolDiff, hangResult, width, rows)...)
+}
+
+// maxApprovalRows is how much of a change is shown while it waits for an answer.
+const maxApprovalRows = 40
+
+// approvalLines is a change waiting for the user: the tool line it will become, its
+// diff, and the question with the keys that answer it.
+func approvalLines(h fold.ChatLine, width int) []ui.Line {
+	out := toolLines(h, width)
+	hang := strings.Repeat(" ", ansi.StringWidth(toolDot))
+	return append(out, ui.Line{{Text: ansi.Truncate(hang+"Allow this change?  y yes · n no (Esc)", width, "…"), Style: askToken}})
 }
 
 // maxDiffRows is how many rows of a change the conversation shows; the rest is
@@ -891,15 +909,15 @@ const maxDiffRows = 14
 // diffLines draws a change under its tool line: red rows for what left, green for
 // what came in, grey for the lines around. A row is cut at the edge rather than
 // wrapped, so a line number never ends up above a stray fragment of code.
-func diffLines(diff, indent string, width int) []ui.Line {
+func diffLines(diff, indent string, width, maxRows int) []ui.Line {
 	if diff == "" {
 		return nil
 	}
 	rows := strings.Split(strings.TrimRight(diff, "\n"), "\n")
 	hidden := 0
-	if len(rows) > maxDiffRows {
-		hidden = len(rows) - maxDiffRows
-		rows = rows[:maxDiffRows]
+	if len(rows) > maxRows {
+		hidden = len(rows) - maxRows
+		rows = rows[:maxRows]
 	}
 	var out []ui.Line
 	for _, row := range rows {
@@ -1006,6 +1024,11 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 				text = errorTurnMarker + text
 				turnToken = errorTurnToken
 				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(errorTurnMarker)), Style: errorTurnToken}}
+			}
+			if h.Role == "approval" {
+				lines = append(lines, approvalLines(h, r.Width)...)
+				lines = append(lines, ui.Line{})
+				continue
 			}
 			if h.Role == "tool" {
 				lines = append(lines, toolLines(h, r.Width)...)

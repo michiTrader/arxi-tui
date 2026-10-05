@@ -623,6 +623,8 @@ var handled = map[string]bool{
 	"chat.warn":       true,
 	"chat.thinking":   true,
 	"chat.tool":       true,
+	"chat.approval":   true,
+	"chat.decided":    true,
 	"chat.cancelled":  true,
 	"run.started":     true,
 	"agent.blocked":   true,
@@ -689,6 +691,13 @@ func (s *State) apply(e Event) {
 	// *any* later event, so an event this reducer otherwise ignores must still
 	// count as "the last thing that happened".
 	s.lastEventType = e.Type
+	// A change waiting for the user is on screen only while it waits: whatever
+	// happens next (the answer, the result, a cancel, a failure) takes it away.
+	if e.Type != "chat.approval" && e.Type != "chat.thinking" {
+		for n := len(s.History); n > 0 && s.History[n-1].Role == "approval"; n-- {
+			s.History = s.History[:n-1]
+		}
+	}
 	switch e.Type {
 	case "run.prompt":
 		s.ThinkingText = ""
@@ -723,6 +732,19 @@ func (s *State) apply(e Event) {
 		s.History = append(s.History, ChatLine{
 			Role: "tool", Text: name + "(" + arg + ")",
 			Tool: name, ToolArg: arg, ToolOK: ok, ToolSummary: summary, ToolOutput: output, ToolDiff: diff,
+		})
+
+	case "chat.approval":
+		// The core holds a change until the user decides. It is drawn as the tool
+		// line it will become, with the whole diff and the question.
+		s.ThinkingText = ""
+		name, _ := e.Payload["name"].(string)
+		arg, _ := e.Payload["arg"].(string)
+		summary, _ := e.Payload["summary"].(string)
+		diff, _ := e.Payload["diff"].(string)
+		s.History = append(s.History, ChatLine{
+			Role: "approval", Text: name + "(" + arg + ")",
+			Tool: name, ToolArg: arg, ToolOK: true, ToolSummary: summary, ToolDiff: diff,
 		})
 
 	case "llm.response":

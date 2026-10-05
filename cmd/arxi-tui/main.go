@@ -528,6 +528,7 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 		},
 	}
 	sd.chat = newChatSession(nd, sd.relay)
+	sd.SetMode(defaultMode)
 	// The model may look into the folder arxi-tui was opened in.
 	if cwd, err := os.Getwd(); err == nil {
 		sd.chat.setWorkdir(cwd)
@@ -1233,6 +1234,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// screen on y/r/n/Esc and leaving it standing otherwise.
 						panicGesture.Reset()
 						bundleMod.handleKey(ev.Key)
+					} else if ap, ok := drv.(approver); ok && ap.PendingApproval() &&
+						ev.Key.Type != term.KeyWheelUp && ev.Key.Type != term.KeyWheelDown {
+						// The model wants to change a file and the turn is waiting for
+						// the user: y allows it, n or Esc declines it, and every other
+						// key is not an answer. It sits after the Ctrl-C branch (the
+						// escape hatch is never captured) and before the other
+						// handlers, so a "y" cannot reach the chat input.
+						panicGesture.Reset()
+						if allow, decided := approvalKey(ev.Key); decided {
+							ap.Decide(allow)
+						}
 					} else if hub != nil {
 						// The provider hub owns the keyboard, after the Ctrl-C branch
 						// so the escape hatch still reaches HandleCtrlC (invariant 6).
@@ -1449,6 +1461,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						} else if ev.Key.Type == term.KeyTab && ev.Key.Mod&term.ModShift != 0 && !strings.HasPrefix(input, "/") {
 							// Shift+Tab walks the agent modes without opening a menu.
 							mode = nextMode(mode)
+							if ms, ok := drv.(modeSetter); ok {
+								ms.SetMode(mode)
+							}
 							modeMn.loaded = false
 						} else if _, open := modelMenuOpen(input); open {
 							// The `/model ` menu owns the keys while it is open: the
@@ -1484,6 +1499,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							input, caret, pick = choiceMenuKey(&modeMn, modePrefix, input, caret, ev.Key)
 							if pick != "" {
 								mode = pick
+								if ms, ok := drv.(modeSetter); ok {
+									ms.SetMode(mode)
+								}
 								modeMn.loaded = false
 								sceneNotice = ""
 							}

@@ -2,8 +2,10 @@ package main
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/michiTrader/arxi_tui/internal/fold"
+	"github.com/michiTrader/arxi_tui/internal/term"
 )
 
 // This file is /mode: how much the agent may do on its own. The mode is a host
@@ -112,4 +114,35 @@ func modeMenuData(current string) []fold.ModelMatch {
 // the chat.
 func modeCommand(input string, sel int, cat string) bool {
 	return menuCommand("mode", input, sel, cat)
+}
+
+// modeSetter is the optional capability a Driver has when the mode changes what its
+// chat turns may do (serveDriver). The mock has no tools.
+type modeSetter interface {
+	SetMode(name string)
+}
+
+// approver is the optional capability a Driver has when a change can wait for the
+// user: PendingApproval says one does, Decide answers it.
+type approver interface {
+	PendingApproval() bool
+	Decide(allow bool) bool
+}
+
+// approvalKey maps a key pressed while a change waits: y allows it, n or Esc
+// declines it. Anything else is not an answer, and "no answer" is never a yes.
+func approvalKey(k term.Key) (allow, decided bool) {
+	if k.Type == term.KeyEscape {
+		return false, true
+	}
+	if k.Type != term.KeyRunes || len(k.Runes) != 1 {
+		return false, false
+	}
+	switch unicode.ToLower(k.Runes[0]) {
+	case 'y':
+		return true, true
+	case 'n':
+		return false, true
+	}
+	return false, false
 }

@@ -355,6 +355,7 @@ func SOBRIA() *Theme {
 		"chat.usage":       {FG: ui.MustHex("#6f6f6f")},
 		// The diff of a change the agent made: red for what left, green for what
 		// came in, grey for the lines around it.
+		"chat.approval": {FG: ui.MustHex("#ffb454"), Attrs: ui.AttrBold},
 		"chat.diff.add": {FG: ui.MustHex("#5fd75f")},
 		"chat.diff.del": {FG: ui.Idx(ui.Red + ui.Bright)},
 		"chat.diff.ctx": {FG: ui.MustHex("#6f6f6f")},
