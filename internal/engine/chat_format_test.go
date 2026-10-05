@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -130,5 +131,32 @@ func TestNewChatLinesUseTheirOwnTokens(t *testing.T) {
 		if !strings.Contains(got, "«"+tok+":") {
 			t.Errorf("no span drawn under %s:\n%s", tok, got)
 		}
+	}
+}
+
+// With the slash menu open, the hint line sits directly under the menu's bottom rule:
+// no blank row between them.
+func TestSlashMenuHintIsAdjacentToTheBottomRule(t *testing.T) {
+	b, err := os.ReadFile("../../testdata/SOBRIA.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	st := fold.Fold(nil)
+	st.SlashActive = true
+	st.StatusActive = "false"
+	st.SlashHint = "  ↑↓ navigate · tab category · enter open · esc close"
+	r := Renderer{Width: 70, Height: 24}
+	rows := strings.Split(strings.TrimRight(r.RenderFrame(mustDoc(t, string(b)), st).Plain(), "\n"), "\n")
+	hint := -1
+	for i, row := range rows {
+		if strings.Contains(row, "navigate") {
+			hint = i
+		}
+	}
+	if hint < 1 {
+		t.Fatalf("no hint row:\n%s", strings.Join(rows, "\n"))
+	}
+	if !strings.HasPrefix(rows[hint-1], "───") {
+		t.Errorf("the row above the hint is %q, want the menu's bottom rule", rows[hint-1])
 	}
 }

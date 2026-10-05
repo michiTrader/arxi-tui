@@ -347,8 +347,8 @@ func SOBRIA() *Theme {
 		// red; the usage is a quiet grey because it is a record, not news.
 		"chat.warn":  {FG: ui.MustHex("#ffb454")},
 		"chat.usage": {FG: ui.MustHex("#6f6f6f")},
-		// The product mark "Δr×i" is the one coloured thing on the first row: an
-		// orange -> yellow -> pink gradient spread over its four letters, one token per
+		// The product mark "Δr×i" is the one coloured thing on the first row: a
+		// deep-orange -> amber -> yellow gradient spread over its four letters, one token per
 		// letter so no node needs gradient support and the rest of the row stays dim.
 		// The command menu is drawn in explicit greys rather than the terminal's faint
 		// attribute, which several terminals render too dark to read on black. The
@@ -362,12 +362,12 @@ func SOBRIA() *Theme {
 		"menu.desc.selected": {FG: ui.MustHex("#cfcfcf")},
 		"menu.tab":           {FG: ui.MustHex("#8a8a8a")},
 		"menu.tab.selected":  {FG: ui.MustHex("#ffffff"), Attrs: ui.AttrBold},
-		"menu.rule":          {FG: ui.MustHex("#4a4a4a")},
+		"menu.rule":          {FG: ui.MustHex("#303030")},
 		"menu.hint":          {FG: ui.MustHex("#8a8a8a")},
-		"brand.1":            {FG: ui.MustHex("#ff8a1f"), Attrs: ui.AttrBold},
-		"brand.2":            {FG: ui.MustHex("#ffc933"), Attrs: ui.AttrBold},
-		"brand.3":            {FG: ui.MustHex("#ff7a8a"), Attrs: ui.AttrBold},
-		"brand.4":            {FG: ui.MustHex("#ff4fa3"), Attrs: ui.AttrBold},
+		"brand.1":            {FG: ui.MustHex("#ff6b1a"), Attrs: ui.AttrBold},
+		"brand.2":            {FG: ui.MustHex("#ff9a1f"), Attrs: ui.AttrBold},
+		"brand.3":            {FG: ui.MustHex("#ffbf26"), Attrs: ui.AttrBold},
+		"brand.4":            {FG: ui.MustHex("#ffe14d"), Attrs: ui.AttrBold},
 		// Assistant replies are Markdown (internal/ui/markdown.go). Structure is carried
 		// by weight and a restrained palette: headings bright and bold, inline code and
 		// links cyan, code blocks syntax-tinted behind a dim gutter, and every frame

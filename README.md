@@ -468,6 +468,14 @@ request instead of leaving its late answer to be mistaken for the next one. When
 nothing is running, Ctrl-C keeps its usual meaning (clear the line; twice to leave) and
 Esc closes a menu.
 
+### Look
+
+The Δr×i mark runs from deep orange to yellow. The caret is amber (set with OSC 12 and
+handed back to the terminal on exit; a terminal without OSC 12 keeps its own colour). The
+caret blinks only while you are idle: every key keeps it solid for about a second, so it
+never disappears while you type or move with the arrows. With the `/` menu open its hint
+line sits right under the bottom rule, and the rules are drawn in a dim grey.
+
 ### Thinking level (`/effort `)
 
 Type `/effort` followed by a space and a menu lists `auto`, `minimal`, `low`, `medium`

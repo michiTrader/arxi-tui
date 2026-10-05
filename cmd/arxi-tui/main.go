@@ -112,7 +112,7 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
 
   { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ " },
 
-  { "id": "input_gap_bottom", "type": "text", "text": "" },
+  { "id": "input_gap_bottom", "type": "text", "text": "", "when": "status.active" },
 
   { "id": "escape_hint", "type": "text", "text": "press ctrl+c again to exit",
     "when": "host.escape.armed", "style": {"style": "dim"} },
@@ -274,6 +274,13 @@ func run(scenePath string) error {
 	// and the host blink still runs by toggling visibility.
 	fmt.Fprint(tty, "\033[2 q")
 	defer fmt.Fprint(tty, "\033[0 q")
+
+	// Caret colour: amber, the same warm family as the Δr×i mark, instead of whatever
+	// the terminal defaults to (often green). OSC 12 sets it and OSC 112 gives the
+	// terminal's own colour back on the way out. A terminal that does not implement
+	// OSC 12 drops it silently and keeps its own caret colour.
+	fmt.Fprint(tty, "\033]12;"+caretColor+"\033\\")
+	defer fmt.Fprint(tty, "\033]112\033\\")
 
 	// Selection highlight: teal (OSC 17 sets the highlight background). When the
 	// user drags to copy from the transcript, the default highlight on many
@@ -866,6 +873,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		}
 	}()
 
+	// lastKey is when the user last pressed a key; see caretLit.
+	var lastKey time.Time
+
 	repaint := func() {
 		state := fold.Fold(collected)
 		state.UserInput = input // view state: the host owns the input buffer
@@ -1085,7 +1095,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// the frame hosts a caret, so an idle scene still blinks it — an animated
 		// scene's own ticker would do it, but an idle one repaints on input alone and
 		// would otherwise freeze the block on whichever half it last painted.
-		emitFrame(tty, frame, theme, h, caretState, blinkOn(time.Now()))
+		emitFrame(tty, frame, theme, h, caretState, caretLit(time.Now(), lastKey))
 		armTicker()
 		armBlink(!frame.Cursor.Hidden)
 	}
@@ -1145,6 +1155,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			for pending {
 				switch ev.Kind {
 				case term.EventKey:
+					lastKey = time.Now()
 					if isCtrlC(ev.Key) && cancelRunningTurn(drv) {
 						// A turn was running, so Ctrl-C means "stop that": it is the key
 						// every terminal tool uses to interrupt work. It does not arm the
@@ -2422,6 +2433,24 @@ type emitState struct {
 // their native caret, chosen so the block reads as an ordinary blinking cursor
 // rather than a strobe or a slow pulse.
 const blinkHalfPeriod = 530 * time.Millisecond
+
+// caretColor is the caret's colour: amber, in the family of the product mark.
+const caretColor = "#ffb000"
+
+// blinkHold is how long the caret stays solid after the last key. A caret that
+// blinks while the user types or moves with the arrows disappears exactly when they
+// are looking for it, so every key keeps it lit and the blink resumes only once the
+// keyboard has been quiet for this long.
+const blinkHold = 1200 * time.Millisecond
+
+// caretLit reports whether the caret should be drawn at now: always while the user
+// has touched the keyboard within blinkHold, otherwise by the blink phase.
+func caretLit(now, lastKey time.Time) bool {
+	if !lastKey.IsZero() && now.Sub(lastKey) < blinkHold {
+		return true
+	}
+	return blinkOn(now)
+}
 
 // blinkOn reports whether the caret is in the shown half of its blink cycle at
 // wall time t. It is a pure function of the clock, so every repaint — driven by a
