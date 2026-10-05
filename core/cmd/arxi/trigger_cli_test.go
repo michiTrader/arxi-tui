@@ -122,6 +122,7 @@ func arxi(t *testing.T, dir string, args ...string) result {
 	t.Helper()
 	cmd := exec.Command(buildIash(t), args...)
 	cmd.Dir = dir
+	subprocessProviders(cmd, dir)
 	out, err := cmd.CombinedOutput()
 	code := 0
 	if ee, ok := err.(*exec.ExitError); ok {
@@ -130,6 +131,16 @@ func arxi(t *testing.T, dir string, args ...string) result {
 		t.Fatalf("running arxi %v: %v", args, err)
 	}
 	return result{out: string(out), code: code}
+}
+
+// subprocessProviders keeps a test subprocess out of the real config folder.
+//
+// Providers now live in the user's config directory, the same from every working
+// directory, so without this every subprocess test would read and write the
+// developer's actual providers. The override points them back at <dir>/providers,
+// which is also what the assertions below look at.
+func subprocessProviders(cmd *exec.Cmd, dir string) {
+	cmd.Env = append(os.Environ(), "ARXI_PROVIDERS_DIR="+filepath.Join(dir, "providers"))
 }
 
 // workdir is a directory the binary may write triggers/ into.

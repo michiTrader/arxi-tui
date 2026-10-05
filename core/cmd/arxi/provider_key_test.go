@@ -290,7 +290,8 @@ func cliRun(t *testing.T, dir, stdin string, env []string, args ...string) resul
 	t.Helper()
 	cmd := exec.Command(buildIash(t), args...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), env...)
+	subprocessProviders(cmd, dir)
+	cmd.Env = append(cmd.Env, env...)
 	cmd.Stdin = strings.NewReader(stdin)
 	out, err := cmd.CombinedOutput()
 	code := 0

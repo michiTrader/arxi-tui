@@ -29,7 +29,7 @@ import (
 //
 // They share the harness in trigger_cli_test.go (TestMain, buildIash, arxi,
 // workdir), and the working directory is what isolates them: providerDir is
-// relative, so each test's t.TempDir() gets its own providers/.
+// relative, so each test's t.TempDir() gets its own providers/ (subprocessProviders points ARXI_PROVIDERS_DIR there).
 
 // addProvider registers a provider in dir and fails loudly if it did not work.
 func addProvider(t *testing.T, dir string, args ...string) result {
