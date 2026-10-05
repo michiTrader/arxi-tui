@@ -528,6 +528,10 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 		},
 	}
 	sd.chat = newChatSession(nd, sd.relay)
+	// The model may look into the folder arxi-tui was opened in.
+	if cwd, err := os.Getwd(); err == nil {
+		sd.chat.setWorkdir(cwd)
+	}
 	sd.chat.dial = func(ctx context.Context) (chatSender, func(), error) {
 		return dialChatConn(ctx, arxiBin)
 	}
