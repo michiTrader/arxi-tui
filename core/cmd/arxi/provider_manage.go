@@ -342,7 +342,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	}
 
 	if box := toolsFrom(ctx); box != nil {
-		system = strings.TrimSpace(system + " " + toolsHint(box.box.Root()))
+		system = strings.TrimSpace(system + " " + toolsHint(box.box.Root(), box.edits))
 	}
 	var messages []turn.Message
 	text := func(role turn.Role, s string) turn.Message {
@@ -510,7 +510,8 @@ type thinkingNotification struct {
 // model think. The reply, the retries and the refusal text are the same ones:
 // only the way the provider is called changes (streamed), and each reasoning
 // fragment is written to the connection as it arrives.
-func handleChatSendThinking(w *connWriter, params map[string]any) (any, error) {
+func handleChatSendThinking(streams *connStreams, params map[string]any) (any, error) {
+	w := streams.w
 	ctx := context.Background()
 	if boolParam(params, "stream_thinking") {
 		ctx = provider.WithThinking(ctx, func(fragment string) {
@@ -519,7 +520,8 @@ func handleChatSendThinking(w *connWriter, params map[string]any) (any, error) {
 	}
 	if dir := stringParam(params, "workdir"); dir != "" {
 		var err error
-		ctx, err = withTools(ctx, dir, func(n chatToolNotification) { _ = w.write(n) })
+		ctx, err = withTools(ctx, dir, stringParam(params, "edits"), streams.ask,
+			func(n chatToolNotification) { _ = w.write(n) })
 		if err != nil {
 			return nil, err
 		}
@@ -529,8 +531,8 @@ func handleChatSendThinking(w *connWriter, params map[string]any) (any, error) {
 }
 
 func handleChatSend(params map[string]any) (any, error) {
-	if stringParam(params, "workdir") != "" {
-		return nil, badInvocation{errors.New("workdir needs a live connection to report the tool calls on")}
+	if stringParam(params, "workdir") != "" || stringParam(params, "edits") != "" {
+		return nil, badInvocation{errors.New("workdir and edits need a live connection to report the tool calls on")}
 	}
 	return chatSendEffort(context.Background(), stringParam(params, "prompt"), stringParam(params, "history"),
 		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))
