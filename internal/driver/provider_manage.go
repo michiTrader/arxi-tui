@@ -191,6 +191,11 @@ type ChatSendParams struct {
 	// turn until it answers. It must return false when ctx ends. With no
 	// OnApproval every change is declined.
 	OnApproval func(ctx context.Context, a Approval) bool
+	// Runs lets the model run shell commands in Workdir: "deny" (the default),
+	// "ask" (every command is put to OnApproval first, with no diff) or "allow".
+	// It is independent of Edits. A core that does not know the parameter makes
+	// the call fail with ErrRunsUnsupported.
+	Runs string
 }
 
 // Approval is a change the model wants to make and the core is holding until the
@@ -219,6 +224,9 @@ type ToolCall struct {
 
 // ErrEditsUnsupported is returned when the core is too old to let the model change files.
 var ErrEditsUnsupported = errors.New("this arxi core cannot let the model change files (it does not know edits)")
+
+// ErrRunsUnsupported is returned when the core is too old to let the model run commands.
+var ErrRunsUnsupported = errors.New("this arxi core cannot let the model run commands (it does not know runs)")
 
 // ErrToolsUnsupported is returned when the core is too old to give the model tools.
 var ErrToolsUnsupported = errors.New("this arxi core cannot give the model tools (it does not know workdir)")
@@ -261,6 +269,9 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 	if p.Edits != "" && p.Workdir != "" {
 		params["edits"] = p.Edits
 	}
+	if p.Runs != "" && p.Workdir != "" {
+		params["runs"] = p.Runs
+	}
 	var r ChatSendResult
 	if p.OnThinking == nil && p.Workdir == "" {
 		if err := d.call(ctx, "chat-send", "chat.send", params, &r); err != nil {
@@ -274,12 +285,17 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 	err := d.callWatching(ctx, "chat-send", "chat.send", params, &r, p.OnThinking, p.OnTool, p.OnApproval)
 	var ref *Refusal
 	if errors.As(err, &ref) && ref.Code == "bad_params" {
+		// Only the part that names what was refused: the rest of the message lists
+		// everything the core does take, which would match every parameter below.
+		refused := refusedPart(ref.Message)
 		switch {
-		case strings.Contains(ref.Message, "workdir"):
+		case strings.Contains(refused, "workdir"):
 			return nil, fmt.Errorf("%w: %s", ErrToolsUnsupported, ref.Message)
-		case strings.Contains(ref.Message, "edits"):
+		case strings.Contains(refused, "edits"):
 			return nil, fmt.Errorf("%w: %s", ErrEditsUnsupported, ref.Message)
-		case strings.Contains(ref.Message, "stream_thinking"):
+		case strings.Contains(refused, "runs"):
+			return nil, fmt.Errorf("%w: %s", ErrRunsUnsupported, ref.Message)
+		case strings.Contains(refused, "stream_thinking"):
 			// An older core refuses the parameter it does not know. The turn it
 			// would have streamed is simply asked again the plain way.
 			delete(params, "stream_thinking")
@@ -294,6 +310,15 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 		return nil, err
 	}
 	return &r, nil
+}
+
+// refusedPart is the start of a bad_params message, before the list of what the core
+// does take ("chat.send does not take runs. It takes: edits, workdir, ...").
+func refusedPart(msg string) string {
+	if i := strings.Index(msg, ". It takes"); i >= 0 {
+		return msg[:i]
+	}
+	return msg
 }
 
 // callWatching is call for a request the core answers with notifications first.

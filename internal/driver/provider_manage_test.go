@@ -350,3 +350,63 @@ func TestChatSendNeverSendsEditsWithoutAFolder(t *testing.T) {
 		t.Fatalf("request = %s", sent.String())
 	}
 }
+
+func TestChatSendSendsRunsOnlyWithAFolder(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent, `{"id":"chat-send","ok":true,"result":{"text":"hi"}}`)
+	if _, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Runs: "allow"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sent.String(), "runs") {
+		t.Fatalf("a request without a folder must not carry runs: %s", sent.String())
+	}
+
+	sent.Reset()
+	d = sessionWithWriter(t, &sent, `{"id":"chat-send","ok":true,"result":{"text":"hi"}}`)
+	if _, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj", Runs: "ask"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sent.String(), `"runs":"ask"`) {
+		t.Fatalf("request = %s", sent.String())
+	}
+}
+
+func TestChatSendPutsACommandToTheUserLikeAChange(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"type":"chat.approval","call_id":"r1","name":"run","arg":"go test ./...","summary":"in /proj"}`,
+		`{"id":"chat-send","ok":true,"result":{"text":"done"}}`)
+	var asked []Approval
+	_, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj", Runs: "ask",
+		OnApproval: func(_ context.Context, a Approval) bool { asked = append(asked, a); return true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 || asked[0].Name != "run" || asked[0].Arg != "go test ./..." || asked[0].Diff != "" {
+		t.Fatalf("asked = %+v", asked)
+	}
+	if dec := decisions(sent.String()); len(dec) != 1 || dec[0]["call_id"] != "r1" || dec[0]["allow"] != true {
+		t.Fatalf("decisions = %v", dec)
+	}
+}
+
+func TestChatSendAgainstACoreWithoutRunsSaysSo(t *testing.T) {
+	// The message a core gives when it knows edits but not runs: the list of what it
+	// does take names "edits" too, and must not be mistaken for the refusal.
+	d := session(t, `{"id":"chat-send","ok":false,"error":{"code":"bad_params","message":"chat.send does not take runs. It takes: edits, effort, history, model, prompt, stream_thinking, system, workdir. Unknown parameters are refused"}}`)
+	_, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj", Edits: "ask", Runs: "ask"})
+	if !errors.Is(err, ErrRunsUnsupported) {
+		t.Fatalf("err = %v; want ErrRunsUnsupported", err)
+	}
+	if errors.Is(err, ErrEditsUnsupported) {
+		t.Fatal("a core that takes edits must not be reported as lacking them")
+	}
+}
+
+func TestChatSendAgainstACoreWithoutEditsNorRunsReportsEdits(t *testing.T) {
+	d := session(t, `{"id":"chat-send","ok":false,"error":{"code":"bad_params","message":"chat.send does not take edits, runs. It takes: effort, history, model, prompt, stream_thinking, system, workdir."}}`)
+	_, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj", Edits: "ask", Runs: "ask"})
+	if !errors.Is(err, ErrEditsUnsupported) {
+		t.Fatalf("err = %v; want ErrEditsUnsupported", err)
+	}
+}

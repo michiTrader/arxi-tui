@@ -837,7 +837,7 @@ const (
 )
 
 // toolTitles are the names a person reads; an unknown tool shows its own name.
-var toolTitles = map[string]string{"list": "List", "read": "Read", "grep": "Search", "edit": "Edit", "write": "Write"}
+var toolTitles = map[string]string{"list": "List", "read": "Read", "grep": "Search", "edit": "Edit", "write": "Write", "run": "Run"}
 
 // toolLines draws one tool line: "● Read(main.go)" and, under it, "  └ Read 12
 // lines". A long argument wraps under itself, and so does a long result.
@@ -899,7 +899,11 @@ const maxApprovalRows = 40
 func approvalLines(h fold.ChatLine, width int) []ui.Line {
 	out := toolLines(h, width)
 	hang := strings.Repeat(" ", ansi.StringWidth(toolDot))
-	return append(out, ui.Line{{Text: ansi.Truncate(hang+"Allow this change?  y yes · n no (Esc)", width, "…"), Style: askToken}})
+	question := "Allow this change?"
+	if h.Tool == "run" {
+		question = "Allow this command?"
+	}
+	return append(out, ui.Line{{Text: ansi.Truncate(hang+question+"  y yes · n no (Esc)", width, "…"), Style: askToken}})
 }
 
 // maxDiffRows is how many rows of a change the conversation shows; the rest is

@@ -68,7 +68,7 @@ func (t *Toolbox) PreviewRun(rawArgs []byte) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	return Result{Arg: cmd, Summary: "Run in " + t.root}, nil
+	return Result{Arg: cmd, Summary: "in " + t.root}, nil
 }
 
 func runArgs(rawArgs []byte) (command string, seconds int, err error) {

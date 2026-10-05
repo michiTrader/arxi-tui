@@ -63,6 +63,9 @@ type chatSession struct {
 	// edits is what the model may do to files in workdir: "deny" (look only),
 	// "ask" (each change waits for the user) or "allow". It follows the agent mode.
 	edits string
+	// runs is the same for shell commands: "deny" (not offered), "ask" (each command
+	// waits for the user) or "allow". It follows the agent mode too.
+	runs string
 	// approval is the change the core is holding for the user, nil when none.
 	approval *pendingApproval
 
@@ -110,6 +113,13 @@ func (c *chatSession) setWorkdir(dir string) {
 func (c *chatSession) setEdits(policy string) {
 	c.mu.Lock()
 	c.edits = policy
+	c.mu.Unlock()
+}
+
+// setRuns chooses what the model may do about running commands from the next turn on.
+func (c *chatSession) setRuns(policy string) {
+	c.mu.Lock()
+	c.runs = policy
 	c.mu.Unlock()
 }
 
@@ -182,7 +192,12 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	gen := c.gen
 	effort := c.effort
 	workdir := c.workdir
-	edits := c.edits
+	edits, runs := c.edits, c.runs
+	if runs == policyDeny {
+		// Denied is what a core that knows nothing about commands already does, and
+		// naming it would make an older core refuse the whole request.
+		runs = ""
+	}
 	hist := append([]driver.ChatTurn(nil), c.history...)
 	if len(hist) > chatMaxHistory {
 		hist = hist[len(hist)-chatMaxHistory:]
@@ -192,7 +207,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	turnCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.mu.Unlock()
-	go c.run(turnCtx, text, hist, gen, effort, workdir, edits, turn)
+	go c.run(turnCtx, text, hist, gen, effort, workdir, edits, runs, turn)
 	return nil
 }
 
@@ -290,7 +305,7 @@ func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload m
 	}
 }
 
-func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64, effort, workdir, edits string, turn int64) {
+func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs string, turn int64) {
 	defer func() {
 		c.mu.Lock()
 		// Only the turn that is still current frees the session: a cancelled turn
@@ -324,7 +339,7 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 			c.post(ctx, gen, "chat.thinking", map[string]any{"text": fragment})
 		},
 		// What it looks at while answering is shown as it happens.
-		Workdir: workdir, Edits: edits,
+		Workdir: workdir, Edits: edits, Runs: runs,
 		OnApproval: func(ctx context.Context, a driver.Approval) bool { return c.askUser(ctx, gen, a) },
 		OnTool: func(t driver.ToolCall) {
 			c.post(ctx, gen, "chat.tool", map[string]any{
@@ -333,11 +348,26 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		},
 	}
 	res, err := core.SubmitChatSend(ctx, params)
-	if errors.Is(err, driver.ErrEditsUnsupported) && ctx.Err() == nil {
-		// A core that can look but not change files: say so, and go on looking.
-		c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model change files, " +
-			"so it may only look; " + rebuildRemedy})
-		params.Edits, params.OnApproval = "", nil
+	// An older core refuses what it does not know, one parameter at a time. Take away
+	// only that, say so, and ask again: the user still gets everything the core can do.
+	for i := 0; i < 2 && ctx.Err() == nil; i++ {
+		switch {
+		case errors.Is(err, driver.ErrEditsUnsupported):
+			// A core that can look but not change files: say so, and go on looking.
+			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model change files, " +
+				"so it may only look; " + rebuildRemedy})
+			params.Edits = ""
+		case errors.Is(err, driver.ErrRunsUnsupported):
+			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model run commands, " +
+				"so it will not; " + rebuildRemedy})
+			params.Runs = ""
+		default:
+			i = 2
+			continue
+		}
+		if params.Edits == "" && params.Runs == "" {
+			params.OnApproval = nil
+		}
 		res, err = core.SubmitChatSend(ctx, params)
 	}
 	if errors.Is(err, driver.ErrToolsUnsupported) && ctx.Err() == nil {

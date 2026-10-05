@@ -16,8 +16,11 @@ import (
 type editChat struct {
 	old bool
 
-	mu     sync.Mutex
-	edits  []string
+	mu    sync.Mutex
+	edits []string
+	runs  []string
+	// noRuns makes the core refuse runs the way a core that predates it does.
+	noRuns bool
 	answer chan bool
 }
 
@@ -26,11 +29,16 @@ func (*editChat) Hello() *driver.Hello { return &driver.Hello{Implemented: []str
 func (c *editChat) SubmitChatSend(ctx context.Context, p driver.ChatSendParams) (*driver.ChatSendResult, error) {
 	c.mu.Lock()
 	c.edits = append(c.edits, p.Edits)
+	c.runs = append(c.runs, p.Runs)
 	c.mu.Unlock()
 	if c.old && p.Edits != "" {
 		return nil, driver.ErrEditsUnsupported
 	}
-	if p.OnApproval != nil {
+	if c.noRuns && p.Runs != "" {
+		return nil, driver.ErrRunsUnsupported
+	}
+	// A real core only asks under "ask"; under deny it never offers the tool.
+	if p.OnApproval != nil && (p.Edits == "ask" || p.Runs == "ask") {
 		c.answer <- p.OnApproval(ctx, driver.Approval{CallID: "c1", Name: "edit", Arg: "main.go", Summary: "Added 1 line", Diff: "    1 +x"})
 	}
 	return &driver.ChatSendResult{Text: "done"}, nil
@@ -99,6 +107,85 @@ func TestTheModeDecidesWhatTheModelMayDo(t *testing.T) {
 		if sd.chat.edits != want {
 			t.Errorf("mode %q: edits = %q, want %q", mode, sd.chat.edits, want)
 		}
+	}
+}
+
+func TestTheModeAlsoDecidesWhetherCommandsMayRun(t *testing.T) {
+	for mode, want := range map[string]string{"ask": "ask", "auto": "ask", "plan": "deny", "full access": "allow"} {
+		sd := &serveDriver{chat: newChatSession(&editChat{}, make(chan fold.Event, 4))}
+		sd.SetMode(mode)
+		if sd.chat.runs != want {
+			t.Errorf("mode %q: runs = %q, want %q", mode, sd.chat.runs, want)
+		}
+	}
+}
+
+func TestACommandWaitsForTheUsersAnswerLikeAChange(t *testing.T) {
+	out := make(chan fold.Event, 32)
+	core := &editChat{answer: make(chan bool, 1)}
+	c := newChatSession(core, out)
+	c.setWorkdir("/proj")
+	c.setRuns("ask")
+	if err := c.send(context.Background(), "run the tests"); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, c.pendingNow)
+	if !c.decide(true) {
+		t.Fatal("there was a command waiting")
+	}
+	if got := <-core.answer; !got {
+		t.Error("the core was not told the user allowed it")
+	}
+	if core.runs[0] != "ask" {
+		t.Errorf("runs sent = %q", core.runs)
+	}
+}
+
+func TestADeniedRunsPolicyIsNotSentAtAll(t *testing.T) {
+	// Plan mode: an older core must not be made to refuse the whole request over a
+	// parameter that only says "no".
+	out := make(chan fold.Event, 32)
+	core := &editChat{noRuns: true, answer: make(chan bool, 1)}
+	c := newChatSession(core, out)
+	c.setWorkdir("/proj")
+	c.setRuns("deny")
+	if err := c.send(context.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, func() bool { return !c.busyNow() })
+	if len(core.runs) != 1 || core.runs[0] != "" {
+		t.Errorf("runs sent = %q; want one request without runs", core.runs)
+	}
+}
+
+func TestACoreThatCannotRunKeepsEditingAndSaysSo(t *testing.T) {
+	out := make(chan fold.Event, 32)
+	core := &editChat{noRuns: true, answer: make(chan bool, 1)}
+	c := newChatSession(core, out)
+	c.setWorkdir("/proj")
+	c.setEdits("ask")
+	c.setRuns("ask")
+	if err := c.send(context.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+	wait(t, c.pendingNow)
+	c.decide(true)
+	wait(t, func() bool { return !c.busyNow() })
+	if len(core.runs) != 2 || core.runs[0] != "ask" || core.runs[1] != "" {
+		t.Errorf("runs sent = %q; want ask, then nothing", core.runs)
+	}
+	if len(core.edits) != 2 || core.edits[1] != "ask" {
+		t.Errorf("edits sent = %q; the second try must keep editing on", core.edits)
+	}
+	close(out)
+	var warned bool
+	for ev := range out {
+		if ev.Type == "chat.warn" {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Error("the user must be told commands are unavailable")
 	}
 }
 
