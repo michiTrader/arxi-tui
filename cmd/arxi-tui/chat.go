@@ -57,6 +57,9 @@ type chatSession struct {
 	// effort is the thinking level sent with each turn ("" = the model decides).
 	// It is a setting, not conversation: reset() leaves it alone.
 	effort string
+	// workdir is the folder the model may look into with read-only tools ("" =
+	// none). Like effort it is a setting: reset() leaves it alone.
+	workdir string
 
 	// dial gives each turn its own connection (nil = every turn shares core, which
 	// is what the tests and the mock use; cancelling then only abandons the answer).
@@ -91,6 +94,13 @@ func (c *chatSession) setEffort(level string) {
 	c.mu.Unlock()
 }
 
+// setWorkdir chooses the folder the model may look into; "" gives it no tools.
+func (c *chatSession) setWorkdir(dir string) {
+	c.mu.Lock()
+	c.workdir = dir
+	c.mu.Unlock()
+}
+
 // send starts one turn. It returns an error immediately for anything that can be
 // decided up front (old core, a turn already running); everything that happens on
 // the network is reported in the chat as a chat.error event.
@@ -110,6 +120,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	c.busy = true
 	gen := c.gen
 	effort := c.effort
+	workdir := c.workdir
 	hist := append([]driver.ChatTurn(nil), c.history...)
 	if len(hist) > chatMaxHistory {
 		hist = hist[len(hist)-chatMaxHistory:]
@@ -119,7 +130,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	turnCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.mu.Unlock()
-	go c.run(turnCtx, text, hist, gen, effort, turn)
+	go c.run(turnCtx, text, hist, gen, effort, workdir, turn)
 	return nil
 }
 
@@ -217,7 +228,7 @@ func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload m
 	}
 }
 
-func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64, effort string, turn int64) {
+func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64, effort, workdir string, turn int64) {
 	defer func() {
 		c.mu.Lock()
 		// Only the turn that is still current frees the session: a cancelled turn
@@ -244,13 +255,29 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		defer closeConn()
 		core = conn
 	}
-	res, err := core.SubmitChatSend(ctx, driver.ChatSendParams{
+	params := driver.ChatSendParams{
 		Prompt: text, System: chatSystemPrompt, History: hist, Effort: effort,
 		// The model's thinking is shown live in the Thinking line.
 		OnThinking: func(fragment string) {
 			c.post(ctx, gen, "chat.thinking", map[string]any{"text": fragment})
 		},
-	})
+		// What it looks at while answering is shown as it happens.
+		Workdir: workdir,
+		OnTool: func(t driver.ToolCall) {
+			c.post(ctx, gen, "chat.tool", map[string]any{
+				"name": t.Name, "arg": t.Arg, "ok": t.OK, "summary": t.Summary, "output": t.Output,
+			})
+		},
+	}
+	res, err := core.SubmitChatSend(ctx, params)
+	if errors.Is(err, driver.ErrToolsUnsupported) && ctx.Err() == nil {
+		// An older core cannot give the model tools. Say so, and answer the
+		// plain way: the user asked a question and still gets an answer.
+		c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot give the model access to your files, " +
+			"so it answers without looking; " + rebuildRemedy})
+		params.Workdir, params.OnTool = "", nil
+		res, err = core.SubmitChatSend(ctx, params)
+	}
 	if ctx.Err() != nil {
 		// Cancelled (cancelTurn already told the conversation) or the program is
 		// closing: whatever came back is not wanted.
