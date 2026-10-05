@@ -39,6 +39,15 @@ with Shift+Tab; `/clear` keeps it.
 | `plan` | on its own | never | never |
 | `full access` | on its own | on its own | on its own |
 
+A command runs in your project folder with no keyboard, is stopped after two minutes
+(ten at most), and does not see environment variables that look like secrets (`*KEY*`,
+`*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `ARXI_*`). It is **not** confined to the folder: it can
+touch anything you can, so the question `Allow this command?` is the only guard. Think
+before you press `full access`.
+
+Long command output and long diffs are cut to a few rows and say `… +N lines (ctrl+o to
+expand)`. Ctrl+O opens them all, and closes them again.
+
 The words are the core's own tool policies (`allow` / `ask` / `deny`). The chat has no
 tools yet, so for now the mode only changes what the bar says; the table is what the tool
 loop will enforce. The directory is where the TUI was started (home shown as `~`). While

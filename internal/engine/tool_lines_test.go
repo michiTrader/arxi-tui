@@ -226,3 +226,104 @@ func TestACommandThatFailedIsDrawnAsAFailure(t *testing.T) {
 		t.Errorf("rows:\n%s", text)
 	}
 }
+
+// ---- output that can be opened ------------------------------------------------
+
+func runEv(seq int64, ok bool, summary, output string) fold.Event {
+	return fold.Event{Type: "chat.tool", Seq: seq, Payload: map[string]any{
+		"name": "run", "arg": "go test ./...", "ok": ok, "summary": summary, "output": output}}
+}
+
+func numbered(n int) string {
+	var b strings.Builder
+	b.WriteString("exit code 0\n")
+	for i := 1; i <= n; i++ {
+		fmt.Fprintf(&b, "output %d\n", i)
+	}
+	return b.String()
+}
+
+// tallRowsExpanded is tallRows with the view Ctrl+O switches on.
+func tallRowsExpanded(t *testing.T, events []fold.Event) string {
+	t.Helper()
+	r, js := chatDoc(t)
+	r.Height = 120
+	r.ExpandTools = true
+	return r.RenderFrame(mustDoc(t, js), fold.Fold(events)).Plain()
+}
+
+func TestACommandsOutputShowsAGlimpseAndCountsTheRest(t *testing.T) {
+	text := strings.Join(tallRows(t, []fold.Event{runEv(1, true, "Exit 0 in 2s", numbered(40))}), "\n")
+	for _, want := range []string{"Run(go test ./...)", "└ Exit 0 in 2s", "output 1", "output 5", "… +35 lines (ctrl+o to expand)"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%q missing:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "output 6") {
+		t.Errorf("rows past the glimpse were drawn:\n%s", text)
+	}
+	if strings.Contains(text, "exit code 0") {
+		t.Errorf("the exit code is already in the outcome line:\n%s", text)
+	}
+}
+
+func TestExpandingShowsTheWholeOutputAndNoHint(t *testing.T) {
+	text := tallRowsExpanded(t, []fold.Event{runEv(1, true, "Exit 0 in 2s", numbered(40))})
+	if !strings.Contains(text, "output 40") || !strings.Contains(text, "output 6") {
+		t.Errorf("expanded view is missing rows:\n%s", text)
+	}
+	if strings.Contains(text, "ctrl+o") {
+		t.Errorf("an expanded view has nothing left to expand:\n%s", text)
+	}
+}
+
+func TestAShortOutputIsShownWholeWithoutAHint(t *testing.T) {
+	text := strings.Join(tallRows(t, []fold.Event{runEv(1, true, "Exit 0 in 0s", numbered(3))}), "\n")
+	if !strings.Contains(text, "output 3") || strings.Contains(text, "ctrl+o") {
+		t.Errorf("rows:\n%s", text)
+	}
+}
+
+func TestACommandWithNoOutputDrawsOnlyItsOutcome(t *testing.T) {
+	for _, out := range []string{"exit code 0\n(no output)", "exit code 0", ""} {
+		rows := tallRows(t, []fold.Event{runEv(1, true, "Exit 0 in 0s", out)})
+		text := strings.Join(rows, "\n")
+		if strings.Contains(text, "(no output)") || strings.Contains(text, "ctrl+o") {
+			t.Errorf("output %q drew:\n%s", out, text)
+		}
+	}
+}
+
+func TestOnlyACommandsOutputIsDrawn(t *testing.T) {
+	// A read's text is the file the user already has; it is not repeated in the chat.
+	ev := toolEv(1, "read", "main.go", true, "Read 3 lines")
+	ev.Payload["output"] = "     1\tpackage main\n     2\t\n     3\tfunc main() {}\n"
+	text := strings.Join(tallRows(t, []fold.Event{ev}), "\n")
+	if strings.Contains(text, "package main") {
+		t.Errorf("a read's content leaked into the conversation:\n%s", text)
+	}
+}
+
+func TestExpandingAlsoOpensACutDiff(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&b, "%5d + line %d\n", i, i)
+	}
+	ev := editEv(1, b.String())
+	if got := strings.Join(tallRows(t, []fold.Event{ev}), "\n"); !strings.Contains(got, "more lines (ctrl+o to expand)") {
+		t.Errorf("a cut diff must say how to open it:\n%s", got)
+	}
+	if got := tallRowsExpanded(t, []fold.Event{ev}); !strings.Contains(got, "line 30") || strings.Contains(got, "more lines") {
+		t.Errorf("expanded diff:\n%s", got)
+	}
+}
+
+func TestCarriageReturnsAndTabsInOutputDoNotBreakTheRows(t *testing.T) {
+	text := strings.Join(tallRows(t, []fold.Event{runEv(1, true, "Exit 0 in 0s", "exit code 0\nprogress 10%\rprogress 100%\nok\tpkg\t0.3s")}), "\n")
+	if strings.ContainsAny(text, "\r\t") {
+		t.Errorf("control characters reached the frame: %q", text)
+	}
+	if !strings.Contains(text, "ok    pkg    0.3s") {
+		t.Errorf("tabs should become spaces:\n%s", text)
+	}
+}
