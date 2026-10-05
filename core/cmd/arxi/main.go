@@ -65,6 +65,12 @@ func main() {
 		usage()
 		os.Exit(2)
 	}
+	switch args[0] {
+	case "-h", "--help", "help", "--version", "version", "schema", "surface":
+		// These read no providers, so they must not copy any either.
+	default:
+		useGlobalProviders()
+	}
 
 	switch args[0] {
 	case "-h", "--help", "help":

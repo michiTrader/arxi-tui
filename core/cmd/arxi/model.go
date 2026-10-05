@@ -29,6 +29,30 @@ import (
 // developer's working directory, matching triggerDir.
 var providerDir = modelstore.DefaultDir
 
+// useGlobalProviders points providerDir at the user's own providers folder, the same
+// from any working directory, and brings along what ./providers already holds (see
+// modelstore.Locate). It runs once, at the start of main; tests never call it, so they
+// keep the folder they set.
+//
+// A failure is not fatal: the program falls back to ./providers and says why on stderr,
+// so a read-only home directory costs the user the global folder and nothing else.
+func useGlobalProviders() {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	dir, migrated, err := modelstore.Locate(os.Getenv, os.UserConfigDir, cwd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi: using ./%s because the global providers folder is not usable: %v\n", modelstore.DefaultDir, err)
+		return
+	}
+	providerDir = dir
+	if migrated > 0 {
+		fmt.Fprintf(os.Stderr, "arxi: copied %d provider file(s) from ./%s to %s; the originals were left in place\n",
+			migrated, modelstore.DefaultDir, dir)
+	}
+}
+
 // openProviders opens the provider store or exits.
 //
 // It is the only way this package reaches those files, which arch rule 18

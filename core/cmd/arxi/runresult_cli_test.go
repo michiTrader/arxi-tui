@@ -49,6 +49,7 @@ func arxiStreams(t *testing.T, dir string, args ...string) (string, string, int)
 	t.Helper()
 	cmd := exec.Command(buildIash(t), args...)
 	cmd.Dir = dir
+	subprocessProviders(cmd, dir)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()

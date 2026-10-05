@@ -119,6 +119,7 @@ func startAttach(t *testing.T, dir string, args ...string) *attachSession {
 	ctx, cancel := context.WithTimeout(context.Background(), attachTestDeadline)
 	cmd := exec.CommandContext(ctx, buildIash(t), append([]string{"run", "attach"}, args...)...)
 	cmd.Dir = dir
+	subprocessProviders(cmd, dir)
 
 	s := &attachSession{t: t, cmd: cmd, ctx: ctx, out: &syncBuf{}, errb: &syncBuf{}, done: make(chan error, 1)}
 	cmd.Stdout, cmd.Stderr = s.out, s.errb

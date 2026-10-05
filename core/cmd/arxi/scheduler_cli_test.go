@@ -136,6 +136,7 @@ func arxiBounded(t *testing.T, dir string, d time.Duration, args ...string) stri
 
 	cmd := exec.CommandContext(ctx, buildIash(t), args...)
 	cmd.Dir = dir
+	subprocessProviders(cmd, dir)
 	configureBoundedTestProcess(cmd)
 
 	out, _ := cmd.CombinedOutput()

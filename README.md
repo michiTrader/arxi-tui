@@ -496,6 +496,11 @@ The key is pasted into a masked field, shown as `••••`, and never printe
 or sent to the chat. If sending a message fails (no provider, no model, a refused key,
 no network) the reason appears in the banner instead of nothing happening.
 
+Where the providers go: in the user's config directory (`~/.config/arxi/providers` on
+Linux, `%AppData%\arxi\providers` on Windows), the same from every working directory
+(override with `ARXI_PROVIDERS_DIR`). A `./providers` folder left by an older version is
+copied there once, never moved or overwritten, and the originals stay where they were.
+
 Where the key goes: the core writes it to `<name>.key` in its secrets directory
 (mode 0600, directory 0700; override with `ARXI_SECRETS_DIR`). **It is not encrypted**,
 only protected by file permissions. An environment variable named by the provider
