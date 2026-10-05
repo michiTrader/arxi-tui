@@ -719,9 +719,10 @@ func (s *State) apply(e Event) {
 		ok, _ := e.Payload["ok"].(bool)
 		summary, _ := e.Payload["summary"].(string)
 		output, _ := e.Payload["output"].(string)
+		diff, _ := e.Payload["diff"].(string)
 		s.History = append(s.History, ChatLine{
 			Role: "tool", Text: name + "(" + arg + ")",
-			Tool: name, ToolArg: arg, ToolOK: ok, ToolSummary: summary, ToolOutput: output,
+			Tool: name, ToolArg: arg, ToolOK: ok, ToolSummary: summary, ToolOutput: output, ToolDiff: diff,
 		})
 
 	case "llm.response":
