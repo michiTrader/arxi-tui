@@ -296,3 +296,38 @@ func TestChatErrorLandsInHistory(t *testing.T) {
 		t.Error("chat.error must be in the handled set")
 	}
 }
+
+// A cancelled turn stops the working indicator and leaves its prompt in the
+// transcript, followed by a line that says it was stopped.
+func TestCancelledTurnStopsWorkingAndKeepsThePrompt(t *testing.T) {
+	s := Fold([]Event{
+		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hi"}},
+		{Type: "agent.activated", Seq: 2, Payload: map[string]any{"agent": "assistant"}},
+		{Type: "chat.cancelled", Seq: 3, Payload: map[string]any{"text": "hi"}},
+	})
+	if s.AgentWorking {
+		t.Error("the turn was cancelled, yet the agent is still shown as working")
+	}
+	if n := len(s.History); n != 2 || s.History[0].Role != "user" || s.History[1].Role != "cancelled" || s.History[1].Text != "hi" {
+		t.Errorf("history = %+v", s.History)
+	}
+	if !Handles("chat.cancelled") || !Handles("chat.warn") {
+		t.Error("chat.cancelled and chat.warn must be in the handled set")
+	}
+}
+
+// What an answer cost rides on the answer itself; a warning is its own line.
+func TestAnswerKeepsItsUsageAndWarningsAreLines(t *testing.T) {
+	s := Fold([]Event{
+		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hi"}},
+		{Type: "chat.warn", Seq: 2, Payload: map[string]any{"text": "careful"}},
+		{Type: "llm.response", Seq: 3, Payload: map[string]any{"text": "a", "tokens_in": float64(2), "tokens_out": float64(57), "duration_ms": float64(2100)}},
+	})
+	if len(s.History) != 3 || s.History[1].Role != "warn" {
+		t.Fatalf("history = %+v", s.History)
+	}
+	a := s.History[2]
+	if a.Role != "assistant" || a.TokensIn != 2 || a.TokensOut != 57 || a.DurationMS != 2100 {
+		t.Errorf("assistant line = %+v", a)
+	}
+}

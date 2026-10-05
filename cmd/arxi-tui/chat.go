@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/michiTrader/arxi_tui/internal/driver"
 	"github.com/michiTrader/arxi_tui/internal/fold"
@@ -19,7 +20,14 @@ const chatMaxHistory = 40
 const chatSystemPrompt = "You are a helpful assistant inside a terminal chat. Answer clearly and concisely."
 
 // errChatBusy is returned when a second line is sent while an answer is pending.
-var errChatBusy = errors.New("still waiting for the previous answer; wait for it to finish before sending another message")
+var errChatBusy = errors.New("still waiting for the previous answer; press Esc to cancel it, or wait for it to finish")
+
+// chatDialer opens a connection of its own for one chat turn and returns it with the
+// function that closes it. Cancelling a turn is closing that connection: the core's
+// protocol has no cancel verb and answers strictly in order, so the only way to stop a
+// request that is in flight, without leaving its late answer to be read by the next
+// request, is to give the turn a connection it alone owns and drop it.
+type chatDialer func(ctx context.Context) (chatSender, func(), error)
 
 // chatSender is the part of the core a chat turn needs.
 type chatSender interface {
@@ -46,6 +54,15 @@ type chatSession struct {
 	// effort is the thinking level sent with each turn ("" = the model decides).
 	// It is a setting, not conversation: reset() leaves it alone.
 	effort string
+
+	// dial gives each turn its own connection (nil = every turn shares core, which
+	// is what the tests and the mock use; cancelling then only abandons the answer).
+	dial chatDialer
+	// turn numbers the turns; cancel is the live turn's way to stop (nil when idle),
+	// and prompt is the text it is answering, for the "Cancelled" line.
+	turn   int64
+	cancel context.CancelFunc
+	prompt string
 }
 
 func newChatSession(core chatSender, out chan<- fold.Event) *chatSession {
@@ -100,9 +117,34 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	if len(hist) > chatMaxHistory {
 		hist = hist[len(hist)-chatMaxHistory:]
 	}
+	c.turn++
+	turn := c.turn
+	turnCtx, cancel := context.WithCancel(ctx)
+	c.cancel = cancel
+	c.prompt = text
 	c.mu.Unlock()
-	go c.run(ctx, text, hist, gen, effort)
+	go c.run(turnCtx, text, hist, gen, effort, turn)
 	return nil
+}
+
+// cancelTurn stops the turn in flight, if any, and puts a "Cancelled" line in the
+// conversation. It reports whether there was a turn to stop, so a key that means
+// "cancel" can fall back to its other meaning when nothing is running. The turn is
+// over at once: the next line may be sent without waiting for the abandoned
+// goroutine to notice.
+func (c *chatSession) cancelTurn() bool {
+	c.mu.Lock()
+	if !c.busy || c.cancel == nil {
+		c.mu.Unlock()
+		return false
+	}
+	cancel, prompt, gen := c.cancel, c.prompt, c.gen
+	c.cancel = nil
+	c.busy = false
+	c.mu.Unlock()
+	cancel()
+	c.post(context.Background(), gen, "chat.cancelled", map[string]any{"text": prompt})
+	return true
 }
 
 // reset starts a new conversation: the history is forgotten, a turn still in
@@ -114,7 +156,19 @@ func (c *chatSession) reset() {
 	c.gen++
 	c.history = nil
 	c.busy = false
+	cancel := c.cancel
+	c.cancel = nil
 	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// busyNow reports whether a turn is in flight.
+func (c *chatSession) busyNow() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.busy
 }
 
 // current reports whether gen is still the live session.
@@ -132,7 +186,7 @@ func (c *chatSession) nextSeq() int64 {
 }
 
 func (c *chatSession) emit(ctx context.Context, gen int64, typ string, payload map[string]any) {
-	if !c.current(gen) {
+	if ctx.Err() != nil || !c.current(gen) {
 		return
 	}
 	ev := fold.Event{Type: typ, Seq: c.nextSeq(), Actor: "assistant", Payload: payload}
@@ -146,10 +200,15 @@ func (c *chatSession) emit(ctx context.Context, gen int64, typ string, payload m
 // channel is buffered, and if it is momentarily full the event waits on its own
 // goroutine rather than being dropped.
 func (c *chatSession) fail(ctx context.Context, gen int64, msg string) {
+	c.post(ctx, gen, "chat.error", map[string]any{"text": msg})
+}
+
+// post queues a conversation event without ever blocking its caller (see fail).
+func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload map[string]any) {
 	if !c.current(gen) {
 		return
 	}
-	ev := fold.Event{Type: "chat.error", Seq: c.nextSeq(), Actor: "assistant", Payload: map[string]any{"text": msg}}
+	ev := fold.Event{Type: typ, Seq: c.nextSeq(), Actor: "assistant", Payload: payload}
 	select {
 	case c.out <- ev:
 	default:
@@ -162,24 +221,46 @@ func (c *chatSession) fail(ctx context.Context, gen int64, msg string) {
 	}
 }
 
-func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64, effort string) {
+func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64, effort string, turn int64) {
 	defer func() {
 		c.mu.Lock()
-		if c.gen == gen {
+		// Only the turn that is still current frees the session: a cancelled turn
+		// winding down late must not mark its successor idle.
+		if c.gen == gen && c.turn == turn {
 			c.busy = false
+			c.cancel = nil
 		}
 		c.mu.Unlock()
 	}()
 	c.emit(ctx, gen, "run.prompt", map[string]any{"text": text})
 	c.emit(ctx, gen, "agent.activated", map[string]any{"agent": "assistant"})
-	res, err := c.core.SubmitChatSend(ctx, driver.ChatSendParams{Prompt: text, System: chatSystemPrompt, History: hist, Effort: effort})
+	started := time.Now()
+	core := c.core
+	if c.dial != nil {
+		conn, closeConn, err := c.dial(ctx)
+		if err != nil {
+			if ctx.Err() == nil {
+				c.emit(ctx, gen, "agent.failed", map[string]any{"agent": "assistant"})
+				c.fail(ctx, gen, chatErrorText(err))
+			}
+			return
+		}
+		defer closeConn()
+		core = conn
+	}
+	res, err := core.SubmitChatSend(ctx, driver.ChatSendParams{Prompt: text, System: chatSystemPrompt, History: hist, Effort: effort})
+	if ctx.Err() != nil {
+		// Cancelled (cancelTurn already told the conversation) or the program is
+		// closing: whatever came back is not wanted.
+		return
+	}
 	if err != nil {
 		c.emit(ctx, gen, "agent.failed", map[string]any{"agent": "assistant"})
 		c.fail(ctx, gen, chatErrorText(err))
 		return
 	}
 	c.mu.Lock()
-	if c.gen != gen {
+	if c.gen != gen || c.turn != turn {
 		c.mu.Unlock()
 		return
 	}
@@ -192,6 +273,7 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 	c.emit(ctx, gen, "llm.response", map[string]any{
 		"text": res.Text, "model": model, "agent": "assistant",
 		"tokens_in": float64(res.InputTokens), "tokens_out": float64(res.OutputTokens),
+		"duration_ms": float64(time.Since(started).Milliseconds()),
 	})
 	c.emit(ctx, gen, "agent.turn_done", map[string]any{"agent": "assistant"})
 }

@@ -331,6 +331,20 @@ type sessionClearer interface {
 	ClearSession()
 }
 
+// turnCanceller is the optional capability a Driver has when it can stop the turn in
+// flight (serveDriver). CancelTurn reports whether there was a turn to stop, which is
+// how Esc and Ctrl-C know whether "cancel" is what the key means right now.
+type turnCanceller interface {
+	CancelTurn() bool
+}
+
+// cancelRunningTurn stops the turn in flight, if the driver has one. The conversation
+// gets its "Cancelled" line from the driver's own event, not from here.
+func cancelRunningTurn(drv Driver) bool {
+	c, ok := drv.(turnCanceller)
+	return ok && c.CancelTurn()
+}
+
 // openDriver decides whether to spawn the arxi core subprocess or fall back to
 // the Phase 0 mock. The mock is used when ARXI_BIN is unset: the binary path
 // is optional, and the mock lets the engine run daily without the core present.
@@ -511,7 +525,47 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 		},
 	}
 	sd.chat = newChatSession(nd, sd.relay)
+	sd.chat.dial = func(ctx context.Context) (chatSender, func(), error) {
+		return dialChatConn(ctx, arxiBin)
+	}
 	return sd, sd.relay, nil
+}
+
+// dialChatConn starts a second `arxi serve` for one chat turn and returns the
+// connection with the function that ends it. The provider store lives on disk, so the
+// new process sees the same providers, keys and selected model as the main one; it is
+// the process that gets killed when the user cancels the turn, which is the only way
+// the protocol lets a request in flight be abandoned cleanly (see chatDialer).
+func dialChatConn(ctx context.Context, arxiBin string) (chatSender, func(), error) {
+	cmd := exec.CommandContext(ctx, arxiBin, "serve")
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("chat: stdin pipe: %w", err)
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		stdin.Close()
+		return nil, nil, fmt.Errorf("chat: stdout pipe: %w", err)
+	}
+	if err := cmd.Start(); err != nil {
+		stdin.Close()
+		stdout.Close()
+		return nil, nil, fmt.Errorf("chat: start arxi serve: %w", err)
+	}
+	closeConn := func() {
+		stdin.Close()
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+	}
+	nd := driver.NewNDJSON(struct {
+		io.Reader
+		io.Writer
+	}{stdout, stdin})
+	if err := nd.Handshake(ctx); err != nil {
+		closeConn()
+		return nil, nil, fmt.Errorf("chat: handshake: %w", err)
+	}
+	return nd, closeConn, nil
 }
 
 // Loop is the Phase 0 event loop: terminal events and core events on one select,
@@ -1091,7 +1145,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			for pending {
 				switch ev.Kind {
 				case term.EventKey:
-					if isCtrlC(ev.Key) {
+					if isCtrlC(ev.Key) && cancelRunningTurn(drv) {
+						// A turn was running, so Ctrl-C means "stop that": it is the key
+						// every terminal tool uses to interrupt work. It does not arm the
+						// leave-the-program gesture — the press was spent on the cancel —
+						// so quitting still takes the usual double Ctrl-C once idle, and
+						// a hung turn can always be cancelled and then escaped from
+						// (invariant 6 holds: no scene or plugin sees this key).
+						panicGesture.Reset()
+					} else if isCtrlC(ev.Key) {
 						if panicGesture.HandleCtrlC(time.Now()) {
 							return nil // second press within the window: leave
 						}
@@ -1198,6 +1260,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								}
 							}
 						}
+					} else if ev.Key.Type == term.KeyEscape && !strings.HasPrefix(input, "/") && cancelRunningTurn(drv) {
+						// Esc stops the turn in flight. A line starting with "/" is a
+						// menu, and there Esc keeps its meaning of closing it, so a menu
+						// opened while an answer is pending can still be dismissed.
+						panicGesture.Reset()
 					} else if ev.Key.Type == term.KeyWheelUp || ev.Key.Type == term.KeyWheelDown {
 						// The mouse wheel scrolls the chat pane and nothing else: it
 						// does not type, and it does not disarm the panic gesture (a

@@ -442,6 +442,32 @@ Keep typing to filter live (every word must match: `/model deeps flash`). Up / D
 move (wrapping), Enter picks, Esc closes. Nothing else is printed; the status bar
 shows the new model. With no provider yet, the notice points you to `/provider`.
 
+### The conversation
+
+Your lines carry a `┃ ` marker; every answer is drawn two columns in, so the two voices
+read as a pair of columns. Under an answer a dim line says what it cost, for example
+`2s (↑2 ↓57)`: how long it took, tokens sent (↑) and received (↓).
+
+```
+┃ hoola
+
+  Hola. ¿En qué te ayudo?
+
+  2s (↑2 ↓57)
+
+┃ Gracias
+```
+
+A warning reads `! auth: API key setup is unavailable in this WASM session.` and a
+failed request `✗ …`.
+
+**Esc or Ctrl-C stops the answer being waited for** and leaves
+`■ Cancelled · <what you asked>` in the conversation; you can send the next line at
+once. Each message runs on its own `arxi serve` process, so cancelling really stops the
+request instead of leaving its late answer to be mistaken for the next one. When
+nothing is running, Ctrl-C keeps its usual meaning (clear the line; twice to leave) and
+Esc closes a menu.
+
 ### Thinking level (`/effort `)
 
 Type `/effort` followed by a space and a menu lists `auto`, `minimal`, `low`, `medium`

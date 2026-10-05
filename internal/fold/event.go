@@ -40,8 +40,16 @@ type Event struct {
 
 // ChatLine is one entry in chat.history: the speaker and the text.
 type ChatLine struct {
-	Role string // "user", "assistant" or "error" (a failed request, shown in the flow)
+	// Role is "user", "assistant", "error" (a failed request, shown in the flow),
+	// "warn" (something the user should know that did not stop the turn) or
+	// "cancelled" (the user stopped a turn; Text is the prompt it was answering).
+	Role string
 	Text string
+	// For an assistant line only: what the answer cost. Zero values mean the
+	// source did not say, and the renderer then draws no usage line.
+	DurationMS int64
+	TokensIn   int64
+	TokensOut  int64
 }
 
 // ToolActivity is one tool invocation as the log records it: who called what,

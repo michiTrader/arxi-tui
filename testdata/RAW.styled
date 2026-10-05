@@ -1,10 +1,10 @@
 «chat.user:┃»«chat.user: »«chat.user:hi»
 
-«text:Hi!»
+  «text:Hi!»
 
 «chat.user:┃»«chat.user: »«chat.user:thanks»
 
-«text:You're»«text: »«text:welcome.»
+  «text:You're»«text: »«text:welcome.»
 
 
 

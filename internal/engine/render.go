@@ -805,6 +805,66 @@ const (
 	errorTurnToken  = "chat.error"
 )
 
+// The other lines the conversation can hold. Each has its own marker and token so a
+// reader tells them apart without reading: a warning (the turn went on), a cancelled
+// turn (the user stopped it), and the dim usage line under an answer.
+const (
+	warnTurnMarker   = "! "
+	warnTurnToken    = "chat.warn"
+	cancelTurnMarker = "■ "
+	cancelTurnToken  = "chat.cancel"
+	usageTurnToken   = "chat.usage"
+
+	// assistantIndent is the left margin of an answer: the width of the user's
+	// "┃ " marker, so the two voices line up as a pair of columns instead of the
+	// answer hugging the edge under a marked question.
+	assistantIndent = 2
+)
+
+// usageLine is what an answer cost, e.g. "2s (↑2 ↓57)": how long it took, then the
+// tokens sent (↑) and received (↓). It is empty when the source reported nothing.
+func usageLine(h fold.ChatLine) string {
+	if h.DurationMS <= 0 && h.TokensIn <= 0 && h.TokensOut <= 0 {
+		return ""
+	}
+	var parts []string
+	if h.DurationMS > 0 {
+		parts = append(parts, formatDuration(h.DurationMS))
+	}
+	if h.TokensIn > 0 || h.TokensOut > 0 {
+		parts = append(parts, fmt.Sprintf("(↑%d ↓%d)", h.TokensIn, h.TokensOut))
+	}
+	return strings.Join(parts, " ")
+}
+
+// formatDuration writes a duration the way a person reads it: "<1s", "2s", "1m 05s".
+func formatDuration(ms int64) string {
+	secs := (ms + 500) / 1000
+	switch {
+	case secs < 1:
+		return "<1s"
+	case secs < 60:
+		return fmt.Sprintf("%ds", secs)
+	default:
+		return fmt.Sprintf("%dm %02ds", secs/60, secs%60)
+	}
+}
+
+// indentLines moves every non-empty line right by n columns. A blank row stays
+// empty rather than gaining trailing spaces.
+func indentLines(lines []ui.Line, n int) []ui.Line {
+	pad := strings.Repeat(" ", n)
+	out := make([]ui.Line, len(lines))
+	for i, l := range lines {
+		if len(l) == 0 {
+			out[i] = l
+			continue
+		}
+		out[i] = append(ui.Line{{Text: pad}}, l...)
+	}
+	return out
+}
+
 // renderMarkdown renders a bound markdown pane, wrapped to the frame width.
 // Wrapping goes through the ported Line/Span machinery, so a row can never end
 // in bare air or overflow the frame no matter what the fold hands it.
@@ -847,11 +907,38 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 				turnToken = errorTurnToken
 				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(errorTurnMarker)), Style: errorTurnToken}}
 			}
+			if h.Role == "warn" {
+				text = warnTurnMarker + text
+				turnToken = warnTurnToken
+				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(warnTurnMarker)), Style: warnTurnToken}}
+			} else if h.Role == "cancelled" {
+				// "■ Cancelled · <what was asked>": the prompt is shown on one row so a
+				// long or multi-line question does not turn the notice into a block.
+				text = cancelTurnMarker + "Cancelled"
+				if q := strings.Join(strings.Fields(h.Text), " "); q != "" {
+					text += " · " + q
+				}
+				turnToken = cancelTurnToken
+				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(cancelTurnMarker)), Style: cancelTurnToken}}
+			}
 			if h.Role == "assistant" {
 				// The agent's answer is Markdown: headings, lists, tables, fenced code and
 				// inline emphasis are laid out, not shown as raw punctuation. The user's own
 				// words and a failure stay literal, because what a person typed is not markup.
-				lines = append(lines, ui.RenderMarkdown(text, r.Width, turnToken)...)
+				// It is drawn assistantIndent columns in, to sit opposite the user's marker.
+				w := r.Width - assistantIndent
+				if w < 1 {
+					w = r.Width
+				}
+				body := ui.RenderMarkdown(text, w, turnToken)
+				if w != r.Width {
+					body = indentLines(body, assistantIndent)
+				}
+				lines = append(lines, body...)
+				if u := usageLine(h); u != "" {
+					lines = append(lines, ui.Line{})
+					lines = append(lines, ui.WrapText(strings.Repeat(" ", assistantIndent)+u, usageTurnToken, r.Width, nil)...)
+				}
 			} else {
 				lines = append(lines, ui.WrapText(text, turnToken, r.Width, cont)...)
 			}
