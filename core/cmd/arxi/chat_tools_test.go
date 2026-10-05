@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,7 +23,7 @@ func projectDir(t *testing.T) string {
 func collect(t *testing.T, dir string) (context.Context, *[]chatToolNotification) {
 	t.Helper()
 	var got []chatToolNotification
-	ctx, err := withTools(context.Background(), dir, func(n chatToolNotification) { got = append(got, n) })
+	ctx, err := withTools(context.Background(), dir, "", nil, func(n chatToolNotification) { got = append(got, n) })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +123,7 @@ func TestTurnWithoutAFolderOffersNoTools(t *testing.T) {
 
 func TestAnInvalidFolderIsRefusedUpFront(t *testing.T) {
 	f := setUpFake(t)
-	if _, err := withTools(context.Background(), filepath.Join(t.TempDir(), "nope"), nil); err == nil {
+	if _, err := withTools(context.Background(), filepath.Join(t.TempDir(), "nope"), "", nil, nil); err == nil {
 		t.Error("a folder that does not exist must be refused")
 	}
 	_, err := handleChatSend(map[string]any{"prompt": "hi", "workdir": t.TempDir()})
@@ -131,5 +132,165 @@ func TestAnInvalidFolderIsRefusedUpFront(t *testing.T) {
 	}
 	if f.calls != 0 {
 		t.Errorf("the provider was called %d times for a refused request", f.calls)
+	}
+}
+
+// editRig runs one turn in which the model asks for the given tool calls, under an
+// edits policy. asked collects what the user was shown.
+type editRig struct {
+	f     *fakeLLM
+	dir   string
+	got   []chatToolNotification
+	asked []chatApprovalNotification
+	res   chatResult
+	err   error
+}
+
+func runEdits(t *testing.T, edits string, ask func(chatApprovalNotification) (bool, error), script ...scripted) *editRig {
+	t.Helper()
+	r := &editRig{f: setUpFake(t), dir: projectDir(t)}
+	r.f.script = script
+	wrapped := ask
+	if ask != nil {
+		wrapped = func(n chatApprovalNotification) (bool, error) {
+			r.asked = append(r.asked, n)
+			return ask(n)
+		}
+	}
+	ctx, err := withTools(context.Background(), r.dir, edits, wrapped, func(n chatToolNotification) { r.got = append(r.got, n) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.res, r.err = chatSendEffort(ctx, "change it", "", "", "", "")
+	return r
+}
+
+func (r *editRig) main(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(r.dir, "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+const editMain = `{"path":"main.go","old_string":"func main() {}","new_string":"func main() { println(1) }"}`
+
+func TestDenyOffersOnlyTheReadingTools(t *testing.T) {
+	r := runEdits(t, "", nil, scripted{name: "edit", args: editMain})
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if got := strings.Join(r.f.tools[0], ","); got != "list,read,grep" {
+		t.Errorf("offered tools = %q", got)
+	}
+	if len(r.got) != 1 || r.got[0].OK || !strings.Contains(r.got[0].Summary, "not available") {
+		t.Errorf("a refused edit must be reported as a failure: %+v", r.got)
+	}
+	if strings.Contains(r.main(t), "println") {
+		t.Error("deny must never change a file")
+	}
+}
+
+func TestAllowEditsWithoutAsking(t *testing.T) {
+	r := runEdits(t, editsAllow, nil, scripted{name: "edit", args: editMain})
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if got := strings.Join(r.f.tools[0], ","); got != "list,read,grep,edit,write" {
+		t.Errorf("offered tools = %q", got)
+	}
+	if !strings.Contains(r.main(t), "println(1)") {
+		t.Error("the file should have been edited")
+	}
+	if len(r.got) != 1 || !r.got[0].OK || r.got[0].Diff == "" || r.got[0].Arg != "main.go" {
+		t.Errorf("notification = %+v", r.got)
+	}
+}
+
+func TestAskPutsTheDiffToTheUserAndEditsWhenAllowed(t *testing.T) {
+	r := runEdits(t, editsAsk, func(chatApprovalNotification) (bool, error) { return true, nil },
+		scripted{name: "edit", args: editMain})
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if len(r.asked) != 1 || r.asked[0].Name != "edit" || r.asked[0].Arg != "main.go" ||
+		!strings.Contains(r.asked[0].Diff, "+ func main() { println(1) }") || r.asked[0].CallID != "call_edit" {
+		t.Fatalf("the user was shown %+v", r.asked)
+	}
+	if !strings.Contains(r.main(t), "println(1)") {
+		t.Error("an allowed change must be made")
+	}
+	if len(r.got) != 1 || !r.got[0].OK {
+		t.Errorf("notification = %+v", r.got)
+	}
+}
+
+func TestAskLeavesTheFileAloneWhenDeclined(t *testing.T) {
+	r := runEdits(t, editsAsk, func(chatApprovalNotification) (bool, error) { return false, nil },
+		scripted{name: "edit", args: editMain})
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if strings.Contains(r.main(t), "println") {
+		t.Fatal("a declined change must not be made")
+	}
+	if len(r.got) != 1 || r.got[0].OK || !strings.Contains(r.got[0].Summary, "did not allow") {
+		t.Errorf("notification = %+v", r.got)
+	}
+	// The model must be told, so it does not retry blindly.
+	last := r.f.messages[len(r.f.messages)-1]
+	if body, _ := last[len(last)-1]["content"].(string); !strings.Contains(body, "the user did not allow") {
+		t.Errorf("the model was not told about the refusal: %v", last[len(last)-1])
+	}
+}
+
+func TestAskWithoutAWayToAskRefuses(t *testing.T) {
+	r := runEdits(t, editsAsk, nil, scripted{name: "write", args: `{"path":"new.txt","content":"x\n"}`})
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if _, err := os.Stat(filepath.Join(r.dir, "new.txt")); err == nil {
+		t.Error("nothing may be written when the user cannot be asked")
+	}
+	if len(r.got) != 1 || r.got[0].OK || !strings.Contains(r.got[0].Summary, "approval") {
+		t.Errorf("notification = %+v", r.got)
+	}
+}
+
+func TestLosingTheUserEndsTheTurn(t *testing.T) {
+	r := runEdits(t, editsAsk, func(chatApprovalNotification) (bool, error) { return false, errors.New("connection closed") },
+		scripted{name: "edit", args: editMain})
+	if r.err == nil || !strings.Contains(r.err.Error(), "connection closed") {
+		t.Fatalf("err = %v", r.err)
+	}
+	if strings.Contains(r.main(t), "println") {
+		t.Error("no change may be made when the user is gone")
+	}
+}
+
+func TestAChangeThatChangesNothingIsNotAsked(t *testing.T) {
+	r := runEdits(t, editsAsk, func(chatApprovalNotification) (bool, error) { return false, nil },
+		scripted{name: "write", args: `{"path":"main.go","content":"package main\n\nfunc main() {}\n"}`})
+	if r.err != nil {
+		t.Fatal(r.err)
+	}
+	if len(r.asked) != 0 {
+		t.Errorf("asked about a no-op: %+v", r.asked)
+	}
+}
+
+func TestAnInvalidEditsPolicyIsRefused(t *testing.T) {
+	if _, err := withTools(context.Background(), t.TempDir(), "yolo", nil, nil); err == nil {
+		t.Error("edits must be deny, ask or allow")
+	}
+}
+
+func TestTheHintMentionsEditingOnlyWhenItIsOffered(t *testing.T) {
+	if strings.Contains(toolsHint("/p/x", editsDeny), "edit") {
+		t.Error("the deny hint must not mention editing")
+	}
+	if !strings.Contains(toolsHint("/p/x", editsAsk), "edit") {
+		t.Error("the ask hint must mention editing")
 	}
 }
