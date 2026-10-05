@@ -262,7 +262,7 @@ func TestSobriaSceneMatchesGolden(t *testing.T) {
 }
 
 // The first row is the product mark over a blank row; only the four letters of
-// "Δr×i" carry colour (one token each, forming the orange-yellow-pink gradient),
+// "Δr×i" carry colour (one token each, forming the orange-to-yellow gradient),
 // and the rest of the row stays dim.
 func TestSobriaBannerGradientAndGap(t *testing.T) {
 	data, err := os.ReadFile("../../testdata/SOBRIA.json")

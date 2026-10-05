@@ -153,3 +153,29 @@ func TestBlinkOnSquareWave(t *testing.T) {
 		t.Errorf("the phase did not repeat after a full blink period")
 	}
 }
+
+// The caret stays lit while the user is typing or moving, and blinks again once the
+// keyboard has been quiet for blinkHold.
+func TestCaretStaysLitWhileTheUserIsActive(t *testing.T) {
+	// Find an instant that is in the hidden half of the blink, so only the hold can
+	// make the caret visible there.
+	var off time.Time
+	for ms := int64(0); ms < int64(4*blinkHalfPeriod/time.Millisecond); ms += 10 {
+		if c := epochAt(time.Duration(ms) * time.Millisecond); !blinkOn(c) {
+			off = c
+			break
+		}
+	}
+	if off.IsZero() {
+		t.Fatal("no hidden blink phase found")
+	}
+	if !caretLit(off, off.Add(-100*time.Millisecond)) {
+		t.Error("a key 100ms ago must keep the caret lit even in the hidden blink phase")
+	}
+	if caretLit(off, off.Add(-blinkHold-time.Millisecond)) {
+		t.Error("after the hold has passed the caret must follow the blink again")
+	}
+	if caretLit(off, time.Time{}) {
+		t.Error("with no key ever pressed the caret follows the blink")
+	}
+}

@@ -83,7 +83,7 @@ the `input` node.
 
   { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ " },
 
-  { "id": "input_gap_bottom", "type": "text", "text": "" },
+  { "id": "input_gap_bottom", "type": "text", "text": "", "when": "status.active" },
 
   { "id": "escape_hint", "type": "text", "text": "press ctrl+c again to exit",
     "when": "host.escape.armed", "style": {"style": "dim"} },
