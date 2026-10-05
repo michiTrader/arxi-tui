@@ -130,7 +130,12 @@ func canonicalOpenAIResponse(resp *chatResponse) (turn.Response, error) {
 		if wire.Type != "" && wire.Type != "function" {
 			return out, fmt.Errorf("provider tool call %q has unsupported type %q", wire.ID, wire.Type)
 		}
-		call, err := turn.NewToolCall(wire.ID, wire.Function.Name, []byte(wire.Function.Arguments))
+		// A tool that takes no arguments may stream none at all.
+		rawArgs := strings.TrimSpace(wire.Function.Arguments)
+		if rawArgs == "" {
+			rawArgs = "{}"
+		}
+		call, err := turn.NewToolCall(wire.ID, wire.Function.Name, []byte(rawArgs))
 		if err != nil {
 			return out, fmt.Errorf("provider tool call %q: %w", wire.ID, err)
 		}

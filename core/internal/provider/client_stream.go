@@ -34,6 +34,10 @@ func thinkingFrom(ctx context.Context) func(string) {
 // only addition is onThinking, called with each reasoning fragment as it
 // arrives. A server that ignores `stream` and answers with a plain JSON body is
 // handled as a plain completion.
+// maxStreamToolCalls bounds the tool-call index a stream may name, so a broken
+// provider cannot make the accumulator grow without limit.
+const maxStreamToolCalls = 64
+
 func (c *Client) CompleteStream(ctx context.Context, req chatRequest, onThinking func(string)) (*chatResponse, error) {
 	if req.Model == "" {
 		return nil, errors.New("a completion needs a model; the caller resolved nothing")
@@ -83,6 +87,8 @@ func (c *Client) CompleteStream(ctx context.Context, req chatRequest, onThinking
 		sawText  bool
 		finish   string
 		sawEvent bool
+		calls    []*chatToolCall
+		args     []*strings.Builder
 	)
 	sc := bufio.NewScanner(io.LimitReader(resp.Body, maxResponseBytes))
 	sc.Buffer(make([]byte, 64<<10), 1<<20)
@@ -128,6 +134,23 @@ func (c *Client) CompleteStream(ctx context.Context, req chatRequest, onThinking
 			if frag != "" && onThinking != nil {
 				onThinking(frag)
 			}
+			for _, frag := range choice.Delta.ToolCalls {
+				if frag.Index < 0 || frag.Index > maxStreamToolCalls {
+					return nil, fmt.Errorf("the provider streamed a tool call with index %d for model %s", frag.Index, req.Model)
+				}
+				for len(calls) <= frag.Index {
+					calls = append(calls, &chatToolCall{Type: "function"})
+					args = append(args, &strings.Builder{})
+				}
+				call := calls[frag.Index]
+				if frag.ID != "" {
+					call.ID = frag.ID
+				}
+				if frag.Function.Name != "" {
+					call.Function.Name = frag.Function.Name
+				}
+				args[frag.Index].WriteString(frag.Function.Arguments)
+			}
 			if choice.FinishReason != "" {
 				finish = choice.FinishReason
 			}
@@ -143,6 +166,10 @@ func (c *Client) CompleteStream(ctx context.Context, req chatRequest, onThinking
 	if sawText {
 		s := text.String()
 		msg.Content = &s
+	}
+	for i, call := range calls {
+		call.Function.Arguments = args[i].String()
+		msg.ToolCalls = append(msg.ToolCalls, *call)
 	}
 	out.Choices = []chatChoice{{Message: msg, FinishReason: finish}}
 	return out, nil
