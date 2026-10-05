@@ -806,14 +806,12 @@ const (
 )
 
 // The other lines the conversation can hold. Each has its own marker and token so a
-// reader tells them apart without reading: a warning (the turn went on), a cancelled
-// turn (the user stopped it), and the dim usage line under an answer.
+// reader tells them apart without reading: a warning (the turn went on) and the dim
+// usage line under an answer.
 const (
-	warnTurnMarker   = "! "
-	warnTurnToken    = "chat.warn"
-	cancelTurnMarker = "■ "
-	cancelTurnToken  = "chat.cancel"
-	usageTurnToken   = "chat.usage"
+	warnTurnMarker = "! "
+	warnTurnToken  = "chat.warn"
+	usageTurnToken = "chat.usage"
 
 	// assistantIndent is the left margin of an answer: the width of the user's
 	// "┃ " marker, so the two voices line up as a pair of columns instead of the
@@ -911,15 +909,6 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 				text = warnTurnMarker + text
 				turnToken = warnTurnToken
 				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(warnTurnMarker)), Style: warnTurnToken}}
-			} else if h.Role == "cancelled" {
-				// "■ Cancelled · <what was asked>": the prompt is shown on one row so a
-				// long or multi-line question does not turn the notice into a block.
-				text = cancelTurnMarker + "Cancelled"
-				if q := strings.Join(strings.Fields(h.Text), " "); q != "" {
-					text += " · " + q
-				}
-				turnToken = cancelTurnToken
-				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(cancelTurnMarker)), Style: cancelTurnToken}}
 			}
 			if h.Role == "assistant" {
 				// The agent's answer is Markdown: headings, lists, tables, fenced code and

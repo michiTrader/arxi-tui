@@ -462,7 +462,7 @@ A warning reads `! auth: API key setup is unavailable in this WASM session.` and
 failed request `✗ …`.
 
 **Esc or Ctrl-C stops the answer being waited for** and leaves
-`■ Cancelled · <what you asked>` in the conversation; you can send the next line at
+`✗ request failed: Cancelled` under your question; you can send the next line at
 once. Each message runs on its own `arxi serve` process, so cancelling really stops the
 request instead of leaving its late answer to be mistaken for the next one. When
 nothing is running, Ctrl-C keeps its usual meaning (clear the line; twice to leave) and

@@ -840,15 +840,16 @@ func (s *State) apply(e Event) {
 		}
 
 	case "chat.cancelled":
-		// The user stopped the turn in flight. The cancelled prompt stays in the
-		// transcript (it was sent), followed by a line that says it was stopped.
-		// Nothing is working any more, and a member that was thinking is not.
+		// The user stopped the turn in flight. It reads as the failed request it is,
+		// "✗ request failed: Cancelled", and says nothing about the prompt: the
+		// prompt is already the line above it. Nothing is working any more, and a
+		// member that was thinking is not.
 		s.AgentWorking = false
 		for _, m := range s.members {
 			m.State = "idle"
 			m.Busy = false
 		}
-		s.History = append(s.History, ChatLine{Role: "cancelled", Text: stringPayload(e.Payload, "text")})
+		s.History = append(s.History, ChatLine{Role: "error", Text: "request failed: Cancelled"})
 
 	case "agent.failed":
 		// The turn failed: no longer busy.
@@ -1597,10 +1598,4 @@ func NextSlashCategory(typed, category string, dir int) string {
 		}
 	}
 	return tabs[((cur+dir)%len(tabs)+len(tabs))%len(tabs)]
-}
-
-// stringPayload reads a string field of an event payload, or "" when it is absent.
-func stringPayload(p map[string]any, key string) string {
-	v, _ := p[key].(string)
-	return v
 }
