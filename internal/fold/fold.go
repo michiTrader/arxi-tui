@@ -622,6 +622,7 @@ var handled = map[string]bool{
 	"chat.error":      true,
 	"chat.warn":       true,
 	"chat.thinking":   true,
+	"chat.tool":       true,
 	"chat.cancelled":  true,
 	"run.started":     true,
 	"agent.blocked":   true,
@@ -704,6 +705,24 @@ func (s *State) apply(e Event) {
 		if text, _ := e.Payload["text"].(string); text != "" {
 			s.ThinkingText = appendThinking(s.ThinkingText, text)
 		}
+
+	case "chat.tool":
+		// The agent looked at something while answering. It is a line of the
+		// conversation of its own, between the question and the answer, and the
+		// thinking that led to it is over.
+		s.ThinkingText = ""
+		name, _ := e.Payload["name"].(string)
+		if name == "" {
+			break
+		}
+		arg, _ := e.Payload["arg"].(string)
+		ok, _ := e.Payload["ok"].(bool)
+		summary, _ := e.Payload["summary"].(string)
+		output, _ := e.Payload["output"].(string)
+		s.History = append(s.History, ChatLine{
+			Role: "tool", Text: name + "(" + arg + ")",
+			Tool: name, ToolArg: arg, ToolOK: ok, ToolSummary: summary, ToolOutput: output,
+		})
 
 	case "llm.response":
 		// The answer has landed, so whatever the model was thinking is over.

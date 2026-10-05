@@ -5,6 +5,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/x/ansi"
 	"github.com/michiTrader/arxi_tui/internal/fold"
@@ -819,6 +820,66 @@ const (
 	assistantIndent = 2
 )
 
+// A tool call the agent made while answering, drawn like a coding agent does:
+// a blue dot and the tool's name with its argument, then what came of it under
+// a dim elbow. The calls of one answer stack with no blank row between them.
+const (
+	toolDotToken    = "chat.tool.dot"
+	toolNameToken   = "chat.tool"
+	toolResultToken = "chat.tool.result"
+	toolFailToken   = "chat.tool.fail"
+	toolDot         = "● "
+	toolElbow       = "└ "
+)
+
+// toolTitles are the names a person reads; an unknown tool shows its own name.
+var toolTitles = map[string]string{"list": "List", "read": "Read", "grep": "Search"}
+
+// toolLines draws one tool line: "● Read(main.go)" and, under it, "  └ Read 12
+// lines". A long argument wraps under itself, and so does a long result.
+func toolLines(h fold.ChatLine, width int) []ui.Line {
+	title := toolTitles[h.Tool]
+	if title == "" {
+		title = h.Tool
+	}
+	dotW := ansi.StringWidth(toolDot)
+	// The argument is usually one long word (a path), which word wrapping would
+	// push to a row of its own. It is cut at the edge instead, so it starts on the
+	// same row as the name and continues under itself.
+	first := ui.Line{{Text: toolDot, Style: toolDotToken}, {Text: title, Style: toolNameToken}, {Text: "(", Style: toolResultToken}}
+	hang := strings.Repeat(" ", dotW)
+	var head []ui.Line
+	cur, room := first, width-first.Width()
+	rest := h.ToolArg + ")"
+	for rest != "" {
+		if room < 1 {
+			head = append(head, cur)
+			cur, room = ui.Line{{Text: hang}}, width-dotW
+			if room < 1 {
+				room = 1
+			}
+		}
+		piece := ansi.Truncate(rest, room, "")
+		if piece == "" {
+			_, n := utf8.DecodeRuneInString(rest)
+			piece = rest[:n]
+		}
+		cur = append(cur, ui.Span{Text: piece, Style: toolResultToken})
+		rest = rest[len(piece):]
+		room -= ansi.StringWidth(piece)
+	}
+	head = append(head, cur)
+	if h.ToolSummary == "" {
+		return head
+	}
+	style := toolResultToken
+	if !h.ToolOK {
+		style = toolFailToken
+	}
+	hangResult := strings.Repeat(" ", dotW+ansi.StringWidth(toolElbow))
+	return append(head, ui.WrapText(hang+toolElbow+h.ToolSummary, style, width, ui.Line{{Text: hangResult}})...)
+}
+
 // usageLine is what an answer cost, e.g. "2s (↑2 ↓57)": how long it took, then the
 // tokens sent (↑) and received (↓). It is empty when the source reported nothing.
 func usageLine(h fold.ChatLine) string {
@@ -879,7 +940,7 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 
 	switch n.Bind {
 	case "chat.history":
-		for _, h := range state.History {
+		for i, h := range state.History {
 			text := h.Text
 			turnToken := token
 			var cont ui.Line
@@ -904,6 +965,14 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 				text = errorTurnMarker + text
 				turnToken = errorTurnToken
 				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(errorTurnMarker)), Style: errorTurnToken}}
+			}
+			if h.Role == "tool" {
+				lines = append(lines, toolLines(h, r.Width)...)
+				// Calls of one answer stack; the gap comes after the last one.
+				if i+1 >= len(state.History) || state.History[i+1].Role != "tool" {
+					lines = append(lines, ui.Line{})
+				}
+				continue
 			}
 			if h.Role == "warn" {
 				text = warnTurnMarker + text

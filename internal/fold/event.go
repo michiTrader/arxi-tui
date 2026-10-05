@@ -40,11 +40,20 @@ type Event struct {
 
 // ChatLine is one entry in chat.history: the speaker and the text.
 type ChatLine struct {
-	// Role is "user", "assistant", "error" (a failed request or a cancelled turn,
-	// shown in the flow) or "warn" (something the user should know that did not
-	// stop the turn).
+	// Role is "user", "assistant", "tool" (something the agent did while
+	// answering, see the Tool fields), "error" (a failed request or a cancelled
+	// turn, shown in the flow) or "warn" (something the user should know that
+	// did not stop the turn).
 	Role string
 	Text string
+	// For a tool line only: which tool ran, on what, whether it worked, and the
+	// one-line account of it. ToolOutput is what the model was shown (capped
+	// by the core); nothing draws it yet.
+	Tool        string
+	ToolArg     string
+	ToolOK      bool
+	ToolSummary string
+	ToolOutput  string
 	// For an assistant line only: what the answer cost. Zero values mean the
 	// source did not say, and the renderer then draws no usage line.
 	DurationMS int64
