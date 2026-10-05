@@ -311,12 +311,15 @@ type State struct {
 	// default and a no-op: the when-gated status node does not render at boot.
 	RunActor string `json:"host.run.actor"`
 
-	// HostCwd is the directory the TUI was started in, and HostEffort the thinking
-	// level the next request will ask for ("auto" until the user picks one with
-	// /effort). Both are host view state like RunActor: no event carries them, the
-	// loop re-attaches them each frame, and an empty value simply draws nothing.
+	// HostCwd is the directory the TUI was started in, HostEffort the thinking
+	// level the next request will ask for (empty until the user picks one with
+	// /effort) and HostMode how much the agent may do unasked (ask, auto, plan or
+	// full access; /mode). All are host view state like RunActor: no event carries
+	// them, the loop re-attaches them each frame, and an empty value simply draws
+	// nothing.
 	HostCwd    string `json:"host.cwd"`
 	HostEffort string `json:"host.effort"`
+	HostMode   string `json:"host.mode"`
 
 	// BudgetMicrounits is run.started.budget_usd × 1000, captured when the run
 	// starts. Combined with CostMicrounits it produces session.tokens_used.
@@ -1523,6 +1526,7 @@ var Commands = []SlashMatch{
 	{"provider", "Account", "Add providers, set keys and URLs, manage their models"},
 	{"model", "Model", "Choose the model"},
 	{"effort", "Model", "Set how much the model thinks"},
+	{"mode", "Model", "Set how much the agent may do without asking"},
 	// /login is a host-owned screen like /provider: it round-trips the serve
 	// protocol (provider.add / provider.key / model.add), so it is not a patch verb.
 }

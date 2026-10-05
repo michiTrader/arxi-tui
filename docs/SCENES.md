@@ -104,8 +104,8 @@ the `input` node.
   { "id": "status", "type": "row", "children": [
     { "type": "text", "bind": "slash.hint", "style": {"style": "menu.hint"},
       "when": "slash.hint" },
-    { "type": "text", "bind": "agent.mode", "style": {"style": "header"},
-      "when": "status.active" },
+    { "type": "text", "bind": "host.mode", "style": {"style": "header"},
+      "when": "host.mode" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "model.name" },
     { "type": "text", "bind": "model.name", "style": {"style": "dim"},
       "when": "model.name" },

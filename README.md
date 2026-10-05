@@ -23,20 +23,26 @@ published, by handing arxi a link.
 
 ## Status
 
-## Status bar and operating modes
+## Status bar and agent modes
 
 The bottom bar reads `mode · model · thinking level · directory`, for example
-`idle · deepseek/deepseek-chat · auto · ~/projects/app`.
+`ask · deepseek/deepseek-chat · high · ~/projects/app`. The thinking level appears only
+once you choose one.
 
-| mode | meaning |
-|---|---|
-| `idle` | **No run has started.** This is the state of a plain chat: you type, the model answers, and nothing is being orchestrated, so the bar stays on `idle` even while a reply streams in (the animated `working` line above the prompt is what shows a reply is pending). It is also what you see right after start and after `/clear`. |
-| `sim` | A *simulated* run (`run.started` with `simulated: true`): agents are replayed without spending money. |
-| `live` | A real run (`run.started` with `simulated: false`): agents call real providers and the budget is spent. |
+The mode says how much the agent may do without asking. Pick it with `/mode` or cycle it
+with Shift+Tab; `/clear` keeps it.
 
-The thinking level is `auto` until you choose one with `/effort`. The directory is
-where the TUI was started (home shown as `~`). While the `/` menu is open the bar
-shows only the navigation hint.
+| mode | reads files | edits files | runs commands |
+|---|---|---|---|
+| `ask` (default) | on its own | asks | asks |
+| `auto` | on its own | on its own | asks |
+| `plan` | on its own | never | never |
+| `full access` | on its own | on its own | on its own |
+
+The words are the core's own tool policies (`allow` / `ask` / `deny`). The chat has no
+tools yet, so for now the mode only changes what the bar says; the table is what the tool
+loop will enforce. The directory is where the TUI was started (home shown as `~`). While
+the `/` menu is open the bar shows only the navigation hint.
 
 ### Sessions and `/clear`
 
@@ -47,7 +53,7 @@ each prompt. `/clear` (typed, or picked in the `/` menu) starts a new one:
 |---|---|
 | the transcript and its scroll position | providers and their keys |
 | the chat history sent with the next prompt | the selected model |
-| a reply still in flight (its answer is discarded, never shown in the new session) | the thinking level (`/effort`) |
+| a reply still in flight (its answer is discarded, never shown in the new session) | the thinking level (`/effort`) and the mode (`/mode`) |
 | the run being followed, if any, and its actor label | the scene, theme and hidden/maximized panes |
 | the notice line | |
 
@@ -478,11 +484,13 @@ line sits right under the bottom rule, and the rules are drawn in a dim grey.
 
 ### Thinking level (`/effort `)
 
-Type `/effort` followed by a space and a menu lists `auto`, `minimal`, `low`, `medium`
-and `high` (same keys as the model menu; a check marks the one in use). The status bar
-shows it. `auto` sends nothing and lets the model decide; any other level is sent with
-every chat message as `reasoning_effort`. `/clear` keeps it. Providers that ignore the
-field simply answer as usual.
+Type `/effort` followed by a space and a menu lists the levels the current model takes
+(same keys as the model menu; a check marks the one in use). OpenAI reasoning models
+(gpt-5, o-series) take `minimal`, `low`, `medium` and `high`; other OpenAI-compatible
+models (DeepSeek, gateways) take `low`, `medium` and `high`; Claude models take none, so
+the menu says so. Choosing the level already in use clears it. Until you choose, nothing
+is sent and the bar shows nothing. A chosen level is sent with every chat message as
+`reasoning_effort`; switching to a model that does not take it clears it. `/clear` keeps it.
 
 The key is pasted into a masked field, shown as `••••`, and never printed back, logged
 or sent to the chat. If sending a message fails (no provider, no model, a refused key,

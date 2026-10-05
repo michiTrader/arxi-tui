@@ -25,13 +25,13 @@ func TestEffortMenuOpensOnlyWithTheSpace(t *testing.T) {
 
 func TestEffortMenuListsEveryLevelAndMarksTheCurrent(t *testing.T) {
 	var mm modelMenu
-	mm.setRows(effortMenuData("high"))
+	mm.setRows(effortMenuData("openai/gpt-5", "high"))
 	rows, sel := mm.view("")
 	var names []string
 	for _, r := range rows {
 		names = append(names, r.Name)
 	}
-	if got := strings.Join(names, ","); got != "auto,minimal,low,medium,high" {
+	if got := strings.Join(names, ","); got != "minimal,low,medium,high" {
 		t.Errorf("levels = %s", got)
 	}
 	if rows[sel].Name != "high" || !rows[sel].Current {
@@ -64,12 +64,12 @@ func TestEffortMenuRendersLikeTheModelMenu(t *testing.T) {
 		t.Fatal(err)
 	}
 	var mm modelMenu
-	mm.setRows(effortMenuData("auto"))
+	mm.setRows(effortMenuData("deepseek/deepseek-chat", "low"))
 	rows, sel := mm.view("")
 	st := fold.State{UserInput: "/effort ", ModelActive: true, ModelMatches: rows, ModelSelected: sel}
 	r := engine.Renderer{Width: 80, Height: 24}
 	got := r.RenderFrame(doc, st).Plain()
-	for _, want := range []string{"  auto", "let the model decide", "  minimal", "  high", "✓"} {
+	for _, want := range []string{"  low", "a little thinking", "  medium", "  high", "✓"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the effort menu is missing %q:\n%s", want, got)
 		}
@@ -121,27 +121,60 @@ func TestChatCarriesTheThinkingLevelAndClearKeepsIt(t *testing.T) {
 	send("two")
 	c.reset() // /clear
 	send("three")
-	c.setEffort("auto")
+	c.setEffort("")
 	send("four")
 	core.mu.Lock()
 	defer core.mu.Unlock()
 	if got := strings.Join(core.efforts, ","); got != ",high,high," {
-		t.Errorf("effort per request = %q, want \",high,high,\" (none, high, kept across /clear, back to auto)", got)
+		t.Errorf("effort per request = %q, want \",high,high,\" (none, high, kept across /clear, cleared)", got)
 	}
 }
 
-func TestSendParamsOmitEffortWhenEmpty(t *testing.T) {
-	// The wire shape is covered in internal/driver; here only the mapping of "auto".
-	c := newChatSession(&effortChat{}, make(chan fold.Event, 4))
-	c.setEffort("auto")
-	if c.effort != "" {
-		t.Errorf("auto must send nothing, got %q", c.effort)
+func TestEffortLevelsDependOnTheModel(t *testing.T) {
+	names := func(ref string) string {
+		var out []string
+		for _, l := range effortLevelsFor(ref) {
+			out = append(out, l.name)
+		}
+		return strings.Join(out, ",")
 	}
-	if _, ok := setEffortLevel(" HIGH "); !ok {
-		t.Error("levels are accepted in any case")
+	for ref, want := range map[string]string{
+		"openai/gpt-5":                  "minimal,low,medium,high",
+		"tokenharbor/o3-mini":           "minimal,low,medium,high",
+		"vyceai/deepseek-v4.1":          "low,medium,high",
+		"tokenharbor/deepseek-reasoner": "low,medium,high",
+		"":                              "low,medium,high",
+		"vyceai/claude-sonnet-4-6":      "",
+		"anthropic/Claude-Opus":         "",
+	} {
+		if got := names(ref); got != want {
+			t.Errorf("levels for %q = %q, want %q", ref, got, want)
+		}
 	}
-	if _, ok := setEffortLevel("ultra"); ok {
-		t.Error("an unknown level must be refused")
+	if effortAllowed("vyceai/claude-sonnet-4-6", "high") {
+		t.Error("a Claude model takes no level")
+	}
+	if effortAllowed("vyceai/deepseek-v4.1", "minimal") {
+		t.Error("minimal is OpenAI-only")
+	}
+}
+
+func TestEffortMenuForAModelWithoutLevelsPicksNothing(t *testing.T) {
+	rows := effortMenuData("vyceai/claude-sonnet-4-6", "")
+	if len(rows) != 1 || rows[0].Ref != "" || !strings.Contains(rows[0].Provider, "does not take") {
+		t.Errorf("rows = %+v", rows)
+	}
+}
+
+func TestEffortAfterPickTogglesTheLevelInUse(t *testing.T) {
+	if got := effortAfterPick("", "high"); got != "high" {
+		t.Errorf("first pick = %q", got)
+	}
+	if got := effortAfterPick("high", "high"); got != "" {
+		t.Errorf("picking the level in use should clear it, got %q", got)
+	}
+	if got := effortAfterPick("high", "low"); got != "low" {
+		t.Errorf("changing level = %q", got)
 	}
 }
 
@@ -171,10 +204,11 @@ func TestLoopEffortMenuEndToEnd(t *testing.T) {
 		}
 		return out
 	}
-	down := scheduledEvent{5 * time.Millisecond, term.Event{Kind: term.EventKey, Key: term.Key{Type: term.KeyDown}}}
+	down := scheduledEvent{30 * time.Millisecond, term.Event{Kind: term.EventKey, Key: term.Key{Type: term.KeyDown}}}
 	script := append([]scheduledEvent{}, keys("/effort ")...)
-	// auto is highlighted first; four Downs reach `high`.
-	script = append(script, down, down, down, down, scheduledEvent{20 * time.Millisecond, enterEvent()})
+	// With no model chosen the menu lists low, medium, high; `low` is highlighted
+	// first, so two Downs reach `high`.
+	script = append(script, down, down, scheduledEvent{20 * time.Millisecond, enterEvent()})
 	script = append(script, keys("hello")...)
 	script = append(script, scheduledEvent{300 * time.Millisecond, ctrlCharEvent('c')}, scheduledEvent{50 * time.Millisecond, ctrlCharEvent('c')})
 
