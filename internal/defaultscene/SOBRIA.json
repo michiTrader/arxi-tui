@@ -1,0 +1,61 @@
+{ "root": { "type": "stack", "children": [
+  { "id": "banner", "type": "row", "children": [
+    { "type": "text", "text": "Δ", "style": {"style": "brand.1"} },
+    { "type": "text", "text": "r", "style": {"style": "brand.2"} },
+    { "type": "text", "text": "×", "style": {"style": "brand.3"} },
+    { "type": "text", "text": "i", "style": {"style": "brand.4"} },
+    { "type": "text", "text": " v0.1.0 · Run /help for commands", "style": {"style": "dim"} } ] },
+
+  { "id": "banner_gap", "type": "text", "text": "" },
+
+  { "id": "notice", "type": "text", "bind": "host.scene.error",
+    "when": "host.scene.error", "style": {"style": "banner"} },
+
+  { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+
+  { "id": "thinking", "type": "marquee", "when": "agent.working",
+    "bind": "thinking.text", "style": {"style": "dim"},
+    "prefix": { "bind": "host.thinking" },
+    "scroll": { "speed": 1 } },
+
+  { "id": "input_gap_top", "type": "text", "text": "" },
+
+  { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ " },
+
+  { "id": "input_gap_bottom", "type": "text", "text": "", "when": "status.active" },
+
+  { "id": "escape_hint", "type": "text", "text": "press ctrl+c again to exit",
+    "when": "host.escape.armed", "style": {"style": "dim"} },
+
+  { "id": "menu", "type": "overlay", "anchor": "bottom", "when": "slash.active",
+    "children": [
+      { "type": "rule", "style": {"style": "menu.rule"} },
+      { "id": "cmds", "type": "list", "bind": "slash.matches",
+        "filter_by": "typed", "count": true,
+        "categories": ["All","General","Session","Account","Model",
+                       "Appearance","Security","Workspace","Media","Extensions","Product"] },
+      { "type": "rule", "style": {"style": "menu.rule"} } ] },
+
+  { "id": "model_menu", "type": "overlay", "anchor": "bottom", "when": "model.active",
+    "children": [
+      { "id": "models", "type": "list", "bind": "model.matches" } ] },
+
+  { "id": "status", "type": "row", "children": [
+    { "type": "text", "bind": "slash.hint", "style": {"style": "menu.hint"},
+      "when": "slash.hint" },
+    { "type": "text", "bind": "host.run.actor", "style": {"style": "dim"},
+      "when": "host.run.actor" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"},
+      "when": "host.run.actor" },
+    { "type": "text", "bind": "host.mode", "style": {"style": "header"},
+      "when": "host.mode" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "model.name" },
+    { "type": "text", "bind": "model.name", "style": {"style": "dim"},
+      "when": "model.name" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.effort" },
+    { "type": "text", "bind": "host.effort", "style": {"style": "dim"},
+      "when": "host.effort" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.cwd" },
+    { "type": "text", "bind": "host.cwd", "style": {"style": "dim"},
+      "when": "host.cwd" } ] }
+]}}

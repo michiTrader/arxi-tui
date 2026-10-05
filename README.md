@@ -599,7 +599,7 @@ the log's length, so every event is either handled or named in the blind list
 (now empty, with a fail-loud check for any future unaccounted type). Every
 re-measurement was *forced* by that pin rather than reported alongside it.
 
-The default scene is `testdata/SOBRIA.json` (the sobria look). If it fails to
+The default scene is the sobria look, built into the binary (a copy of `testdata/SOBRIA.json`, kept identical by a test), so it boots from any folder. `-scene <file>` boots a file instead and `-raw` the factory raw scene. If a scene fails to
 load, the interface falls back to the factory RAW scene (two nodes: transcript
 and input, nothing else) and states why, addressed, on screen.
 
