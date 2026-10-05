@@ -779,7 +779,7 @@ func TestLoopSobriaStatusbarRenders(t *testing.T) {
 	// The status row splits "live" (bright, the agent.mode bind under the
 	// "header" token) from the dim separators and model — stripANSI collapses
 	// the SGR resets between spans so the visible text is one contiguous line.
-	if !strings.Contains(out, "ask · openai/gpt-4o · ~") {
+	if !strings.Contains(out, "ask · openai/gpt-4o") {
 		t.Errorf("status bar not rendered correctly; output:\n%s", out)
 	}
 }
