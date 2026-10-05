@@ -382,7 +382,14 @@ func (x *Executor) CompleteTurn(ctx context.Context, req turn.Request) (turn.Res
 		if err != nil {
 			return turn.Response{}, exec.NotDispatched(err)
 		}
-		resp, callErr := x.newClient(res).Complete(ctx, wire)
+		client := x.newClient(res)
+		var resp *chatResponse
+		var callErr error
+		if think := thinkingFrom(ctx); think != nil {
+			resp, callErr = client.CompleteStream(ctx, wire, think)
+		} else {
+			resp, callErr = client.Complete(ctx, wire)
+		}
 		var apiErr *APIError
 		if callErr != nil && !asAPIError(callErr, &apiErr) {
 			return turn.Response{}, callErr

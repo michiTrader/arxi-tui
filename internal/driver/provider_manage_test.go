@@ -153,3 +153,59 @@ func TestChatSendCarriesTheThinkingLevelOnlyWhenSet(t *testing.T) {
 		}
 	}
 }
+
+func TestChatSendNeverAsksToStreamUnlessWatched(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent, `{"id":"chat-send","ok":true,"result":{"text":"hi"}}`)
+	if _, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "hello"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sent.String(), "stream_thinking") {
+		t.Fatalf("an unwatched turn asked for a stream: %s", sent.String())
+	}
+}
+
+func TestChatSendHandsThinkingNotificationsToTheWatcher(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"type":"chat.thinking","text":"Let me "}`,
+		`{"type":"something.else","text":"ignored"}`,
+		`{"type":"chat.thinking","text":"think."}`,
+		`{"id":"chat-send","ok":true,"result":{"text":"done","model":"m","provider":"p"}}`)
+	var got []string
+	res, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "hello", OnThinking: func(f string) { got = append(got, f) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Text != "done" || strings.Join(got, "|") != "Let me |think." {
+		t.Fatalf("text=%q thinking=%q", res.Text, got)
+	}
+	if !strings.Contains(sent.String(), `"stream_thinking":true`) {
+		t.Fatalf("the request did not ask for the stream: %s", sent.String())
+	}
+}
+
+func TestChatSendFallsBackAgainstACoreThatDoesNotStream(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"id":"chat-send","ok":false,"error":{"code":"bad_params","message":"unknown parameter stream_thinking for chat.send"}}`,
+		`{"id":"chat-send","ok":true,"result":{"text":"plain"}}`)
+	called := false
+	res, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "hello", OnThinking: func(string) { called = true }})
+	if err != nil || res.Text != "plain" || called {
+		t.Fatalf("res=%+v err=%v called=%v", res, err, called)
+	}
+	lines := strings.Split(strings.TrimSpace(sent.String()), "\n")
+	if len(lines) != 2 || strings.Contains(lines[1], "stream_thinking") {
+		t.Fatalf("the retry must be the plain request: %v", lines)
+	}
+}
+
+func TestChatSendWatchedRefusalKeepsTheCoresWords(t *testing.T) {
+	d := session(t, `{"id":"chat-send","ok":false,"error":{"code":"failed","message":"the provider is down"}}`)
+	_, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "hello", OnThinking: func(string) {}})
+	ref, ok := err.(*Refusal)
+	if !ok || !strings.Contains(ref.Message, "the provider is down") {
+		t.Fatalf("err = %#v", err)
+	}
+}

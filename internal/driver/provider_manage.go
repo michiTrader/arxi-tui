@@ -3,7 +3,9 @@ package driver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
 )
 
 // This file holds the provider-management verbs added with the /provider hub:
@@ -169,6 +171,11 @@ type ChatSendParams struct {
 	// Effort is the thinking level: "minimal", "low", "medium" or "high". Empty
 	// sends nothing, and the model decides.
 	Effort string
+	// OnThinking, when set, is called with each fragment of the model's thinking
+	// as the core streams it, before the answer comes back. The call still
+	// returns the whole answer. A core that does not know how to stream falls
+	// back to a plain call and never calls it.
+	OnThinking func(fragment string)
 }
 
 // ChatSendResult is the model's answer with the usage the core measured.
@@ -204,8 +211,72 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 		params["history"] = string(b)
 	}
 	var r ChatSendResult
-	if err := d.call(ctx, "chat-send", "chat.send", params, &r); err != nil {
+	if p.OnThinking == nil {
+		if err := d.call(ctx, "chat-send", "chat.send", params, &r); err != nil {
+			return nil, err
+		}
+		return &r, nil
+	}
+	params["stream_thinking"] = true
+	err := d.callWatching(ctx, "chat-send", "chat.send", params, &r, p.OnThinking)
+	var ref *Refusal
+	if errors.As(err, &ref) && ref.Code == "bad_params" && strings.Contains(ref.Message, "stream_thinking") {
+		// An older core refuses the parameter it does not know. The turn it would
+		// have streamed is simply asked again the plain way.
+		delete(params, "stream_thinking")
+		err = d.call(ctx, "chat-send", "chat.send", params, &r)
+	}
+	if err != nil {
 		return nil, err
 	}
 	return &r, nil
+}
+
+// callWatching is call for a request the core answers with notifications first.
+// A line with a type and no id is a notification: a chat.thinking one is handed
+// to onThinking and every other kind is skipped. The first line carrying an id
+// is the response.
+func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params map[string]any, out any, onThinking func(string)) error {
+	req := protoRequest{ID: id, Type: verb, Params: params}
+
+	d.mu.Lock()
+	defer d.mu.Unlock()
+
+	if err := d.enc.Encode(req); err != nil {
+		return fmt.Errorf("ndjson: send %s: %w", verb, err)
+	}
+	for {
+		line, err := d.readLine(ctx)
+		if err != nil {
+			return fmt.Errorf("ndjson: read response: %w", err)
+		}
+		var head struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal([]byte(line), &head); err != nil {
+			return fmt.Errorf("ndjson: response is not JSON: %w", err)
+		}
+		if head.ID == "" && head.Type != "" {
+			if head.Type == "chat.thinking" && head.Text != "" {
+				onThinking(head.Text)
+			}
+			continue
+		}
+		var resp protoResponse
+		if err := json.Unmarshal([]byte(line), &resp); err != nil {
+			return fmt.Errorf("ndjson: response is not JSON: %w", err)
+		}
+		if !resp.OK {
+			return resp.refusal(verb)
+		}
+		if out == nil {
+			return nil
+		}
+		if err := json.Unmarshal(resp.Result, out); err != nil {
+			return fmt.Errorf("ndjson: decode %s result: %w", verb, err)
+		}
+		return nil
+	}
 }

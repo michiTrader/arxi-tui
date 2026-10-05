@@ -244,7 +244,13 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		defer closeConn()
 		core = conn
 	}
-	res, err := core.SubmitChatSend(ctx, driver.ChatSendParams{Prompt: text, System: chatSystemPrompt, History: hist, Effort: effort})
+	res, err := core.SubmitChatSend(ctx, driver.ChatSendParams{
+		Prompt: text, System: chatSystemPrompt, History: hist, Effort: effort,
+		// The model's thinking is shown live in the Thinking line.
+		OnThinking: func(fragment string) {
+			c.post(ctx, gen, "chat.thinking", map[string]any{"text": fragment})
+		},
+	})
 	if ctx.Err() != nil {
 		// Cancelled (cancelTurn already told the conversation) or the program is
 		// closing: whatever came back is not wanted.

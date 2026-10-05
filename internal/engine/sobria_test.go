@@ -104,6 +104,8 @@ func TestSobriaSceneMarqueeGolden(t *testing.T) {
 		UsageIn:      25,
 		UsageOut:     35,
 		UserInput:    "",
+		// The loop builds the label from the wall clock; the fold only carries it.
+		HostThinking: "• Thinking (3s) ",
 	}
 	state.DeriveUsageDelta()
 
@@ -111,9 +113,9 @@ func TestSobriaSceneMarqueeGolden(t *testing.T) {
 	f := r.RenderFrame(doc, state)
 	got := f.Plain()
 
-	// The marquee must show the prefix and suffix.
-	if !strings.Contains(got, "• Thinking · Looking at the code...+i25 +o35") {
-		t.Errorf("expected marquee '• Thinking · Looking at the code...+i25 +o35'; got:\n%s", got)
+	// The marquee shows the label and the thinking words after it.
+	if !strings.Contains(got, "• Thinking (3s) Looking at the code...") {
+		t.Errorf("expected marquee '• Thinking (3s) Looking at the code...'; got:\n%s", got)
 	}
 }
 

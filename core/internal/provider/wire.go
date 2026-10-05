@@ -48,11 +48,37 @@ type chatRequest struct {
 	// omitted so a provider that does not know the field never sees it.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 
-	// Stream stays false. Streaming would deliver the reply in fragments and
-	// the usage block last, which means the cost of a turn would be unknown
-	// until the end of it -- and a turn whose cost is unknown cannot be charged
-	// to a budget as it happens. The run loop has no use for partial text.
+	// Stream stays false for runs: streaming would deliver the reply in
+	// fragments and the usage block last, which means the cost of a turn would be
+	// unknown until the end of it -- and a turn whose cost is unknown cannot be
+	// charged to a budget as it happens. The run loop has no use for partial
+	// text. Only CompleteStream sets it, for a chat turn that asked to watch the
+	// model think; it still assembles the whole reply before returning.
 	Stream bool `json:"stream"`
+
+	// StreamOptions asks a streaming server to send the usage block last.
+	StreamOptions *streamOptions `json:"stream_options,omitempty"`
+}
+
+type streamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
+}
+
+// streamChunk is one server-sent event of a streamed completion. Reasoning
+// arrives as reasoning_content (DeepSeek and kin) or reasoning (OpenRouter).
+type streamChunk struct {
+	ID      string `json:"id"`
+	Model   string `json:"model"`
+	Choices []struct {
+		Delta struct {
+			Content          *string `json:"content"`
+			ReasoningContent string  `json:"reasoning_content"`
+			Reasoning        string  `json:"reasoning"`
+		} `json:"delta"`
+		FinishReason string `json:"finish_reason"`
+	} `json:"choices"`
+	Usage *usage     `json:"usage"`
+	Error *wireError `json:"error"`
 }
 
 type chatMessage struct {

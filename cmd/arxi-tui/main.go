@@ -99,14 +99,10 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
 
   { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
 
-  { "id": "working", "type": "row", "when": "agent.working", "children": [
-    { "id": "working_spin", "type": "spinner", "bind": "agent.working", "style": {"style": "dim"} },
-    { "type": "text", "text": " working", "style": {"style": "dim"} } ] },
-
   { "id": "thinking", "type": "marquee", "when": "agent.working",
-    "bind": "thinking.text",
-    "prefix": { "text": "• Thinking · ", "style": {"style": "dim"} },
-    "suffix": { "bind": "usage.delta", "style": {"style": "dim"} } },
+    "bind": "thinking.text", "style": {"style": "dim"},
+    "prefix": { "bind": "host.thinking" },
+    "scroll": { "speed": 1 } },
 
   { "id": "input_gap_top", "type": "text", "text": "" },
 
@@ -879,6 +875,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// lastKey is when the user last pressed a key; see caretLit.
 	var lastKey time.Time
 
+	// turnStart is when the turn now in flight began, as the Thinking line counts
+	// it: set on the first frame that finds the agent working, cleared on the
+	// first that does not. The fold cannot hold it (it knows no wall time), so it
+	// lives here with the other per-frame host state.
+	var turnStart time.Time
+
 	repaint := func() {
 		state := fold.Fold(collected)
 		state.UserInput = input // view state: the host owns the input buffer
@@ -1017,6 +1019,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// host.cwd / host.effort: the working directory and the thinking level, shown
 		// in the bottom bar. They (and the model name) are blanked while the slash menu is
 		// open, like the actor above, so the bar carries the menu hint alone.
+		if state.AgentWorking {
+			if turnStart.IsZero() {
+				turnStart = time.Now()
+			}
+			state.HostThinking = thinkingLabel(time.Since(turnStart))
+		} else {
+			turnStart = time.Time{}
+		}
 		if state.SlashActive {
 			state.HostEffort, state.HostCwd, state.HostMode, state.ModelName = "", "", "", ""
 		} else {
@@ -1109,7 +1119,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// would otherwise freeze the block on whichever half it last painted.
 		emitFrame(tty, frame, theme, h, caretState, caretLit(time.Now(), lastKey))
 		armTicker()
-		armBlink(!frame.Cursor.Hidden)
+		// The Thinking line counts seconds, so the loop must wake while a turn is
+		// in flight even when the caret is off screen: the blink ticker is the
+		// slowest tick that still moves a seconds counter on time.
+		armBlink(!frame.Cursor.Hidden || state.AgentWorking)
 	}
 
 	repaint()
@@ -2616,4 +2629,15 @@ func shortCwd(p string) string {
 		return "…" + string(r[len(r)-keep+1:])
 	}
 	return p
+}
+
+// thinkingLabel is the Thinking line's lead: "• Thinking (3s) " while a turn is
+// in flight, "• Thinking (1m 5s) " once it passes a minute. The trailing space
+// separates it from the model's own words that scroll after it.
+func thinkingLabel(d time.Duration) string {
+	secs := int(d.Seconds())
+	if secs < 60 {
+		return fmt.Sprintf("• Thinking (%ds) ", secs)
+	}
+	return fmt.Sprintf("• Thinking (%dm %ds) ", secs/60, secs%60)
 }
