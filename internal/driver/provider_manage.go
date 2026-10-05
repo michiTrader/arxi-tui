@@ -182,6 +182,25 @@ type ChatSendParams struct {
 	// ErrToolsUnsupported, so the caller can say so and ask again without it.
 	Workdir string
 	OnTool  func(ToolCall)
+	// Edits lets the model change files in Workdir: "deny" (the default, it may
+	// only look), "ask" (every change is put to OnApproval first) or "allow".
+	// A core that does not know the parameter makes the call fail with
+	// ErrEditsUnsupported.
+	Edits string
+	// OnApproval is asked about each change when Edits is "ask", and blocks the
+	// turn until it answers. It must return false when ctx ends. With no
+	// OnApproval every change is declined.
+	OnApproval func(ctx context.Context, a Approval) bool
+}
+
+// Approval is a change the model wants to make and the core is holding until the
+// user decides. Diff is a ready-to-show line diff.
+type Approval struct {
+	CallID  string
+	Name    string
+	Arg     string
+	Summary string
+	Diff    string
 }
 
 // ToolCall is one tool the core ran for the model. OK is false when the tool
@@ -194,7 +213,12 @@ type ToolCall struct {
 	OK      bool
 	Summary string
 	Output  string
+	// Diff is the change a write or edit made; empty for the other tools.
+	Diff string
 }
+
+// ErrEditsUnsupported is returned when the core is too old to let the model change files.
+var ErrEditsUnsupported = errors.New("this arxi core cannot let the model change files (it does not know edits)")
 
 // ErrToolsUnsupported is returned when the core is too old to give the model tools.
 var ErrToolsUnsupported = errors.New("this arxi core cannot give the model tools (it does not know workdir)")
@@ -234,6 +258,9 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 	if p.Workdir != "" {
 		params["workdir"] = p.Workdir
 	}
+	if p.Edits != "" && p.Workdir != "" {
+		params["edits"] = p.Edits
+	}
 	var r ChatSendResult
 	if p.OnThinking == nil && p.Workdir == "" {
 		if err := d.call(ctx, "chat-send", "chat.send", params, &r); err != nil {
@@ -244,18 +271,20 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 	if p.OnThinking != nil {
 		params["stream_thinking"] = true
 	}
-	err := d.callWatching(ctx, "chat-send", "chat.send", params, &r, p.OnThinking, p.OnTool)
+	err := d.callWatching(ctx, "chat-send", "chat.send", params, &r, p.OnThinking, p.OnTool, p.OnApproval)
 	var ref *Refusal
 	if errors.As(err, &ref) && ref.Code == "bad_params" {
 		switch {
 		case strings.Contains(ref.Message, "workdir"):
 			return nil, fmt.Errorf("%w: %s", ErrToolsUnsupported, ref.Message)
+		case strings.Contains(ref.Message, "edits"):
+			return nil, fmt.Errorf("%w: %s", ErrEditsUnsupported, ref.Message)
 		case strings.Contains(ref.Message, "stream_thinking"):
 			// An older core refuses the parameter it does not know. The turn it
 			// would have streamed is simply asked again the plain way.
 			delete(params, "stream_thinking")
 			if p.Workdir != "" {
-				err = d.callWatching(ctx, "chat-send", "chat.send", params, &r, nil, p.OnTool)
+				err = d.callWatching(ctx, "chat-send", "chat.send", params, &r, nil, p.OnTool, p.OnApproval)
 			} else {
 				err = d.call(ctx, "chat-send", "chat.send", params, &r)
 			}
@@ -269,10 +298,11 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 
 // callWatching is call for a request the core answers with notifications first.
 // A line with a type and no id is a notification: chat.thinking goes to
-// onThinking, chat.tool to onTool, and every other kind is skipped. Either
-// callback may be nil. The first line carrying an id
-// is the response.
-func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params map[string]any, out any, onThinking func(string), onTool func(ToolCall)) error {
+// onThinking, chat.tool to onTool, chat.approval to onApproval (whose answer goes
+// back as a chat.decision line while the turn waits), and every other kind is
+// skipped. Any callback may be nil; with no onApproval every change is declined.
+// The first line carrying an id is the response.
+func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params map[string]any, out any, onThinking func(string), onTool func(ToolCall), onApproval func(context.Context, Approval) bool) error {
 	req := protoRequest{ID: id, Type: verb, Params: params}
 
 	d.mu.Lock()
@@ -296,6 +326,7 @@ func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params
 			OK      bool   `json:"ok"`
 			Summary string `json:"summary"`
 			Output  string `json:"output"`
+			Diff    string `json:"diff"`
 		}
 		if err := json.Unmarshal([]byte(line), &head); err != nil {
 			return fmt.Errorf("ndjson: response is not JSON: %w", err)
@@ -305,7 +336,12 @@ func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params
 			case head.Type == "chat.thinking" && head.Text != "" && onThinking != nil:
 				onThinking(head.Text)
 			case head.Type == "chat.tool" && onTool != nil:
-				onTool(ToolCall{ID: head.CallID, Name: head.Name, Arg: head.Arg, OK: head.OK, Summary: head.Summary, Output: head.Output})
+				onTool(ToolCall{ID: head.CallID, Name: head.Name, Arg: head.Arg, OK: head.OK, Summary: head.Summary, Output: head.Output, Diff: head.Diff})
+			case head.Type == "chat.approval":
+				allow := onApproval != nil && onApproval(ctx, Approval{CallID: head.CallID, Name: head.Name, Arg: head.Arg, Summary: head.Summary, Diff: head.Diff})
+				if err := d.enc.Encode(map[string]any{"type": "chat.decision", "call_id": head.CallID, "allow": allow}); err != nil {
+					return fmt.Errorf("ndjson: answer %s: %w", head.CallID, err)
+				}
 			}
 			continue
 		}
