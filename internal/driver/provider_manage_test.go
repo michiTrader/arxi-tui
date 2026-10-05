@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -207,5 +208,69 @@ func TestChatSendWatchedRefusalKeepsTheCoresWords(t *testing.T) {
 	ref, ok := err.(*Refusal)
 	if !ok || !strings.Contains(ref.Message, "the provider is down") {
 		t.Fatalf("err = %#v", err)
+	}
+}
+
+func TestChatSendRelaysToolCallsInOrderAndAsksForTheFolder(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"type":"chat.tool","call_id":"c1","name":"list","arg":".","ok":true,"summary":"Listed 2 entries","output":"a\nb"}`,
+		`{"type":"chat.tool","call_id":"c2","name":"read","arg":".env","ok":false,"summary":"looks like it holds secrets"}`,
+		`{"id":"chat-send","ok":true,"result":{"text":"done","model":"m","provider":"p"}}`)
+	var got []ToolCall
+	res, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "look", Workdir: "/proj", OnTool: func(c ToolCall) { got = append(got, c) }})
+	if err != nil || res.Text != "done" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if len(got) != 2 || got[0].Name != "list" || got[0].ID != "c1" || !got[0].OK || got[0].Output != "a\nb" ||
+		got[1].Name != "read" || got[1].OK || got[1].Summary != "looks like it holds secrets" {
+		t.Fatalf("tool calls = %+v", got)
+	}
+	if !strings.Contains(sent.String(), `"workdir":"/proj"`) || strings.Contains(sent.String(), "stream_thinking") {
+		t.Fatalf("request = %s", sent.String())
+	}
+}
+
+func TestChatSendWithToolsAndThinkingAsksForBoth(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"type":"chat.thinking","text":"hm"}`,
+		`{"type":"chat.tool","call_id":"c1","name":"grep","arg":"x","ok":true,"summary":"No matches"}`,
+		`{"id":"chat-send","ok":true,"result":{"text":"done"}}`)
+	var think []string
+	var tools int
+	_, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj",
+		OnThinking: func(f string) { think = append(think, f) }, OnTool: func(ToolCall) { tools++ }})
+	if err != nil || len(think) != 1 || tools != 1 {
+		t.Fatalf("err=%v think=%v tools=%d", err, think, tools)
+	}
+	if !strings.Contains(sent.String(), `"stream_thinking":true`) || !strings.Contains(sent.String(), `"workdir":"/proj"`) {
+		t.Fatalf("request = %s", sent.String())
+	}
+}
+
+func TestChatSendAgainstACoreWithoutToolsSaysSo(t *testing.T) {
+	d := session(t, `{"id":"chat-send","ok":false,"error":{"code":"bad_params","message":"unknown parameter workdir for chat.send"}}`)
+	_, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj"})
+	if !errors.Is(err, ErrToolsUnsupported) {
+		t.Fatalf("err = %v; want ErrToolsUnsupported", err)
+	}
+}
+
+func TestChatSendWithToolsFallsBackFromStreamingKeepingTheFolder(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"id":"chat-send","ok":false,"error":{"code":"bad_params","message":"unknown parameter stream_thinking for chat.send"}}`,
+		`{"type":"chat.tool","call_id":"c1","name":"list","arg":".","ok":true,"summary":"Listed 1 entry"}`,
+		`{"id":"chat-send","ok":true,"result":{"text":"plain"}}`)
+	var tools int
+	res, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj",
+		OnThinking: func(string) {}, OnTool: func(ToolCall) { tools++ }})
+	if err != nil || res.Text != "plain" || tools != 1 {
+		t.Fatalf("res=%+v err=%v tools=%d", res, err, tools)
+	}
+	lines := strings.Split(strings.TrimSpace(sent.String()), "\n")
+	if len(lines) != 2 || strings.Contains(lines[1], "stream_thinking") || !strings.Contains(lines[1], `"workdir":"/proj"`) {
+		t.Fatalf("the retry must keep the folder and drop the stream: %v", lines)
 	}
 }

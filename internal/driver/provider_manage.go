@@ -176,7 +176,28 @@ type ChatSendParams struct {
 	// returns the whole answer. A core that does not know how to stream falls
 	// back to a plain call and never calls it.
 	OnThinking func(fragment string)
+	// Workdir, when set, lets the model look into that folder with read-only
+	// tools. Each call the core runs on its behalf is handed to OnTool. A core
+	// that does not know the parameter makes the call fail with
+	// ErrToolsUnsupported, so the caller can say so and ask again without it.
+	Workdir string
+	OnTool  func(ToolCall)
 }
+
+// ToolCall is one tool the core ran for the model. OK is false when the tool
+// refused or failed; Summary then says why. Output is the (capped) text the
+// model was given.
+type ToolCall struct {
+	ID      string
+	Name    string
+	Arg     string
+	OK      bool
+	Summary string
+	Output  string
+}
+
+// ErrToolsUnsupported is returned when the core is too old to give the model tools.
+var ErrToolsUnsupported = errors.New("this arxi core cannot give the model tools (it does not know workdir)")
 
 // ChatSendResult is the model's answer with the usage the core measured.
 type ChatSendResult struct {
@@ -210,21 +231,35 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 		}
 		params["history"] = string(b)
 	}
+	if p.Workdir != "" {
+		params["workdir"] = p.Workdir
+	}
 	var r ChatSendResult
-	if p.OnThinking == nil {
+	if p.OnThinking == nil && p.Workdir == "" {
 		if err := d.call(ctx, "chat-send", "chat.send", params, &r); err != nil {
 			return nil, err
 		}
 		return &r, nil
 	}
-	params["stream_thinking"] = true
-	err := d.callWatching(ctx, "chat-send", "chat.send", params, &r, p.OnThinking)
+	if p.OnThinking != nil {
+		params["stream_thinking"] = true
+	}
+	err := d.callWatching(ctx, "chat-send", "chat.send", params, &r, p.OnThinking, p.OnTool)
 	var ref *Refusal
-	if errors.As(err, &ref) && ref.Code == "bad_params" && strings.Contains(ref.Message, "stream_thinking") {
-		// An older core refuses the parameter it does not know. The turn it would
-		// have streamed is simply asked again the plain way.
-		delete(params, "stream_thinking")
-		err = d.call(ctx, "chat-send", "chat.send", params, &r)
+	if errors.As(err, &ref) && ref.Code == "bad_params" {
+		switch {
+		case strings.Contains(ref.Message, "workdir"):
+			return nil, fmt.Errorf("%w: %s", ErrToolsUnsupported, ref.Message)
+		case strings.Contains(ref.Message, "stream_thinking"):
+			// An older core refuses the parameter it does not know. The turn it
+			// would have streamed is simply asked again the plain way.
+			delete(params, "stream_thinking")
+			if p.Workdir != "" {
+				err = d.callWatching(ctx, "chat-send", "chat.send", params, &r, nil, p.OnTool)
+			} else {
+				err = d.call(ctx, "chat-send", "chat.send", params, &r)
+			}
+		}
 	}
 	if err != nil {
 		return nil, err
@@ -233,10 +268,11 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 }
 
 // callWatching is call for a request the core answers with notifications first.
-// A line with a type and no id is a notification: a chat.thinking one is handed
-// to onThinking and every other kind is skipped. The first line carrying an id
+// A line with a type and no id is a notification: chat.thinking goes to
+// onThinking, chat.tool to onTool, and every other kind is skipped. Either
+// callback may be nil. The first line carrying an id
 // is the response.
-func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params map[string]any, out any, onThinking func(string)) error {
+func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params map[string]any, out any, onThinking func(string), onTool func(ToolCall)) error {
 	req := protoRequest{ID: id, Type: verb, Params: params}
 
 	d.mu.Lock()
@@ -251,16 +287,25 @@ func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params
 			return fmt.Errorf("ndjson: read response: %w", err)
 		}
 		var head struct {
-			ID   string `json:"id"`
-			Type string `json:"type"`
-			Text string `json:"text"`
+			ID      string `json:"id"`
+			Type    string `json:"type"`
+			Text    string `json:"text"`
+			CallID  string `json:"call_id"`
+			Name    string `json:"name"`
+			Arg     string `json:"arg"`
+			OK      bool   `json:"ok"`
+			Summary string `json:"summary"`
+			Output  string `json:"output"`
 		}
 		if err := json.Unmarshal([]byte(line), &head); err != nil {
 			return fmt.Errorf("ndjson: response is not JSON: %w", err)
 		}
 		if head.ID == "" && head.Type != "" {
-			if head.Type == "chat.thinking" && head.Text != "" {
+			switch {
+			case head.Type == "chat.thinking" && head.Text != "" && onThinking != nil:
 				onThinking(head.Text)
+			case head.Type == "chat.tool" && onTool != nil:
+				onTool(ToolCall{ID: head.CallID, Name: head.Name, Arg: head.Arg, OK: head.OK, Summary: head.Summary, Output: head.Output})
 			}
 			continue
 		}
