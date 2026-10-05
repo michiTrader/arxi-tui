@@ -33,7 +33,13 @@ type fakeLLM struct {
 	status   int
 	streams  int      // chat requests that asked for server-sent events
 	think    []string // reasoning fragments a streamed answer sends first
+	script   []scripted
+	tools    [][]string // names of the tools offered with each chat request
 }
+
+// scripted is one step of a tool conversation: while steps remain, the model
+// answers a request by asking for the named tool; afterwards it answers text.
+type scripted struct{ name, args, text string }
 
 func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 	t.Helper()
@@ -67,10 +73,24 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 				Messages        []map[string]any `json:"messages"`
 				ReasoningEffort string           `json:"reasoning_effort"`
 				Stream          bool             `json:"stream"`
+				Tools           []struct {
+					Function struct {
+						Name string `json:"name"`
+					} `json:"function"`
+				} `json:"tools"`
 			}
 			json.NewDecoder(r.Body).Decode(&body)
 			f.messages = append(f.messages, body.Messages)
 			f.efforts = append(f.efforts, body.ReasoningEffort)
+			var offered []string
+			for _, tl := range body.Tools {
+				offered = append(offered, tl.Function.Name)
+			}
+			f.tools = append(f.tools, offered)
+			if step := len(f.tools) - 1; step < len(f.script) {
+				f.answerScripted(w, f.script[step], body.Stream)
+				return
+			}
 			last, _ := body.Messages[len(body.Messages)-1]["content"].(string)
 			if body.Stream {
 				f.streams++
@@ -95,6 +115,41 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 	}))
 	t.Cleanup(f.srv.Close)
 	return f
+}
+
+// answerScripted asks for one tool, in the plain shape or as the fragments a
+// stream sends, so both wires are exercised.
+func (f *fakeLLM) answerScripted(w http.ResponseWriter, st scripted, stream bool) {
+	id := "call_" + st.name
+	if !stream {
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": "x",
+			"choices": []any{map[string]any{"index": 0, "finish_reason": "tool_calls", "message": map[string]any{
+				"role": "assistant", "content": nil,
+				"tool_calls": []any{map[string]any{"id": id, "type": "function", "function": map[string]any{"name": st.name, "arguments": st.args}}},
+			}}},
+			"usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 5},
+		})
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	send := func(v any) {
+		b, _ := json.Marshal(v)
+		io.WriteString(w, "data: "+string(b)+"\n\n")
+	}
+	delta := func(d map[string]any, finish string) map[string]any {
+		c := map[string]any{"delta": d}
+		if finish != "" {
+			c["finish_reason"] = finish
+		}
+		return map[string]any{"choices": []any{c}}
+	}
+	half := len(st.args) / 2
+	send(delta(map[string]any{"tool_calls": []any{map[string]any{"index": 0, "id": id, "type": "function", "function": map[string]any{"name": st.name, "arguments": ""}}}}, ""))
+	send(delta(map[string]any{"tool_calls": []any{map[string]any{"index": 0, "function": map[string]any{"arguments": st.args[:half]}}}}, ""))
+	send(delta(map[string]any{"tool_calls": []any{map[string]any{"index": 0, "function": map[string]any{"arguments": st.args[half:]}}}}, "tool_calls"))
+	send(map[string]any{"choices": []any{}, "usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 5}})
+	io.WriteString(w, "data: [DONE]\n\n")
 }
 
 func (f *fakeLLM) url() string { return f.srv.URL + "/v1" }
