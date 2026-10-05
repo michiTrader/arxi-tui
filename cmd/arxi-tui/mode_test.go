@@ -109,3 +109,19 @@ func TestLoopModeShowsInTheBarAndShiftTabCyclesIt(t *testing.T) {
 		t.Errorf("the bar still says idle:\n%s", out)
 	}
 }
+
+func TestCtrlOIsTheExpandKeyAndNothingElseIs(t *testing.T) {
+	ctrl := func(r rune) term.Key { return term.Key{Type: term.KeyRunes, Runes: []rune{r}, Mod: term.ModCtrl} }
+	if !isCtrlO(ctrl('o')) {
+		t.Error("ctrl+o must expand")
+	}
+	for _, k := range []term.Key{
+		{Type: term.KeyRunes, Runes: []rune{'o'}},
+		ctrl('c'), ctrl('p'),
+		{Type: term.KeyEnter},
+	} {
+		if isCtrlO(k) {
+			t.Errorf("%+v is not ctrl+o", k)
+		}
+	}
+}

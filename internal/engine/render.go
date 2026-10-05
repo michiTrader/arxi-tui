@@ -134,6 +134,12 @@ type Renderer struct {
 	FocusRowNode  string
 	FocusRowIndex int
 
+	// ExpandTools shows tool output and diffs in full instead of cut to a few rows
+	// with a count of what is hidden. It is host view state (Ctrl+O), fed in per
+	// repaint like ChatScroll: the fold projects content, never how much of it the
+	// reader asked to see. The zero value is the collapsed view every golden uses.
+	ExpandTools bool
+
 	// PluginValues is the host-owned plugin bind snapshot, fed in per repaint the
 	// way AnimTicks and ChatScroll are: the loop reads a snapshot of the
 	// ext.PluginStore once per frame and hands it here (I3, ADR-0007 §I-D). It maps
@@ -841,7 +847,7 @@ var toolTitles = map[string]string{"list": "List", "read": "Read", "grep": "Sear
 
 // toolLines draws one tool line: "● Read(main.go)" and, under it, "  └ Read 12
 // lines". A long argument wraps under itself, and so does a long result.
-func toolLines(h fold.ChatLine, width int) []ui.Line {
+func toolLines(h fold.ChatLine, width int, expand bool) []ui.Line {
 	title := toolTitles[h.Tool]
 	if title == "" {
 		title = h.Tool
@@ -888,6 +894,10 @@ func toolLines(h fold.ChatLine, width int) []ui.Line {
 		// approved from a summary is not really approved.
 		rows = maxApprovalRows
 	}
+	if expand {
+		rows = 1 << 30
+	}
+	out = append(out, outputLines(h, hangResult, width, expand)...)
 	return append(out, diffLines(h.ToolDiff, hangResult, width, rows)...)
 }
 
@@ -896,14 +906,58 @@ const maxApprovalRows = 40
 
 // approvalLines is a change waiting for the user: the tool line it will become, its
 // diff, and the question with the keys that answer it.
-func approvalLines(h fold.ChatLine, width int) []ui.Line {
-	out := toolLines(h, width)
+func approvalLines(h fold.ChatLine, width int, expand bool) []ui.Line {
+	out := toolLines(h, width, expand)
 	hang := strings.Repeat(" ", ansi.StringWidth(toolDot))
 	question := "Allow this change?"
 	if h.Tool == "run" {
 		question = "Allow this command?"
 	}
 	return append(out, ui.Line{{Text: ansi.Truncate(hang+question+"  y yes · n no (Esc)", width, "…"), Style: askToken}})
+}
+
+// maxOutputRows is how many rows of a command's output the conversation shows before
+// it counts the rest. A build prints hundreds of lines and the reader wants the
+// outcome, so the default is a glimpse; Ctrl+O opens the whole of it.
+const maxOutputRows = 5
+
+// expandHint is what a cut block says it can become.
+const expandHint = " (ctrl+o to expand)"
+
+// outputLines draws what a command printed, under its outcome. Only a command's
+// output is drawn: the text a read or a search returns is the file, which the model
+// needed and the user already has.
+func outputLines(h fold.ChatLine, indent string, width int, expand bool) []ui.Line {
+	if h.Tool != "run" || h.ToolOutput == "" {
+		return nil
+	}
+	body := h.ToolOutput
+	// The first line is the exit code, which the outcome line already says.
+	if strings.HasPrefix(body, "exit code ") {
+		if i := strings.IndexByte(body, '\n'); i >= 0 {
+			body = body[i+1:]
+		} else {
+			body = ""
+		}
+	}
+	body = strings.TrimRight(strings.ReplaceAll(body, "\r", ""), "\n ")
+	if body == "" || body == "(no output)" {
+		return nil
+	}
+	rows := strings.Split(strings.ReplaceAll(body, "\t", "    "), "\n")
+	hidden := 0
+	if !expand && len(rows) > maxOutputRows {
+		hidden = len(rows) - maxOutputRows
+		rows = rows[:maxOutputRows]
+	}
+	var out []ui.Line
+	for _, row := range rows {
+		out = append(out, ui.Line{{Text: ansi.Truncate(indent+row, width, "…"), Style: toolResultToken}})
+	}
+	if hidden > 0 {
+		out = append(out, ui.Line{{Text: ansi.Truncate(indent+fmt.Sprintf("… +%d lines%s", hidden, expandHint), width, "…"), Style: diffCtxToken}})
+	}
+	return out
 }
 
 // maxDiffRows is how many rows of a change the conversation shows; the rest is
@@ -938,7 +992,7 @@ func diffLines(diff, indent string, width, maxRows int) []ui.Line {
 		out = append(out, ui.Line{{Text: ansi.Truncate(indent+row, width, "…"), Style: style}})
 	}
 	if hidden > 0 {
-		out = append(out, ui.Line{{Text: ansi.Truncate(indent+fmt.Sprintf("… +%d more lines", hidden), width, "…"), Style: diffCtxToken}})
+		out = append(out, ui.Line{{Text: ansi.Truncate(indent+fmt.Sprintf("… +%d more lines%s", hidden, expandHint), width, "…"), Style: diffCtxToken}})
 	}
 	return out
 }
@@ -1030,12 +1084,12 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(errorTurnMarker)), Style: errorTurnToken}}
 			}
 			if h.Role == "approval" {
-				lines = append(lines, approvalLines(h, r.Width)...)
+				lines = append(lines, approvalLines(h, r.Width, r.ExpandTools)...)
 				lines = append(lines, ui.Line{})
 				continue
 			}
 			if h.Role == "tool" {
-				lines = append(lines, toolLines(h, r.Width)...)
+				lines = append(lines, toolLines(h, r.Width, r.ExpandTools)...)
 				// Calls of one answer stack; the gap comes after the last one.
 				if i+1 >= len(state.History) || state.History[i+1].Role != "tool" {
 					lines = append(lines, ui.Line{})

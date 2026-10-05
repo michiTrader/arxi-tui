@@ -624,6 +624,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// turns. The renderer clamps it to the frame's line count and reports the
 	// ceiling back through r.ChatScrollMax, which the repaint below pins it to.
 	chatScroll := 0
+	// expandTools is Ctrl+O: tool output and diffs in full instead of cut. It is a
+	// view setting like the scroll position, so /clear leaves it alone.
+	expandTools := false
 	// slashSel is the menu's highlighted row. The host owns it across frames
 	// the way it owns the input buffer: the fold is rebuilt per frame and
 	// carries it, but the state of the menu is not the scene's business.
@@ -1080,6 +1083,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		r.AnimTicks = clock.ticks()
 		r.AnimPhase = clock.phases()
 		r.ChatScroll = chatScroll
+		r.ExpandTools = expandTools
 		// While a consent screen is up it replaces the scene on display: the modal
 		// owns the whole frame so the identity the user is judging is the only thing
 		// they see, and a keypress cannot be split between the prompt and the scene
@@ -1242,6 +1246,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// screen on y/r/n/Esc and leaving it standing otherwise.
 						panicGesture.Reset()
 						bundleMod.handleKey(ev.Key)
+					} else if isCtrlO(ev.Key) {
+						// Show the cut part of a command's output or of a change, or cut it
+						// again. It sits after the consent screens (which own every key)
+						// and before the approval prompt, so a long change can be opened
+						// in full while the question is still waiting.
+						panicGesture.Reset()
+						expandTools = !expandTools
 					} else if ap, ok := drv.(approver); ok && ap.PendingApproval() &&
 						ev.Key.Type != term.KeyWheelUp && ev.Key.Type != term.KeyWheelDown {
 						// The model wants to change a file and the turn is waiting for
@@ -2267,6 +2278,14 @@ func applyViewState(hidden map[string]bool, op *patch.ViewStateOp) {
 	for _, id := range op.Show {
 		delete(hidden, id)
 	}
+}
+
+// isCtrlO reports whether a key event is Ctrl-O (0x0f), which expands or cuts the
+// output of the tools in the conversation.
+func isCtrlO(k term.Key) bool {
+	return k.Type == term.KeyRunes &&
+		len(k.Runes) == 1 && k.Runes[0] == 'o' &&
+		k.Mod&term.ModCtrl != 0
 }
 
 // isCtrlC reports whether a key event is Ctrl-C. The decoder reports control
