@@ -565,7 +565,7 @@ func handleLineSession(ctx context.Context, session protoSession, line string) p
 	// handler, with the thinking sent as notifications while it runs. It needs a
 	// live connection to write them to; without one it is an ordinary turn.
 	if req.Type == "chat.send" && (boolParam(req.Params, "stream_thinking") || stringParam(req.Params, "workdir") != "") && session.streams != nil {
-		res, err := handleChatSendThinking(session.streams.w, req.Params)
+		res, err := handleChatSendThinking(session.streams, req.Params)
 		if err != nil {
 			return protoResponse{ID: req.ID, OK: false, Error: &protoError{Code: errFailed, Message: err.Error()}}
 		}

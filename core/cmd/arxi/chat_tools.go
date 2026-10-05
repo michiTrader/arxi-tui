@@ -22,20 +22,47 @@ const (
 
 type toolsKey struct{}
 
+// What a turn may do to files without being stopped: the core's own three policies.
+// "deny" (the default) gives the model the read tools only.
+const (
+	editsDeny  = "deny"
+	editsAsk   = "ask"
+	editsAllow = "allow"
+)
+
 // chatToolbox is what a chat turn carries when the caller gave it a folder: the
-// read-only tools and where to report each call.
+// tools, where to report each call, and what to do about a change to a file.
 type chatToolbox struct {
 	box    *chattools.Toolbox
 	report func(chatToolNotification)
+	// edits is the policy for write and edit: deny (not offered), ask (the user
+	// sees the diff and decides first) or allow.
+	edits string
+	// ask puts a change to the user. It is nil when the connection cannot ask, and
+	// a change that needs asking is then refused.
+	ask func(chatApprovalNotification) (bool, error)
 }
 
-// withTools returns a context whose chat turn may look into dir.
-func withTools(ctx context.Context, dir string, report func(chatToolNotification)) (context.Context, error) {
+// withTools returns a context whose chat turn may look into dir, and change files
+// there as far as edits (deny, ask or allow) permits. ask is how a change reaches the
+// user under "ask".
+func withTools(ctx context.Context, dir, edits string, ask func(chatApprovalNotification) (bool, error),
+	report func(chatToolNotification)) (context.Context, error) {
+	switch edits {
+	case "", editsDeny:
+		edits = editsDeny
+	case editsAsk, editsAllow:
+	default:
+		return ctx, badInvocation{fmt.Errorf("edits must be deny, ask or allow, not %q", edits)}
+	}
 	box, err := chattools.New(dir)
 	if err != nil {
 		return ctx, badInvocation{fmt.Errorf("the working folder cannot be used: %w", err)}
 	}
-	return context.WithValue(ctx, toolsKey{}, &chatToolbox{box: box, report: report}), nil
+	if edits != editsDeny {
+		box = box.WithEdits()
+	}
+	return context.WithValue(ctx, toolsKey{}, &chatToolbox{box: box, report: report, edits: edits, ask: ask}), nil
 }
 
 func toolsFrom(ctx context.Context) *chatToolbox {
@@ -54,22 +81,41 @@ type chatToolNotification struct {
 	OK      bool   `json:"ok"`
 	Summary string `json:"summary"`
 	Output  string `json:"output,omitempty"`
+	// Diff is, for a change to a file, what changed (see chattools.Result.Diff).
+	Diff string `json:"diff,omitempty"`
 }
 
 // toolsHint tells the model what it can do and how paths are read.
-func toolsHint(root string) string {
-	return "You can look at the user's project with the tools list, read and grep. " +
+func toolsHint(root, edits string) string {
+	h := "You can look at the user's project with the tools list, read and grep. " +
 		"Paths are relative to the project root (" + filepath.Base(root) + "). " +
 		"Look before you answer questions about the code, and do not guess file contents."
+	if edits != editsDeny {
+		h += " You can change files with edit (replace text that appears once) and write (create or replace a file); " +
+			"read a file before you edit it. The user may decline a change: if so, do not try the same change again, " +
+			"say what you would have done and ask what they prefer."
+	}
+	return h
+}
+
+// definitions are the tools offered to the model under this toolbox's policy.
+func (tb *chatToolbox) definitions() []turn.ToolDefinition {
+	defs := chattools.Definitions()
+	if tb.edits != editsDeny {
+		defs = append(defs, chattools.EditDefinitions()...)
+	}
+	out := make([]turn.ToolDefinition, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, turn.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: d.Schema})
+	}
+	return out
 }
 
 // runToolLoop asks the model, runs the tools it requests, and asks again until
 // it answers in plain text. complete performs one request (with its retries).
 func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 	complete func(turn.Request) (turn.Response, error)) (turn.Response, error) {
-	for _, d := range chattools.Definitions() {
-		req.Tools = append(req.Tools, turn.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: d.Schema})
-	}
+	req.Tools = append(req.Tools, tb.definitions()...)
 	for round := 0; ; round++ {
 		if round >= maxToolRounds {
 			req.Tools = nil
@@ -97,33 +143,72 @@ func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 		req.Messages = append(req.Messages, turn.Message{Role: turn.RoleAssistant, Content: resp.Content})
 		var results []turn.ContentBlock
 		for _, call := range calls {
-			results = append(results, turn.ContentBlock{Type: turn.BlockToolResult, ToolResult: runOneTool(tb, call)})
+			res, err := runOneTool(tb, call)
+			if err != nil {
+				// The user could not be asked (the connection is gone): the turn is over.
+				return resp, err
+			}
+			results = append(results, turn.ContentBlock{Type: turn.BlockToolResult, ToolResult: res})
 		}
 		req.Messages = append(req.Messages, turn.Message{Role: turn.RoleTool, Content: results})
 	}
 }
 
-// runOneTool runs a single call. A failure is not fatal: the model reads it as
-// the result, so it can try another path or tell the user.
-func runOneTool(tb *chatToolbox, call *turn.ToolCall) *turn.ToolResult {
-	res, err := tb.box.Run(call.Name, call.Arguments)
-	n := chatToolNotification{Type: "chat.tool", CallID: call.ID, Name: call.Name, Arg: res.Arg}
-	if n.Arg == "" {
-		n.Arg = argOf(call.Arguments)
-	}
+// runOneTool runs a single call. A failure is not fatal: the model reads it as the
+// result, so it can try another path or tell the user. The one error returned is
+// fatal: a change that had to be put to the user, who could not be reached.
+func runOneTool(tb *chatToolbox, call *turn.ToolCall) (*turn.ToolResult, error) {
+	n := chatToolNotification{Type: "chat.tool", CallID: call.ID, Name: call.Name, Arg: argOf(call.Arguments)}
 	out := &turn.ToolResult{CallID: call.ID}
-	if err != nil {
+	fail := func(msg string) (*turn.ToolResult, error) {
 		out.IsError = true
-		out.Content = []turn.ContentBlock{{Type: turn.BlockText, Text: "error: " + err.Error()}}
-		n.Summary = err.Error()
-	} else {
-		out.Content = []turn.ContentBlock{{Type: turn.BlockText, Text: res.Text}}
-		n.OK, n.Summary, n.Output = true, res.Summary, clip(res.Text, maxToolOutputEvent)
+		out.Content = []turn.ContentBlock{{Type: turn.BlockText, Text: "error: " + msg}}
+		n.Summary = msg
+		if tb.report != nil {
+			tb.report(n)
+		}
+		return out, nil
 	}
+
+	if chattools.Mutating(call.Name) {
+		if tb.edits == editsDeny {
+			return fail(call.Name + " is not available in this mode: the model may look at files but not change them")
+		}
+		prev, err := tb.box.Preview(call.Name, call.Arguments)
+		if err != nil {
+			return fail(err.Error())
+		}
+		n.Arg = prev.Arg
+		// A change that changes nothing needs no permission.
+		if tb.edits == editsAsk && prev.Diff != "" {
+			if tb.ask == nil {
+				return fail("this change needs the user's approval and this connection cannot ask for it, so it was not made")
+			}
+			allowed, err := tb.ask(chatApprovalNotification{
+				CallID: call.ID, Name: call.Name, Arg: prev.Arg, Summary: prev.Summary, Diff: prev.Diff,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if !allowed {
+				return fail("the user did not allow this change, so the file was not changed")
+			}
+		}
+	}
+
+	res, err := tb.box.Run(call.Name, call.Arguments)
+	if res.Arg != "" {
+		n.Arg = res.Arg
+	}
+	if err != nil {
+		return fail(err.Error())
+	}
+	out.Content = []turn.ContentBlock{{Type: turn.BlockText, Text: res.Text}}
+	n.OK, n.Summary, n.Output, n.Diff = true, res.Summary, clip(res.Text, maxToolOutputEvent), res.Diff
 	if tb.report != nil {
 		tb.report(n)
 	}
-	return out
+	return out, nil
 }
 
 // argOf picks the argument worth showing from a call's raw arguments.
