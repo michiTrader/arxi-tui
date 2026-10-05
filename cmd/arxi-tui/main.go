@@ -14,6 +14,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/michiTrader/arxi_tui/internal/defaultscene"
 	"io"
 	"os"
 	"os/exec"
@@ -155,8 +156,8 @@ func main() {
 	// scene; a path lets a user (or a tester) boot any document —
 	// testdata/ANIMATION.json to see the motion props, testdata/SUBAGENTS.json
 	// the row template, and so on — without editing the binary.
-	scenePath := flag.String("scene", "testdata/SOBRIA.json",
-		`scene document to boot (a file path); use -raw for the factory raw scene`)
+	scenePath := flag.String("scene", "",
+		`scene document to boot (a file path); by default the built-in sobria scene, which works from any folder; use -raw for the factory raw scene`)
 	// -raw is the start-time escape hatch invariant 6 names beside double Ctrl-C:
 	// it boots the factory raw scene regardless of -scene. It exists as its own
 	// flag because the documented spelling -scene "" is unreachable from
@@ -170,7 +171,14 @@ func main() {
 		fmt.Println(version)
 		return
 	}
-	scenePath0 := *scenePath
+	// With no -scene the built-in sobria scene boots, from any folder. An explicit
+	// -scene "" keeps its old meaning, the raw scene, as does -raw.
+	scenePath0 := builtinScene
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "scene" {
+			scenePath0 = *scenePath
+		}
+	})
 	if *raw {
 		scenePath0 = ""
 	}
@@ -2357,8 +2365,16 @@ func resolveStartScene(path string) (*scene.Document, string, error) {
 		doc, err := scene.ParseDocument([]byte(factoryRAW))
 		return doc, "", err
 	}
+	if path == builtinScene {
+		doc, err := scene.ParseNamed(defaultscene.Name, defaultscene.JSON)
+		return vetScene(defaultscene.Name, doc, err, factoryRAW)
+	}
 	return loadScene(path, factoryRAW)
 }
+
+// builtinScene stands for the scene compiled into the binary. It is not a path a
+// person could type (it holds a NUL), so it can never be mistaken for a file.
+const builtinScene = "\x00builtin"
 
 // loadScene reads a scene document from path, validates it, and falls back to
 // the factory RAW scene if the file is missing or fails to parse/validate.
@@ -2375,6 +2391,12 @@ func loadScene(path string, fallback string) (*scene.Document, string, error) {
 	// ParseFile carries the path into the error, so the notice addresses the
 	// file the user would open rather than the bytes the host happened to read.
 	doc, err := scene.ParseFile(path)
+	return vetScene(path, doc, err, fallback)
+}
+
+// vetScene is the rest of loadScene for a document already read (from disk or from
+// the binary): the same refusals, the same fallback, the same notice.
+func vetScene(path string, doc *scene.Document, err error, fallback string) (*scene.Document, string, error) {
 	if err != nil {
 		if os.IsNotExist(err) {
 			// A missing scene file is not a defect: the default install has
