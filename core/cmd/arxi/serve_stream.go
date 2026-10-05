@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"sync"
 
 	hostv1 "github.com/michiTrader/arxi/host/v1"
@@ -115,6 +118,9 @@ type connStreams struct {
 	ctx context.Context
 	w   *connWriter
 	wg  sync.WaitGroup
+	// src is the connection's reader. It is here, and not only in the loop, so a
+	// request that has to wait for the user's decision can read it (see ask).
+	src *lineSource
 
 	mu      sync.Mutex
 	pending []*subscriptionPump // registered, waiting for their ack to be written
@@ -169,4 +175,94 @@ func (c *connStreams) closeAll() {
 		_ = p.sub.Close()
 	}
 	c.wg.Wait()
+}
+
+// lineSource is the connection's reader: the loop takes its requests from it, and a
+// turn waiting for the user's decision takes the decision from it. Both run on the
+// loop's own goroutine, one at a time, so it needs no lock.
+type lineSource struct {
+	sc       *bufio.Scanner
+	deferred []sourceLine // requests that arrived while a decision was awaited
+	cur      sourceLine
+}
+
+// sourceLine is one line read, and how long the reader saw it to be (the loop
+// refuses a line over maxLineBytes).
+type sourceLine struct {
+	text string
+	size int
+}
+
+func newLineSource(sc *bufio.Scanner) *lineSource { return &lineSource{sc: sc} }
+
+// scan advances to the next request: first any that arrived while a decision was
+// awaited, in the order they came, then whatever the connection sends.
+func (s *lineSource) scan() bool {
+	if len(s.deferred) > 0 {
+		s.cur, s.deferred = s.deferred[0], s.deferred[1:]
+		return true
+	}
+	if !s.sc.Scan() {
+		return false
+	}
+	s.cur = sourceLine{text: s.sc.Text(), size: len(s.sc.Bytes())}
+	return true
+}
+
+// chatApprovalNotification asks the client whether the model may make a change. It
+// has a type and no id, like every notification; the client answers with a line
+// {"type":"chat.decision","call_id":...,"allow":true|false}.
+type chatApprovalNotification struct {
+	Type    string `json:"type"`
+	CallID  string `json:"call_id"`
+	Name    string `json:"name"`
+	Arg     string `json:"arg"`
+	Summary string `json:"summary"`
+	Diff    string `json:"diff,omitempty"`
+}
+
+// ask puts a question to the user through the client and waits for the answer.
+//
+// The loop answers requests strictly in order and is busy with the one that is
+// asking, so nothing else would read the connection meanwhile: this reads it. A line
+// that is the decision for this call ends the wait. Any other line is a request that
+// came early; it is kept and handled, in order, once the current one is answered. A
+// decision for some other call is stale and dropped, and one that does not say
+// allow or deny counts as a refusal: when in doubt a change is not made.
+//
+// If the connection ends first, nothing was allowed and the error says so. A client
+// that cancels a turn closes its connection, which is what unblocks this; there is
+// no context to pass because a read on the connection cannot be interrupted any
+// other way.
+func (c *connStreams) ask(n chatApprovalNotification) (bool, error) {
+	if c == nil || c.src == nil {
+		return false, fmt.Errorf("this connection cannot ask the user")
+	}
+	n.Type = "chat.approval"
+	if err := c.w.write(n); err != nil {
+		return false, fmt.Errorf("ask the user: %w", err)
+	}
+	src := c.src
+	for src.sc.Scan() {
+		line := sourceLine{text: src.sc.Text(), size: len(src.sc.Bytes())}
+		var d struct {
+			Type   string `json:"type"`
+			CallID string `json:"call_id"`
+			Allow  *bool  `json:"allow"`
+		}
+		if json.Unmarshal([]byte(line.text), &d) == nil && d.Type == "chat.decision" {
+			if d.CallID != n.CallID {
+				continue
+			}
+			return d.Allow != nil && *d.Allow, nil
+		}
+		if line.text != "" {
+			src.deferred = append(src.deferred, line)
+		}
+	}
+	err := src.sc.Err()
+	if err == nil {
+		err = io.EOF
+	}
+	return false, fmt.Errorf("the connection ended before the user decided (nothing was changed): %w", err)
 }
