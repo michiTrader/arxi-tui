@@ -345,8 +345,14 @@ func SOBRIA() *Theme {
 		// A warning (the turn went on) and the usage line under an answer. The warning
 		// borrows the product's amber so it reads as "look here" without the alarm of
 		// red; the usage is a quiet grey because it is a record, not news.
-		"chat.warn":  {FG: ui.MustHex("#ffb454")},
-		"chat.usage": {FG: ui.MustHex("#6f6f6f")},
+		"chat.warn": {FG: ui.MustHex("#ffb454")},
+		// A tool call the agent made: a blue dot and a bold name, with what came of
+		// it in grey underneath (red when the tool refused or failed).
+		"chat.tool":        {Attrs: ui.AttrBold},
+		"chat.tool.dot":    {FG: ui.MustHex("#4f9dff")},
+		"chat.tool.result": {FG: ui.MustHex("#6f6f6f")},
+		"chat.tool.fail":   {FG: ui.Idx(ui.Red + ui.Bright)},
+		"chat.usage":       {FG: ui.MustHex("#6f6f6f")},
 		// The product mark "Δr×i" is the one coloured thing on the first row: a
 		// deep-orange -> amber -> yellow gradient spread over its four letters, one token per
 		// letter so no node needs gradient support and the rest of the row stays dim.
