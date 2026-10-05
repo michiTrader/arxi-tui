@@ -83,13 +83,9 @@ func chatRequires(h *driver.Hello) error {
 	return fmt.Errorf("this arxi core is too old to chat (it lacks chat.send); %s", rebuildRemedy)
 }
 
-// setEffort chooses the thinking level for the turns that start from now on. "auto"
-// and "" both mean "send nothing". A turn already in flight keeps the level it began
-// with.
+// setEffort chooses the thinking level for the turns that start from now on; "" means
+// "send nothing". A turn already in flight keeps the level it began with.
 func (c *chatSession) setEffort(level string) {
-	if level == effortAuto {
-		level = ""
-	}
 	c.mu.Lock()
 	c.effort = level
 	c.mu.Unlock()

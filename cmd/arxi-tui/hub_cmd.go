@@ -113,5 +113,12 @@ func menuCommand(name, input string, sel int, cat string) bool {
 	if sel < 0 || sel >= len(matches) {
 		sel = len(matches) - 1
 	}
+	// A line that names a command exactly belongs to that command, whatever else
+	// shares its prefix: `/mode` is not `/model`, even with `/model` listed first.
+	for _, m := range matches {
+		if m.Name == typed {
+			return typed == name
+		}
+	}
 	return matches[sel].Name == name
 }

@@ -645,7 +645,10 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 		want = noLiveCoreNotice
 	case "effort":
 		// /effort opens its own menu; it needs no core, so its first row shows.
-		want = "let the model decide"
+		want = "a little thinking"
+	case "mode":
+		// /mode opens its own menu; its first row shows.
+		want = "asks before editing"
 	default:
 		t.Fatalf("the last registry row is %q; teach this test what picking it does", last)
 	}
@@ -776,7 +779,7 @@ func TestLoopSobriaStatusbarRenders(t *testing.T) {
 	// The status row splits "live" (bright, the agent.mode bind under the
 	// "header" token) from the dim separators and model — stripANSI collapses
 	// the SGR resets between spans so the visible text is one contiguous line.
-	if !strings.Contains(out, "live · openai/gpt-4o · auto") {
+	if !strings.Contains(out, "ask · openai/gpt-4o") {
 		t.Errorf("status bar not rendered correctly; output:\n%s", out)
 	}
 }

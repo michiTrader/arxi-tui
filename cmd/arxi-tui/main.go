@@ -133,8 +133,8 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
   { "id": "status", "type": "row", "children": [
     { "type": "text", "bind": "slash.hint", "style": {"style": "menu.hint"},
       "when": "slash.hint" },
-    { "type": "text", "bind": "agent.mode", "style": {"style": "header"},
-      "when": "status.active" },
+    { "type": "text", "bind": "host.mode", "style": {"style": "header"},
+      "when": "host.mode" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "model.name" },
     { "type": "text", "bind": "model.name", "style": {"style": "dim"},
       "when": "model.name" },
@@ -743,10 +743,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// status bar shows it until a reply names the model that really answered.
 	var hubDefault string
 	// cwd is where the TUI was started, shown in the bottom bar. effort is the
-	// thinking level the next request asks for; "auto" leaves the choice to the model
-	// until the user sets one with /effort.
+	// thinking level the next request asks for; empty sends nothing until the user
+	// sets one with /effort. mode is how much the agent may do unasked (/mode).
 	cwd, _ := os.Getwd()
-	effort := "auto"
+	effort := ""
+	mode := defaultMode
 	hubDoneCh := make(chan hubOutcome, 1)
 	// modelMenu is the `/model ` menu's state; modelCh carries its worker's answers.
 	var modelMn modelMenu
@@ -754,6 +755,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// effortMn is the `/effort ` menu: the same shape as the model menu over a fixed
 	// list, so it needs no worker.
 	var effortMn modelMenu
+	// modeMn is the `/mode ` menu, built the same way.
+	var modeMn modelMenu
 	hubDoc, hubDocErr := loadHubScene()
 	// openHub is the one door a typed command and a slash-menu pick both take. It
 	// reads the core's state on a worker first so a hung core never freezes the loop.
@@ -936,12 +939,20 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		} else if filter, open := effortMenuOpen(input); open && hub == nil {
 			// `/effort ` borrows the model menu's overlay: same rows, same keys.
 			if !effortMn.loaded {
-				effortMn.setRows(effortMenuData(effort))
+				effortMn.setRows(effortMenuData(hubDefault, effort))
 			}
 			state.ModelActive = true
 			state.ModelMatches, state.ModelSelected = effortMn.view(filter)
+		} else if filter, open := modeMenuOpen(input); open && hub == nil {
+			// `/mode ` borrows the same overlay.
+			if !modeMn.loaded {
+				modeMn.setRows(modeMenuData(mode))
+			}
+			state.ModelActive = true
+			state.ModelMatches, state.ModelSelected = modeMn.view(filter)
 		} else if strings.HasPrefix(input, "/") {
 			effortMn.loaded = false
+			modeMn.loaded = false
 			modelMn.loaded = false // the next opening reads the core again
 			state.SlashActive = true
 			state.SlashTyped = input[1:]
@@ -963,6 +974,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		} else {
 			modelMn.loaded = false
 			effortMn.loaded = false
+			modeMn.loaded = false
 			state.SlashActive = false
 			state.SlashTyped = ""
 			state.SlashMatches = nil
@@ -1006,9 +1018,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// in the bottom bar. They (and the model name) are blanked while the slash menu is
 		// open, like the actor above, so the bar carries the menu hint alone.
 		if state.SlashActive {
-			state.HostEffort, state.HostCwd, state.ModelName = "", "", ""
+			state.HostEffort, state.HostCwd, state.HostMode, state.ModelName = "", "", "", ""
 		} else {
-			state.HostEffort, state.HostCwd = effort, shortCwd(cwd)
+			state.HostEffort, state.HostCwd, state.HostMode = effort, shortCwd(cwd), mode
 		}
 
 		var r engine.Renderer
@@ -1417,6 +1429,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						} else if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens); handled {
 							input = next
 							caret = clampCaret(input, caret)
+						} else if ev.Key.Type == term.KeyTab && ev.Key.Mod&term.ModShift != 0 && !strings.HasPrefix(input, "/") {
+							// Shift+Tab walks the agent modes without opening a menu.
+							mode = nextMode(mode)
+							modeMn.loaded = false
 						} else if _, open := modelMenuOpen(input); open {
 							// The `/model ` menu owns the keys while it is open: the
 							// arrows move its highlight, typing filters it and Enter
@@ -1438,13 +1454,27 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							var pick string
 							input, caret, pick = choiceMenuKey(&effortMn, effortPrefix, input, caret, ev.Key)
 							if pick != "" {
-								effort = pick
+								effort = effortAfterPick(effort, pick)
 								if s, ok := drv.(effortSetter); ok {
-									s.SetEffort(pick)
+									s.SetEffort(effort)
 								}
 								effortMn.loaded = false
 								sceneNotice = ""
 							}
+						} else if _, open := modeMenuOpen(input); open {
+							// The `/mode ` menu: same keys; a pick sets the mode.
+							var pick string
+							input, caret, pick = choiceMenuKey(&modeMn, modePrefix, input, caret, ev.Key)
+							if pick != "" {
+								mode = pick
+								modeMn.loaded = false
+								sceneNotice = ""
+							}
+						} else if ev.Key.Type == term.KeyEnter && modeCommand(input, slashSel, slashCat) {
+							input = modePrefix
+							caret = len([]rune(input))
+							slashSel = 0
+							modeMn.loaded = false
 						} else if ev.Key.Type == term.KeyEnter && effortCommand(input, slashSel, slashCat) {
 							input = effortPrefix
 							caret = len([]rune(input))
@@ -1716,6 +1746,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				if out.hasData || out.picked == "" {
 					modelMn.setData(out.data)
 					hubDefault = out.data.def
+				}
+				// A model that does not take the chosen thinking level drops it,
+				// so the bar never claims a level the request will not carry.
+				if effort != "" && !effortAllowed(hubDefault, effort) {
+					effort = ""
+					if s, ok := drv.(effortSetter); ok {
+						s.SetEffort("")
+					}
 				}
 				if out.picked != "" {
 					sceneNotice = out.notice

@@ -213,8 +213,8 @@ func (d *serveDriver) ActorLabel() string {
 	return d.actorLabel
 }
 
-// SetEffort chooses the thinking level the next chat turns ask for ("auto" or "" lets
-// the model decide). It is a setting, so ClearSession leaves it alone.
+// SetEffort chooses the thinking level the next chat turns ask for ("" sends
+// nothing). It is a setting, so ClearSession leaves it alone.
 func (d *serveDriver) SetEffort(level string) {
 	if d.chat != nil {
 		d.chat.setEffort(level)
