@@ -224,6 +224,49 @@ const maxChatHistory = 40
 // short enough that a hung endpoint reports itself instead of freezing the UI.
 const chatTimeout = 3 * time.Minute
 
+// chatAttempts is how many times one chat message is tried when the provider answers
+// with a transient refusal (a gateway timeout, an overload). chatBackoff is the wait
+// before the second try; the third waits twice as long. Both are variables so tests
+// need not sleep.
+var (
+	chatAttempts = 3
+	chatBackoff  = 1500 * time.Millisecond
+)
+
+// transientRefusal reports whether a refusal is the provider saying "not now" rather
+// than "not this": 429 and the gateway errors 502, 503 and 504. A 500 is left alone on
+// purpose, because it more often means the request itself broke the provider.
+func transientRefusal(r *turn.Refusal) bool {
+	if r == nil {
+		return false
+	}
+	switch r.Code {
+	case "http_429", "http_502", "http_503", "http_504":
+		return true
+	}
+	return false
+}
+
+// refusalText is the sentence the user reads when the provider refused. A bare
+// gateway body such as "error code: 504" says nothing, so the usual causes get a
+// plain explanation that keeps the original words.
+func refusalText(r *turn.Refusal) string {
+	msg := "the model refused"
+	if r != nil && strings.TrimSpace(r.Message) != "" {
+		msg = r.Message
+	}
+	if r == nil {
+		return msg
+	}
+	switch r.Code {
+	case "http_504", "http_502", "http_503":
+		return fmt.Sprintf("the provider timed out or is overloaded (%s, tried %d times). A long answer from a slow model is the usual cause: ask for something shorter, lower /effort, or pick another model with /model. Provider said: %s", strings.TrimPrefix(r.Code, "http_"), chatAttempts, msg)
+	case "http_429":
+		return fmt.Sprintf("the provider is rate limiting this key (429, tried %d times); wait a moment and try again. Provider said: %s", chatAttempts, msg)
+	}
+	return msg
+}
+
 // chatResult is what one chat call returns.
 type chatResult struct {
 	Text         string `json:"text"`
@@ -321,20 +364,31 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	ctx, cancel := context.WithTimeout(ctx, chatTimeout)
 	defer cancel()
 	exec := &provider.Executor{}
-	resp, err := exec.CompleteTurn(ctx, turn.Request{
+	req := turn.Request{
 		Schema: turn.Schema, Provider: res.Provider, Protocol: res.Protocol,
 		BaseURL: res.BaseURL, APIKeyEnv: res.APIKeyEnv, Model: res.Model,
 		MaxTokens: 4096, Messages: messages, Effort: level,
-	})
-	if err != nil {
-		return chatResult{}, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, err)
+	}
+	var resp turn.Response
+	for attempt := 1; ; attempt++ {
+		resp, err = exec.CompleteTurn(ctx, req)
+		if err != nil {
+			return chatResult{}, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, err)
+		}
+		if resp.FinishReason != turn.FinishRefusal || !transientRefusal(resp.Refusal) || attempt >= chatAttempts {
+			break
+		}
+		// A gateway timeout or an overloaded provider often clears on the next try, and
+		// the refusal carries no answer, so asking again repeats nothing the user paid
+		// for. The wait grows so a struggling provider is not hammered.
+		select {
+		case <-time.After(chatBackoff * time.Duration(attempt)):
+		case <-ctx.Done():
+			return chatResult{}, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, ctx.Err())
+		}
 	}
 	if resp.FinishReason == turn.FinishRefusal {
-		msg := "the model refused"
-		if resp.Refusal != nil && resp.Refusal.Message != "" {
-			msg = resp.Refusal.Message
-		}
-		return chatResult{}, fmt.Errorf("%s/%s: %s", res.Provider, res.Model, msg)
+		return chatResult{}, fmt.Errorf("%s/%s: %s", res.Provider, res.Model, refusalText(resp.Refusal))
 	}
 	reply := responseText(resp)
 	if strings.TrimSpace(reply) == "" {

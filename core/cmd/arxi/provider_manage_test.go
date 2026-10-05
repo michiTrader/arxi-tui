@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/michiTrader/arxi/internal/modelstore"
 )
@@ -22,6 +24,9 @@ type fakeLLM struct {
 	mu       sync.Mutex
 	auth     []string
 	messages [][]map[string]any
+	failNext int // answer this many chat requests with failCode before succeeding
+	failCode int
+	calls    int      // chat requests seen
 	efforts  []string // reasoning_effort of each chat request ("" when absent)
 	models   []string
 	status   int
@@ -48,6 +53,13 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 			}
 			json.NewEncoder(w).Encode(map[string]any{"data": data})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/chat/completions"):
+			f.calls++
+			if f.failNext > 0 {
+				f.failNext--
+				w.WriteHeader(f.failCode)
+				io.WriteString(w, "error code: "+strconv.Itoa(f.failCode))
+				return
+			}
 			var body struct {
 				Messages        []map[string]any `json:"messages"`
 				ReasoningEffort string           `json:"reasoning_effort"`
@@ -361,5 +373,85 @@ func TestChatRefusesAnUnknownThinkingLevelBeforeBilling(t *testing.T) {
 	}
 	if len(f.efforts) != 0 {
 		t.Errorf("the provider was called %d times for a refused request", len(f.efforts))
+	}
+}
+
+func fastRetries(t *testing.T) {
+	t.Helper()
+	saved := chatBackoff
+	chatBackoff = time.Millisecond
+	t.Cleanup(func() { chatBackoff = saved })
+}
+
+func chatProvider(t *testing.T) *fakeLLM {
+	t.Helper()
+	isolate(t)
+	fastRetries(t)
+	f := newFakeLLM(t, "fake-small")
+	if _, err := registerProvider("fake", f.url(), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverModels(context.Background(), "fake"); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func TestChatRetriesAGatewayTimeoutAndThenAnswers(t *testing.T) {
+	for _, code := range []int{504, 502, 503, 429} {
+		f := chatProvider(t)
+		f.failNext, f.failCode = 2, code
+		res, err := chatSend(context.Background(), "hi", "", "", "")
+		if err != nil {
+			t.Fatalf("HTTP %d twice then ok: %v", code, err)
+		}
+		if res.Text != "echo: hi" || f.calls != 3 {
+			t.Errorf("HTTP %d: text %q after %d calls, want the answer on the 3rd", code, res.Text, f.calls)
+		}
+	}
+}
+
+func TestChatGivesUpWithAPlainSentenceAfterThreeGatewayTimeouts(t *testing.T) {
+	f := chatProvider(t)
+	f.failNext, f.failCode = 99, 504
+	_, err := chatSend(context.Background(), "hi", "", "", "")
+	if err == nil {
+		t.Fatal("a provider that always times out must end in an error")
+	}
+	if f.calls != 3 {
+		t.Errorf("tried %d times, want 3", f.calls)
+	}
+	for _, want := range []string{"timed out or is overloaded", "504", "tried 3 times", "/effort", "/model"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the error should mention %q: %v", want, err)
+		}
+	}
+}
+
+func TestChatDoesNotRetryWhatRetryingCannotFix(t *testing.T) {
+	for _, code := range []int{400, 401, 403, 404, 500} {
+		f := chatProvider(t)
+		f.failNext, f.failCode = 99, code
+		if _, err := chatSend(context.Background(), "hi", "", "", ""); err == nil {
+			t.Fatalf("HTTP %d must be an error", code)
+		}
+		if f.calls != 1 {
+			t.Errorf("HTTP %d was tried %d times; a refusal retrying cannot fix must not be repeated", code, f.calls)
+		}
+	}
+}
+
+func TestChatStopsRetryingWhenCancelled(t *testing.T) {
+	f := chatProvider(t)
+	chatBackoff = time.Hour
+	f.failNext, f.failCode = 99, 504
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	if _, err := chatSend(ctx, "hi", "", "", ""); err == nil {
+		t.Fatal("a cancelled chat must be an error")
+	}
+	if time.Since(start) > 5*time.Second {
+		t.Error("the wait between tries ignored the cancellation")
 	}
 }
