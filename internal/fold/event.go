@@ -54,6 +54,9 @@ type ChatLine struct {
 	ToolOK      bool
 	ToolSummary string
 	ToolOutput  string
+	// ToolDiff is the change a write or edit made, as the core drew it: one
+	// "%5d %c text" row per line, '-' removed, '+' added, ' ' context.
+	ToolDiff string
 	// For an assistant line only: what the answer cost. Zero values mean the
 	// source did not say, and the renderer then draws no usage line.
 	DurationMS int64

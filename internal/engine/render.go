@@ -828,12 +828,15 @@ const (
 	toolNameToken   = "chat.tool"
 	toolResultToken = "chat.tool.result"
 	toolFailToken   = "chat.tool.fail"
+	diffAddToken    = "chat.diff.add"
+	diffDelToken    = "chat.diff.del"
+	diffCtxToken    = "chat.diff.ctx"
 	toolDot         = "● "
 	toolElbow       = "└ "
 )
 
 // toolTitles are the names a person reads; an unknown tool shows its own name.
-var toolTitles = map[string]string{"list": "List", "read": "Read", "grep": "Search"}
+var toolTitles = map[string]string{"list": "List", "read": "Read", "grep": "Search", "edit": "Edit", "write": "Write"}
 
 // toolLines draws one tool line: "● Read(main.go)" and, under it, "  └ Read 12
 // lines". A long argument wraps under itself, and so does a long result.
@@ -877,7 +880,45 @@ func toolLines(h fold.ChatLine, width int) []ui.Line {
 		style = toolFailToken
 	}
 	hangResult := strings.Repeat(" ", dotW+ansi.StringWidth(toolElbow))
-	return append(head, ui.WrapText(hang+toolElbow+h.ToolSummary, style, width, ui.Line{{Text: hangResult}})...)
+	out := append(head, ui.WrapText(hang+toolElbow+h.ToolSummary, style, width, ui.Line{{Text: hangResult}})...)
+	return append(out, diffLines(h.ToolDiff, hangResult, width)...)
+}
+
+// maxDiffRows is how many rows of a change the conversation shows; the rest is
+// counted, not drawn, so one big edit cannot push the conversation off the screen.
+const maxDiffRows = 14
+
+// diffLines draws a change under its tool line: red rows for what left, green for
+// what came in, grey for the lines around. A row is cut at the edge rather than
+// wrapped, so a line number never ends up above a stray fragment of code.
+func diffLines(diff, indent string, width int) []ui.Line {
+	if diff == "" {
+		return nil
+	}
+	rows := strings.Split(strings.TrimRight(diff, "\n"), "\n")
+	hidden := 0
+	if len(rows) > maxDiffRows {
+		hidden = len(rows) - maxDiffRows
+		rows = rows[:maxDiffRows]
+	}
+	var out []ui.Line
+	for _, row := range rows {
+		style := diffCtxToken
+		// A row reads "%5d %c text": the marker is the seventh byte.
+		if len(row) > 6 {
+			switch row[6] {
+			case '+':
+				style = diffAddToken
+			case '-':
+				style = diffDelToken
+			}
+		}
+		out = append(out, ui.Line{{Text: ansi.Truncate(indent+row, width, "…"), Style: style}})
+	}
+	if hidden > 0 {
+		out = append(out, ui.Line{{Text: ansi.Truncate(indent+fmt.Sprintf("… +%d more lines", hidden), width, "…"), Style: diffCtxToken}})
+	}
+	return out
 }
 
 // usageLine is what an answer cost, e.g. "2s (↑2 ↓57)": how long it took, then the

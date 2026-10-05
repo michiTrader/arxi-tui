@@ -353,6 +353,11 @@ func SOBRIA() *Theme {
 		"chat.tool.result": {FG: ui.MustHex("#6f6f6f")},
 		"chat.tool.fail":   {FG: ui.Idx(ui.Red + ui.Bright)},
 		"chat.usage":       {FG: ui.MustHex("#6f6f6f")},
+		// The diff of a change the agent made: red for what left, green for what
+		// came in, grey for the lines around it.
+		"chat.diff.add": {FG: ui.MustHex("#5fd75f")},
+		"chat.diff.del": {FG: ui.Idx(ui.Red + ui.Bright)},
+		"chat.diff.ctx": {FG: ui.MustHex("#6f6f6f")},
 		// The product mark "Δr×i" is the one coloured thing on the first row: a
 		// deep-orange -> amber -> yellow gradient spread over its four letters, one token per
 		// letter so no node needs gradient support and the rest of the row stays dim.

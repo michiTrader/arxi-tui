@@ -1,6 +1,9 @@
 package engine
 
 import (
+	"fmt"
+
+	"github.com/charmbracelet/x/ansi"
 	"strings"
 	"testing"
 
@@ -70,5 +73,78 @@ func TestLongToolArgumentWrapsUnderItself(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(rows, "\n"), "  └ Read 3 lines") {
 		t.Errorf("result row missing:\n%s", strings.Join(rows, "\n"))
+	}
+}
+
+const sampleDiff = "    1   package main\n    2   \n    3 -func main() {}\n    3 +func main() { println(1) }\n    4   // end"
+
+func editEv(seq int64, diff string) fold.Event {
+	return fold.Event{Type: "chat.tool", Seq: seq, Payload: map[string]any{
+		"name": "edit", "arg": "main.go", "ok": true, "summary": "Added 1 line, removed 1 line", "diff": diff}}
+}
+
+// An edit shows its diff under the result, indented under the elbow.
+func TestEditDrawsItsDiffUnderTheResult(t *testing.T) {
+	rows := plainRows(t, []fold.Event{editEv(1, sampleDiff)})
+	want := []string{
+		"● Edit(main.go)",
+		"  └ Added 1 line, removed 1 line",
+		"        1   package main",
+		"        2",
+		"        3 -func main() {}",
+		"        3 +func main() { println(1) }",
+		"        4   // end",
+	}
+	if len(rows) < len(want) {
+		t.Fatalf("too few rows:\n%s", strings.Join(rows, "\n"))
+	}
+	for i, w := range want {
+		if strings.TrimRight(rows[i], " ") != strings.TrimRight(w, " ") {
+			t.Errorf("row %d = %q, want %q", i, rows[i], w)
+		}
+	}
+}
+
+func TestDiffRowsAreColouredByWhatHappenedToThem(t *testing.T) {
+	r, js := chatDoc(t)
+	got := r.RenderFrame(mustDoc(t, js), fold.Fold([]fold.Event{editEv(1, sampleDiff)})).Styled()
+	for _, want := range []string{"«chat.diff.del:", "«chat.diff.add:", "«chat.diff.ctx:"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("styled frame lacks %s:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "«chat.diff.add:        3 -") || strings.Contains(got, "«chat.diff.del:        3 +") {
+		t.Errorf("added and removed rows are mixed up:\n%s", got)
+	}
+}
+
+// A long change is cut and counted, and a long row is cut at the edge, so a diff
+// can never push the conversation away or spill past the frame.
+func TestBigDiffIsCutAndCounted(t *testing.T) {
+	var b strings.Builder
+	for i := 1; i <= 30; i++ {
+		fmt.Fprintf(&b, "%5d + line %d %s\n", i, i, strings.Repeat("x", 300))
+	}
+	rows := plainRows(t, []fold.Event{editEv(1, b.String())})
+	text := strings.Join(rows, "\n")
+	if !strings.Contains(text, "… +16 more lines") {
+		t.Errorf("the hidden rows are not counted:\n%s", text)
+	}
+	if strings.Contains(text, "line 20 ") {
+		t.Errorf("rows past the cap were drawn:\n%s", text)
+	}
+	for _, row := range rows {
+		if w := ansi.StringWidth(row); w > 100 {
+			t.Errorf("row is %d wide, past the frame: %q", w, row)
+		}
+	}
+}
+
+func TestToolWithoutADiffDrawsNoDiff(t *testing.T) {
+	rows := plainRows(t, []fold.Event{toolEv(1, "read", "main.go", true, "Read 3 lines")})
+	for _, r := range rows {
+		if strings.Contains(r, "more lines") {
+			t.Errorf("unexpected row %q", r)
+		}
 	}
 }
