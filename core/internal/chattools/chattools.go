@@ -79,11 +79,17 @@ type Result struct {
 	Summary string
 	// Arg is the call as the user sees it inside the parentheses, e.g. "main.go".
 	Arg string
+	// Diff is, for a tool that changes a file, the change as lines to show (see
+	// lineDiff). It is empty for the read tools.
+	Diff string
 }
 
 // Toolbox runs the tools against one directory.
 type Toolbox struct {
 	root string
+	// edits is whether write and edit may run. A toolbox starts read-only; the
+	// caller that has settled with the user that files may change says so.
+	edits bool
 }
 
 // New opens a toolbox on dir. The directory must exist.
@@ -107,6 +113,15 @@ func New(dir string) (*Toolbox, error) {
 		return nil, fmt.Errorf("chattools: %s is not a directory", real)
 	}
 	return &Toolbox{root: real}, nil
+}
+
+// WithEdits returns a toolbox on the same folder whose write and edit tools run.
+// Without it they refuse, whatever the model asks, so a caller that only meant to
+// let the model look cannot be talked into more.
+func (t *Toolbox) WithEdits() *Toolbox {
+	c := *t
+	c.edits = true
+	return &c
 }
 
 // Root is the resolved directory the tools are confined to.
@@ -136,11 +151,15 @@ func Definitions() []Definition {
 // be read by the model (and the user) as the result of the call; it never panics the
 // turn.
 func (t *Toolbox) Run(name string, rawArgs json.RawMessage) (Result, error) {
-	args := map[string]any{}
-	if len(strings.TrimSpace(string(rawArgs))) > 0 {
-		if err := json.Unmarshal(rawArgs, &args); err != nil {
-			return Result{}, fmt.Errorf("the arguments are not a JSON object: %v", err)
+	if Mutating(name) {
+		if !t.edits {
+			return Result{Arg: display(str(mustArgs(rawArgs), "path"))}, fmt.Errorf("%s is not available: this session may only look at files, not change them", name)
 		}
+		return t.runEdit(name, rawArgs)
+	}
+	args, err := decodeArgs(rawArgs)
+	if err != nil {
+		return Result{}, err
 	}
 	switch name {
 	case ToolList:
@@ -150,7 +169,28 @@ func (t *Toolbox) Run(name string, rawArgs json.RawMessage) (Result, error) {
 	case ToolGrep:
 		return t.grep(str(args, "pattern"), str(args, "path"))
 	}
-	return Result{}, fmt.Errorf("there is no tool called %q; the tools are list, read and grep", name)
+	return Result{}, fmt.Errorf("there is no tool called %q; the tools are list, read, grep, edit and write", name)
+}
+
+// decodeArgs reads a call's arguments, which must be a JSON object (or nothing).
+func decodeArgs(raw []byte) (map[string]any, error) {
+	args := map[string]any{}
+	if len(strings.TrimSpace(string(raw))) > 0 {
+		if err := json.Unmarshal(raw, &args); err != nil {
+			return nil, fmt.Errorf("the arguments are not a JSON object: %v", err)
+		}
+	}
+	return args, nil
+}
+
+// mustArgs is decodeArgs for a caller that only wants a hint to show: bad
+// arguments read as none.
+func mustArgs(raw []byte) map[string]any {
+	args, err := decodeArgs(raw)
+	if err != nil {
+		return map[string]any{}
+	}
+	return args
 }
 
 func str(m map[string]any, k string) string {
