@@ -74,6 +74,8 @@ func TestProviderToChatAgainstTheRealCore(t *testing.T) {
 	work := t.TempDir()
 	secrets := filepath.Join(work, "secrets")
 	t.Setenv("ARXI_SECRETS_DIR", secrets)
+	// Providers live in the config folder now; keep this test inside its own directory.
+	t.Setenv("ARXI_PROVIDERS_DIR", filepath.Join(work, "providers"))
 	t.Setenv("ARXI_BIN", bin)
 	t.Setenv("HOME", work)
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(work, "cfg"))
