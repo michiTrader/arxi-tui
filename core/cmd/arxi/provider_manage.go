@@ -480,6 +480,26 @@ func handleModelDefault(params map[string]any) (any, error) {
 	}{ref, provider, id}, nil
 }
 
+// thinkingNotification is one fragment of the model's reasoning, sent on the
+// connection while a chat.send that asked for it is still running. It has a type
+// and no id, which is how every notification on this wire is told from a response.
+type thinkingNotification struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+// handleChatSendThinking is handleChatSend for a caller that wants to watch the
+// model think. The reply, the retries and the refusal text are the same ones:
+// only the way the provider is called changes (streamed), and each reasoning
+// fragment is written to the connection as it arrives.
+func handleChatSendThinking(w *connWriter, params map[string]any) (any, error) {
+	ctx := provider.WithThinking(context.Background(), func(fragment string) {
+		_ = w.write(thinkingNotification{Type: "chat.thinking", Text: fragment})
+	})
+	return chatSendEffort(ctx, stringParam(params, "prompt"), stringParam(params, "history"),
+		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))
+}
+
 func handleChatSend(params map[string]any) (any, error) {
 	return chatSendEffort(context.Background(), stringParam(params, "prompt"), stringParam(params, "history"),
 		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))

@@ -321,6 +321,12 @@ type State struct {
 	HostEffort string `json:"host.effort"`
 	HostMode   string `json:"host.mode"`
 
+	// HostThinking is the label of the Thinking line while a turn is in flight
+	// ("• Thinking (3s) "): the loop builds it from the wall clock because the
+	// fold is a pure function of the log and knows no time. Empty when nothing is
+	// working, which is what keeps the when-gated line off the screen.
+	HostThinking string `json:"host.thinking"`
+
 	// BudgetMicrounits is run.started.budget_usd × 1000, captured when the run
 	// starts. Combined with CostMicrounits it produces session.tokens_used.
 	BudgetMicrounits uint64
@@ -615,6 +621,7 @@ var handled = map[string]bool{
 	"agent.failed":    true,
 	"chat.error":      true,
 	"chat.warn":       true,
+	"chat.thinking":   true,
 	"chat.cancelled":  true,
 	"run.started":     true,
 	"agent.blocked":   true,
@@ -683,13 +690,24 @@ func (s *State) apply(e Event) {
 	s.lastEventType = e.Type
 	switch e.Type {
 	case "run.prompt":
+		s.ThinkingText = ""
 		text := ""
 		if t, ok := e.Payload["text"]; ok {
 			text, _ = t.(string)
 		}
 		s.History = append(s.History, ChatLine{Role: "user", Text: text})
 
+	case "chat.thinking":
+		// A fragment of the model's thinking, streamed before the answer. It feeds
+		// the Thinking line's marquee and nothing else: it never enters the
+		// transcript, and the answer's own llm.response clears it.
+		if text, _ := e.Payload["text"].(string); text != "" {
+			s.ThinkingText = appendThinking(s.ThinkingText, text)
+		}
+
 	case "llm.response":
+		// The answer has landed, so whatever the model was thinking is over.
+		s.ThinkingText = ""
 		// A response event accumulates text (streaming deltas arrive as
 		// consecutive llm.response events with partial text, per the executor).
 		text := ""
@@ -781,6 +799,7 @@ func (s *State) apply(e Event) {
 		}
 
 	case "agent.turn_done":
+		s.ThinkingText = ""
 		// The member's turn finished cleanly: no longer busy.
 		s.AgentWorking = false
 
@@ -827,6 +846,7 @@ func (s *State) apply(e Event) {
 		}
 
 	case "chat.error":
+		s.ThinkingText = ""
 		// A request failed. The failure is part of the conversation, so it lands in
 		// the transcript as an ordinary turn (role "error") instead of in a banner
 		// above the chat. It does not touch AgentWorking: a refused second line
@@ -843,6 +863,7 @@ func (s *State) apply(e Event) {
 		}
 
 	case "chat.cancelled":
+		s.ThinkingText = ""
 		// The user stopped the turn in flight. It reads as the failed request it is,
 		// "✗ request failed: Cancelled", and says nothing about the prompt: the
 		// prompt is already the line above it. Nothing is working any more, and a
@@ -855,6 +876,7 @@ func (s *State) apply(e Event) {
 		s.History = append(s.History, ChatLine{Role: "error", Text: "request failed: Cancelled"})
 
 	case "agent.failed":
+		s.ThinkingText = ""
 		// The turn failed: no longer busy.
 		s.AgentWorking = false
 		// A core that names the cause (payload "error") has it shown in the chat
@@ -1602,4 +1624,31 @@ func NextSlashCategory(typed, category string, dir int) string {
 		}
 	}
 	return tabs[((cur+dir)%len(tabs)+len(tabs))%len(tabs)]
+}
+
+// thinkingKeep bounds the thinking the Thinking line holds: a long reasoning
+// would otherwise grow the marquee's cycle without end, and only the recent words
+// are worth watching go by.
+const thinkingKeep = 240
+
+// appendThinking adds a streamed fragment to the thinking shown in the marquee.
+// The marquee is a single line, so every run of whitespace (reasoning is full of
+// newlines) collapses to one space, and only the last thinkingKeep characters are
+// kept, cut at a word boundary so the line never starts mid-word.
+func appendThinking(cur, frag string) string {
+	// Fragments are pieces of words as often as whole words, so they are joined
+	// as they come and the model's own spaces separate the words.
+	joined := strings.Join(strings.Fields(cur+frag), " ")
+	if joined != "" && frag != strings.TrimRight(frag, " \t\r\n") {
+		joined += " "
+	}
+	r := []rune(joined)
+	if len(r) <= thinkingKeep {
+		return joined
+	}
+	tail := string(r[len(r)-thinkingKeep:])
+	if i := strings.IndexByte(tail, ' '); i >= 0 {
+		return tail[i+1:]
+	}
+	return tail
 }

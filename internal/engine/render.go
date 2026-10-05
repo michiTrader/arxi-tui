@@ -1616,9 +1616,12 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 		text = n.Text
 	}
 
-	// The marquee collapses to nothing when there is no text to show,
-	// matching the empty-state contract for thinking.text.
-	if text == "" {
+	// The marquee collapses to nothing when there is no text to show and no
+	// prefix to carry the line either, matching the empty-state contract for
+	// thinking.text. A prefix that does resolve to something keeps the line:
+	// the Thinking label ("• Thinking (3s)") must be on screen from the moment
+	// the turn starts, before the model has thought a single word.
+	if text == "" && !r.marqueePrefixShows(n, state) {
 		return ui.Frame{Width: r.Width, Height: 0}
 	}
 
@@ -1711,6 +1714,19 @@ func (r *Renderer) renderMarquee(n *scene.Node, state fold.State, budget int) ui
 		Width:  r.Width,
 		Height: 1,
 	}
+}
+
+// marqueePrefixShows reports whether the marquee's prefix resolves to visible
+// text, which is what lets a marquee with nothing to scroll still draw its label.
+func (r *Renderer) marqueePrefixShows(n *scene.Node, state fold.State) bool {
+	prefix := n.PrefixNode()
+	if prefix == nil || hiddenByWhenRow(prefix, state, r.curRow, r.PluginValues, r.PreviewMocks) {
+		return false
+	}
+	if prefix.Bind != "" {
+		return resolveBindRow(prefix.Bind, state, r.curRow, r.PluginValues, r.PreviewMocks) != ""
+	}
+	return prefix.Text != ""
 }
 
 // marqueeGap is the run of blank cells between the tail of a scrolling marquee
@@ -2404,6 +2420,8 @@ func resolveBind(bind string, state fold.State) string {
 		return state.HostEffort
 	case "host.mode":
 		return state.HostMode
+	case "host.thinking":
+		return state.HostThinking
 	case "host.run.actor":
 		// Host view state, not a projection: the loop resolves the actor from the
 		// run.start config and re-attaches it each frame (BINDS.md §4.3, M2). It

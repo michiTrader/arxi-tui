@@ -234,6 +234,7 @@ var signedBinds = map[string]bool{
 	"host.cwd":             true,
 	"host.effort":          true,
 	"host.mode":            true,
+	"host.thinking":        true,
 }
 
 // SignedBinds returns the §4.5 inventory: every bind path a scene may

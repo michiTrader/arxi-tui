@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/michiTrader/arxi/internal/modelstore"
+	"github.com/michiTrader/arxi/internal/provider"
 )
 
 // fakeLLM is an OpenAI-compatible endpoint on loopback. It records what it was
@@ -30,6 +31,8 @@ type fakeLLM struct {
 	efforts  []string // reasoning_effort of each chat request ("" when absent)
 	models   []string
 	status   int
+	streams  int      // chat requests that asked for server-sent events
+	think    []string // reasoning fragments a streamed answer sends first
 }
 
 func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
@@ -63,11 +66,24 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 			var body struct {
 				Messages        []map[string]any `json:"messages"`
 				ReasoningEffort string           `json:"reasoning_effort"`
+				Stream          bool             `json:"stream"`
 			}
 			json.NewDecoder(r.Body).Decode(&body)
 			f.messages = append(f.messages, body.Messages)
 			f.efforts = append(f.efforts, body.ReasoningEffort)
 			last, _ := body.Messages[len(body.Messages)-1]["content"].(string)
+			if body.Stream {
+				f.streams++
+				w.Header().Set("Content-Type", "text/event-stream")
+				for _, frag := range f.think {
+					b, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"reasoning_content": frag}}}})
+					io.WriteString(w, "data: "+string(b)+"\n\n")
+				}
+				b, _ := json.Marshal(map[string]any{"id": "x", "choices": []any{map[string]any{"delta": map[string]any{"content": "echo: " + last}, "finish_reason": "stop"}},
+					"usage": map[string]int{"prompt_tokens": 3, "completion_tokens": 2}})
+				io.WriteString(w, "data: "+string(b)+"\n\ndata: [DONE]\n\n")
+				return
+			}
 			json.NewEncoder(w).Encode(map[string]any{
 				"id":      "x",
 				"choices": []any{map[string]any{"index": 0, "finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": "echo: " + last}}},
@@ -453,5 +469,62 @@ func TestChatStopsRetryingWhenCancelled(t *testing.T) {
 	}
 	if time.Since(start) > 5*time.Second {
 		t.Error("the wait between tries ignored the cancellation")
+	}
+}
+
+func setUpFake(t *testing.T) *fakeLLM {
+	t.Helper()
+	isolate(t)
+	f := newFakeLLM(t, "fake-small")
+	if _, err := registerProvider("fake", f.url(), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverModels(context.Background(), "fake"); err != nil {
+		t.Fatal(err)
+	}
+	return f
+}
+
+func TestChatStreamsTheThinkingAndStillReturnsTheWholeAnswer(t *testing.T) {
+	f := setUpFake(t)
+	f.think = []string{"The user ", "says hi."}
+	var got []string
+	ctx := provider.WithThinking(context.Background(), func(s string) { got = append(got, s) })
+	res, err := chatSendEffort(ctx, "hi", "", "", "", "high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got, "|") != "The user |says hi." {
+		t.Errorf("thinking fragments = %q", got)
+	}
+	if res.Text != "echo: hi" || res.InputTokens != 3 || res.OutputTokens != 2 {
+		t.Errorf("result = %+v; the streamed answer must carry the text and the usage block", res)
+	}
+	if f.streams != 1 || f.efforts[0] != "high" {
+		t.Errorf("streams=%d efforts=%q; the level must ride along on a streamed request too", f.streams, f.efforts)
+	}
+}
+
+func TestChatDoesNotStreamUnlessAsked(t *testing.T) {
+	f := setUpFake(t)
+	f.think = []string{"never seen"}
+	if _, err := chatSendEffort(context.Background(), "hi", "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if f.streams != 0 {
+		t.Errorf("a plain chat turn streamed (%d); only a turn that asked to watch the thinking may", f.streams)
+	}
+}
+
+func TestStreamedChatKeepsTheRetries(t *testing.T) {
+	f := setUpFake(t)
+	f.failNext, f.failCode = 1, 504
+	ctx := provider.WithThinking(context.Background(), func(string) {})
+	res, err := chatSendEffort(ctx, "hi", "", "", "", "")
+	if err != nil {
+		t.Fatalf("a 504 on a streamed turn was not retried: %v", err)
+	}
+	if res.Text != "echo: hi" || f.calls != 2 {
+		t.Errorf("text=%q calls=%d; want the answer after one retry", res.Text, f.calls)
 	}
 }
