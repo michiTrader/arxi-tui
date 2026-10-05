@@ -438,13 +438,15 @@ func serveConnSessionContext(ctx context.Context, r io.Reader, w io.Writer, sess
 	// explicit length check below keeps the content limit at exactly 1 MiB; two
 	// extra bytes admit either LF or CRLF without shifting that boundary.
 	sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes+2)
+	src := newLineSource(sc)
+	streams.src = src
 
-	for sc.Scan() {
-		if len(sc.Bytes()) > maxLineBytes {
+	for src.scan() {
+		if src.cur.size > maxLineBytes {
 			writeLineTooLong(cw)
 			return fmt.Errorf("request line over %d bytes", maxLineBytes)
 		}
-		line := strings.TrimSpace(sc.Text())
+		line := strings.TrimSpace(src.cur.text)
 		if line == "" {
 			// Blank lines are skipped rather than reported. Plenty of clients emit
 			// one when flushing, and answering it with an error would make every
