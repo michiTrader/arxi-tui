@@ -341,6 +341,9 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 		return chatResult{}, err
 	}
 
+	if box := toolsFrom(ctx); box != nil {
+		system = strings.TrimSpace(system + " " + toolsHint(box.box.Root()))
+	}
 	var messages []turn.Message
 	text := func(role turn.Role, s string) turn.Message {
 		return turn.Message{Role: role, Content: []turn.ContentBlock{{Type: turn.BlockText, Text: s}}}
@@ -369,23 +372,38 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 		BaseURL: res.BaseURL, APIKeyEnv: res.APIKeyEnv, Model: res.Model,
 		MaxTokens: 4096, Messages: messages, Effort: level,
 	}
+	// complete asks the model once, retrying a transient refusal. Tokens are
+	// added up over every ask of the turn, so a tool loop reports its true cost.
+	var used turn.Usage
+	complete := func(req turn.Request) (turn.Response, error) {
+		for attempt := 1; ; attempt++ {
+			resp, err := exec.CompleteTurn(ctx, req)
+			if err != nil {
+				return resp, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, err)
+			}
+			used.InputTokens += resp.Usage.InputTokens
+			used.OutputTokens += resp.Usage.OutputTokens
+			if resp.FinishReason != turn.FinishRefusal || !transientRefusal(resp.Refusal) || attempt >= chatAttempts {
+				return resp, nil
+			}
+			// A gateway timeout or an overloaded provider often clears on the next try, and
+			// the refusal carries no answer, so asking again repeats nothing the user paid
+			// for. The wait grows so a struggling provider is not hammered.
+			select {
+			case <-time.After(chatBackoff * time.Duration(attempt)):
+			case <-ctx.Done():
+				return resp, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, ctx.Err())
+			}
+		}
+	}
 	var resp turn.Response
-	for attempt := 1; ; attempt++ {
-		resp, err = exec.CompleteTurn(ctx, req)
-		if err != nil {
-			return chatResult{}, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, err)
-		}
-		if resp.FinishReason != turn.FinishRefusal || !transientRefusal(resp.Refusal) || attempt >= chatAttempts {
-			break
-		}
-		// A gateway timeout or an overloaded provider often clears on the next try, and
-		// the refusal carries no answer, so asking again repeats nothing the user paid
-		// for. The wait grows so a struggling provider is not hammered.
-		select {
-		case <-time.After(chatBackoff * time.Duration(attempt)):
-		case <-ctx.Done():
-			return chatResult{}, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, ctx.Err())
-		}
+	if box := toolsFrom(ctx); box != nil {
+		resp, err = runToolLoop(ctx, box, &req, complete)
+	} else {
+		resp, err = complete(req)
+	}
+	if err != nil {
+		return chatResult{}, err
 	}
 	if resp.FinishReason == turn.FinishRefusal {
 		return chatResult{}, fmt.Errorf("%s/%s: %s", res.Provider, res.Model, refusalText(resp.Refusal))
@@ -396,7 +414,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	}
 	return chatResult{
 		Text: reply, Model: res.Model, Provider: res.Provider,
-		InputTokens: resp.Usage.InputTokens, OutputTokens: resp.Usage.OutputTokens,
+		InputTokens: used.InputTokens, OutputTokens: used.OutputTokens,
 	}, nil
 }
 
@@ -493,14 +511,27 @@ type thinkingNotification struct {
 // only the way the provider is called changes (streamed), and each reasoning
 // fragment is written to the connection as it arrives.
 func handleChatSendThinking(w *connWriter, params map[string]any) (any, error) {
-	ctx := provider.WithThinking(context.Background(), func(fragment string) {
-		_ = w.write(thinkingNotification{Type: "chat.thinking", Text: fragment})
-	})
+	ctx := context.Background()
+	if boolParam(params, "stream_thinking") {
+		ctx = provider.WithThinking(ctx, func(fragment string) {
+			_ = w.write(thinkingNotification{Type: "chat.thinking", Text: fragment})
+		})
+	}
+	if dir := stringParam(params, "workdir"); dir != "" {
+		var err error
+		ctx, err = withTools(ctx, dir, func(n chatToolNotification) { _ = w.write(n) })
+		if err != nil {
+			return nil, err
+		}
+	}
 	return chatSendEffort(ctx, stringParam(params, "prompt"), stringParam(params, "history"),
 		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))
 }
 
 func handleChatSend(params map[string]any) (any, error) {
+	if stringParam(params, "workdir") != "" {
+		return nil, badInvocation{errors.New("workdir needs a live connection to report the tool calls on")}
+	}
 	return chatSendEffort(context.Background(), stringParam(params, "prompt"), stringParam(params, "history"),
 		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))
 }
