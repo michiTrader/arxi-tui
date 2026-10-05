@@ -274,3 +274,79 @@ func TestChatSendWithToolsFallsBackFromStreamingKeepingTheFolder(t *testing.T) {
 		t.Fatalf("the retry must keep the folder and drop the stream: %v", lines)
 	}
 }
+
+const approvalLine = `{"type":"chat.approval","call_id":"c9","name":"edit","arg":"main.go","summary":"Added 1 line","diff":"- a\n+ b"}`
+
+func decisions(sent string) []map[string]any {
+	var out []map[string]any
+	for _, l := range strings.Split(strings.TrimSpace(sent), "\n") {
+		var m map[string]any
+		if json.Unmarshal([]byte(l), &m) == nil && m["type"] == "chat.decision" {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+func TestChatSendPutsEachChangeToTheUserAndRelaysTheDecision(t *testing.T) {
+	for _, allow := range []bool{true, false} {
+		var sent bytes.Buffer
+		d := sessionWithWriter(t, &sent, approvalLine,
+			`{"type":"chat.tool","call_id":"c9","name":"edit","arg":"main.go","ok":true,"summary":"Added 1 line","diff":"- a\n+ b"}`,
+			`{"id":"chat-send","ok":true,"result":{"text":"done"}}`)
+		var asked []Approval
+		var tools []ToolCall
+		_, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj", Edits: "ask",
+			OnTool: func(c ToolCall) { tools = append(tools, c) },
+			OnApproval: func(_ context.Context, a Approval) bool {
+				asked = append(asked, a)
+				return allow
+			}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(asked) != 1 || asked[0].CallID != "c9" || asked[0].Name != "edit" || asked[0].Arg != "main.go" || asked[0].Diff != "- a\n+ b" {
+			t.Fatalf("asked = %+v", asked)
+		}
+		dec := decisions(sent.String())
+		if len(dec) != 1 || dec[0]["call_id"] != "c9" || dec[0]["allow"] != allow {
+			t.Fatalf("decisions = %v (allow=%v)", dec, allow)
+		}
+		if len(tools) != 1 || tools[0].Diff != "- a\n+ b" {
+			t.Errorf("the diff of the applied change must reach OnTool: %+v", tools)
+		}
+		if !strings.Contains(sent.String(), `"edits":"ask"`) {
+			t.Errorf("request = %s", sent.String())
+		}
+	}
+}
+
+func TestChatSendDeclinesChangesWhenNobodyCanDecide(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent, approvalLine, `{"id":"chat-send","ok":true,"result":{"text":"done"}}`)
+	if _, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj", Edits: "ask"}); err != nil {
+		t.Fatal(err)
+	}
+	if dec := decisions(sent.String()); len(dec) != 1 || dec[0]["allow"] != false {
+		t.Fatalf("a change with no one to ask must be declined: %v", dec)
+	}
+}
+
+func TestChatSendAgainstACoreWithoutEditsSaysSo(t *testing.T) {
+	d := session(t, `{"id":"chat-send","ok":false,"error":{"code":"bad_params","message":"unknown parameter edits for chat.send"}}`)
+	_, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj", Edits: "ask"})
+	if !errors.Is(err, ErrEditsUnsupported) {
+		t.Fatalf("err = %v; want ErrEditsUnsupported", err)
+	}
+}
+
+func TestChatSendNeverSendsEditsWithoutAFolder(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent, `{"id":"chat-send","ok":true,"result":{"text":"hi"}}`)
+	if _, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Edits: "allow"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sent.String(), "edits") {
+		t.Fatalf("request = %s", sent.String())
+	}
+}
