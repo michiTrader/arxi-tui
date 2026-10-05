@@ -73,7 +73,7 @@ func TestAskPutsTheCommandToTheUserAndRunsItWhenAllowed(t *testing.T) {
 		t.Fatal(r.err)
 	}
 	if len(r.asked) != 1 || r.asked[0].Name != "run" || r.asked[0].Arg != "echo built" ||
-		r.asked[0].Diff != "" || !strings.Contains(r.asked[0].Summary, "Run in") {
+		r.asked[0].Diff != "" || !strings.HasPrefix(r.asked[0].Summary, "in ") {
 		t.Fatalf("the user was shown %+v", r.asked)
 	}
 	if len(r.got) != 1 || !r.got[0].OK {

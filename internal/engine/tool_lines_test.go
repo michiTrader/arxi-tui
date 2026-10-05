@@ -201,3 +201,28 @@ func tallRows(t *testing.T, events []fold.Event) []string {
 	}
 	return rows
 }
+
+func TestACommandWaitingIsAskedAboutAsACommand(t *testing.T) {
+	ev := fold.Event{Type: "chat.approval", Seq: 1, Payload: map[string]any{
+		"name": "run", "arg": "go test ./...", "summary": "in /proj",
+	}}
+	text := strings.Join(tallRows(t, []fold.Event{ev}), "\n")
+	for _, want := range []string{"Run(go test ./...)", "in /proj", "Allow this command?", "y yes"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("%q missing from:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Allow this change?") {
+		t.Errorf("a command is not a change:\n%s", text)
+	}
+}
+
+func TestACommandThatFailedIsDrawnAsAFailure(t *testing.T) {
+	ev := fold.Event{Type: "chat.tool", Seq: 1, Payload: map[string]any{
+		"name": "run", "arg": "go test ./...", "ok": false, "summary": "Exit 1 in 2.3s",
+	}}
+	text := strings.Join(tallRows(t, []fold.Event{ev}), "\n")
+	if !strings.Contains(text, "Run(go test ./...)") || !strings.Contains(text, "└ Exit 1 in 2.3s") {
+		t.Errorf("rows:\n%s", text)
+	}
+}

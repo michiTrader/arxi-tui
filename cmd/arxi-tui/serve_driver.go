@@ -225,6 +225,7 @@ func (d *serveDriver) SetEffort(level string) {
 func (d *serveDriver) SetMode(name string) {
 	if m, ok := modeByName(name); ok && d.chat != nil {
 		d.chat.setEdits(m.policy(classEdit))
+		d.chat.setRuns(m.policy(classRun))
 	}
 }
 
