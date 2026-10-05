@@ -298,7 +298,7 @@ func TestChatErrorLandsInHistory(t *testing.T) {
 }
 
 // A cancelled turn stops the working indicator and leaves its prompt in the
-// transcript, followed by a line that says it was stopped.
+// transcript, followed by the failed-request line (without repeating the prompt).
 func TestCancelledTurnStopsWorkingAndKeepsThePrompt(t *testing.T) {
 	s := Fold([]Event{
 		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hi"}},
@@ -308,7 +308,7 @@ func TestCancelledTurnStopsWorkingAndKeepsThePrompt(t *testing.T) {
 	if s.AgentWorking {
 		t.Error("the turn was cancelled, yet the agent is still shown as working")
 	}
-	if n := len(s.History); n != 2 || s.History[0].Role != "user" || s.History[1].Role != "cancelled" || s.History[1].Text != "hi" {
+	if n := len(s.History); n != 2 || s.History[0].Role != "user" || s.History[1].Role != "error" || s.History[1].Text != "request failed: Cancelled" {
 		t.Errorf("history = %+v", s.History)
 	}
 	if !Handles("chat.cancelled") || !Handles("chat.warn") {

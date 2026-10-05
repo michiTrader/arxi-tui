@@ -88,24 +88,25 @@ func TestNoUsageLineWithoutUsage(t *testing.T) {
 	}
 }
 
-// "! auth: ..." for a warning, "■ Cancelled · <prompt>" for a stopped turn.
+// A warning reads "! auth: ..."; a cancelled turn is a failed request and does not
+// repeat the prompt, which is already the line above it.
 func TestWarningAndCancelledLines(t *testing.T) {
 	rows := plainRows(t, []fold.Event{
 		{Type: "chat.warn", Seq: 1, Payload: map[string]any{"text": "auth: API key setup is unavailable in this WASM session."}},
-		{Type: "run.prompt", Seq: 2, Payload: map[string]any{"text": "What can fx do\ndifferently?"}},
-		{Type: "chat.cancelled", Seq: 3, Payload: map[string]any{"text": "What can fx do\ndifferently?"}},
+		{Type: "run.prompt", Seq: 2, Payload: map[string]any{"text": "cual es la masa de un elefante"}},
+		{Type: "chat.cancelled", Seq: 3},
 	})
 	if rows[0] != "! auth: API key setup is unavailable in this WASM session." {
 		t.Errorf("warning row = %q", rows[0])
 	}
-	var cancelled string
-	for _, row := range rows {
-		if strings.HasPrefix(row, "■") {
-			cancelled = row
+	want := []string{"┃ cual es la masa de un elefante", "", "✗ request failed: Cancelled"}
+	for i, w := range want {
+		if rows[2+i] != w {
+			t.Errorf("row %d = %q, want %q\nall rows:\n%s", 2+i, rows[2+i], w, strings.Join(rows, "\n"))
 		}
 	}
-	if cancelled != "■ Cancelled · What can fx do differently?" {
-		t.Errorf("cancelled row = %q\nall rows:\n%s", cancelled, strings.Join(rows, "\n"))
+	if n := strings.Count(strings.Join(rows, "\n"), "elefante"); n != 1 {
+		t.Errorf("the prompt appears %d times; the cancel line must not repeat it", n)
 	}
 }
 
@@ -117,15 +118,15 @@ func TestFormatDuration(t *testing.T) {
 	}
 }
 
-// The three new lines are drawn in their own tokens.
+// The warning, the usage line and a cancelled turn are drawn in their own tokens.
 func TestNewChatLinesUseTheirOwnTokens(t *testing.T) {
 	r, js := chatDoc(t)
 	got := r.RenderFrame(mustDoc(t, js), fold.Fold([]fold.Event{
 		{Type: "chat.warn", Seq: 1, Payload: map[string]any{"text": "w"}},
 		{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "a", "duration_ms": float64(3000), "tokens_out": float64(5)}},
-		{Type: "chat.cancelled", Seq: 3, Payload: map[string]any{"text": "q"}},
+		{Type: "chat.cancelled", Seq: 3},
 	})).Styled()
-	for _, tok := range []string{"chat.warn", "chat.usage", "chat.cancel"} {
+	for _, tok := range []string{"chat.warn", "chat.usage", "chat.error"} {
 		if !strings.Contains(got, "«"+tok+":") {
 			t.Errorf("no span drawn under %s:\n%s", tok, got)
 		}

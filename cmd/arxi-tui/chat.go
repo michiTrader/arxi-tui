@@ -17,7 +17,10 @@ import (
 const chatMaxHistory = 40
 
 // chatSystemPrompt is the standing instruction for a plain chat turn.
-const chatSystemPrompt = "You are a helpful assistant inside a terminal chat. Answer clearly and concisely."
+//
+// It is sent with every message and the provider counts it, so it is kept to one short
+// sentence: a bare "hola" should not cost dozens of tokens before the model reads it.
+const chatSystemPrompt = "You are a concise assistant in a terminal."
 
 // errChatBusy is returned when a second line is sent while an answer is pending.
 var errChatBusy = errors.New("still waiting for the previous answer; press Esc to cancel it, or wait for it to finish")
@@ -58,11 +61,9 @@ type chatSession struct {
 	// dial gives each turn its own connection (nil = every turn shares core, which
 	// is what the tests and the mock use; cancelling then only abandons the answer).
 	dial chatDialer
-	// turn numbers the turns; cancel is the live turn's way to stop (nil when idle),
-	// and prompt is the text it is answering, for the "Cancelled" line.
+	// turn numbers the turns; cancel is the live turn's way to stop (nil when idle).
 	turn   int64
 	cancel context.CancelFunc
-	prompt string
 }
 
 func newChatSession(core chatSender, out chan<- fold.Event) *chatSession {
@@ -121,14 +122,13 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	turn := c.turn
 	turnCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
-	c.prompt = text
 	c.mu.Unlock()
 	go c.run(turnCtx, text, hist, gen, effort, turn)
 	return nil
 }
 
-// cancelTurn stops the turn in flight, if any, and puts a "Cancelled" line in the
-// conversation. It reports whether there was a turn to stop, so a key that means
+// cancelTurn stops the turn in flight, if any, and puts a "request failed:
+// Cancelled" line in the conversation. It reports whether there was a turn to stop, so a key that means
 // "cancel" can fall back to its other meaning when nothing is running. The turn is
 // over at once: the next line may be sent without waiting for the abandoned
 // goroutine to notice.
@@ -138,12 +138,12 @@ func (c *chatSession) cancelTurn() bool {
 		c.mu.Unlock()
 		return false
 	}
-	cancel, prompt, gen := c.cancel, c.prompt, c.gen
+	cancel, gen := c.cancel, c.gen
 	c.cancel = nil
 	c.busy = false
 	c.mu.Unlock()
 	cancel()
-	c.post(context.Background(), gen, "chat.cancelled", map[string]any{"text": prompt})
+	c.post(context.Background(), gen, "chat.cancelled", nil)
 	return true
 }
 
