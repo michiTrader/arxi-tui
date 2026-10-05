@@ -342,7 +342,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	}
 
 	if box := toolsFrom(ctx); box != nil {
-		system = strings.TrimSpace(system + " " + toolsHint(box.box.Root(), box.edits))
+		system = strings.TrimSpace(system + " " + toolsHint(box.box.Root(), box.edits) + " " + runsHint(box.runs))
 	}
 	var messages []turn.Message
 	text := func(role turn.Role, s string) turn.Message {
@@ -518,11 +518,17 @@ func handleChatSendThinking(streams *connStreams, params map[string]any) (any, e
 			_ = w.write(thinkingNotification{Type: "chat.thinking", Text: fragment})
 		})
 	}
+	if stringParam(params, "workdir") == "" && stringParam(params, "runs") != "" {
+		return nil, badInvocation{errors.New("runs needs a workdir to run the commands in")}
+	}
 	if dir := stringParam(params, "workdir"); dir != "" {
 		var err error
 		ctx, err = withTools(ctx, dir, stringParam(params, "edits"), streams.ask,
 			func(n chatToolNotification) { _ = w.write(n) })
 		if err != nil {
+			return nil, err
+		}
+		if ctx, err = withRuns(ctx, stringParam(params, "runs")); err != nil {
 			return nil, err
 		}
 	}
@@ -531,8 +537,8 @@ func handleChatSendThinking(streams *connStreams, params map[string]any) (any, e
 }
 
 func handleChatSend(params map[string]any) (any, error) {
-	if stringParam(params, "workdir") != "" || stringParam(params, "edits") != "" {
-		return nil, badInvocation{errors.New("workdir and edits need a live connection to report the tool calls on")}
+	if stringParam(params, "workdir") != "" || stringParam(params, "edits") != "" || stringParam(params, "runs") != "" {
+		return nil, badInvocation{errors.New("workdir, edits and runs need a live connection to report the tool calls on")}
 	}
 	return chatSendEffort(context.Background(), stringParam(params, "prompt"), stringParam(params, "history"),
 		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))

@@ -1,12 +1,13 @@
-// Package chattools is the read-only toolbox a chat turn may hand to the model so it
-// can look at the files of the directory the user is working in.
+// Package chattools is the toolbox a chat turn may hand to the model so it can work in
+// the directory the user is working in: look at files (list, read, grep), change them
+// (edit, write) and run commands (run).
 //
 // It is deliberately separate from internal/toolrun. That package runs the tools of a
 // governed run (writes, shell, frozen sessions) and its confinement leans on
 // handle-relative opens that only exist on Linux; a chat on the user's own machine has
-// to work on Windows and macOS too, and it can only look, never change. So this one is
-// small, portable, and read-only by construction: nothing here opens a file for
-// writing, and it starts no process.
+// to work on Windows and macOS too. So this one is small and portable, and it starts
+// read-only: the caller turns on changes (WithEdits) and commands (WithRuns) separately,
+// after settling with the user, and a model cannot be talked into more than it was given.
 //
 // The model is careless rather than hostile, so the guard is the same as toolrun's:
 // every path is resolved (symlinks included) and must land inside the root, the
@@ -82,6 +83,9 @@ type Result struct {
 	// Diff is, for a tool that changes a file, the change as lines to show (see
 	// lineDiff). It is empty for the read tools.
 	Diff string
+	// Failed is set when the tool ran but did not succeed (a command that exited with
+	// an error): Text still carries what the model needs to read.
+	Failed bool
 }
 
 // Toolbox runs the tools against one directory.
@@ -90,6 +94,9 @@ type Toolbox struct {
 	// edits is whether write and edit may run. A toolbox starts read-only; the
 	// caller that has settled with the user that files may change says so.
 	edits bool
+	// runs is whether the run tool may start a command. Off until the caller has
+	// settled with the user that commands may run.
+	runs bool
 }
 
 // New opens a toolbox on dir. The directory must exist.
@@ -157,6 +164,12 @@ func (t *Toolbox) Run(name string, rawArgs json.RawMessage) (Result, error) {
 		}
 		return t.runEdit(name, rawArgs)
 	}
+	if Runs(name) {
+		if !t.runs {
+			return Result{}, fmt.Errorf("%s is not available: this session may not run commands", name)
+		}
+		return t.runCommand(rawArgs)
+	}
 	args, err := decodeArgs(rawArgs)
 	if err != nil {
 		return Result{}, err
@@ -169,7 +182,7 @@ func (t *Toolbox) Run(name string, rawArgs json.RawMessage) (Result, error) {
 	case ToolGrep:
 		return t.grep(str(args, "pattern"), str(args, "path"))
 	}
-	return Result{}, fmt.Errorf("there is no tool called %q; the tools are list, read, grep, edit and write", name)
+	return Result{}, fmt.Errorf("there is no tool called %q; the tools are list, read, grep, edit, write and run", name)
 }
 
 // decodeArgs reads a call's arguments, which must be a JSON object (or nothing).

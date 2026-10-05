@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -38,6 +39,9 @@ type chatToolbox struct {
 	// edits is the policy for write and edit: deny (not offered), ask (the user
 	// sees the diff and decides first) or allow.
 	edits string
+	// runs is the same for the run tool: deny (not offered), ask (the user sees the
+	// command and decides first) or allow.
+	runs string
 	// ask puts a change to the user. It is nil when the connection cannot ask, and
 	// a change that needs asking is then refused.
 	ask func(chatApprovalNotification) (bool, error)
@@ -62,7 +66,27 @@ func withTools(ctx context.Context, dir, edits string, ask func(chatApprovalNoti
 	if edits != editsDeny {
 		box = box.WithEdits()
 	}
-	return context.WithValue(ctx, toolsKey{}, &chatToolbox{box: box, report: report, edits: edits, ask: ask}), nil
+	return context.WithValue(ctx, toolsKey{}, &chatToolbox{box: box, report: report, edits: edits, runs: editsDeny, ask: ask}), nil
+}
+
+// withRuns lets the turn's model run commands in the folder withTools opened, as far
+// as runs (deny, ask or allow) permits. It is a second step so that a caller that
+// never heard of commands keeps the toolbox it had.
+func withRuns(ctx context.Context, runs string) (context.Context, error) {
+	tb := toolsFrom(ctx)
+	switch runs {
+	case "", editsDeny:
+		return ctx, nil
+	case editsAsk, editsAllow:
+	default:
+		return ctx, badInvocation{fmt.Errorf("runs must be deny, ask or allow, not %q", runs)}
+	}
+	if tb == nil {
+		return ctx, badInvocation{errors.New("runs needs a workdir to run the commands in")}
+	}
+	c := *tb
+	c.box, c.runs = tb.box.WithRuns(), runs
+	return context.WithValue(ctx, toolsKey{}, &c), nil
 }
 
 func toolsFrom(ctx context.Context) *chatToolbox {
@@ -98,11 +122,24 @@ func toolsHint(root, edits string) string {
 	return h
 }
 
+// runsHint tells the model about the run tool, when it has one.
+func runsHint(runs string) string {
+	if runs == editsDeny || runs == "" {
+		return ""
+	}
+	return "You can run shell commands in the project folder with run (the shell is " + chattools.ShellName() + "). " +
+		"Commands have no keyboard, so never start anything that waits for input or runs forever. " +
+		"Prefer read, grep and edit over cat, grep and sed. If the user declines a command, do not try it again: say what you wanted to learn and ask."
+}
+
 // definitions are the tools offered to the model under this toolbox's policy.
 func (tb *chatToolbox) definitions() []turn.ToolDefinition {
 	defs := chattools.Definitions()
 	if tb.edits != editsDeny {
 		defs = append(defs, chattools.EditDefinitions()...)
+	}
+	if tb.runs == editsAsk || tb.runs == editsAllow {
+		defs = append(defs, chattools.RunDefinitions()...)
 	}
 	out := make([]turn.ToolDefinition, 0, len(defs))
 	for _, d := range defs {
@@ -170,7 +207,33 @@ func runOneTool(tb *chatToolbox, call *turn.ToolCall) (*turn.ToolResult, error) 
 		return out, nil
 	}
 
-	if chattools.Mutating(call.Name) {
+	switch {
+	case chattools.Runs(call.Name):
+		if tb.runs == editsDeny {
+			return fail(call.Name + " is not available in this mode: the model may not run commands")
+		}
+		prev, err := tb.box.PreviewRun(call.Arguments)
+		if err != nil {
+			return fail(err.Error())
+		}
+		n.Arg = prev.Arg
+		// A command is always put to the user under ask: unlike a change to a file, there
+		// is no diff that could turn out to be empty.
+		if tb.runs == editsAsk {
+			if tb.ask == nil {
+				return fail("this command needs the user's approval and this connection cannot ask for it, so it was not run")
+			}
+			allowed, err := tb.ask(chatApprovalNotification{
+				CallID: call.ID, Name: call.Name, Arg: prev.Arg, Summary: prev.Summary,
+			})
+			if err != nil {
+				return nil, err
+			}
+			if !allowed {
+				return fail("the user did not allow this command, so it was not run")
+			}
+		}
+	case chattools.Mutating(call.Name):
 		if tb.edits == editsDeny {
 			return fail(call.Name + " is not available in this mode: the model may look at files but not change them")
 		}
@@ -204,7 +267,10 @@ func runOneTool(tb *chatToolbox, call *turn.ToolCall) (*turn.ToolResult, error) 
 		return fail(err.Error())
 	}
 	out.Content = []turn.ContentBlock{{Type: turn.BlockText, Text: res.Text}}
-	n.OK, n.Summary, n.Output, n.Diff = true, res.Summary, clip(res.Text, maxToolOutputEvent), res.Diff
+	// A command that ran and failed is still a result for the model to read, but the
+	// user is shown it as a failure.
+	out.IsError = res.Failed
+	n.OK, n.Summary, n.Output, n.Diff = !res.Failed, res.Summary, clip(res.Text, maxToolOutputEvent), res.Diff
 	if tb.report != nil {
 		tb.report(n)
 	}
@@ -216,8 +282,12 @@ func argOf(raw json.RawMessage) string {
 	var a struct {
 		Path    string `json:"path"`
 		Pattern string `json:"pattern"`
+		Command string `json:"command"`
 	}
 	_ = json.Unmarshal(raw, &a)
+	if a.Command != "" {
+		return a.Command
+	}
 	if a.Path != "" {
 		return a.Path
 	}
