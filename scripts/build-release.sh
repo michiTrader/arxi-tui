@@ -26,6 +26,8 @@ VERSION="${1:-$(git describe --tags --always --dirty 2>/dev/null || echo dev)}"
 OUT="dist"
 PKG="./cmd/arxi-tui"
 NAME="arxi-tui"
+CORE_NAME="arxi"
+CORE_PKG="./cmd/arxi"
 
 # The target matrix is the install rule's named set: linux, macos (darwin),
 # windows, and android-arm64 for Termux, with arm64 alongside amd64 where the
@@ -66,6 +68,15 @@ for t in "${TARGETS[@]}"; do
 		-ldflags "-s -w -X main.version=${VERSION}" \
 		-o "${OUT}/${artifact}${ext}" "$PKG"
 	echo "  ok  ${artifact}${ext}"
+
+	# The core ships beside the TUI: chat needs it, and the TUI finds it next to
+	# its own executable. It is a separate module, so it is built from core/.
+	core_artifact="${CORE_NAME}_${VERSION}_${label}_${arch}"
+	(cd core && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
+		go build -trimpath \
+		-ldflags "-s -w" \
+		-o "../${OUT}/${core_artifact}${ext}" "$CORE_PKG")
+	echo "  ok  ${core_artifact}${ext}"
 done
 
 # One checksum file over every artifact, computed in dist/ so the names in it are
@@ -76,9 +87,9 @@ done
 (
 	cd "$OUT"
 	if command -v sha256sum >/dev/null 2>&1; then
-		sha256sum arxi-tui_* >SHA256SUMS
+		sha256sum arxi-tui_* arxi_* >SHA256SUMS
 	else
-		shasum -a 256 arxi-tui_* >SHA256SUMS
+		shasum -a 256 arxi-tui_* arxi_* >SHA256SUMS
 	fi
 )
 echo "wrote ${OUT}/SHA256SUMS"

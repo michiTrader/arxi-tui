@@ -22,6 +22,9 @@ set -eu
 
 REPO="michitrader/arxi-tui"
 NAME="arxi-tui"
+# The core (the backend that talks to the models) is installed beside the TUI;
+# the TUI looks for it next to its own executable.
+CORE="arxi"
 # ARXI_VERSION pins a tag; empty means "latest", resolved from the redirect of
 # the releases/latest URL so we never hardcode a version this script outlives.
 VERSION="${ARXI_VERSION:-latest}"
@@ -112,18 +115,23 @@ if [ "$VERSION" = "latest" ]; then
 fi
 
 ARTIFACT="${NAME}_${VERSION}_${LABEL}_${ARCH}${EXT}"
-BASE="https://github.com/$REPO/releases/download/$VERSION"
+CORE_ARTIFACT="${CORE}_${VERSION}_${LABEL}_${ARCH}${EXT}"
+# ARXI_DOWNLOAD_BASE points the download at a mirror or a local directory server
+# (used to test this script without publishing a release); it replaces the
+# whole ".../releases/download/<version>" prefix.
+BASE="${ARXI_DOWNLOAD_BASE:-https://github.com/$REPO/releases/download/$VERSION}"
 
 echo "arxi-tui installer"
 echo "  version:  $VERSION"
 echo "  platform: $LABEL/$ARCH"
-echo "  artifact: $ARTIFACT"
+echo "  artifact: $ARTIFACT + $CORE_ARTIFACT"
 
 TMP="$(mktemp -d 2>/dev/null || mktemp -d -t arxi)"
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
 echo "downloading…"
 dl "$BASE/$ARTIFACT" "$TMP/$ARTIFACT"
+dl "$BASE/$CORE_ARTIFACT" "$TMP/$CORE_ARTIFACT"
 dl "$BASE/SHA256SUMS" "$TMP/SHA256SUMS"
 
 # ---------------------------------------------------------------------------
@@ -132,18 +140,23 @@ dl "$BASE/SHA256SUMS" "$TMP/SHA256SUMS"
 # filtering SHA256SUMS to its line, so a checksum file covering six platforms
 # does not fail on the five we did not download.
 # ---------------------------------------------------------------------------
-echo "verifying checksum…"
-line="$(grep " [*]\{0,1\}${ARTIFACT}\$" "$TMP/SHA256SUMS" || true)"
-[ -n "$line" ] || fail "no checksum for $ARTIFACT in SHA256SUMS"
-want="${line%% *}"
-if have sha256sum; then
-	got="$(sha256sum "$TMP/$ARTIFACT" | cut -d' ' -f1)"
-elif have shasum; then
-	got="$(shasum -a 256 "$TMP/$ARTIFACT" | cut -d' ' -f1)"
-else
-	fail "need sha256sum or shasum to verify"
-fi
-[ "$want" = "$got" ] || fail "checksum mismatch for $ARTIFACT (want $want, got $got)"
+echo "verifying checksums…"
+verify() {
+	a="$1"
+	line="$(grep " [*]\{0,1\}${a}\$" "$TMP/SHA256SUMS" || true)"
+	[ -n "$line" ] || fail "no checksum for $a in SHA256SUMS"
+	want="${line%% *}"
+	if have sha256sum; then
+		got="$(sha256sum "$TMP/$a" | cut -d' ' -f1)"
+	elif have shasum; then
+		got="$(shasum -a 256 "$TMP/$a" | cut -d' ' -f1)"
+	else
+		fail "need sha256sum or shasum to verify"
+	fi
+	[ "$want" = "$got" ] || fail "checksum mismatch for $a (want $want, got $got)"
+}
+verify "$ARTIFACT"
+verify "$CORE_ARTIFACT"
 
 # ---------------------------------------------------------------------------
 # Install. Default dir prefers a writable user bin so the common path needs no
@@ -161,14 +174,21 @@ else
 	mkdir -p "$BIN_DIR"
 fi
 
-DEST="$BIN_DIR/${NAME}${EXT}"
-install -m 0755 "$TMP/$ARTIFACT" "$DEST" 2>/dev/null || {
-	# install(1) is absent on some minimal boxes; fall back to cp + chmod.
-	cp "$TMP/$ARTIFACT" "$DEST"
-	chmod 0755 "$DEST"
+put() {
+	src="$1"
+	dest="$2"
+	install -m 0755 "$src" "$dest" 2>/dev/null || {
+		# install(1) is absent on some minimal boxes; fall back to cp + chmod.
+		cp "$src" "$dest"
+		chmod 0755 "$dest"
+	}
 }
+DEST="$BIN_DIR/${NAME}${EXT}"
+put "$TMP/$ARTIFACT" "$DEST"
+put "$TMP/$CORE_ARTIFACT" "$BIN_DIR/${CORE}${EXT}"
 
 echo "installed $DEST"
+echo "installed $BIN_DIR/${CORE}${EXT}"
 case ":$PATH:" in
 	*":$BIN_DIR:"*) ;;
 	*) echo "note: $BIN_DIR is not on your PATH — add it, e.g. export PATH=\"$BIN_DIR:\$PATH\"" ;;
