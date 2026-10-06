@@ -140,6 +140,12 @@ type Renderer struct {
 	// reader asked to see. The zero value is the collapsed view every golden uses.
 	ExpandTools bool
 
+	// PromptStyle is how the user's own messages are drawn in the chat: "" or
+	// "bar" (a ┃ marker on every row, the default), "band" (the marker over a wash
+	// that runs to the right edge) or "plain" (no marker, just brighter text). It is
+	// a host view setting like ChatScroll, so the fold never sees it.
+	PromptStyle string
+
 	// PluginValues is the host-owned plugin bind snapshot, fed in per repaint the
 	// way AnimTicks and ChatScroll are: the loop reads a snapshot of the
 	// ext.PluginStore once per frame and hands it here (I3, ADR-0007 §I-D). It maps
@@ -805,6 +811,36 @@ const userTurnMarker = "┃ "
 // than failing to render.
 const userTurnToken = "chat.user"
 
+// The ways the user's own messages can be drawn (Renderer.PromptStyle).
+const (
+	PromptBar   = "bar"
+	PromptBand  = "band"
+	PromptPlain = "plain"
+
+	// promptBandToken is the wash behind a banded message. A theme that does not
+	// define it resolves to nothing, so the band is then just the marker.
+	promptBandToken = "chat.band"
+)
+
+// bandLines lays a wash under every row, out to the right edge: each span carries the
+// fill token and the row is padded with fill-coloured spaces to the full width, so the
+// band is one block and not a ragged edge following the words.
+func bandLines(lines []ui.Line, width int, fill string) []ui.Line {
+	out := make([]ui.Line, len(lines))
+	for i, l := range lines {
+		row := make(ui.Line, 0, len(l)+1)
+		for _, sp := range l {
+			sp.Fill = fill
+			row = append(row, sp)
+		}
+		if pad := width - l.Width(); pad > 0 {
+			row = append(row, ui.Span{Text: strings.Repeat(" ", pad), Fill: fill})
+		}
+		out[i] = row
+	}
+	return out
+}
+
 // errorTurnMarker and errorTurnToken dress a failed request in the transcript. A
 // theme that does not define the token resolves it to the zero style, so the line
 // still reads (it falls back to the pane's colour) rather than failing to render.
@@ -1094,9 +1130,11 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 				// voice of the pane. The turn is wrapped under userTurnToken so it
 				// also carries the user's colour, while an agent turn keeps the
 				// pane's own token.
-				text = userTurnMarker + text
 				turnToken = userTurnToken
-				cont = ui.Line{{Text: userTurnMarker, Style: userTurnToken}}
+				if r.PromptStyle != PromptPlain {
+					text = userTurnMarker + text
+					cont = ui.Line{{Text: userTurnMarker, Style: userTurnToken}}
+				}
 			} else if h.Role == "error" {
 				// A failed request is a line of the conversation, not a banner: it is
 				// drawn in the flow under its own token, with a marker that keeps it
@@ -1142,7 +1180,11 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 					lines = append(lines, ui.WrapText(strings.Repeat(" ", assistantIndent)+u, usageTurnToken, r.Width, nil)...)
 				}
 			} else {
-				lines = append(lines, ui.WrapText(text, turnToken, r.Width, cont)...)
+				wrapped := ui.WrapText(text, turnToken, r.Width, cont)
+				if h.Role == "user" && r.PromptStyle == PromptBand {
+					wrapped = bandLines(wrapped, r.Width, promptBandToken)
+				}
+				lines = append(lines, wrapped...)
 			}
 			lines = append(lines, ui.Line{}) // one blank row between turns
 		}
@@ -1186,7 +1228,7 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 			}
 			r.ChatScrollMax = max
 			start := max - s
-			if pin := pinnedPrompt(state.History, starts, lines, start, s, budget, r.Width); len(pin) > 0 {
+			if pin := pinnedPrompt(state.History, starts, lines, start, s, budget, r.Width, r.PromptStyle); len(pin) > 0 {
 				// The pinned rows are spent out of the window's foot, not its head: the
 				// rows that go are the ones a step back toward the tail brings again, so
 				// the wheel never steps over a line nobody read.
@@ -3330,7 +3372,7 @@ const pinnedRowsMax = 2
 //
 // The result is empty when there is nothing to pin or no room for it: a window too short
 // to keep a few rows of conversation beside the header is left alone.
-func pinnedPrompt(history []fold.ChatLine, starts []int, lines []ui.Line, top, scrolled, budget, width int) []ui.Line {
+func pinnedPrompt(history []fold.ChatLine, starts []int, lines []ui.Line, top, scrolled, budget, width int, style string) []ui.Line {
 	if scrolled <= 0 || top <= 0 || budget < 2*pinnedRowsMax {
 		return nil
 	}
@@ -3374,7 +3416,11 @@ func pinnedPrompt(history []fold.ChatLine, starts []int, lines []ui.Line, top, s
 					last = hard[0]
 				}
 			}
-			pin[lost-1] = append(last, ui.Span{Text: cut, Style: userTurnToken})
+			last = append(last, ui.Span{Text: cut, Style: userTurnToken})
+			if style == PromptBand {
+				last = bandLines([]ui.Line{last}, width, promptBandToken)[0]
+			}
+			pin[lost-1] = last
 		}
 	}
 	return pin
