@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/michiTrader/arxi/internal/chattools"
 	"github.com/michiTrader/arxi/internal/provider"
 )
 
@@ -70,7 +72,7 @@ func TestToolLoopRunsToolsThenAnswersOnBothWires(t *testing.T) {
 				t.Errorf("the model must be shown its call and the result: %v / %v", asst["role"], tool)
 			}
 			sys, _ := last[0]["content"].(string)
-			if !strings.Contains(sys, "list, read and grep") {
+			if !strings.Contains(sys, "You can use tools on the user's project") {
 				t.Errorf("system prompt lacks the tools hint: %q", sys)
 			}
 		})
@@ -292,5 +294,24 @@ func TestTheHintMentionsEditingOnlyWhenItIsOffered(t *testing.T) {
 	}
 	if !strings.Contains(toolsHint("/p/x", editsAsk), "edit") {
 		t.Error("the ask hint must mention editing")
+	}
+}
+
+// What every request carries before the user has said a word: the hints plus the
+// tool schemas. It is a cost on every turn of every session, so it has a budget; a
+// change that grows it past that has to say so here, on purpose.
+func TestStandingPromptStaysWithinItsBudget(t *testing.T) {
+	hints := toolsHint("/p/project", editsAsk) + " " + runsHint(editsAsk)
+	defs := append(append(chattools.Definitions(), chattools.EditDefinitions()...), chattools.RunDefinitions()...)
+	raw, err := json.Marshal(defs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const maxHintBytes, maxDefBytes = 520, 1650
+	if len(hints) > maxHintBytes {
+		t.Errorf("the hints are %d bytes, budget %d:\n%s", len(hints), maxHintBytes, hints)
+	}
+	if len(raw) > maxDefBytes {
+		t.Errorf("the tool definitions are %d bytes, budget %d", len(raw), maxDefBytes)
 	}
 }

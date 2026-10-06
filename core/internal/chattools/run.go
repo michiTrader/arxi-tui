@@ -45,11 +45,8 @@ func Runs(name string) bool { return name == ToolRun }
 // RunDefinitions lists the tool that runs commands.
 func RunDefinitions() []Definition {
 	return []Definition{
-		{ToolRun, "Run a shell command in the project folder and return its output and exit code. " +
-			"The command has no keyboard, so it must not wait for input. " +
-			"Use the other tools to read, search and change files; use this for building, testing and anything else a terminal does. " +
-			"The user sees and approves each command.",
-			[]byte(`{"type":"object","properties":{"command":{"type":"string","description":"The command line, run by the system shell (` + ShellName() + `)."},"timeout_seconds":{"type":"integer","description":"Stop it after this many seconds. Default 120, at most 600."}},"required":["command"]}`)},
+		{ToolRun, "Run a " + ShellName() + " command in the project folder; returns its output and exit code. It has no keyboard. The user approves each command.",
+			[]byte(`{"type":"object","properties":{"command":{"type":"string"},"timeout_seconds":{"type":"integer","description":"Default 120, max 600."}},"required":["command"]}`)},
 	}
 }
 

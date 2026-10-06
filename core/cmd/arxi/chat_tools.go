@@ -111,13 +111,10 @@ type chatToolNotification struct {
 
 // toolsHint tells the model what it can do and how paths are read.
 func toolsHint(root, edits string) string {
-	h := "You can look at the user's project with the tools list, read and grep. " +
-		"Paths are relative to the project root (" + filepath.Base(root) + "). " +
-		"Look before you answer questions about the code, and do not guess file contents."
+	h := "You can use tools on the user's project (root: " + filepath.Base(root) + "; paths are relative to it). " +
+		"Look before you answer about the code; never guess file contents."
 	if edits != editsDeny {
-		h += " You can change files with edit (replace text that appears once) and write (create or replace a file); " +
-			"read a file before you edit it. The user may decline a change: if so, do not try the same change again, " +
-			"say what you would have done and ask what they prefer."
+		h += " Read a file before you edit it. If the user declines a change, do not retry it: say what you would do and ask."
 	}
 	return h
 }
@@ -127,9 +124,8 @@ func runsHint(runs string) string {
 	if runs == editsDeny || runs == "" {
 		return ""
 	}
-	return "You can run shell commands in the project folder with run (the shell is " + chattools.ShellName() + "). " +
-		"Commands have no keyboard, so never start anything that waits for input or runs forever. " +
-		"Prefer read, grep and edit over cat, grep and sed. If the user declines a command, do not try it again: say what you wanted to learn and ask."
+	return "Use run only for what the other tools cannot do (build, test, git); nothing interactive or endless. " +
+		"If the user declines a command, do not retry it: ask."
 }
 
 // definitions are the tools offered to the model under this toolbox's policy.

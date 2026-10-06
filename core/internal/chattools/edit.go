@@ -43,11 +43,10 @@ func Mutating(name string) bool { return name == ToolWrite || name == ToolEdit }
 // EditDefinitions lists the tools that change files, in the order they are offered.
 func EditDefinitions() []Definition {
 	return []Definition{
-		{ToolEdit, "Replace text in a file of the project. old_string must appear exactly once in the file " +
-			"(include enough surrounding lines to make it unique) unless replace_all is true. Read the file first.",
-			[]byte(`{"type":"object","properties":{"path":{"type":"string","description":"File, relative to the project root."},"old_string":{"type":"string","description":"The exact text to replace."},"new_string":{"type":"string","description":"The text to put in its place."},"replace_all":{"type":"boolean","description":"Replace every occurrence instead of requiring one."}},"required":["path","old_string","new_string"]}`)},
-		{ToolWrite, "Create a file, or replace a file completely, with the given content. To change part of an existing file use edit instead.",
-			[]byte(`{"type":"object","properties":{"path":{"type":"string","description":"File, relative to the project root."},"content":{"type":"string","description":"The whole new content of the file."}},"required":["path","content"]}`)},
+		{ToolEdit, "Replace old_string with new_string in a file. old_string must appear exactly once unless replace_all is true. Read the file first.",
+			[]byte(`{"type":"object","properties":{"path":{"type":"string"},"old_string":{"type":"string"},"new_string":{"type":"string"},"replace_all":{"type":"boolean"}},"required":["path","old_string","new_string"]}`)},
+		{ToolWrite, "Create a file or replace it completely. Use edit for a partial change.",
+			[]byte(`{"type":"object","properties":{"path":{"type":"string"},"content":{"type":"string"}},"required":["path","content"]}`)},
 	}
 }
 
