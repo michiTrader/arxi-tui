@@ -601,6 +601,9 @@ func TestLoopSobriaSlashMenu(t *testing.T) {
 // the first. The highlight must always sit on a real row — a menu that spins
 // off the end and leaves Enter pointing at nothing is a menu that lies.
 func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
+	// /resume lists what other tests saved in the shared settings folder; this one wants
+	// to see it empty.
+	t.Setenv(configDirEnv, t.TempDir())
 	doc, err := scene.ParseDocument([]byte(factorySobria))
 	if err != nil {
 		t.Fatalf("ParseDocument: %v", err)
@@ -648,6 +651,9 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	case "mode":
 		// /mode opens its own menu; its first row shows.
 		want = "asks before editing"
+	case "resume":
+		// /resume opens its own menu over the saved conversations; none exist here.
+		want = "no saved conversations yet"
 	case "search":
 		// /search is a local setting: its screen opens with no core and lists the services.
 		want = "Brave Search"

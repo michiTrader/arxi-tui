@@ -241,6 +241,14 @@ func (d *serveDriver) CancelTurn() bool {
 	return d.chat != nil && d.chat.cancelTurn()
 }
 
+// ResumeSession makes history the conversation in progress. It is called right after
+// ClearSession, so nothing from the conversation it replaces is left behind.
+func (d *serveDriver) ResumeSession(history []driver.ChatTurn) {
+	if d.chat != nil {
+		d.chat.setHistory(history)
+	}
+}
+
 // ClearSession ends the conversation the driver is following and leaves it ready
 // for a fresh one: the chat history is forgotten, a run being followed is no
 // longer relayed, and anything already queued for the loop is dropped. Nothing

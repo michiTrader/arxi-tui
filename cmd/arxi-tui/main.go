@@ -344,6 +344,13 @@ type sessionClearer interface {
 	ClearSession()
 }
 
+// sessionResumer is the optional capability a Driver has when it keeps the chat history
+// it sends with each question (serveDriver): /resume hands it the history of the
+// conversation brought back, so the model carries on from where it was.
+type sessionResumer interface {
+	ResumeSession(history []driver.ChatTurn)
+}
+
 // turnCanceller is the optional capability a Driver has when it can stop the turn in
 // flight (serveDriver). CancelTurn reports whether there was a turn to stop, which is
 // how Esc and Ctrl-C know whether "cancel" is what the key means right now.
@@ -774,6 +781,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	var effortMn modelMenu
 	// modeMn is the `/mode ` menu, built the same way.
 	var modeMn modelMenu
+	// resumeMn is the `/resume ` menu: the saved conversations, newest first. sessLog
+	// writes the conversation on screen to disk as it happens.
+	var resumeMn modelMenu
+	sessLog := newSessionLog(sessionsDir())
 	hubDoc, hubDocErr := loadHubScene()
 	// openHub is the one door a typed command and a slash-menu pick both take. It
 	// reads the core's state on a worker first so a hung core never freezes the loop.
@@ -979,9 +990,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			state.ModelActive = true
 			state.ModelMatches, state.ModelSelected = modeMn.view(filter)
+		} else if filter, open := resumeMenuOpen(input); open && hub == nil {
+			// `/resume ` borrows the same overlay; it is read from disk each time it opens.
+			if !resumeMn.loaded {
+				resumeMn.setRows(resumeMenuData(sessionsDir(), time.Now()))
+			}
+			state.ModelActive = true
+			state.ModelMatches, state.ModelSelected = resumeMn.view(filter)
 		} else if strings.HasPrefix(input, "/") {
 			effortMn.loaded = false
 			modeMn.loaded = false
+			resumeMn.loaded = false
 			modelMn.loaded = false // the next opening reads the core again
 			state.SlashActive = true
 			state.SlashTyped = input[1:]
@@ -1004,6 +1023,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			modelMn.loaded = false
 			effortMn.loaded = false
 			modeMn.loaded = false
+			resumeMn.loaded = false
 			state.SlashActive = false
 			state.SlashTyped = ""
 			state.SlashMatches = nil
@@ -1533,6 +1553,38 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								effortMn.loaded = false
 								sceneNotice = ""
 							}
+						} else if _, open := resumeMenuOpen(input); open {
+							// The `/resume ` menu: same keys; a pick brings that
+							// conversation back onto the screen and into the history.
+							var pick string
+							input, caret, pick = choiceMenuKey(&resumeMn, resumePrefix, input, caret, ev.Key)
+							resumeMn.loaded = pick == ""
+							if pick != "" {
+								id := resumePick(pick)
+								evs, err := loadSession(sessionsDir(), id)
+								if err != nil {
+									sceneNotice = err.Error()
+								} else {
+									if c, ok := drv.(sessionClearer); ok {
+										c.ClearSession()
+									}
+									if r, ok := drv.(sessionResumer); ok {
+										r.ResumeSession(historyFromEvents(evs))
+									}
+									for drained := false; !drained; {
+										select {
+										case <-eventCh:
+										default:
+											drained = true
+										}
+									}
+									collected = evs
+									sessLog.Continue(id)
+									chatScroll = 0
+									slashSel = 0
+									sceneNotice = ""
+								}
+							}
 						} else if _, open := modeMenuOpen(input); open {
 							// The `/mode ` menu: same keys; a pick sets the mode.
 							var pick string
@@ -1545,6 +1597,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								modeMn.loaded = false
 								sceneNotice = ""
 							}
+						} else if ev.Key.Type == term.KeyEnter && resumeCommand(input, slashSel, slashCat) {
+							input = resumePrefix
+							caret = len([]rune(input))
+							slashSel = 0
+							resumeMn.loaded = false
 						} else if ev.Key.Type == term.KeyEnter && modeCommand(input, slashSel, slashCat) {
 							input = modePrefix
 							caret = len([]rune(input))
@@ -1572,6 +1629,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								c.ClearSession()
 							}
 							collected = nil
+							sessLog.End()
 							for drained := false; !drained; {
 								select {
 								case <-eventCh:
@@ -1746,6 +1804,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				eventCh = nil
 			} else {
 				collected = append(collected, e)
+				if err := sessLog.Record(e); err != nil {
+					sceneNotice = err.Error()
+				}
 				repaint()
 			}
 
