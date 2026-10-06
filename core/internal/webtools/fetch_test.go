@@ -169,3 +169,14 @@ func TestHTMLToTextKeepsOnlyWebLinks(t *testing.T) {
 		t.Errorf("web link missing or fragment kept: %q", got)
 	}
 }
+
+func TestFetchTellsTheModelNotToWorkAroundABlock(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "no bots", http.StatusForbidden)
+	}))
+	defer srv.Close()
+	_, err := newFetcher(allowAll).Fetch(context.Background(), srv.URL)
+	if err == nil || !strings.Contains(err.Error(), "403") || !strings.Contains(err.Error(), "Do not retry") {
+		t.Errorf("a 403 must say so and tell the model to stop: %v", err)
+	}
+}

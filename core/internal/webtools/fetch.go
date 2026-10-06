@@ -186,7 +186,7 @@ func (f *Fetcher) Fetch(ctx context.Context, rawURL string) (*Page, error) {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return nil, fmt.Errorf("the site answered %s", resp.Status)
+		return nil, statusError(resp.StatusCode, resp.Status)
 	}
 	ctype, params, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	kind := classify(ctype)
@@ -291,4 +291,16 @@ func simplify(err error) error {
 		return fmt.Errorf("the address %q does not exist", dns.Name)
 	}
 	return err
+}
+
+// statusError words a refusal. A site that answers 401, 403 or 429 to an automated reader
+// is saying "not you", which retrying or guessing another address will not change, so the
+// model is told to report it rather than hunt for a way round.
+func statusError(code int, status string) error {
+	switch code {
+	case http.StatusUnauthorized, http.StatusForbidden, http.StatusTooManyRequests:
+		return fmt.Errorf("the site answered %s: it does not let automated readers in. "+
+			"Do not retry it or guess other addresses; tell the user, or use another source", status)
+	}
+	return fmt.Errorf("the site answered %s", status)
 }
