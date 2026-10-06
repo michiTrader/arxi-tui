@@ -491,6 +491,15 @@ caret blinks only while you are idle: every key keeps it solid for about a secon
 never disappears while you type or move with the arrows. With the `/` menu open its hint
 line sits right under the bottom rule, and the rules are drawn in a dim grey.
 
+### Input history
+
+Up and Down (or Ctrl+P and Ctrl+N) walk the lines you have sent, newest first. The line you
+were typing is kept and comes back when you step past the newest one. In a multi-line input
+the arrows move between its rows first and only walk the history from the top or bottom
+row; with the `/` menu open they steer the menu. The last 500 lines are kept between
+sessions in `arxi/history` inside your configuration directory (`ARXI_HISTORY_DIR` moves
+it), readable only by you.
+
 ### Thinking level (`/effort `)
 
 Type `/effort` followed by a space and a menu lists the levels the current model takes
