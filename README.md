@@ -29,6 +29,12 @@ The bottom bar reads `mode · model · thinking level · directory`, for example
 `ask · deepseek/deepseek-chat · high · ~/projects/app`. The thinking level appears only
 once you choose one.
 
+After the first answer the bar also shows how big the conversation is and what it has
+used: `ctx 1.2k · ↑3.4k ↓800`. `ctx` is the size of the latest request (what the model has
+to read again on every turn, so it grows as the chat does); `↑` and `↓` are the running
+totals sent and received. These are token counts: the provider does not report prices, so
+no money figure is shown.
+
 The mode says how much the agent may do without asking. Pick it with `/mode` or cycle it
 with Shift+Tab; `/clear` keeps it.
 

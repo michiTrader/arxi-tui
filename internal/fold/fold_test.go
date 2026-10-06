@@ -331,3 +331,25 @@ func TestAnswerKeepsItsUsageAndWarningsAreLines(t *testing.T) {
 		t.Errorf("assistant line = %+v", a)
 	}
 }
+
+// TestLastContextIsTheSizeOfTheLatestRequest checks that LastContext follows
+// the most recent answer (input plus output of that one call) instead of
+// accumulating, and that an answer without token figures leaves it alone.
+func TestLastContextIsTheSizeOfTheLatestRequest(t *testing.T) {
+	ev := func(seq int, in, out float64) Event {
+		return Event{Type: "llm.response", Seq: int64(seq), Payload: map[string]any{
+			"text": "x", "tokens_in": in, "tokens_out": out,
+		}}
+	}
+	s := Fold([]Event{ev(1, 100, 20), ev(2, 150, 30)})
+	if s.LastContext != 180 {
+		t.Errorf("LastContext = %d, want 180", s.LastContext)
+	}
+	if s.UsageIn != 250 || s.UsageOut != 50 {
+		t.Errorf("totals = %d/%d, want 250/50", s.UsageIn, s.UsageOut)
+	}
+	s = Fold([]Event{ev(1, 100, 20), ev(2, 0, 0)})
+	if s.LastContext != 120 {
+		t.Errorf("LastContext after an answer without figures = %d, want 120", s.LastContext)
+	}
+}

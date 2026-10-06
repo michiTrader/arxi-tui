@@ -327,6 +327,17 @@ type State struct {
 	// working, which is what keeps the when-gated line off the screen.
 	HostThinking string `json:"host.thinking"`
 
+	// LastContext is how many tokens the latest answer's request held plus the answer
+	// itself: what the next question starts from, so it is the honest size of the
+	// conversation as the model sees it. Zero until an answer reports tokens. It is a
+	// plain fold of the log, so it survives /resume (the saved events carry the counts).
+	LastContext uint64
+
+	// HostUsage is the status bar's usage segment ("ctx 1.2k · ↑3.4k ↓0.8k"), built by the
+	// loop from the figures above because its blanking while the slash menu is open is host
+	// view state, like HostCwd. Empty draws nothing.
+	HostUsage string `json:"host.usage"`
+
 	// BudgetMicrounits is run.started.budget_usd × 1000, captured when the run
 	// starts. Combined with CostMicrounits it produces session.tokens_used.
 	BudgetMicrounits uint64
@@ -766,6 +777,10 @@ func (s *State) apply(e Event) {
 		// Accumulate usage counters from this response.
 		if in, ok := e.Payload["tokens_in"].(float64); ok {
 			s.UsageIn += uint64(in)
+			if in > 0 {
+				out, _ := e.Payload["tokens_out"].(float64)
+				s.LastContext = uint64(in) + uint64(out)
+			}
 		}
 		if out, ok := e.Payload["tokens_out"].(float64); ok {
 			s.UsageOut += uint64(out)
