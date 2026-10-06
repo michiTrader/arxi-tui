@@ -233,6 +233,12 @@ func (h *providerHub) enter() hubKeyResult {
 			return hubKeyResult{work: &hubWork{Op: opRemoveModel, Ref: h.model}}
 		}
 
+	case lvSearch:
+		if it.id == "off" {
+			return hubKeyResult{work: &hubWork{Op: opSearch, Close: true}}
+		}
+		h.openForm(newSearchForm(it.id))
+
 	case lvConfirm:
 		if it.id == "yes" {
 			return hubKeyResult{work: &hubWork{Op: opRemove, Name: h.prov}}

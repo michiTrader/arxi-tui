@@ -46,6 +46,7 @@ const (
 	formAddOther                 // any OpenAI-compatible service
 	formEdit                     // URL / key / key variable of a registered provider
 	formModels                   // model ids (and prices) added by hand
+	formSearch                   // the key or address of a web search service
 )
 
 // hubForm is the open form. It is wiped when it closes: the key must not outlive it.
@@ -59,6 +60,7 @@ type hubForm struct {
 	focus  int
 
 	origURL, origEnv string // formEdit: what the core holds now
+	backend          string // formSearch: brave, exa or searxng
 }
 
 // isEnvName reports whether s is shaped like an environment variable NAME. A value
@@ -276,6 +278,9 @@ func (f *hubForm) submit() (hubWork, string) {
 	}
 
 	switch f.kind {
+	case formSearch:
+		return hubWork{Op: opSearch, Name: f.backend, Key: f.get("API key"), BaseURL: f.get("Address"), Close: true}, ""
+
 	case formAdd:
 		return hubWork{Op: opAdd, Name: f.target.ID, BaseURL: f.target.BaseURL, Key: f.get("API key")}, ""
 
@@ -321,4 +326,32 @@ func (f *hubForm) submit() (hubWork, string) {
 		return w, ""
 	}
 	return hubWork{}, "unknown form"
+}
+
+// searchBackend is one service /search can use.
+type searchBackend struct{ id, label, hint string }
+
+var searchBackends = []searchBackend{
+	{"brave", "Brave Search", "needs an API key · brave.com/search/api"},
+	{"exa", "Exa", "needs an API key · exa.ai"},
+	{"searxng", "SearXNG", "your own server · needs its address"},
+}
+
+func newSearchForm(id string) *hubForm {
+	name := id
+	for _, b := range searchBackends {
+		if b.id == id {
+			name = b.label
+		}
+	}
+	f := &hubForm{kind: formSearch, backend: id, title: "Search with " + name}
+	if id == "searxng" {
+		f.help = "The address of your SearXNG server, for example http://localhost:8080. It must allow the JSON format."
+		f.fields = []hubField{{label: "Address", required: true, kind: kindURL}}
+		return f
+	}
+	f.help = "Paste your " + name + " API key. It is stored on this computer (never shown, never in a log) " +
+		"and used from your next question."
+	f.fields = []hubField{{label: "API key", secret: true, required: true, kind: kindKey}}
+	return f
 }

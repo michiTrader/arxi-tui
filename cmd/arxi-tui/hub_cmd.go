@@ -42,6 +42,8 @@ func hubCommand(line string) (open hubOpen, ok bool) {
 	switch name {
 	case "provider", "providers", "login":
 		return hubOpenProviders, true
+	case "search":
+		return hubOpenSearch, true
 	}
 	return 0, false
 }
