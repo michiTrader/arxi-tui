@@ -539,6 +539,16 @@ row; with the `/` menu open they steer the menu. The last 500 lines are kept bet
 sessions in `arxi/history` inside your configuration directory (`ARXI_HISTORY_DIR` moves
 it), readable only by you.
 
+### Project rules (`ARXI.md` / `AGENTS.md`)
+
+If the folder you start in has an `ARXI.md` (preferred) or an `AGENTS.md`, its text is added
+to the model's instructions on every turn, and the chat says once `using AGENTS.md as
+project rules`. Only that folder is read (no parent folders, no links to files elsewhere).
+Every turn pays for the rules, so only the first 6,000 bytes are sent and the notice says
+when a file was cut. The model is told the rules come from the project, not from you, and
+they never switch off the questions the agent mode asks. `ARXI_PROJECT_RULES=off` disables
+the feature. The file is re-read every turn, so an edit counts from your next message.
+
 ### Thinking level (`/effort `)
 
 Type `/effort` followed by a space and a menu lists the levels the current model takes
