@@ -40,7 +40,7 @@ jobs:
       # installed. Passing it explicitly beats git-describe here because the
       # checkout is a detached tag and we want the clean tag, not a -0-g suffix.
       - name: Build release artifacts
-        run: bash scripts/build-release.sh "${GITHUB_REF_NAME}"
+        run: scripts/build-release.sh "${GITHUB_REF_NAME}"
 
       # The whole dist/ tree — six platform binaries and the SHA256SUMS install.sh
       # verifies against — becomes the release's downloadable assets.
