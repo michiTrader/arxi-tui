@@ -98,7 +98,9 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
 
   ` + factoryNoticeNode + `,
 
-  { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1 },
+  { "id": "chat", "type": "markdown", "bind": "chat.history", "grow": 1, "fit": true },
+
+  { "id": "thinking_gap", "type": "text", "text": "", "when": "agent.working" },
 
   { "id": "thinking", "type": "marquee", "when": "agent.working",
     "bind": "thinking.text", "style": {"style": "dim"},

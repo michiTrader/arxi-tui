@@ -301,16 +301,15 @@ func TestLoopParksTheTerminalCursorInTheInputBar(t *testing.T) {
 
 	out := tty.output()
 
-	// The empty line parks the caret just past the two-column prefix, on the
-	// prompt row of the 24-row sobria frame. The layout now carries a blank
-	// spacer above and below the input, so the prompt sits on row 22: header(1),
-	// transcript(2-20), gap(21), prompt(22), gap(23), status(24).
-	if !strings.Contains(out, "\x1b[22;3H") {
+	// The empty line parks the caret just past the two-column prefix. The chat pane
+	// fits its content, so with nothing said the prompt rides up under the banner:
+	// header(1), gap(2), gap(3), prompt(4), then the status bar.
+	if !strings.Contains(out, "\x1b[4;3H") {
 		t.Errorf("no cursor-position escape for the empty input; the caret is left in the corner. output:\n%q", out)
 	}
 	// After "hi" the caret walked two columns with the text.
-	if !strings.Contains(out, "\x1b[22;5H") {
-		t.Errorf("caret did not follow the typed text; want a park at row 22 column 5. output:\n%q", out)
+	if !strings.Contains(out, "\x1b[4;5H") {
+		t.Errorf("caret did not follow the typed text; want a park at row 4 column 5. output:\n%q", out)
 	}
 }
 

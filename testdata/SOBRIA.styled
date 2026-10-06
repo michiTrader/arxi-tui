@@ -2,23 +2,6 @@
 
   «text:Hola!»«text: »«text:How»«text: »«text:can»«text: »«text:I»«text: »«text:help»«text: »«text:you»«text: »«text:today?»
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 «input:┃ »«input.placeholder:»
 
 «dim: · »«dim:openai/gpt-4o»                                                                

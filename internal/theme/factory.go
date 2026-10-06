@@ -39,7 +39,7 @@ func Factory() *Theme {
 		"brand.1":            {FG: ui.MustHex("#ff6b1a"), Attrs: ui.AttrBold},
 		"brand.2":            {FG: ui.MustHex("#ff9a1f"), Attrs: ui.AttrBold},
 		"brand.3":            {FG: ui.MustHex("#ffbf26"), Attrs: ui.AttrBold},
-		"brand.4":            {FG: ui.MustHex("#ffe14d"), Attrs: ui.AttrBold},
+		"brand.4":            {FG: ui.MustHex("#ffd666"), Attrs: ui.AttrBold},
 		"diff.context":       {Attrs: ui.AttrDim},
 		"diff.del":           {Attrs: ui.AttrStrike},
 		"diff.add":           {Attrs: ui.AttrBold},
