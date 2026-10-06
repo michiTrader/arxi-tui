@@ -17,7 +17,13 @@ func ShellName() string { return "cmd.exe" }
 // tree with taskkill rather than only cmd.exe.
 func shellCommand(ctx context.Context, line string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, "cmd.exe")
-	cmd.SysProcAttr = &syscall.SysProcAttr{CmdLine: `cmd.exe /d /s /c "` + line + `"`}
+	// CREATE_NO_WINDOW gives the child a console of its own. Without it cmd.exe shares
+	// the TUI's console and changes its input modes (echo, virtual-terminal input),
+	// which shows up as raw key codes typed into the input line after a command ran.
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CmdLine:       `cmd.exe /d /s /c "` + line + `"`,
+		CreationFlags: 0x08000000, // CREATE_NO_WINDOW
+	}
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return nil

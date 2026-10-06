@@ -22,6 +22,7 @@ func (t *TTY) watchResize() {
 			case <-t.done:
 				return
 			case <-tick.C:
+				t.reassert()
 				w, h := t.Size()
 				if w == lastW && h == lastH {
 					continue

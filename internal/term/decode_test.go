@@ -487,10 +487,10 @@ func TestFlushPartialResolvesTheEscAmbiguity(t *testing.T) {
 		// them apart, and after 50 ms this is the right answer.
 		{"\x1b[", []string{"alt+["}},
 		{"\x1bO", []string{"alt+O"}},
-		// The honest cost, written down: a real sequence that stalled mid-parameter
-		// gets read as the text it looks like. Every library with a working esc key
-		// pays this, and the alternative is an esc that needs a second keypress.
-		{"\x1b[1;5", []string{"alt+[1;5"}},
+		// A real sequence that stalled mid-parameter used to be read as the text it
+		// looks like, which typed "[1;5" into the input line. It is dropped now; see
+		// TestFlushPartialDropsUnfinishedSequences.
+		{"\x1b[1;5", nil},
 	}
 	for _, c := range cases {
 		evs, rest := flushPartial([]byte(c.in))

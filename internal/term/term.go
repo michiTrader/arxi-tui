@@ -22,6 +22,13 @@ import (
 // then a bracket that fast on purpose.
 const escTimeout = 50 * time.Millisecond
 
+// csiTimeout is the wait for a tail that is already unmistakably a sequence: ESC [
+// followed by parameter bytes. Nobody types that by hand, so it is a terminal that was
+// interrupted mid-write (the window was busy repainting, or the console was switching
+// windows), and the rest is on its way. Waiting longer costs nothing, because no key
+// press looks like this.
+const csiTimeout = 400 * time.Millisecond
+
 // ErrNotATerminal is what Open returns when stdin is a pipe. Worth a named error
 // because the caller's answer is not "fail" but "run the scenario without a tty".
 var ErrNotATerminal = errors.New("standard input is not a terminal")
@@ -31,6 +38,10 @@ type TTY struct {
 	in    *os.File
 	out   *os.File
 	state *term.State
+
+	// console is the Windows console modes Raw asked for, kept so they can be put
+	// back (see console_windows.go). Nil elsewhere.
+	console any
 
 	events chan Event
 	done   chan struct{}
@@ -64,6 +75,7 @@ func (t *TTY) Raw() error {
 		return err
 	}
 	t.state = st
+	t.wantConsole()
 	return nil
 }
 
@@ -160,7 +172,7 @@ func (t *TTY) read() {
 				return
 			}
 			if len(rest) > 0 && rest[0] == 0x1b {
-				timeout = time.After(escTimeout)
+				timeout = time.After(stallFor(rest))
 			}
 		case <-timeout:
 			timeout = nil
@@ -213,6 +225,12 @@ func flushPartial(rest []byte) ([]Event, []byte) {
 	if len(rest) == 1 {
 		return []Event{{Kind: EventKey, Key: Key{Type: KeyEscape}}}, nil
 	}
+	if partialSequence(rest) {
+		// A sequence that never finished. Its parameters are digits, semicolons and
+		// '<', which is exactly what the user would see typed into the input line if
+		// they were read as text, so the whole tail is dropped.
+		return nil, nil
+	}
 	evs, _ := Decode(rest[1:])
 	for i := range evs {
 		if evs[i].Kind == EventKey {
@@ -222,4 +240,29 @@ func flushPartial(rest []byte) ([]Event, []byte) {
 	// Whatever did not decode is dropped rather than carried: it has already had its
 	// chance, and a buffer that never empties is a terminal that stops responding.
 	return evs, nil
+}
+
+// partialSequence reports whether b is the beginning of a control sequence rather than
+// a key: ESC [ or ESC O with at least one byte after it that only a sequence has, or an
+// OSC/DCS/APC string that has not ended. A bare ESC [ stays alt+[.
+func partialSequence(b []byte) bool {
+	if len(b) < 3 || b[0] != 0x1b {
+		return false
+	}
+	switch b[1] {
+	case '[':
+		c := b[2]
+		return c >= 0x30 && c <= 0x3f || c >= 0x20 && c <= 0x2f // parameter or intermediate
+	case ']', 'P', '^', '_':
+		return true
+	}
+	return false
+}
+
+// stallFor is how long an unfinished tail may wait before flushPartial decides.
+func stallFor(rest []byte) time.Duration {
+	if partialSequence(rest) {
+		return csiTimeout
+	}
+	return escTimeout
 }
