@@ -144,13 +144,16 @@ type Definition struct {
 
 // Definitions lists the tools in the order they are offered.
 func Definitions() []Definition {
+	// These ride along with every request, so they are as short as they can be while
+	// still saying what each tool does. "Relative to the project root" is said once, in
+	// the system hint, and not once per path argument.
 	return []Definition{
-		{ToolList, "List the files and folders in a directory of the project. Folders end with /.",
-			json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"Directory, relative to the project root. Omit for the root."}}}`)},
-		{ToolRead, "Read a text file of the project. Lines come back numbered. Long files are read in parts with offset and limit.",
-			json.RawMessage(`{"type":"object","properties":{"path":{"type":"string","description":"File, relative to the project root."},"offset":{"type":"integer","description":"First line to read, starting at 1."},"limit":{"type":"integer","description":"How many lines to read."}},"required":["path"]}`)},
-		{ToolGrep, "Search the project's text files for a regular expression. Returns path:line:text.",
-			json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string","description":"Regular expression (RE2)."},"path":{"type":"string","description":"Directory or file to search. Omit for the whole project."}},"required":["pattern"]}`)},
+		{ToolList, "List a directory (folders end with /). Omit path for the root.",
+			json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}}}`)},
+		{ToolRead, "Read a file, lines numbered. offset and limit read part of a long one.",
+			json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"offset":{"type":"integer"},"limit":{"type":"integer"}},"required":["path"]}`)},
+		{ToolGrep, "Search files for a regex (RE2); returns path:line:text. Omit path to search everything.",
+			json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string"},"path":{"type":"string"}},"required":["pattern"]}`)},
 	}
 }
 
