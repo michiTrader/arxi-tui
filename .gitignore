@@ -17,3 +17,9 @@
 # Local agent coordination state (writer lock + append-only log). Per-machine
 # runtime scratch, never a source of truth, so it stays out of the repo.
 /.arxi/
+
+# A stray `go build` inside core/cmd/arxi leaves the binary next to the source.
+/core/cmd/arxi/arxi
+/core/cmd/arxi/arxi.exe
+/core/arxi
+/core/arxi.exe
