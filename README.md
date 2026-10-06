@@ -112,6 +112,22 @@ each prompt. `/clear` (typed, or picked in the `/` menu) starts a new one:
 | the run being followed, if any, and its actor label | the scene, theme and hidden/maximized panes |
 | the notice line | |
 
+### Saved conversations and `/resume`
+
+Every conversation is saved as you go, so closing the program loses nothing. `/resume`
+opens a list of them, newest first, each with its first question and how long ago it was
+used; type to filter the list, Enter to pick one. The conversation comes back on screen
+exactly as it was, and the model carries on from where it stopped (the next question is sent
+with that history). `/clear` starts a fresh conversation without deleting the old one.
+
+What is saved is what you see: your questions, the answers, the files and pages the model
+looked at, and errors. Not saved: the model's streamed thinking, an approval that was still
+waiting for your answer, and your settings (model, effort, mode), which are yours and not
+the conversation's. Files are kept in the `sessions` folder of the `arxi` settings folder
+(`%AppData%\arxi\sessions` on Windows, `~/.config/arxi/sessions` elsewhere), readable only
+by you. The latest 100 are kept and older ones are deleted. A conversation can contain
+anything you typed, so set `ARXI_SESSIONS=off` to save nothing at all.
+
 `/clear` takes no arguments, so `/clear now` is not a clear. Managed processes (the
 arxi core and plugins) are not restarted: the core keeps no chat state (`chat.send`
 is stateless), so forgetting the history on the TUI side is the whole reset.

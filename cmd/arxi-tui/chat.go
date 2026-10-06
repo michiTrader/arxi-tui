@@ -285,6 +285,13 @@ func (c *chatSession) reset() {
 	}
 }
 
+// setHistory replaces the conversation the next question is asked in.
+func (c *chatSession) setHistory(h []driver.ChatTurn) {
+	c.mu.Lock()
+	c.history = append([]driver.ChatTurn(nil), h...)
+	c.mu.Unlock()
+}
+
 // busyNow reports whether a turn is in flight.
 func (c *chatSession) busyNow() bool {
 	c.mu.Lock()
