@@ -22,6 +22,16 @@ const chatMaxHistory = 40
 // sentence: a bare "hola" should not cost dozens of tokens before the model reads it.
 const chatSystemPrompt = "You are a concise assistant in a terminal."
 
+// chatNow is the clock behind the date line; tests replace it.
+var chatNow = time.Now
+
+// chatSystem is the standing instruction plus today's date. A model has no clock of its
+// own, so without the date "the latest news" or "this week" is answered from whenever its
+// training stopped, and a page dated today looks like a mistake to it.
+func chatSystem() string {
+	return chatSystemPrompt + " Today is " + chatNow().Format("2006-01-02") + "."
+}
+
 // errChatBusy is returned when a second line is sent while an answer is pending.
 var errChatBusy = errors.New("still waiting for the previous answer; press Esc to cancel it, or wait for it to finish")
 
@@ -359,7 +369,7 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		defer closeConn()
 		core = conn
 	}
-	system := chatSystemPrompt
+	system := chatSystem()
 	if workdir != "" {
 		// Read on every turn, so an edit to the file counts from the next question;
 		// the user is told once per version of it, not once per turn.
