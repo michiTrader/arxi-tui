@@ -369,10 +369,11 @@ func cancelRunningTurn(drv Driver) bool {
 }
 
 // openDriver decides whether to spawn the arxi core subprocess or fall back to
-// the Phase 0 mock. The mock is used when ARXI_BIN is unset: the binary path
-// is optional, and the mock lets the engine run daily without the core present.
+// the Phase 0 mock. The mock is used when no core can be found (ARXI_BIN unset and
+// no arxi core next to this program): the core is optional, and the mock lets the
+// engine run daily without it.
 func openDriver(ctx context.Context, doc *scene.Document) (Driver, <-chan fold.Event, error) {
-	arxiBin := os.Getenv("ARXI_BIN")
+	arxiBin := coreBinary(os.Getenv("ARXI_BIN"), os.Executable)
 	if arxiBin == "" {
 		// Phase 0: no arxi binary, use the mock driver that replays a fixed
 		// log. The mock submits prompts by appending directly to the event

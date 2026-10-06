@@ -460,6 +460,11 @@ cd core && go build -o ../arxi ./cmd/arxi    # the core
 ARXI_BIN=./arxi ./arxi-tui
 ```
 
+Installing a release (Linux, macOS, Termux): `curl -fsSL https://raw.githubusercontent.com/michiTrader/arxi-tui/master/install.sh | sh`
+puts `arxi-tui` and the `arxi` core in the same folder. The TUI looks for the core next to
+itself, so no `ARXI_BIN` is needed; setting `ARXI_BIN` still overrides it. On Windows,
+download both `.exe` files from the release page into one folder.
+
 Direction: one program. The core now lives in this repository so the frontend and the
 backend change together; the goal is a single binary installed with one command. Until
 that lands, build both as above.
