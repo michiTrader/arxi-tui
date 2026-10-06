@@ -41,6 +41,19 @@ func TestModeTableUsesTheCoreSpellingAndLeastPrivilegeFirst(t *testing.T) {
 	}
 }
 
+// Reading a page sends an address to a third party and brings back text nobody vouches
+// for, so every mode asks about it except the one that asks about nothing — and even
+// plan, which changes nothing on the machine, does not read the web unasked.
+func TestEveryModeAsksAboutThePagesExceptFullAccess(t *testing.T) {
+	want := map[string]string{"ask": "ask", "auto": "ask", "plan": "ask", "full access": "allow"}
+	for name, p := range want {
+		m, _ := modeByName(name)
+		if got := m.policy(classWeb); got != p {
+			t.Errorf("%s web policy = %q, want %q", name, got, p)
+		}
+	}
+}
+
 func TestNextModeWalksAndWraps(t *testing.T) {
 	var seen []string
 	m := defaultMode

@@ -66,6 +66,9 @@ type chatSession struct {
 	// runs is the same for shell commands: "deny" (not offered), "ask" (each command
 	// waits for the user) or "allow". It follows the agent mode too.
 	runs string
+	// web is the same for reading web pages: "deny" (not offered), "ask" (each
+	// address waits for the user) or "allow". It follows the agent mode too.
+	web string
 	// approval is the change the core is holding for the user, nil when none.
 	approval *pendingApproval
 
@@ -120,6 +123,13 @@ func (c *chatSession) setEdits(policy string) {
 func (c *chatSession) setRuns(policy string) {
 	c.mu.Lock()
 	c.runs = policy
+	c.mu.Unlock()
+}
+
+// setWeb chooses what the model may do about reading web pages from the next turn on.
+func (c *chatSession) setWeb(policy string) {
+	c.mu.Lock()
+	c.web = policy
 	c.mu.Unlock()
 }
 
@@ -192,11 +202,14 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	gen := c.gen
 	effort := c.effort
 	workdir := c.workdir
-	edits, runs := c.edits, c.runs
+	edits, runs, web := c.edits, c.runs, c.web
 	if runs == policyDeny {
 		// Denied is what a core that knows nothing about commands already does, and
 		// naming it would make an older core refuse the whole request.
 		runs = ""
+	}
+	if web == policyDeny {
+		web = ""
 	}
 	hist := append([]driver.ChatTurn(nil), c.history...)
 	if len(hist) > chatMaxHistory {
@@ -207,7 +220,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	turnCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.mu.Unlock()
-	go c.run(turnCtx, text, hist, gen, effort, workdir, edits, runs, turn)
+	go c.run(turnCtx, text, hist, gen, effort, workdir, edits, runs, web, turn)
 	return nil
 }
 
@@ -305,7 +318,7 @@ func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload m
 	}
 }
 
-func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs string, turn int64) {
+func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs, web string, turn int64) {
 	defer func() {
 		c.mu.Lock()
 		// Only the turn that is still current frees the session: a cancelled turn
@@ -339,7 +352,7 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 			c.post(ctx, gen, "chat.thinking", map[string]any{"text": fragment})
 		},
 		// What it looks at while answering is shown as it happens.
-		Workdir: workdir, Edits: edits, Runs: runs,
+		Workdir: workdir, Edits: edits, Runs: runs, Web: web,
 		OnApproval: func(ctx context.Context, a driver.Approval) bool { return c.askUser(ctx, gen, a) },
 		OnTool: func(t driver.ToolCall) {
 			c.post(ctx, gen, "chat.tool", map[string]any{
@@ -350,7 +363,7 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 	res, err := core.SubmitChatSend(ctx, params)
 	// An older core refuses what it does not know, one parameter at a time. Take away
 	// only that, say so, and ask again: the user still gets everything the core can do.
-	for i := 0; i < 2 && ctx.Err() == nil; i++ {
+	for i := 0; i < 3 && ctx.Err() == nil; i++ {
 		switch {
 		case errors.Is(err, driver.ErrEditsUnsupported):
 			// A core that can look but not change files: say so, and go on looking.
@@ -361,11 +374,15 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model run commands, " +
 				"so it will not; " + rebuildRemedy})
 			params.Runs = ""
+		case errors.Is(err, driver.ErrWebUnsupported):
+			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model read web pages, " +
+				"so it will not; " + rebuildRemedy})
+			params.Web = ""
 		default:
-			i = 2
+			i = 3
 			continue
 		}
-		if params.Edits == "" && params.Runs == "" {
+		if params.Edits == "" && params.Runs == "" && params.Web == "" {
 			params.OnApproval = nil
 		}
 		res, err = core.SubmitChatSend(ctx, params)

@@ -32,18 +32,40 @@ once you choose one.
 The mode says how much the agent may do without asking. Pick it with `/mode` or cycle it
 with Shift+Tab; `/clear` keeps it.
 
-| mode | reads files | edits files | runs commands |
-|---|---|---|---|
-| `ask` (default) | on its own | asks | asks |
-| `auto` | on its own | on its own | asks |
-| `plan` | on its own | never | never |
-| `full access` | on its own | on its own | on its own |
+| mode | reads files | edits files | runs commands | reads web pages |
+|---|---|---|---|---|
+| `ask` (default) | on its own | asks | asks | asks |
+| `auto` | on its own | on its own | asks | asks |
+| `plan` | on its own | never | never | asks |
+| `full access` | on its own | on its own | on its own | on its own |
 
 A command runs in your project folder with no keyboard, is stopped after two minutes
 (ten at most), and does not see environment variables that look like secrets (`*KEY*`,
 `*TOKEN*`, `*SECRET*`, `*PASSWORD*`, `ARXI_*`). It is **not** confined to the folder: it can
 touch anything you can, so the question `Allow this command?` is the only guard. Think
 before you press `full access`.
+
+### Reading web pages (`web_fetch`)
+
+The model can read a page you or it names, as plain text (headings, lists and links kept;
+scripts and styles dropped). Every page is asked about first (`Allow reading this page?`)
+in every mode except `full access`, because reading one sends the address to a third party
+and brings back text nobody vouches for. What the tool does and does not do:
+
+- It reaches only public `http`/`https` addresses. Your own machine and network are never
+  reached, whatever the model asks or a page redirects to: `localhost`, private ranges,
+  link-local addresses (where cloud metadata lives) and the like are refused at connection
+  time, on every redirect hop, even in `full access`.
+- It gives up after 20 seconds, reads at most 2 MB, hands the model at most 32 KB of text
+  (saying how much was left out), follows at most 5 redirects, and refuses anything that is
+  not text (PDFs, images, archives).
+- It never runs the page: no scripts, so pages that only draw themselves with JavaScript
+  come back nearly empty.
+- The text is handed to the model wrapped as untrusted content, and the model is told never
+  to follow instructions found in a page. That reduces the risk of a page hijacking the
+  conversation; it does not remove it, which is why the question is asked.
+
+A search tool is planned next; it needs a search service, which you will choose.
 
 Long command output and long diffs are cut to a few rows and say `… +N lines (ctrl+o to
 expand)`. Ctrl+O opens them all, and closes them again.
