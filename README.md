@@ -23,6 +23,13 @@ published, by handing arxi a link.
 
 ## Status
 
+## Scrolling a long conversation
+
+The mouse wheel scrolls the chat. While you are scrolled away from the bottom, the top of
+the chat repeats the question you are reading the answer to (at most two rows, with `…`
+where it is cut), so a long answer never loses its question. It is drawn only for rows that
+have really left the window, and not at all while you follow the newest text.
+
 ## Status bar and agent modes
 
 The bottom bar reads `mode · model · thinking level · directory`, for example

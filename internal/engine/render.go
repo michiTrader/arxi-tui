@@ -1063,6 +1063,7 @@ func indentLines(lines []ui.Line, n int) []ui.Line {
 // in bare air or overflow the frame no matter what the fold hands it.
 func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) ui.Frame {
 	var lines []ui.Line
+	var starts []int
 
 	// "text" is the token the pane mints when the scene declares none. A
 	// declared token replaces it, because the transcript is content this node
@@ -1074,7 +1075,11 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 
 	switch n.Bind {
 	case "chat.history":
+		// starts[i] is the first row of history item i, so a scrolled view can tell
+		// which of the reader's own messages the top of the window is inside.
+		starts = make([]int, len(state.History))
 		for i, h := range state.History {
+			starts[i] = len(lines)
 			text := h.Text
 			turnToken := token
 			var cont ui.Line
@@ -1181,7 +1186,14 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 			}
 			r.ChatScrollMax = max
 			start := max - s
-			lines = lines[start : start+budget]
+			if pin := pinnedPrompt(state.History, starts, lines, start, s, budget, r.Width); len(pin) > 0 {
+				// The pinned rows are spent out of the window's foot, not its head: the
+				// rows that go are the ones a step back toward the tail brings again, so
+				// the wheel never steps over a line nobody read.
+				lines = append(pin, lines[start:start+budget-len(pin)]...)
+			} else {
+				lines = lines[start : start+budget]
+			}
 		} else {
 			lines = lines[len(lines)-budget:]
 		}
@@ -3297,4 +3309,73 @@ func styleNameOr(style map[string]string, minted string) string {
 		return name
 	}
 	return minted
+}
+
+// pinnedRowsMax is the most of a message the pinned header spends on itself: enough
+// that a sentence survives a narrow terminal, few enough that a pasted paragraph cannot
+// take the screen away from the conversation it only labels.
+const pinnedRowsMax = 2
+
+// pinnedPrompt is the reader's own message, repeated at the top of the chat while they
+// are scrolled away from it. A long conversation is searched by landmark and the only
+// landmark in one is what the human asked: once it has gone off the top of the window,
+// every row on screen is an answer to a question the screen no longer names.
+//
+// A message owns every row from its own first one to the next message's, so the header
+// stays put all the way down a long answer instead of blinking out a row below the
+// question. top is the index of the window's first row. The header repeats only the rows
+// that have actually left the window (never a row that is also on screen just below), so a
+// jump that lands exactly on a message pins nothing. Nothing is pinned while following
+// the tail (scrolled == 0): the reader's last message is a few rows up and in plain view.
+//
+// The result is empty when there is nothing to pin or no room for it: a window too short
+// to keep a few rows of conversation beside the header is left alone.
+func pinnedPrompt(history []fold.ChatLine, starts []int, lines []ui.Line, top, scrolled, budget, width int) []ui.Line {
+	if scrolled <= 0 || top <= 0 || budget < 2*pinnedRowsMax {
+		return nil
+	}
+	owner := -1
+	for i, h := range history {
+		if h.Role == "user" && starts[i] <= top {
+			owner = i
+		}
+	}
+	if owner < 0 {
+		return nil
+	}
+	// The turn's own height runs to the next history item.
+	end := len(lines)
+	if owner+1 < len(starts) {
+		end = starts[owner+1]
+	}
+	height := end - starts[owner]
+	// The trailing blank row between turns is not part of the message.
+	for height > 0 && len(lines[starts[owner]+height-1]) == 0 {
+		height--
+	}
+	lost := top - starts[owner]
+	if lost > height {
+		lost = height
+	}
+	if lost > pinnedRowsMax {
+		lost = pinnedRowsMax
+	}
+	if lost <= 0 {
+		return nil
+	}
+	pin := append([]ui.Line(nil), lines[starts[owner]:starts[owner]+lost]...)
+	if height > lost {
+		// The message goes on below: say so where its words stop, not out at the edge.
+		last := pin[lost-1].TrimRight()
+		const cut = " …"
+		if room := width - ansi.StringWidth(cut); room > 0 {
+			if last.Width() > room {
+				if hard := ui.HardWrapSpans(last, room); len(hard) > 0 {
+					last = hard[0]
+				}
+			}
+			pin[lost-1] = append(last, ui.Span{Text: cut, Style: userTurnToken})
+		}
+	}
+	return pin
 }
