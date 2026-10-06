@@ -615,6 +615,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	caretState := &emitState{}
 	var collected []fold.Event
 	var input string
+	// hist is the sent lines the up and down arrows walk, kept across runs.
+	hist := loadHistory(historyPath())
 	// caret is the rune index of the edit point within input, host-owned view
 	// state held across frames exactly like input itself. It lets the arrow keys
 	// move the cursor and edit the middle of the line; the renderer places the
@@ -1200,6 +1202,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				switch ev.Kind {
 				case term.EventKey:
 					lastKey = time.Now()
+					// Remember the line this key may send: Enter that empties a
+					// non-empty buffer is a submit (or a command), and what was
+					// typed is what the history keeps.
+					lineBefore := input
 					if isCtrlC(ev.Key) && cancelRunningTurn(drv) {
 						// A turn was running, so Ctrl-C means "stop that": it is the key
 						// every terminal tool uses to interrupt work. It does not arm the
@@ -1599,6 +1605,32 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							}
 							input = ""
 							caret = 0
+						} else if step := historyStep(ev.Key); step != 0 && (!strings.HasPrefix(input, "/") || hist.Browsing() || ev.Key.Type == term.KeyRunes) {
+							// Up/Down (or ctrl+p/ctrl+n) walk the sent lines. On a
+							// multi-line input they first move the caret between
+							// the wrapped rows, and only at the first or last row
+							// fall through to the history — the editor of
+							// arxi_cli_sim does the same, so a long prompt can be
+							// edited without losing it to the arrow key. While the
+							// slash menu is open the arrows steer its highlight
+							// instead, unless the line on screen is a recalled one.
+							w, _ := tty.Size()
+							if moved := engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w), step); moved != caret {
+								caret = moved
+							} else {
+								var line string
+								var ok bool
+								if step < 0 {
+									line, ok = hist.Older(input)
+								} else {
+									line, ok = hist.Newer()
+								}
+								if ok {
+									input = line
+									caret = len([]rune(input))
+									slashSel = 0
+								}
+							}
 						} else if strings.HasPrefix(input, "/") {
 							// The menu is open: navigation steers the highlight
 							// and never reaches the buffer. Ctrl-C never gets
@@ -1640,6 +1672,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						} else {
 							input, caret = typeKey(input, caret, ev.Key, ctx, drv)
 						}
+					}
+					if ev.Key.Type == term.KeyEnter && input == "" && strings.TrimSpace(lineBefore) != "" {
+						hist.Add(strings.TrimSpace(lineBefore))
 					}
 				case term.EventPaste:
 					// A paste is text, never keys: nothing in it dispatches an
