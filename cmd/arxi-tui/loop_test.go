@@ -657,6 +657,9 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	case "style":
 		// /style opens its own menu; its first row shows.
 		want = "a ┃ marker on every row"
+	case "flow":
+		// /flow opens its own screen; a conversation with no team says so.
+		want = "plain chat with one agent"
 	case "search":
 		// /search is a local setting: its screen opens with no core and lists the services.
 		want = "Brave Search"
