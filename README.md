@@ -30,6 +30,14 @@ the chat repeats the question you are reading the answer to (at most two rows, w
 where it is cut), so a long answer never loses its question. It is drawn only for rows that
 have really left the window, and not at all while you follow the newest text.
 
+### How your messages look: `/style`
+
+`/style` chooses how your own messages are drawn in the conversation: `bar` (a `┃`
+marker down the left edge, the default), `band` (the same marker over a shaded block
+that runs to the right edge) or `plain` (no marker, just brighter text). The choice is
+remembered between sessions and also applies to the question pinned at the top while you
+scroll. It only changes how things look; the model never sees it.
+
 ## Status bar and agent modes
 
 The bottom bar reads `mode · model · thinking level · directory`, for example

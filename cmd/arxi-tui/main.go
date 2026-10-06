@@ -788,6 +788,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// resumeMn is the `/resume ` menu: the saved conversations, newest first. sessLog
 	// writes the conversation on screen to disk as it happens.
 	var resumeMn modelMenu
+	// styleMn is the `/style ` menu; promptStyle is how the user's messages are drawn,
+	// loaded once and saved when it changes.
+	var styleMn modelMenu
+	promptStyle := loadPromptStyle(stylePath())
 	sessLog := newSessionLog(sessionsDir())
 	hubDoc, hubDocErr := loadHubScene()
 	// openHub is the one door a typed command and a slash-menu pick both take. It
@@ -994,6 +998,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			state.ModelActive = true
 			state.ModelMatches, state.ModelSelected = modeMn.view(filter)
+		} else if filter, open := styleMenuOpen(input); open && hub == nil {
+			// `/style ` borrows the same overlay.
+			if !styleMn.loaded {
+				styleMn.setRows(styleMenuData(promptStyle))
+			}
+			state.ModelActive = true
+			state.ModelMatches, state.ModelSelected = styleMn.view(filter)
 		} else if filter, open := resumeMenuOpen(input); open && hub == nil {
 			// `/resume ` borrows the same overlay; it is read from disk each time it opens.
 			if !resumeMn.loaded {
@@ -1005,6 +1016,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			effortMn.loaded = false
 			modeMn.loaded = false
 			resumeMn.loaded = false
+			styleMn.loaded = false
 			modelMn.loaded = false // the next opening reads the core again
 			state.SlashActive = true
 			state.SlashTyped = input[1:]
@@ -1028,6 +1040,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			effortMn.loaded = false
 			modeMn.loaded = false
 			resumeMn.loaded = false
+			styleMn.loaded = false
 			state.SlashActive = false
 			state.SlashTyped = ""
 			state.SlashMatches = nil
@@ -1121,6 +1134,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		r.AnimPhase = clock.phases()
 		r.ChatScroll = chatScroll
 		r.ExpandTools = expandTools
+		r.PromptStyle = promptStyle
 		// While a consent screen is up it replaces the scene on display: the modal
 		// owns the whole frame so the identity the user is judging is the only thing
 		// they see, and a keypress cannot be split between the prompt and the scene
@@ -1559,6 +1573,20 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								effortMn.loaded = false
 								sceneNotice = ""
 							}
+						} else if _, open := styleMenuOpen(input); open {
+							// The `/style ` menu: same keys; a pick changes how your
+							// messages are drawn and is remembered.
+							var pick string
+							input, caret, pick = choiceMenuKey(&styleMn, stylePrefix, input, caret, ev.Key)
+							if pick != "" {
+								promptStyle = normalizePromptStyle(pick)
+								if err := savePromptStyle(stylePath(), promptStyle); err != nil {
+									sceneNotice = "style not saved: " + err.Error()
+								} else {
+									sceneNotice = ""
+								}
+								styleMn.loaded = false
+							}
 						} else if _, open := resumeMenuOpen(input); open {
 							// The `/resume ` menu: same keys; a pick brings that
 							// conversation back onto the screen and into the history.
@@ -1603,6 +1631,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								modeMn.loaded = false
 								sceneNotice = ""
 							}
+						} else if ev.Key.Type == term.KeyEnter && styleCommand(input, slashSel, slashCat) {
+							input = stylePrefix
+							caret = len([]rune(input))
+							slashSel = 0
+							styleMn.loaded = false
 						} else if ev.Key.Type == term.KeyEnter && resumeCommand(input, slashSel, slashCat) {
 							input = resumePrefix
 							caret = len([]rune(input))

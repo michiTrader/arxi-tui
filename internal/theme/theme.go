@@ -342,6 +342,8 @@ func SOBRIA() *Theme {
 		// light grey.
 		"chat.user":  {FG: ui.Idx(ui.White + ui.Bright)},
 		"chat.error": {FG: ui.Idx(ui.Red + ui.Bright)},
+		// The wash behind the user's message when /style asks for a band.
+		"chat.band": {BG: ui.MustHex("#2c2c31")},
 		// A warning (the turn went on) and the usage line under an answer. The warning
 		// borrows the product's amber so it reads as "look here" without the alarm of
 		// red; the usage is a quiet grey because it is a record, not news.

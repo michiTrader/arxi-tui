@@ -654,6 +654,9 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	case "resume":
 		// /resume opens its own menu over the saved conversations; none exist here.
 		want = "no saved conversations yet"
+	case "style":
+		// /style opens its own menu; its first row shows.
+		want = "a ┃ marker on every row"
 	case "search":
 		// /search is a local setting: its screen opens with no core and lists the services.
 		want = "Brave Search"
