@@ -34,6 +34,12 @@ Content: `text`, `markdown`, `input`, `spinner`, `marquee`, `list`
 `button`, `switch`/`slider`, `sparkline`, `rule`.
 Universal: `id`, `bind` (absolute `path.state` or relative `row.field` inside
 a template), `when`, `style`, `grow`/`weight`, `on_press`, `scroll`.
+
+Non-universal: `fit: true` on a `grow` child of a stack makes it take only the rows its content needs
+(up to its share), so what follows it — the input and the status bar — sits right under
+it and sinks to the bottom edge as the content grows. Without it a grower reserves its
+whole share and pins what follows to the bottom. The built-in scene uses it on the chat.
+
 Actions are a closed vocabulary per surface (`cmd:/slash`, `ext:<name>:<action>`,
 `answer:<kind>`, `focus:<node>`), extended only through registered names.
 Binds come from a Phase-0.5 inventory: host-owned fields, computed

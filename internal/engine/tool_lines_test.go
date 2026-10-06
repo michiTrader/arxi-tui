@@ -49,7 +49,7 @@ func TestFailedToolCallIsStyledAsFailure(t *testing.T) {
 	got := r.RenderFrame(mustDoc(t, js), fold.Fold([]fold.Event{
 		toolEv(1, "read", ".env", false, "looks like it holds secrets"),
 	})).Styled()
-	for _, tok := range []string{"«chat.tool.dot:", "«chat.tool:", "«chat.tool.fail:"} {
+	for _, tok := range []string{"«chat.tool.dot.fail:", "«chat.tool:", "«chat.tool.fail:"} {
 		if !strings.Contains(got, tok) {
 			t.Errorf("styled frame lacks %s:\n%s", tok, got)
 		}
@@ -325,5 +325,20 @@ func TestCarriageReturnsAndTabsInOutputDoNotBreakTheRows(t *testing.T) {
 	}
 	if !strings.Contains(text, "ok    pkg    0.3s") {
 		t.Errorf("tabs should become spaces:\n%s", text)
+	}
+}
+
+// The dot is the outcome at a glance: white when the call worked, red when it
+// failed, blue while it waits for an answer.
+func TestToolDotFollowsTheOutcome(t *testing.T) {
+	r, js := chatDoc(t)
+	styled := func(evs ...fold.Event) string {
+		return r.RenderFrame(mustDoc(t, js), fold.Fold(evs)).Styled()
+	}
+	if got := styled(toolEv(1, "read", "a.go", true, "Read 3 lines")); !strings.Contains(got, "«chat.tool.dot.ok:● ") {
+		t.Errorf("a call that worked lacks the ok dot:\n%s", got)
+	}
+	if got := styled(toolEv(1, "read", ".env", false, "refused")); !strings.Contains(got, "«chat.tool.dot.fail:● ") {
+		t.Errorf("a call that failed lacks the fail dot:\n%s", got)
 	}
 }

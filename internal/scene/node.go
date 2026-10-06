@@ -22,6 +22,13 @@ type Node struct {
 	Grow        *int              `json:"grow,omitempty"`
 	Weight      *int              `json:"weight,omitempty"`
 
+	// Fit makes a `grow` child of a stack take only the rows its content needs, up to
+	// its share, instead of reserving the whole share. The rows after it then follow
+	// the content up the screen — an input that sits right under a short transcript
+	// and sinks to the bottom edge as the transcript grows. Without it (the default) a
+	// grower keeps its whole share and pins what comes after it to the bottom.
+	Fit bool `json:"fit,omitempty"`
+
 	// Prefix is either a string (for the input node's prompt glyph) or a
 	// child node (for the marquee's styled prefix). Uses json.RawMessage so
 	// the same field accepts both shapes without a custom unmarshaller.

@@ -540,7 +540,8 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		grown := f.Live
 		// Grow children reserve their full share even when content is short.
 		// This is what pins the input to the bottom of the screen instead
-		// of letting it ride up under the transcript.
+		// of letting it ride up under the transcript — unless the node asked
+		// to `fit`, which is exactly asking for the input to ride up.
 		if len(grown) > share {
 			grown = grown[len(grown)-share:]
 		}
@@ -548,7 +549,7 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 			caret = ui.Cursor{Line: len(live) + f.Cursor.Line, Col: f.Cursor.Col}
 		}
 		live = append(live, grown...)
-		for len(grown) < share {
+		for !s.node.Fit && len(grown) < share {
 			live = append(live, ui.Line{})
 			grown = append(grown, ui.Line{})
 		}
@@ -830,7 +831,9 @@ const (
 // a blue dot and the tool's name with its argument, then what came of it under
 // a dim elbow. The calls of one answer stack with no blank row between them.
 const (
-	toolDotToken    = "chat.tool.dot"
+	toolDotToken    = "chat.tool.dot" // waiting for the user's answer
+	toolDotOKToken  = "chat.tool.dot.ok"
+	toolDotBadToken = "chat.tool.dot.fail"
 	toolNameToken   = "chat.tool"
 	toolResultToken = "chat.tool.result"
 	toolFailToken   = "chat.tool.fail"
@@ -856,7 +859,16 @@ func toolLines(h fold.ChatLine, width int, expand bool) []ui.Line {
 	// The argument is usually one long word (a path), which word wrapping would
 	// push to a row of its own. It is cut at the edge instead, so it starts on the
 	// same row as the name and continues under itself.
-	first := ui.Line{{Text: toolDot, Style: toolDotToken}, {Text: title, Style: toolNameToken}, {Text: "(", Style: toolResultToken}}
+	// The dot says how the call went: blue while it waits for an answer, white when it
+	// worked, red when it failed or was refused.
+	dot := toolDotOKToken
+	switch {
+	case h.Role == "approval":
+		dot = toolDotToken
+	case !h.ToolOK:
+		dot = toolDotBadToken
+	}
+	first := ui.Line{{Text: toolDot, Style: dot}, {Text: title, Style: toolNameToken}, {Text: "(", Style: toolResultToken}}
 	hang := strings.Repeat(" ", dotW)
 	var head []ui.Line
 	cur, room := first, width-first.Width()

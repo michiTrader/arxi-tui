@@ -348,11 +348,13 @@ func SOBRIA() *Theme {
 		"chat.warn": {FG: ui.MustHex("#ffb454")},
 		// A tool call the agent made: a blue dot and a bold name, with what came of
 		// it in grey underneath (red when the tool refused or failed).
-		"chat.tool":        {Attrs: ui.AttrBold},
-		"chat.tool.dot":    {FG: ui.MustHex("#4f9dff")},
-		"chat.tool.result": {FG: ui.MustHex("#6f6f6f")},
-		"chat.tool.fail":   {FG: ui.Idx(ui.Red + ui.Bright)},
-		"chat.usage":       {FG: ui.MustHex("#6f6f6f")},
+		"chat.tool":          {Attrs: ui.AttrBold},
+		"chat.tool.dot":      {FG: ui.MustHex("#4f9dff")},
+		"chat.tool.dot.ok":   {FG: ui.Idx(ui.White + ui.Bright)},
+		"chat.tool.dot.fail": {FG: ui.Idx(ui.Red + ui.Bright)},
+		"chat.tool.result":   {FG: ui.MustHex("#6f6f6f")},
+		"chat.tool.fail":     {FG: ui.Idx(ui.Red + ui.Bright)},
+		"chat.usage":         {FG: ui.MustHex("#6f6f6f")},
 		// The diff of a change the agent made: red for what left, green for what
 		// came in, grey for the lines around it.
 		"chat.approval": {FG: ui.MustHex("#ffb454"), Attrs: ui.AttrBold},
@@ -379,7 +381,7 @@ func SOBRIA() *Theme {
 		"brand.1":            {FG: ui.MustHex("#ff6b1a"), Attrs: ui.AttrBold},
 		"brand.2":            {FG: ui.MustHex("#ff9a1f"), Attrs: ui.AttrBold},
 		"brand.3":            {FG: ui.MustHex("#ffbf26"), Attrs: ui.AttrBold},
-		"brand.4":            {FG: ui.MustHex("#ffe14d"), Attrs: ui.AttrBold},
+		"brand.4":            {FG: ui.MustHex("#ffd666"), Attrs: ui.AttrBold},
 		// Assistant replies are Markdown (internal/ui/markdown.go). Structure is carried
 		// by weight and a restrained palette: headings bright and bold, inline code and
 		// links cyan, code blocks syntax-tinted behind a dim gutter, and every frame
