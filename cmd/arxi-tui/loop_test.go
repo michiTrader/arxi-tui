@@ -753,7 +753,7 @@ func TestLoopSobriaStatusbarRenders(t *testing.T) {
 		{Type: "agent.activated", Seq: 2, Payload: map[string]any{"agent": "backend"}},
 		{Type: "llm.response", Seq: 3, Payload: map[string]any{
 			"text": "Hola!", "model": "openai/gpt-4o",
-			"tokens_in": 12, "tokens_out": 8,
+			"tokens_in": float64(12), "tokens_out": float64(8),
 		}},
 		{Type: "agent.turn_done", Seq: 4, Payload: map[string]any{"agent": "backend"}},
 	}
@@ -789,6 +789,10 @@ func TestLoopSobriaStatusbarRenders(t *testing.T) {
 	// the SGR resets between spans so the visible text is one contiguous line.
 	if !strings.Contains(out, "ask · openai/gpt-4o") {
 		t.Errorf("status bar not rendered correctly; output:\n%s", out)
+	}
+	// The same bar carries the conversation size and token totals.
+	if !strings.Contains(out, "ctx 20 · ↑12 ↓8") {
+		t.Errorf("status bar lacks the usage segment; output:\n%s", out)
 	}
 }
 

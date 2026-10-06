@@ -140,6 +140,9 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.effort" },
     { "type": "text", "bind": "host.effort", "style": {"style": "dim"},
       "when": "host.effort" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.usage" },
+    { "type": "text", "bind": "host.usage", "style": {"style": "dim"},
+      "when": "host.usage" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.cwd" },
     { "type": "text", "bind": "host.cwd", "style": {"style": "dim"},
       "when": "host.cwd" } ] }
@@ -1076,8 +1079,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		}
 		if state.SlashActive {
 			state.HostEffort, state.HostCwd, state.HostMode, state.ModelName = "", "", "", ""
+			state.HostUsage = ""
 		} else {
 			state.HostEffort, state.HostCwd, state.HostMode = effort, shortCwd(cwd), mode
+			state.HostUsage = usageLabel(state.LastContext, state.UsageIn, state.UsageOut)
 		}
 
 		var r engine.Renderer
