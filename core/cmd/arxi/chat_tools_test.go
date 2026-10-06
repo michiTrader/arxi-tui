@@ -308,11 +308,11 @@ func TestStandingPromptStaysWithinItsBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	web, err := json.Marshal(webtools.Definitions())
+	web, err := json.Marshal(append(webtools.Definitions(), webtools.SearchDefinition()))
 	if err != nil {
 		t.Fatal(err)
 	}
-	const maxHintBytes, maxDefBytes = 600, 1650 + 260
+	const maxHintBytes, maxDefBytes = 600, 1650 + 520
 	raw = append(raw, web...)
 	if len(hints) > maxHintBytes {
 		t.Errorf("the hints are %d bytes, budget %d:\n%s", len(hints), maxHintBytes, hints)

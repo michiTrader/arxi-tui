@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -48,6 +49,9 @@ type chatToolbox struct {
 	web string
 	// fetcher reads the pages; nil until the turn is given the web.
 	fetcher *webtools.Fetcher
+	// searcher runs web searches; nil when the user has not chosen a backend, in which
+	// case web_search is not offered.
+	searcher *webtools.Searcher
 	// ask puts a change to the user. It is nil when the connection cannot ask, and
 	// a change that needs asking is then refused.
 	ask func(chatApprovalNotification) (bool, error)
@@ -112,6 +116,9 @@ func withWeb(ctx context.Context, web string) (context.Context, error) {
 	}
 	c := *tb
 	c.web, c.fetcher = web, webtools.NewFetcher()
+	// A search backend that was chosen but cannot work is reported to the user as a
+	// warning by the caller; here it just means search is not offered.
+	c.searcher, _ = webtools.SearcherFromEnv(os.Getenv)
 	return context.WithValue(ctx, toolsKey{}, &c), nil
 }
 
@@ -176,7 +183,11 @@ func (tb *chatToolbox) definitions() []turn.ToolDefinition {
 		out = append(out, turn.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: d.Schema})
 	}
 	if tb.web == editsAsk || tb.web == editsAllow {
-		for _, d := range webtools.Definitions() {
+		ds := webtools.Definitions()
+		if tb.searcher != nil {
+			ds = append(ds, webtools.SearchDefinition())
+		}
+		for _, d := range ds {
 			out = append(out, turn.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: d.Schema})
 		}
 	}
@@ -315,31 +326,59 @@ func runOneTool(ctx context.Context, tb *chatToolbox, call *turn.ToolCall) (*tur
 	return out, nil
 }
 
-// runWebTool runs a web call. A page is put to the user first under ask: reading it
+// runWebTool runs a web call (a page or a search). It is put to the user first under ask: reading it
 // sends the address, and whatever the model put in it, to a third party.
 func runWebTool(ctx context.Context, tb *chatToolbox, call *turn.ToolCall, n chatToolNotification,
 	out *turn.ToolResult, fail func(string) (*turn.ToolResult, error)) (*turn.ToolResult, error) {
 	if tb.web != editsAsk && tb.web != editsAllow {
 		return fail(call.Name + " is not available in this mode: the model may not read the web")
 	}
-	addr, err := webtools.FetchArgs(call.Arguments)
-	if err != nil {
-		return fail(err.Error())
+	var addr, query string
+	var count int
+	var err error
+	if call.Name == webtools.ToolSearch {
+		if tb.searcher == nil {
+			return fail("web_search is not available: no search service is set up")
+		}
+		if query, count, err = webtools.SearchArgs(call.Arguments); err != nil {
+			return fail(err.Error())
+		}
+		n.Arg = query
+	} else {
+		if addr, err = webtools.FetchArgs(call.Arguments); err != nil {
+			return fail(err.Error())
+		}
+		n.Arg = addr
 	}
-	n.Arg = addr
 	if tb.web == editsAsk {
 		if tb.ask == nil {
-			return fail("this page needs the user's approval and this connection cannot ask for it, so it was not read")
+			return fail("this needs the user's approval and this connection cannot ask for it, so it was not done")
+		}
+		summary := "Read " + webtools.Host(addr)
+		if query != "" {
+			summary = "Search with " + tb.searcher.Backend()
 		}
 		allowed, err := tb.ask(chatApprovalNotification{
-			CallID: call.ID, Name: call.Name, Arg: addr, Summary: "Read " + webtools.Host(addr),
+			CallID: call.ID, Name: call.Name, Arg: n.Arg, Summary: summary,
 		})
 		if err != nil {
 			return nil, err
 		}
 		if !allowed {
-			return fail("the user did not allow this page, so it was not read")
+			return fail("the user did not allow this, so it was not done")
 		}
+	}
+	if query != "" {
+		results, err := tb.searcher.Search(ctx, query, count)
+		if err != nil {
+			return fail(err.Error())
+		}
+		out.Content = []turn.ContentBlock{{Type: turn.BlockText, Text: webtools.Format(query, results)}}
+		n.OK, n.Summary = true, fmt.Sprintf("%d results", len(results))
+		if tb.report != nil {
+			tb.report(n)
+		}
+		return out, nil
 	}
 	page, err := tb.fetcher.Fetch(ctx, addr)
 	if err != nil {
@@ -360,6 +399,7 @@ func argOf(raw json.RawMessage) string {
 		Pattern string `json:"pattern"`
 		Command string `json:"command"`
 		URL     string `json:"url"`
+		Query   string `json:"query"`
 	}
 	_ = json.Unmarshal(raw, &a)
 	if a.Command != "" {
@@ -367,6 +407,9 @@ func argOf(raw json.RawMessage) string {
 	}
 	if a.URL != "" {
 		return a.URL
+	}
+	if a.Query != "" {
+		return a.Query
 	}
 	if a.Path != "" {
 		return a.Path

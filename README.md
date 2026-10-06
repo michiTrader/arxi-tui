@@ -65,7 +65,24 @@ and brings back text nobody vouches for. What the tool does and does not do:
   to follow instructions found in a page. That reduces the risk of a page hijacking the
   conversation; it does not remove it, which is why the question is asked.
 
-A search tool is planned next; it needs a search service, which you will choose.
+### Searching the web (`web_search`)
+
+Search needs a search service, and you choose which one. Until you do, the tool is simply
+not offered to the model. Set these environment variables before starting `arxi-tui`:
+
+| service | `ARXI_SEARCH_BACKEND` | also set | notes |
+|---|---|---|---|
+| Brave Search | `brave` | `ARXI_SEARCH_KEY` = your API key | independent index; has a free monthly allowance |
+| Exa | `exa` | `ARXI_SEARCH_KEY` = your API key | built for AI agents; paid after a free allowance |
+| SearxNG | `searxng` | `ARXI_SEARCH_URL` = your instance, e.g. `http://localhost:8080` | free and private if you run it yourself; the instance must allow `format=json` (`search.formats` in its `settings.yml`) |
+
+A misspelled or incomplete setting leaves search off rather than half-working. The query is
+sent to that service, so each search is asked about first, like a page (`Allow this
+search?`), in every mode but `full access`. Results come back as titles, addresses and
+short snippets wrapped as untrusted content; the model reads a page with `web_fetch` when
+a snippet is not enough. A SearxNG instance you named yourself may be on your own machine
+or network: that is the one place the web tools will connect to a private address, because
+you asked for it. The key is never shown, never logged and never put in an error.
 
 Long command output and long diffs are cut to a few rows and say `… +N lines (ctrl+o to
 expand)`. Ctrl+O opens them all, and closes them again.
