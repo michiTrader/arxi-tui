@@ -410,3 +410,55 @@ func TestChatSendAgainstACoreWithoutEditsNorRunsReportsEdits(t *testing.T) {
 		t.Fatalf("err = %v; want ErrEditsUnsupported", err)
 	}
 }
+
+func TestChatSendSendsWebOnlyWithAFolder(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent, `{"id":"chat-send","ok":true,"result":{"text":"hi"}}`)
+	if _, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Web: "allow"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sent.String(), "web") {
+		t.Fatalf("a request without a folder must not carry web: %s", sent.String())
+	}
+
+	sent.Reset()
+	d = sessionWithWriter(t, &sent, `{"id":"chat-send","ok":true,"result":{"text":"hi"}}`)
+	if _, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj", Web: "ask"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sent.String(), `"web":"ask"`) {
+		t.Fatalf("request = %s", sent.String())
+	}
+}
+
+func TestChatSendAgainstACoreWithoutWebSaysSo(t *testing.T) {
+	// A core that takes edits and runs but not web: the list of what it does take names
+	// them, and must not be mistaken for the refusal.
+	d := session(t, `{"id":"chat-send","ok":false,"error":{"code":"bad_params","message":"chat.send does not take web. It takes: edits, effort, history, model, prompt, runs, stream_thinking, system, workdir. Unknown parameters are refused"}}`)
+	_, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj", Edits: "ask", Runs: "ask", Web: "ask"})
+	if !errors.Is(err, ErrWebUnsupported) {
+		t.Fatalf("err = %v; want ErrWebUnsupported", err)
+	}
+	if errors.Is(err, ErrEditsUnsupported) || errors.Is(err, ErrRunsUnsupported) {
+		t.Fatal("a core that takes edits and runs must not be reported as lacking them")
+	}
+}
+
+func TestChatSendPutsAPageToTheUserLikeACommand(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"type":"chat.approval","call_id":"w1","name":"web_fetch","arg":"https://example.com/docs","summary":"Read example.com"}`,
+		`{"id":"chat-send","ok":true,"result":{"text":"done"}}`)
+	var asked []Approval
+	_, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj", Web: "ask",
+		OnApproval: func(_ context.Context, a Approval) bool { asked = append(asked, a); return false }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(asked) != 1 || asked[0].Name != "web_fetch" || asked[0].Arg != "https://example.com/docs" {
+		t.Fatalf("asked = %+v", asked)
+	}
+	if dec := decisions(sent.String()); len(dec) != 1 || dec[0]["call_id"] != "w1" || dec[0]["allow"] != false {
+		t.Fatalf("decisions = %v", dec)
+	}
+}

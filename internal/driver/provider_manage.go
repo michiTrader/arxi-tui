@@ -196,6 +196,11 @@ type ChatSendParams struct {
 	// It is independent of Edits. A core that does not know the parameter makes
 	// the call fail with ErrRunsUnsupported.
 	Runs string
+	// Web lets the model read web pages: "deny" (the default), "ask" (every address
+	// is put to OnApproval first) or "allow". It needs Workdir, because it travels
+	// with the tools. A core that does not know the parameter makes the call fail
+	// with ErrWebUnsupported.
+	Web string
 }
 
 // Approval is a change the model wants to make and the core is holding until the
@@ -227,6 +232,9 @@ var ErrEditsUnsupported = errors.New("this arxi core cannot let the model change
 
 // ErrRunsUnsupported is returned when the core is too old to let the model run commands.
 var ErrRunsUnsupported = errors.New("this arxi core cannot let the model run commands (it does not know runs)")
+
+// ErrWebUnsupported is returned when the core is too old to let the model read the web.
+var ErrWebUnsupported = errors.New("this arxi core cannot let the model read web pages (it does not know web)")
 
 // ErrToolsUnsupported is returned when the core is too old to give the model tools.
 var ErrToolsUnsupported = errors.New("this arxi core cannot give the model tools (it does not know workdir)")
@@ -272,6 +280,9 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 	if p.Runs != "" && p.Workdir != "" {
 		params["runs"] = p.Runs
 	}
+	if p.Web != "" && p.Workdir != "" {
+		params["web"] = p.Web
+	}
 	var r ChatSendResult
 	if p.OnThinking == nil && p.Workdir == "" {
 		if err := d.call(ctx, "chat-send", "chat.send", params, &r); err != nil {
@@ -295,6 +306,8 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 			return nil, fmt.Errorf("%w: %s", ErrEditsUnsupported, ref.Message)
 		case strings.Contains(refused, "runs"):
 			return nil, fmt.Errorf("%w: %s", ErrRunsUnsupported, ref.Message)
+		case strings.Contains(refused, "web"):
+			return nil, fmt.Errorf("%w: %s", ErrWebUnsupported, ref.Message)
 		case strings.Contains(refused, "stream_thinking"):
 			// An older core refuses the parameter it does not know. The turn it
 			// would have streamed is simply asked again the plain way.

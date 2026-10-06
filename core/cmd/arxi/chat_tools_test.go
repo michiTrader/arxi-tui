@@ -11,6 +11,7 @@ import (
 
 	"github.com/michiTrader/arxi/internal/chattools"
 	"github.com/michiTrader/arxi/internal/provider"
+	"github.com/michiTrader/arxi/internal/webtools"
 )
 
 func projectDir(t *testing.T) string {
@@ -301,13 +302,18 @@ func TestTheHintMentionsEditingOnlyWhenItIsOffered(t *testing.T) {
 // tool schemas. It is a cost on every turn of every session, so it has a budget; a
 // change that grows it past that has to say so here, on purpose.
 func TestStandingPromptStaysWithinItsBudget(t *testing.T) {
-	hints := toolsHint("/p/project", editsAsk) + " " + runsHint(editsAsk)
+	hints := toolsHint("/p/project", editsAsk) + " " + runsHint(editsAsk) + " " + webHint(editsAsk)
 	defs := append(append(chattools.Definitions(), chattools.EditDefinitions()...), chattools.RunDefinitions()...)
 	raw, err := json.Marshal(defs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const maxHintBytes, maxDefBytes = 520, 1650
+	web, err := json.Marshal(webtools.Definitions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const maxHintBytes, maxDefBytes = 600, 1650 + 260
+	raw = append(raw, web...)
 	if len(hints) > maxHintBytes {
 		t.Errorf("the hints are %d bytes, budget %d:\n%s", len(hints), maxHintBytes, hints)
 	}

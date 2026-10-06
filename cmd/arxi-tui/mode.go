@@ -30,6 +30,11 @@ const (
 	classRead toolClass = "read"
 	classEdit toolClass = "edit"
 	classRun  toolClass = "run"
+	// classWeb is reading a page from the internet. It changes nothing on the machine,
+	// but it sends an address (and whatever the model put in it) to a third party and
+	// brings back text nobody vouches for, so it is asked about in every mode but the
+	// one that asks about nothing.
+	classWeb toolClass = "web"
 )
 
 // The core's three policies, spelled as the core spells them.
@@ -43,17 +48,17 @@ const (
 type agentMode struct {
 	name string
 	hint string
-	// read, edit and run are the policy for each tool class.
-	read, edit, run string
+	// read, edit, run and web are the policy for each tool class.
+	read, edit, run, web string
 }
 
 // agentModes lists the modes in the order Shift+Tab walks them. The first is the
 // default: the safest one that still lets the agent work.
 var agentModes = []agentMode{
-	{"ask", "asks before editing files or running commands", policyAllow, policyAsk, policyAsk},
-	{"auto", "edits files on its own, asks before running commands", policyAllow, policyAllow, policyAsk},
-	{"plan", "read-only: looks around and proposes, changes nothing", policyAllow, policyDeny, policyDeny},
-	{"full access", "edits and runs commands without asking", policyAllow, policyAllow, policyAllow},
+	{"ask", "asks before editing files or running commands", policyAllow, policyAsk, policyAsk, policyAsk},
+	{"auto", "edits files on its own, asks before running commands", policyAllow, policyAllow, policyAsk, policyAsk},
+	{"plan", "read-only: looks around and proposes, changes nothing", policyAllow, policyDeny, policyDeny, policyAsk},
+	{"full access", "edits and runs commands without asking", policyAllow, policyAllow, policyAllow, policyAllow},
 }
 
 // defaultMode is the mode a session starts in.
@@ -80,6 +85,8 @@ func (m agentMode) policy(c toolClass) string {
 		return m.edit
 	case classRun:
 		return m.run
+	case classWeb:
+		return m.web
 	}
 	return policyDeny
 }

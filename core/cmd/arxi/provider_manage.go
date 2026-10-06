@@ -342,7 +342,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	}
 
 	if box := toolsFrom(ctx); box != nil {
-		system = strings.TrimSpace(system + " " + toolsHint(box.box.Root(), box.edits) + " " + runsHint(box.runs))
+		system = strings.TrimSpace(system + " " + toolsHint(box.box.Root(), box.edits) + " " + runsHint(box.runs) + " " + webHint(box.web))
 	}
 	var messages []turn.Message
 	text := func(role turn.Role, s string) turn.Message {
@@ -521,6 +521,9 @@ func handleChatSendThinking(streams *connStreams, params map[string]any) (any, e
 	if stringParam(params, "workdir") == "" && stringParam(params, "runs") != "" {
 		return nil, badInvocation{errors.New("runs needs a workdir to run the commands in")}
 	}
+	if stringParam(params, "workdir") == "" && stringParam(params, "web") != "" {
+		return nil, badInvocation{errors.New("web needs a workdir: it travels with the tools")}
+	}
 	if dir := stringParam(params, "workdir"); dir != "" {
 		var err error
 		ctx, err = withTools(ctx, dir, stringParam(params, "edits"), streams.ask,
@@ -531,14 +534,17 @@ func handleChatSendThinking(streams *connStreams, params map[string]any) (any, e
 		if ctx, err = withRuns(ctx, stringParam(params, "runs")); err != nil {
 			return nil, err
 		}
+		if ctx, err = withWeb(ctx, stringParam(params, "web")); err != nil {
+			return nil, err
+		}
 	}
 	return chatSendEffort(ctx, stringParam(params, "prompt"), stringParam(params, "history"),
 		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))
 }
 
 func handleChatSend(params map[string]any) (any, error) {
-	if stringParam(params, "workdir") != "" || stringParam(params, "edits") != "" || stringParam(params, "runs") != "" {
-		return nil, badInvocation{errors.New("workdir, edits and runs need a live connection to report the tool calls on")}
+	if stringParam(params, "workdir") != "" || stringParam(params, "edits") != "" || stringParam(params, "runs") != "" || stringParam(params, "web") != "" {
+		return nil, badInvocation{errors.New("workdir, edits, runs and web need a live connection to report the tool calls on")}
 	}
 	return chatSendEffort(context.Background(), stringParam(params, "prompt"), stringParam(params, "history"),
 		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))

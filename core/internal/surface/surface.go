@@ -205,6 +205,8 @@ var Registry = []Cmd{
 			enum(def(p("edits", "string", "whether the model may change files in the workdir: deny offers it no tool that does, ask shows each change as a chat.approval notification and waits for a chat.decision line, allow lets it change files unasked (wire only)"),
 				"deny"), "deny", "ask", "allow"),
 			enum(def(p("runs", "string", "whether the model may run shell commands in the workdir: deny offers it no such tool, ask shows each command as a chat.approval notification and waits for a chat.decision line, allow runs them unasked (wire only)"),
+				"deny"), "deny", "ask", "allow"),
+			enum(def(p("web", "string", "whether the model may read web pages: deny offers it no such tool, ask shows each address as a chat.approval notification and waits for a chat.decision line, allow reads them unasked; needs a workdir (wire only)"),
 				"deny"), "deny", "ask", "allow")}},
 	{Path: []string{"model", "list"}, Desc: "list available models",
 		Kind: CLIOnly | AgentTool | Protocol, ToolPolicy: PolicyAllow, Idempotent: true, Since: 1},
