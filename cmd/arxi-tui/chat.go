@@ -69,6 +69,8 @@ type chatSession struct {
 	// web is the same for reading web pages: "deny" (not offered), "ask" (each
 	// address waits for the user) or "allow". It follows the agent mode too.
 	web string
+	// rulesNotice is the last "using AGENTS.md" line shown, so it is not repeated.
+	rulesNotice string
 	// approval is the change the core is holding for the user, nil when none.
 	approval *pendingApproval
 
@@ -110,6 +112,18 @@ func (c *chatSession) setWorkdir(dir string) {
 	c.mu.Lock()
 	c.workdir = dir
 	c.mu.Unlock()
+}
+
+// rulesSeen reports whether this notice is news — it has not been shown in this session
+// since the rules last changed — and remembers it.
+func (c *chatSession) rulesSeen(notice string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.rulesNotice == notice {
+		return false
+	}
+	c.rulesNotice = notice
+	return true
 }
 
 // setEdits chooses what the model may do to files from the next turn on.
@@ -345,8 +359,20 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		defer closeConn()
 		core = conn
 	}
+	system := chatSystemPrompt
+	if workdir != "" {
+		// Read on every turn, so an edit to the file counts from the next question;
+		// the user is told once per version of it, not once per turn.
+		rules := loadProjectRules(workdir)
+		if p := rules.Prompt(); p != "" {
+			system += "\n\n" + p
+		}
+		if n := rules.Notice(); n != "" && c.rulesSeen(n) {
+			c.post(ctx, gen, "chat.warn", map[string]any{"text": n})
+		}
+	}
 	params := driver.ChatSendParams{
-		Prompt: text, System: chatSystemPrompt, History: hist, Effort: effort,
+		Prompt: text, System: system, History: hist, Effort: effort,
 		// The model's thinking is shown live in the Thinking line.
 		OnThinking: func(fragment string) {
 			c.post(ctx, gen, "chat.thinking", map[string]any{"text": fragment})
