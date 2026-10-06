@@ -186,6 +186,17 @@ type State struct {
 	BlockedOn    string         `json:"agent.blocked.blocked_on"`
 	BlockedActor string         `json:"agent.blocked.actor"`
 
+	// Attention is the one thing that currently stops the run (an approval,
+	// a lock, a peer, an exhausted budget, a quiescent run). Zero when the
+	// run is not stopped. Not a bind: the /flow screen reads it directly.
+	Attention Attention `json:"-"`
+	// WaitingOn maps a member to the peer it waits for, from agent.blocked
+	// with blocked_on=peer. Not a bind.
+	WaitingOn map[string]string `json:"-"`
+	// StageRun is every stage the log proves the run entered, in order, with
+	// who submitted to each. Not a bind.
+	StageRun []StageProgress `json:"-"`
+
 	// View-state binds (arxi-tui's own contract, docs/BINDS.md §4.3)
 	UserInput string `json:"user.input"`
 	// UserInputCaret is the rune index of the caret within UserInput, host-owned
@@ -399,6 +410,11 @@ type State struct {
 	// NewMilestone). apply() writes it for every event so the derive step does
 	// not have to reach back into a slice the reducer has already consumed.
 	lastEventType string
+
+	// attn is the open attention items, oldest first; see flow.go.
+	attn []attnRec
+	// stageRun is the internal list behind StageRun.
+	stageRun []StageProgress
 }
 
 // Fold is the pure reducer: events in, view-state out. It is deterministic.
@@ -435,6 +451,7 @@ func Fold(events []Event) State {
 	s.deriveToolSurface()
 	s.deriveStageSurface()
 	s.deriveNewMilestone()
+	s.deriveFlow()
 	return s
 }
 
@@ -641,6 +658,8 @@ var handled = map[string]bool{
 	"agent.blocked":   true,
 	"agent.unblocked": true,
 	"run.quiescent":   true,
+	"budget.exceeded": true,
+	"run.unpaused":    true,
 	"ui.state":        true,
 
 	// Durable execution progress, per kernel/event.go's "durable execution
@@ -833,6 +852,9 @@ func (s *State) apply(e Event) {
 		// simulated:false, so the overwrite wrote the value already there.
 		// A real 121-event core log caught it on the first run.
 		s.AgentWorking = true
+		// Someone is running again, so the run is no longer quiescent (the
+		// core wakes it through a watcher).
+		s.dropAttentionKinds("quiescent")
 
 		// Track the activated agent in team.members
 		agent := ""
@@ -1002,9 +1024,13 @@ func (s *State) apply(e Event) {
 		// the most recent blocked event's fields, not a list.
 		s.BlockedOn = blockedOn
 		s.BlockedActor = actor
+		var blockedRef map[string]any
 		if ref, ok := e.Payload["blocked_ref"].(map[string]any); ok {
 			s.BlockedRef = ref
+			blockedRef = ref
 		}
+		s.openAttention(Attention{Kind: blockedOn, Actor: actor, Ref: blockedRef,
+			Text: blockedText(actor, blockedOn, blockedRef, task)})
 
 		// Update team member state
 		if m, exists := s.members[actor]; exists {
@@ -1029,6 +1055,7 @@ func (s *State) apply(e Event) {
 		if b, ok := e.Payload["blocked_on"].(string); ok {
 			blockedOn = b
 		}
+		s.closeAttention(blockedOn, actor)
 		for i := 0; i < len(s.Todos); i++ {
 			if s.Todos[i].Actor == actor && s.Todos[i].BlockedOn == blockedOn {
 				s.Todos = append(s.Todos[:i], s.Todos[i+1:]...)
@@ -1052,7 +1079,24 @@ func (s *State) apply(e Event) {
 		// Quiescence diagnosis: why the run is stuck (BINDS.md §4.1)
 		if diag, ok := e.Payload["diagnosis"].(string); ok {
 			s.QuiescentDiag = diag
+			s.dropAttentionKinds("quiescent")
+			s.openAttention(Attention{Kind: "quiescent", Text: diag})
 		}
+
+	case "budget.exceeded":
+		// The tree ceiling was crossed. The core also blocks the members with
+		// blocked_on=budget; this notice is what says by how much.
+		spent, _ := e.Payload["tree_spent_usd"].(float64)
+		limit, _ := e.Payload["budget_usd"].(float64)
+		s.dropAttentionKinds("budget_exceeded")
+		s.openAttention(Attention{Kind: "budget_exceeded",
+			Text: "budget exceeded: " + strconv.FormatFloat(spent, 'f', 2, 64) +
+				" of " + strconv.FormatFloat(limit, 'f', 2, 64) + " USD"})
+
+	case "run.unpaused":
+		// The run resumed, possibly with a higher ceiling: the budget stops
+		// are over, whatever raised them.
+		s.dropAttentionKinds("budget_exceeded", "budget")
 
 	case "exec.work_prepared":
 		// A unit of work was bound and is about to be attempted. The fold
@@ -1242,6 +1286,8 @@ func (s *State) apply(e Event) {
 		// rule nobody met. Set to an empty non-nil slice so "entered a stage,
 		// nobody submitted yet" and "no stage yet" stay distinguishable.
 		s.StageSubmissions = []string{}
+		s.noteStageEntered(s.StageName, s.StageIndex)
+		s.dropAttentionKinds("quiescent")
 
 	case "stage.submitted":
 		// A member declared its work for this stage done.
@@ -1270,6 +1316,7 @@ func (s *State) apply(e Event) {
 			}
 			if !seen {
 				s.StageSubmissions = append(s.StageSubmissions, actor)
+				s.noteSubmitted(actor)
 			}
 		}
 		// The member is submitted, not idle. This is the state BINDS.md §4.1
@@ -1305,6 +1352,8 @@ func (s *State) apply(e Event) {
 			s.StageIndex = int(idx)
 		}
 		s.StageAdvances++
+		s.noteStageLeft(s.StagePrev)
+		s.dropAttentionKinds("quiescent")
 
 	case "stage.timeout":
 		// The stage deadline fired. Deliberately NOT a failure and not a
