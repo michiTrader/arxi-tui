@@ -556,6 +556,7 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 // the protocol lets a request in flight be abandoned cleanly (see chatDialer).
 func dialChatConn(ctx context.Context, arxiBin string) (chatSender, func(), error) {
 	cmd := exec.CommandContext(ctx, arxiBin, "serve")
+	cmd.Env = chatCoreEnv()
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		return nil, nil, fmt.Errorf("chat: stdin pipe: %w", err)
@@ -782,6 +783,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		hubWant = open
 		if hubDocErr != nil {
 			sceneNotice = "/provider: " + hubDocErr.Error()
+			return
+		}
+		if open == hubOpenSearch {
+			// A local setting: it needs no core, so it opens even with none.
+			hub, _ = newHub(hubData{}, open)
+			sceneNotice = ""
 			return
 		}
 		hc, _ := drv.(interface{ Hub() hubCore })
@@ -1290,6 +1297,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						case res.work != nil:
 							if hubBusy {
 								sceneNotice = "the providers screen is still working; wait a moment"
+							} else if res.work.Op == opSearch {
+								// Saved on this computer, so no core is involved.
+								hubBusy = true
+								hub.working = res.work.Op.String()
+								sceneNotice = hub.working + " …"
+								startHubWork(ctx, nil, *res.work, hubDoneCh)
 							} else if hc, _ := drv.(interface{ Hub() hubCore }); hc == nil || hc.Hub() == nil {
 								sceneNotice = noLiveCoreNotice
 							} else {

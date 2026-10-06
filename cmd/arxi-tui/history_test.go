@@ -24,6 +24,7 @@ func TestMain(m *testing.M) {
 		os.Exit(1)
 	}
 	os.Setenv(historyEnv, dir)
+	os.Setenv(configDirEnv, dir)
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

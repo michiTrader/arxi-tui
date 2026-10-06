@@ -26,6 +26,7 @@ const (
 	opToggle                   // enable / disable one model
 	opRemoveModel              // delete one model
 	opRemove                   // delete a provider and its models
+	opSearch                   // choose (or turn off) the web search service; local, no core
 )
 
 // hubWork is one finished request from the hub. Key is the only secret in it.
@@ -172,6 +173,11 @@ func runHubWork(ctx context.Context, core hubCore, w hubWork) hubOutcome {
 	out := hubOutcome{ok: true, closeUI: w.Close}
 
 	switch w.Op {
+	case opSearch:
+		// A local setting: the core is told about it the next time a chat turn starts, so
+		// there is nothing to ask it and nothing to read back.
+		return saveSearchChoice(w)
+
 	case opAdd:
 		res, err := core.SubmitProviderAdd(ctx, driver.ProviderAddParams{
 			Name: w.Name, BaseURL: w.BaseURL, APIKeyEnv: w.EnvName, APIKey: w.Key,
@@ -355,6 +361,27 @@ func (o hubOp) String() string {
 		return "removing the model"
 	case opRemove:
 		return "removing the provider"
+	case opSearch:
+		return "saving the search setting"
 	}
 	return "working"
+}
+
+// saveSearchChoice stores the /search choice and says what happened. The key is in the
+// work and nowhere in the message.
+func saveSearchChoice(w hubWork) hubOutcome {
+	cfg := searchConfig{Backend: w.Name, Key: w.Key, URL: w.BaseURL}
+	if err := cfg.save(searchConfigPath()); err != nil {
+		return hubOutcome{notice: "could not save the search setting: " + scrub(err.Error(), w.Key)}
+	}
+	out := hubOutcome{ok: true, closeUI: w.Close}
+	if cfg.Backend == "" {
+		out.notice = "✓ web search is off"
+		return out
+	}
+	out.notice = "✓ web search: " + cfg.Backend + "; the model can use it from your next question"
+	if searchFromShell() {
+		out.notice += " (but " + envSearchBackend + " is set in the environment and wins until you remove it)"
+	}
+	return out
 }

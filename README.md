@@ -68,7 +68,14 @@ and brings back text nobody vouches for. What the tool does and does not do:
 ### Searching the web (`web_search`)
 
 Search needs a search service, and you choose which one. Until you do, the tool is simply
-not offered to the model. Set these environment variables before starting `arxi-tui`:
+not offered to the model. The easy way is the `/search` command: pick a service, paste its
+key (or, for SearxNG, its address) and it is saved on this computer and used from your next
+question, with no restart. The key is kept in `search.json` in the `arxi` settings folder
+(`%AppData%\arxi` on Windows, `~/.config/arxi` elsewhere; `ARXI_CONFIG_DIR` moves it),
+readable only by you, and choosing "Turn web search off" deletes it.
+
+The same thing can be set with environment variables before starting `arxi-tui`, and they
+win over what `/search` saved (the screen says so when that is the case):
 
 | service | `ARXI_SEARCH_BACKEND` | also set | notes |
 |---|---|---|---|

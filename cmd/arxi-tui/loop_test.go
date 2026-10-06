@@ -648,6 +648,9 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	case "mode":
 		// /mode opens its own menu; its first row shows.
 		want = "asks before editing"
+	case "search":
+		// /search is a local setting: its screen opens with no core and lists the services.
+		want = "Brave Search"
 	default:
 		t.Fatalf("the last registry row is %q; teach this test what picking it does", last)
 	}

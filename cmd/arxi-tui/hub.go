@@ -30,6 +30,7 @@ const (
 	lvModelActions                 // what to do with one model
 	lvConfirm                      // are you sure (remove a provider)
 	lvForm                         // typed fields
+	lvSearch                       // where the model searches the web (/search)
 )
 
 const hubPageSize = 8
@@ -123,12 +124,17 @@ type hubOpen int
 
 const (
 	hubOpenProviders hubOpen = iota
+	hubOpenSearch            // /search: the web search backends
 )
 
 // newHub builds the hub for an entry point. Choosing the chat model is not part of the
 // hub: `/model ` has its own minimal menu (model_menu.go).
 func newHub(data hubData, open hubOpen) (*providerHub, string) {
-	return &providerHub{data: data}, ""
+	h := &providerHub{data: data}
+	if open == hubOpenSearch {
+		h.level = lvSearch
+	}
+	return h, ""
 }
 
 // newOfflineHub is the hub when there is no core to talk to: it opens, explains why,
@@ -249,6 +255,21 @@ func (h *providerHub) allItems() []hubItem {
 			hubItem{id: "remove", label: "Remove this model"},
 		)
 
+	case lvSearch:
+		cur := loadSearchConfig(searchConfigPath()).Backend
+		for _, b := range searchBackends {
+			st := b.hint
+			if b.id == cur {
+				st = "✓ in use · " + b.hint
+			}
+			out = append(out, hubItem{id: b.id, label: b.label, status: st})
+		}
+		st := "web search is not offered to the model"
+		if cur == "" {
+			st = "✓ in use · " + st
+		}
+		out = append(out, hubItem{id: "off", label: "Turn web search off", status: st})
+
 	case lvConfirm:
 		out = append(out,
 			hubItem{id: "yes", label: "Yes, remove " + h.prov},
@@ -356,6 +377,8 @@ func (h *providerHub) title() string {
 		return "Remove " + h.prov + "?"
 	case lvForm:
 		return h.form.title + ":"
+	case lvSearch:
+		return "Web search — pick where the model searches:"
 	}
 	return ""
 }
@@ -366,6 +389,8 @@ func (h *providerHub) hint() string {
 		return "tab next field · enter next/save · esc back · the key is never shown"
 	case lvConfirm:
 		return "↑↓ move · enter choose · esc back"
+	case lvSearch:
+		return "↑↓ move · enter select · esc close"
 	}
 	return "type to filter · ↑↓ move · enter select · esc back"
 }
@@ -425,6 +450,8 @@ func (h *providerHub) detail() string {
 		}
 	case lvForm:
 		b.WriteString(h.form.help)
+	case lvSearch:
+		h.writeSearchSummary(&b)
 	}
 	return b.String()
 }
@@ -488,4 +515,17 @@ func (h *providerHub) wipe() {
 		h.form.wipe()
 		h.form = nil
 	}
+}
+
+// writeSearchSummary explains the /search screen: what the choice does, what it costs and
+// whether something else is already deciding it.
+func (h *providerHub) writeSearchSummary(b *strings.Builder) {
+	if searchFromShell() {
+		b.WriteString("The environment variable " + envSearchBackend + " is set, so it decides the search\n" +
+			"and what you choose here is kept but not used until that variable is removed.\n\n")
+	}
+	b.WriteString("The model can search the web only after you pick a service here. Each search asks\n" +
+		"your permission unless the mode is full access. Brave and Exa need an API key from\n" +
+		"their site; SearXNG is a search server you run yourself and needs only its address.\n" +
+		"The key is stored on this computer, never shown, and applies from your next question.")
 }
