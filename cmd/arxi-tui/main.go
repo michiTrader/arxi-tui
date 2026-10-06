@@ -765,6 +765,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// field -- never to the chat. hubBusy refuses a second request while one is in
 	// flight, and hubDoneCh carries the worker's answer back to the select.
 	var hub *providerHub
+	// flow is the open /flow screen, non-nil exactly while it is showing. It owns
+	// the keyboard like hub does, but reads everything from the folded log.
+	var flow *flowScreen
+	flowDoc, flowDocErr := loadFlowScene()
 	var hubWant hubOpen
 	var hubBusy bool
 	// hubDefault is the default model the core last reported ("provider/id"); the
@@ -1153,6 +1157,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// binds to none of the fold state, so the swap is purely which document is
 			// walked.
 			activeDoc = bundleMod.consent.doc
+		case flow != nil:
+			// The flow screen is open: it replaces the scene on display and
+			// draws the team from the same folded state the chat reads.
+			activeDoc = flowDoc
+			flow.publish(&state)
 		case hub != nil:
 			// The provider hub is open: it replaces the scene on display. Its rows
 			// are published as display text only -- a typed key is bullets by the
@@ -1318,6 +1327,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						panicGesture.Reset()
 						if allow, decided := approvalKey(ev.Key); decided {
 							ap.Decide(allow)
+						}
+					} else if flow != nil {
+						// The flow screen owns the keyboard, after the Ctrl-C
+						// branch so the escape hatch still works. Nothing typed
+						// here reaches the chat input.
+						panicGesture.Reset()
+						if flow.key(ev.Key) {
+							flow = nil
+							sceneNotice = ""
 						}
 					} else if hub != nil {
 						// The provider hub owns the keyboard, after the Ctrl-C branch
@@ -1631,6 +1649,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								modeMn.loaded = false
 								sceneNotice = ""
 							}
+						} else if ev.Key.Type == term.KeyEnter && flowCommand(input, slashSel, slashCat) {
+							// `/flow` opens the team screen. With a broken embedded
+							// document it says why instead of vanishing.
+							if flowDocErr != nil {
+								sceneNotice = "/flow: " + flowDocErr.Error()
+							} else {
+								flow = &flowScreen{}
+								sceneNotice = ""
+							}
+							input = ""
+							caret = 0
+							slashSel = 0
 						} else if ev.Key.Type == term.KeyEnter && styleCommand(input, slashSel, slashCat) {
 							input = stylePrefix
 							caret = len([]rune(input))
