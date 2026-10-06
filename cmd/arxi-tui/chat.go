@@ -16,6 +16,13 @@ import (
 // session cannot grow a request without bound.
 const chatMaxHistory = 40
 
+// chatMaxHistoryBytes caps the text carried along as history. Forty long answers
+// (pasted files, big code blocks) can run to hundreds of thousands of tokens, which a
+// message count alone does not prevent. About four bytes make a token, so this is
+// roughly 25k tokens: well inside the window of any current model, with room for the
+// prompt and the reply.
+const chatMaxHistoryBytes = 100_000
+
 // chatSystemPrompt is the standing instruction for a plain chat turn.
 //
 // It is sent with every message and the provider counts it, so it is kept to one short
@@ -235,10 +242,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	if web == policyDeny {
 		web = ""
 	}
-	hist := append([]driver.ChatTurn(nil), c.history...)
-	if len(hist) > chatMaxHistory {
-		hist = hist[len(hist)-chatMaxHistory:]
-	}
+	hist := trimHistory(c.history, chatMaxHistory, chatMaxHistoryBytes)
 	c.turn++
 	turn := c.turn
 	turnCtx, cancel := context.WithCancel(ctx)
