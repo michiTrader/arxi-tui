@@ -221,6 +221,23 @@ func cmdInboxAnswer(verb string, args []string) {
 		fmt.Fprintf(os.Stderr, "arxi inbox %s: %v\n", verb, err)
 		os.Exit(1)
 	}
+	// --run names the run when the caller already knows it (a front end that is
+	// following one). It narrows the search; it never widens it, so an id that is
+	// not pending in that run is still refused rather than found elsewhere.
+	if want := vals["run"]; want != "" {
+		target := filepath.Clean(resolveRunDir(want))
+		var narrowed []string
+		for _, d := range dirs {
+			if filepath.Clean(d) == target {
+				narrowed = append(narrowed, d)
+			}
+		}
+		dirs = narrowed
+		if len(dirs) == 0 {
+			fmt.Fprintf(os.Stderr, "arxi inbox %s: no pending question %q in run %s.\n", verb, id, want)
+			os.Exit(1)
+		}
+	}
 	switch len(dirs) {
 	case 0:
 		// Nothing PENDING has that id, which is two different situations, and
@@ -352,7 +369,43 @@ func cmdInboxAnswer(verb string, args []string) {
 	// between a command that worked and a user who concludes it did not. The
 	// answer is in the log; something has to fold it and act, and that is a
 	// different process from the one that just appended an event.
-	fmt.Println("  the answer is in the log. the run resumes when it is next driven.")
+	if vals["resume"] != "true" {
+		fmt.Println("  the answer is in the log. the run resumes when it is next driven.")
+		return
+	}
+	resumeAnswered(dirs[0])
+}
+
+// resumeAnswered continues a run whose question was just answered, in this
+// process. It is the second half of an answer for a caller (a TUI) that has no
+// scheduler of its own: the answer is already durable, so every refusal here
+// leaves the log valid and only says why the run was not driven.
+func resumeAnswered(dir string) {
+	pre, effective, _, err := preflightEffectiveRun(dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi inbox: answered, but the run cannot be continued: %v\n", err)
+		os.Exit(3)
+	}
+	if pre.Status.Terminal() {
+		fmt.Printf("  the run is %s, so there is nothing to continue.\n", pre.Status)
+		return
+	}
+	store, err := logstore.Open(dir)
+	if err != nil {
+		if isWriterLocked(err) {
+			// Another process is driving this run right now. It reads the log
+			// as it goes, so it picks the answer up by itself; driving a second
+			// copy would be the one thing worse than not driving.
+			fmt.Printf("  run %s is being driven by another process, which continues it.\n", pre.RunID)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "arxi inbox: answered, but the run cannot be continued: %v\n", err)
+		os.Exit(3)
+	}
+	defer store.Close()
+	atExit(func() { store.Close() })
+	fmt.Printf("  continuing run %s\n", pre.RunID)
+	driveEffectiveRun(dir, effective, store, pre.RunID)
 }
 
 func externalInboxEvent(id string, reply inbox.Reply) kernel.Event {

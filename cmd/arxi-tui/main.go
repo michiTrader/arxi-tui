@@ -776,6 +776,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	var team *teamScreen
 	teamDoc, teamDocErr := loadTeamScene()
 	teamCh := make(chan teamOutcome, 1)
+	// flowCh carries the result of an approval or rejection given from /flow; it
+	// holds two because an answer reports twice (saved, then the run's end).
+	flowCh := make(chan flowOutcome, 2)
 	var hubWant hubOpen
 	var hubBusy bool
 	// hubDefault is the default model the core last reported ("provider/id"); the
@@ -1367,9 +1370,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// branch so the escape hatch still works. Nothing typed
 						// here reaches the chat input.
 						panicGesture.Reset()
-						if flow.key(ev.Key) {
+						closeFlow, task := flow.key(ev.Key)
+						if closeFlow {
 							flow = nil
 							sceneNotice = ""
+						} else if task != nil {
+							// An approval or rejection: the core records it and
+							// carries the run on, on a worker.
+							if ir, ok := drv.(inboxResumer); ok {
+								startFlowAnswer(ctx, ir, *task, flowCh)
+							} else {
+								flowCh <- flowOutcome{err: "this session has no arxi core to send the answer to"}
+							}
 						}
 					} else if hub != nil {
 						// The provider hub owns the keyboard, after the Ctrl-C branch
@@ -1893,6 +1905,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						team.paste(ev.Text)
 						break
 					}
+					if flow != nil {
+						// A pasted reason goes to the rejection being typed.
+						flow.paste(ev.Text)
+						break
+					}
 					input, caret = insertText(input, caret, cleanPaste(ev.Text))
 				case term.EventResize:
 					// A resize only needs a fresh frame at the new size, delivered
@@ -2001,6 +2018,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				sceneNotice = "/ui plugin bundle: you rejected " + out.url + "; nothing was installed"
 			default:
 				sceneNotice = "/ui plugin bundle: " + out.err.Error()
+			}
+			repaint()
+
+		case out := <-flowCh:
+			// An answer's worker reported; a user who closed /flow meanwhile
+			// does not see it reappear.
+			if flow != nil {
+				flow.apply(out)
 			}
 			repaint()
 
