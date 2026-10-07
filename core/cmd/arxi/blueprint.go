@@ -19,6 +19,8 @@ const blueprintUsage = "usage: arxi blueprint create <name> --members a,b,c [--s
 	"       arxi blueprint stage <name> --stage <s> [--advance-when all|any|quorum:N]\n" +
 	"                            [--timeout-ms N] [--on-timeout escalate|advance|fail|ask]\n" +
 	"       arxi blueprint member <name> --member <m> [--model M] [--role R] [--tools a,b] [--advisory=true|false]\n" +
+	"       arxi blueprint watch <name> --agent <m> --pattern <events> [--action activate|notify|run_tool]\n" +
+	"                            [--tool T] [--remove]\n" +
 	"       arxi blueprint validate <file.yaml>\n" +
 	"  create composes agents already in " + agentstore.DefaultDir + "/ into one file of the\n" +
 	"  same kind, in the same directory: `arxi agent list` shows it and\n" +
@@ -569,4 +571,37 @@ func cmdBlueprintMember(args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("%s: member %s updated (applies to runs started from now on)\n", vals["name"], vals["member"])
+}
+
+// cmdBlueprintWatch implements `arxi blueprint watch <name> --agent <m> --pattern <p> ...`.
+//
+// The same SetWatcher the protocol calls: saying a member and a pattern that are
+// already watched replaces that rule, and --remove drops it.
+func cmdBlueprintWatch(args []string) {
+	c := surface.Lookup("blueprint", "watch")
+	vals, err := parseInvocation(c, args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi blueprint watch: %v\n\n%s", err, blueprintUsage)
+		os.Exit(2)
+	}
+	remove := false
+	if raw, ok := vals["remove"]; ok {
+		b, perr := strconv.ParseBool(raw)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "arxi blueprint watch: --remove %q is not true or false\n", raw)
+			os.Exit(2)
+		}
+		remove = b
+	}
+	e := agentstore.WatchEdit{Agent: vals["agent"], Pattern: vals["pattern"],
+		Action: vals["action"], Tool: vals["tool"], Remove: remove}
+	if err := readAgents().SetWatcher(vals["name"], e); err != nil {
+		fmt.Fprintf(os.Stderr, "arxi blueprint watch: %v\n", err)
+		os.Exit(1)
+	}
+	verb := "saved"
+	if remove {
+		verb = "removed"
+	}
+	fmt.Printf("%s: watcher of %s on %s %s (applies to runs started from now on)\n", vals["name"], vals["agent"], vals["pattern"], verb)
 }

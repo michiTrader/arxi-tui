@@ -369,6 +369,7 @@ var protoHandlers = map[string]protoHandler{
 	"blueprint.create":   handleBlueprintCreate,
 	"blueprint.stage":    handleBlueprintStage,
 	"blueprint.member":   handleBlueprintMember,
+	"blueprint.watch":    handleBlueprintWatch,
 	"agent.list":         handleAgentList,
 	"agent.create":       handleAgentCreate,
 	"trigger.list":       handleTriggerList,
@@ -1013,6 +1014,7 @@ func handleBlueprintValidate(params map[string]any) (any, error) {
 		Agent   string `json:"agent"`
 		Pattern string `json:"pattern"`
 		Action  string `json:"action"`
+		Tool    string `json:"tool,omitempty"`
 	}
 
 	out := struct {
@@ -1057,7 +1059,7 @@ func handleBlueprintValidate(params map[string]any) (any, error) {
 			action = "wake"
 		}
 		out.Watchers = append(out.Watchers, watcherOut{
-			Agent: w.Agent, Pattern: w.Pattern, Action: action,
+			Agent: w.Agent, Pattern: w.Pattern, Action: action, Tool: w.Tool,
 		})
 	}
 	return out, nil

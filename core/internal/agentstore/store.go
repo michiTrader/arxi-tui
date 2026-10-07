@@ -1211,3 +1211,107 @@ func renderMemberMap(m map[string]any) []string {
 	}
 	return out
 }
+
+// WatchEdit adds, replaces or removes ONE watcher of a stored blueprint. A watcher
+// is identified by the member it wakes and the event pattern it listens to, so
+// saying the same pair again replaces that rule instead of piling up a second one.
+type WatchEdit struct {
+	Agent   string // the member to wake; required
+	Pattern string // the event type to listen to, `stage.advanced` or `stage.*`; required
+	Action  string // activate (the default, written as nothing), notify or run_tool
+	Tool    string // only with run_tool: the tool to dispatch
+	Remove  bool   // drop the rule instead of saving it
+}
+
+// SetWatcher saves one watcher of a stored blueprint and leaves the rest alone.
+//
+// Only the `watchers:` block is rewritten (a file with none gets one at its end),
+// every other watcher is carried over as the file declared it, and the result is
+// loaded before it is published, so a rule the loader refuses -- an agent that is
+// not a member, a pattern with a wildcard in the middle, a tool that does not
+// exist -- leaves the file as it was and comes back as the loader's own sentence.
+// A comment written between two watchers is the one thing that does not survive.
+func (s *Store) SetWatcher(name string, e WatchEdit) error {
+	if e.Agent == "" || e.Pattern == "" {
+		return errors.New("say which member the watcher wakes and which events it listens to")
+	}
+	if e.Remove && (e.Action != "" || e.Tool != "") {
+		return errors.New("removing a watcher takes only its member and its pattern")
+	}
+	bp, err := s.Load(name)
+	if err != nil {
+		return err
+	}
+	doc, err := blueprint.Parse(bp.Raw)
+	if err != nil {
+		return err
+	}
+	root, _ := doc.(map[string]any)
+	items, _ := root["watchers"].([]any)
+
+	fresh := map[string]any{"agent": e.Agent, "pattern": e.Pattern}
+	if e.Action != "" && e.Action != "activate" {
+		fresh["action"] = e.Action
+	}
+	if e.Tool != "" {
+		fresh["tool"] = e.Tool
+	}
+
+	var lines []string
+	found := false
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		if m["agent"] == e.Agent && m["pattern"] == e.Pattern {
+			found = true
+			if e.Remove {
+				continue
+			}
+			m = fresh
+		}
+		lines = append(lines, "  - "+renderWatcherMap(m))
+	}
+	switch {
+	case e.Remove && !found:
+		return fmt.Errorf("%q has no watcher of %s on %s", name, e.Agent, e.Pattern)
+	case !found:
+		lines = append(lines, "  - "+renderWatcherMap(fresh))
+	}
+
+	var out []byte
+	if _, has := root["watchers"]; has {
+		out, err = replaceBlock(bp.Raw, "watchers", lines)
+		if err != nil {
+			return err
+		}
+	} else {
+		out = append([]byte(nil), bp.Raw...)
+		eol := "\n"
+		if bytes.Contains(out, []byte("\r\n")) {
+			eol = "\r\n"
+		}
+		if len(out) > 0 && out[len(out)-1] != '\n' {
+			out = append(out, eol...)
+		}
+		out = append(out, "watchers:"+eol...)
+		for _, l := range lines {
+			out = append(out, l+eol...)
+		}
+	}
+	if _, err := blueprint.Load(out); err != nil {
+		return err
+	}
+	return s.write(name, out)
+}
+
+// renderWatcherMap writes one watcher as a flow mapping in a fixed key order.
+// include_self is not written: the loader refuses it when true and false is the
+// default.
+func renderWatcherMap(m map[string]any) string {
+	var parts []string
+	for _, k := range []string{"agent", "pattern", "action", "tool"} {
+		if v, ok := m[k]; ok && v != nil {
+			parts = append(parts, k+": "+yamlScalar(fmt.Sprint(v)))
+		}
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
+}
