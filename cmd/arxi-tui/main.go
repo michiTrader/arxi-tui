@@ -1786,6 +1786,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							} else {
 								flow = &flowScreen{}
 								sceneNotice = ""
+								startFlowPlan(ctx, planReader(drv), cwd, planTeam(drv), flowCh)
 							}
 							input = ""
 							caret = 0
@@ -2119,6 +2120,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					team = nil
 					flow = &flowScreen{}
 					sceneNotice = ""
+					startFlowPlan(ctx, planReader(drv), cwd, planTeam(drv), flowCh)
 				}
 			}
 			repaint()

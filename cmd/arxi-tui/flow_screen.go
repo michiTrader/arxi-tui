@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
+	"github.com/michiTrader/arxi_tui/internal/driver"
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
 	"github.com/michiTrader/arxi_tui/internal/term"
@@ -65,6 +67,11 @@ type flowScreen struct {
 	working string
 	// banner is the last result: "✓ ..." or "✗ ...".
 	banner string
+	// plan is the stages the team's blueprint declares, in order, so the stages
+	// still ahead can be drawn. Empty when the blueprint could not be read (a
+	// plain chat, a team file that moved): the screen then draws only what the
+	// log proves, as it always did.
+	plan []driver.BlueprintStage
 }
 
 // flowHint is the key legend.
@@ -95,6 +102,27 @@ func (t flowTask) workingLine() string {
 type flowOutcome struct {
 	answered string // the success sentence once the answer is recorded
 	err      string // a plain sentence when it was not
+	// plan is the blueprint's stages when this outcome carries them (and only then).
+	plan []driver.BlueprintStage
+}
+
+// startFlowPlan reads the stages of ./agents/<team>.yaml on a worker, so /flow can
+// show the ones still ahead. Any failure just leaves the screen without a plan:
+// what the log proves is still drawn.
+func startFlowPlan(ctx context.Context, core blueprintReader, root, team string, done chan<- flowOutcome) {
+	if core == nil || team == "" || strings.ContainsAny(team, `/\`) {
+		return
+	}
+	go func() {
+		info, err := core.SubmitBlueprintValidate(ctx, filepath.Join(root, teamDir, team+".yaml"))
+		if err != nil || info == nil || len(info.Stages) == 0 {
+			return
+		}
+		select {
+		case done <- flowOutcome{plan: info.Stages}:
+		case <-ctx.Done():
+		}
+	}()
 }
 
 // inboxResumer answers an inbox item and keeps the run going. Only the live
@@ -132,6 +160,10 @@ func startFlowAnswer(ctx context.Context, a inboxResumer, t flowTask, done chan<
 
 // apply shows a worker's result.
 func (f *flowScreen) apply(o flowOutcome) {
+	if o.plan != nil {
+		f.plan = o.plan
+		return
+	}
 	f.working = ""
 	switch {
 	case o.err != "":
@@ -197,25 +229,39 @@ func memberStatus(m fold.TeamMember, waitingOn map[string]string) string {
 }
 
 // stageLine draws the stages the log proves the run went through, oldest first,
-// the one it is in marked. Stages that are still ahead are not shown: no event
-// names them yet.
-func stageLine(runs []fold.StageProgress) string {
-	var b strings.Builder
-	for i, s := range runs {
-		if i > 0 {
-			b.WriteString(" → ")
-		}
+// the one it is in marked, then the stages the blueprint says are still ahead
+// (marked ○). With no plan only what happened is drawn.
+func stageLine(runs []fold.StageProgress, plan []driver.BlueprintStage) string {
+	var parts []string
+	for _, s := range runs {
 		switch {
 		case s.Left:
-			b.WriteString(s.Name + " ✓")
+			parts = append(parts, s.Name+" ✓")
 		default:
-			b.WriteString(s.Name + " ●")
+			p := s.Name + " ●"
 			if len(s.Submitted) > 0 {
-				b.WriteString(" (submitted: " + strings.Join(s.Submitted, ", ") + ")")
+				p += " (submitted: " + strings.Join(s.Submitted, ", ") + ")"
+			}
+			parts = append(parts, p)
+		}
+	}
+	// Ahead: everything after the stage the run last entered, by the plan's order.
+	// A run that has entered nothing yet has the whole plan ahead of it.
+	from := 0
+	if n := len(runs); n > 0 {
+		from = -1
+		for i, st := range plan {
+			if st.Name == runs[n-1].Name {
+				from = i + 1
 			}
 		}
 	}
-	return b.String()
+	if from >= 0 {
+		for _, st := range plan[from:] {
+			parts = append(parts, st.Name+" ○")
+		}
+	}
+	return strings.Join(parts, " → ")
 }
 
 // flowIsChat reports whether the run has no team structure to draw: one agent
@@ -257,14 +303,16 @@ func flowDetail(st *fold.State) string {
 
 // detail is flowDetail plus what this screen is doing about the blocker.
 func (f *flowScreen) detail(st *fold.State) string {
-	if flowIsChat(st) {
+	// A plan only exists for a team run, so a run that has not shown a member yet
+	// is still a team's, not a chat.
+	if flowIsChat(st) && len(f.plan) == 0 {
 		return "This conversation is a plain chat with one agent, so there is no team flow to show.\n\n" +
 			"When a team run is going (members working in stages), this screen draws who is doing what, " +
 			"which stage the run is in and what is holding it up."
 	}
 	var parts []string
-	if len(st.StageRun) > 0 {
-		parts = append(parts, stageLine(st.StageRun))
+	if len(st.StageRun) > 0 || len(f.plan) > 0 {
+		parts = append(parts, stageLine(st.StageRun, f.plan))
 	}
 	if a := st.Attention; a.Kind != "" {
 		line := "⚠ " + a.Text
@@ -414,4 +462,21 @@ func (f *flowScreen) reasonKey(k term.Key) (bool, *flowTask) {
 // is `/flow` with nothing after it.
 func flowCommand(input string, sel int, cat string) bool {
 	return menuCommand("flow", input, sel, cat)
+}
+
+// planReader is the part of the driver that can describe a stored team, or nil.
+func planReader(drv Driver) blueprintReader {
+	if hc, _ := drv.(interface{ Hub() hubCore }); hc != nil && hc.Hub() != nil {
+		br, _ := hc.Hub().(blueprintReader)
+		return br
+	}
+	return nil
+}
+
+// planTeam is the name of the team the followed run belongs to ("" when none).
+func planTeam(drv Driver) string {
+	if l, ok := drv.(actorLabeler); ok {
+		return l.ActorLabel()
+	}
+	return ""
 }
