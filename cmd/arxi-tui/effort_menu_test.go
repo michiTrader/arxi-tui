@@ -25,7 +25,7 @@ func TestEffortMenuOpensOnlyWithTheSpace(t *testing.T) {
 
 func TestEffortMenuListsEveryLevelAndMarksTheCurrent(t *testing.T) {
 	var mm modelMenu
-	mm.setRows(effortMenuData("openai/gpt-5", "high"))
+	mm.setRows(effortMenuData([]string{"minimal", "low", "medium", "high"}, true, "high"))
 	rows, sel := mm.view("")
 	var names []string
 	for _, r := range rows {
@@ -64,7 +64,7 @@ func TestEffortMenuRendersLikeTheModelMenu(t *testing.T) {
 		t.Fatal(err)
 	}
 	var mm modelMenu
-	mm.setRows(effortMenuData("deepseek/deepseek-chat", "low"))
+	mm.setRows(effortMenuData(nil, false, "low"))
 	rows, sel := mm.view("")
 	st := fold.State{UserInput: "/effort ", ModelActive: true, ModelMatches: rows, ModelSelected: sel}
 	r := engine.Renderer{Width: 80, Height: 24}
@@ -130,39 +130,68 @@ func TestChatCarriesTheThinkingLevelAndClearKeepsIt(t *testing.T) {
 	}
 }
 
-func TestEffortLevelsDependOnTheModel(t *testing.T) {
-	names := func(ref string) string {
+func TestEffortMenuShowsOnlyWhatTheCoreSaysTheModelTakes(t *testing.T) {
+	names := func(levels []string, known bool) string {
 		var out []string
-		for _, l := range effortLevelsFor(ref) {
-			out = append(out, l.name)
+		for _, r := range effortMenuData(levels, known, "") {
+			out = append(out, r.Name)
 		}
 		return strings.Join(out, ",")
 	}
-	for ref, want := range map[string]string{
-		"openai/gpt-5":                  "minimal,low,medium,high",
-		"tokenharbor/o3-mini":           "minimal,low,medium,high",
-		"vyceai/deepseek-v4.1":          "low,medium,high",
-		"tokenharbor/deepseek-reasoner": "low,medium,high",
-		"":                              "low,medium,high",
-		"vyceai/claude-sonnet-4-6":      "",
-		"anthropic/Claude-Opus":         "",
+	for name, c := range map[string]struct {
+		levels []string
+		known  bool
+		want   string
+	}{
+		"deepseek v4: switch, no medium, has max": {[]string{"off", "low", "high", "max"}, true, "off,low,high,max"},
+		"switch only":               {[]string{"off", "on"}, true, "off,on"},
+		"claude with max and xhigh": {[]string{"low", "medium", "high", "xhigh", "max"}, true, "low,medium,high,xhigh,max"},
+		"core did not say":          {nil, false, "low,medium,high"},
+		"model with no levels":      {[]string{}, true, "no levels"},
 	} {
-		if got := names(ref); got != want {
-			t.Errorf("levels for %q = %q, want %q", ref, got, want)
+		if got := names(c.levels, c.known); got != c.want {
+			t.Errorf("%s: menu = %q, want %q", name, got, c.want)
 		}
 	}
-	if effortAllowed("vyceai/claude-sonnet-4-6", "high") {
-		t.Error("a Claude model takes no level")
+	if !effortAllowed([]string{"off", "low", "high", "max"}, true, "max") {
+		t.Error("max is on this model's list")
 	}
-	if effortAllowed("vyceai/deepseek-v4.1", "minimal") {
-		t.Error("minimal is OpenAI-only")
+	if effortAllowed([]string{"off", "low", "high", "max"}, true, "medium") {
+		t.Error("medium is not on this model's list")
+	}
+	if effortAllowed([]string{}, true, "high") {
+		t.Error("a model with no levels takes none")
+	}
+	if !effortAllowed(nil, false, "medium") {
+		t.Error("with no word from the core the common three are allowed")
 	}
 }
 
-func TestEffortMenuForAModelWithoutLevelsPicksNothing(t *testing.T) {
-	rows := effortMenuData("vyceai/claude-sonnet-4-6", "")
-	if len(rows) != 1 || rows[0].Ref != "" || !strings.Contains(rows[0].Provider, "does not take") {
-		t.Errorf("rows = %+v", rows)
+func TestEffortLabelReadsTheSwitchWords(t *testing.T) {
+	for in, want := range map[string]string{"off": "thinking off", "on": "thinking on", "max": "max", "": ""} {
+		if got := effortLabel(in); got != want {
+			t.Errorf("effortLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestHubDataEffortsOfFollowsTheModelRow(t *testing.T) {
+	d := hubData{models: []driver.ModelRow{
+		{Provider: "a", ID: "m1", Efforts: []string{"off", "on"}},
+		{Provider: "a", ID: "m2", Efforts: []string{}},
+		{Provider: "a", ID: "old"}, // an older core sends no efforts
+	}}
+	if l, known := d.effortsOf("a/m1"); !known || strings.Join(l, ",") != "off,on" {
+		t.Errorf("m1 = %v %v", l, known)
+	}
+	if l, known := d.effortsOf("a/m2"); !known || len(l) != 0 {
+		t.Errorf("m2 = %v %v", l, known)
+	}
+	if _, known := d.effortsOf("a/old"); known {
+		t.Error("a model row without efforts must read as not said")
+	}
+	if _, known := d.effortsOf("a/ghost"); known {
+		t.Error("an unknown model must read as not said")
 	}
 }
 

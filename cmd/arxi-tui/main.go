@@ -792,6 +792,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// hubDefaultKnown turns true once the core has answered (or there is no core
 	// to ask), so the status bar can tell "still reading" from "no model chosen".
 	var hubDefaultKnown bool
+	// hubEfforts are the thinking levels the chat model takes, from the same read
+	// as hubDefault; hubEffortsKnown is false until the core has said.
+	var hubEfforts []string
+	var hubEffortsKnown bool
 	// cwd is where the TUI was started, shown in the bottom bar. effort is the
 	// thinking level the next request asks for; empty sends nothing until the user
 	// sets one with /effort. mode is how much the agent may do unasked (/mode).
@@ -1006,7 +1010,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		} else if filter, open := effortMenuOpen(input); open && hub == nil {
 			// `/effort ` borrows the model menu's overlay: same rows, same keys.
 			if !effortMn.loaded {
-				effortMn.setRows(effortMenuData(hubDefault, effort))
+				effortMn.setRows(effortMenuData(hubEfforts, hubEffortsKnown, effort))
 			}
 			state.ModelActive = true
 			state.ModelMatches, state.ModelSelected = effortMn.view(filter)
@@ -1114,7 +1118,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.HostEffort, state.HostCwd, state.HostMode, state.ModelName = "", "", "", ""
 			state.HostUsage = ""
 		} else {
-			state.HostEffort, state.HostCwd, state.HostMode = effort, shortCwd(cwd), mode
+			state.HostEffort, state.HostCwd, state.HostMode = effortLabel(effort), shortCwd(cwd), mode
 			state.HostUsage = usageLabel(state.LastContext, state.UsageIn, state.UsageOut)
 		}
 
@@ -2146,6 +2150,16 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			if out.hasData {
 				hubDefault = out.data.def
 				hubDefaultKnown = true
+				hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
+				effortMn.loaded = false
+				// A default changed from the providers screen may not take the
+				// level in use; drop it so the bar never claims one.
+				if effort != "" && !effortAllowed(hubEfforts, hubEffortsKnown, effort) {
+					effort = ""
+					if s, ok := drv.(effortSetter); ok {
+						s.SetEffort("")
+					}
+				}
 			}
 			if out.opened && hub == nil {
 				var why string
@@ -2170,6 +2184,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				// failure leaves the bar saying "no model", never a notice.
 				if out.err == "" {
 					hubDefault = out.data.def
+					hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
+					effortMn.loaded = false
 				}
 				repaint()
 				continue
@@ -2183,10 +2199,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				if out.hasData || out.picked == "" {
 					modelMn.setData(out.data)
 					hubDefault = out.data.def
+					hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
+					effortMn.loaded = false
 				}
 				// A model that does not take the chosen thinking level drops it,
 				// so the bar never claims a level the request will not carry.
-				if effort != "" && !effortAllowed(hubDefault, effort) {
+				if effort != "" && !effortAllowed(hubEfforts, hubEffortsKnown, effort) {
 					effort = ""
 					if s, ok := drv.(effortSetter); ok {
 						s.SetEffort("")

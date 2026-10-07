@@ -63,6 +63,17 @@ func (d hubData) modelsOf(name string) []driver.ModelRow {
 	return out
 }
 
+// effortsOf is the thinking levels of the model a reference names ("provider/id"),
+// and whether the core said (false for an unknown model or an older core).
+func (d hubData) effortsOf(ref string) (levels []string, known bool) {
+	for _, m := range d.models {
+		if modelRef(m) == ref {
+			return m.Efforts, m.Efforts != nil
+		}
+	}
+	return nil, false
+}
+
 func (d hubData) enabledModels() []driver.ModelRow {
 	var out []driver.ModelRow
 	for _, m := range d.models {

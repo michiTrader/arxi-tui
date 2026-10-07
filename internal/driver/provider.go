@@ -126,6 +126,10 @@ type ModelRow struct {
 	Provider string `json:"provider"`
 	ID       string `json:"id"`
 	Enabled  bool   `json:"enabled"`
+	// Efforts are the thinking levels this model takes, as the core's table says
+	// (off, on, minimal, low, medium, high, xhigh, max). Nil means the core did
+	// not say (an older core); empty means the model has no level to choose.
+	Efforts []string `json:"efforts"`
 }
 
 // ModelListResult wraps the rows model.list returns. An empty slice is a valid
