@@ -51,6 +51,7 @@ const (
 	formNewTeam
 	formRunTeam
 	formNewAuto
+	formEditStages
 )
 
 // teamForm is the open form; it lives only while it is on screen.
@@ -60,6 +61,7 @@ type teamForm struct {
 	help   string
 	fields []teamField
 	focus  int
+	target string // formEditStages: the team being changed
 }
 
 // teamTask is what the worker is asked to create.
@@ -68,6 +70,7 @@ type teamTask struct {
 	team  *driver.BlueprintCreateParams
 	run   *runLaunch
 	auto  *driver.TriggerCreateParams
+	stage *driver.BlueprintStageParams
 }
 
 // shown is what the row's right-hand column says.
@@ -286,6 +289,8 @@ func (f *teamForm) submit() (*teamTask, string) {
 		return f.submitRun()
 	case formNewAuto:
 		return f.submitAuto()
+	case formEditStages:
+		return f.submitStages()
 	}
 	name := f.value("Name")
 	if name == "" {
@@ -349,6 +354,9 @@ func (f *teamForm) submitRun() (*teamTask, string) {
 
 // working is the line shown while the core writes the file.
 func (t *teamTask) working() string {
+	if t.stage != nil {
+		return "Saving the rules of " + t.stage.Stage + " in " + t.stage.Name + " …"
+	}
 	if t.auto != nil {
 		return "Saving automation " + t.auto.Name + " …"
 	}
@@ -372,6 +380,9 @@ func (t *teamTask) done(agent *driver.AgentCreateResult, team *driver.BlueprintC
 		return s
 	case team != nil:
 		return fmt.Sprintf("team %s created with %s", team.Name, plural(len(team.Members), "member", "members"))
+	}
+	if t.stage != nil {
+		return fmt.Sprintf("stage %s of %s saved; it applies to runs you start from now on", t.stage.Stage, t.stage.Name)
 	}
 	return ""
 }

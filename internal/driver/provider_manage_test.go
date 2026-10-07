@@ -611,3 +611,26 @@ func TestTriggerResumeSendsTheName(t *testing.T) {
 		t.Fatal("an empty name was sent")
 	}
 }
+
+func TestBlueprintStageSendsOnlyWhatChangesAndAZeroTimeout(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"id":"blueprint-stage","ok":true,"result":{"name":"duo","stages":[{"name":"review","advance_when":"any","on_timeout":"escalate"}]}}`)
+	zero := int64(0)
+	r, err := d.SubmitBlueprintStage(context.Background(), BlueprintStageParams{Name: "duo", Stage: "review", AdvanceWhen: "any", TimeoutMs: &zero})
+	if err != nil || len(r.Stages) != 1 || r.Stages[0].AdvanceWhen != "any" {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	line := sent.String()
+	for _, want := range []string{`"type":"blueprint.stage"`, `"stage":"review"`, `"advance_when":"any"`, `"timeout_ms":0`} {
+		if !strings.Contains(line, want) {
+			t.Errorf("request %s lacks %s", line, want)
+		}
+	}
+	if strings.Contains(line, "on_timeout") {
+		t.Errorf("an unchanged field was sent: %s", line)
+	}
+	if _, err := d.SubmitBlueprintStage(context.Background(), BlueprintStageParams{Name: "duo"}); err == nil {
+		t.Fatal("a request without a stage was sent")
+	}
+}
