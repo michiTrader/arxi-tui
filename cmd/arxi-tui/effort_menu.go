@@ -1,8 +1,6 @@
 package main
 
 import (
-	"strings"
-
 	"github.com/michiTrader/arxi_tui/internal/fold"
 )
 
@@ -17,69 +15,74 @@ import (
 // effortPrefix is what the input must start with for the effort menu to open.
 const effortPrefix = "/effort "
 
-type effortLevel struct{ name, hint string }
+// effortHints is the one-line meaning of each level word, in the menu.
+var effortHints = map[string]string{
+	"off":     "no thinking, answer straight away",
+	"on":      "think, as deep as the model sees fit",
+	"minimal": "answer fast, barely think",
+	"low":     "a little thinking",
+	"medium":  "balanced",
+	"high":    "think as long as it helps",
+	"xhigh":   "very deep thinking, slower",
+	"max":     "the deepest thinking, slowest",
+}
 
-var (
-	levelMinimal = effortLevel{"minimal", "answer fast, barely think"}
-	levelLow     = effortLevel{"low", "a little thinking"}
-	levelMedium  = effortLevel{"medium", "balanced"}
-	levelHigh    = effortLevel{"high", "think as long as it helps"}
-)
+// defaultEffortLevels are what a model the core knows nothing about is offered: the
+// three depths every OpenAI-style server understands.
+var defaultEffortLevels = []string{"low", "medium", "high"}
 
-// effortLevelsFor lists the levels that mean something for a model reference
-// ("provider/model"), in menu order. What a model accepts depends on the model and on
-// the wire the provider speaks, and the core only has one way to carry a level
-// (`reasoning_effort`, the OpenAI-style field), so the answer is by family:
-//
-//   - OpenAI's reasoning models (gpt-5 and later, the o-series) take all four.
-//   - Claude models think through a token budget, which this core does not send, so
-//     there is nothing to choose: no levels.
-//   - Everything else that speaks the OpenAI wire (DeepSeek, gateways, local models)
-//     takes low / medium / high; "minimal" is an OpenAI-only word.
-//
-// An empty reference (no model chosen yet) gets the common three.
-func effortLevelsFor(modelRef string) []effortLevel {
-	m := strings.ToLower(modelRef)
-	if i := strings.LastIndex(m, "/"); i >= 0 {
-		m = m[i+1:]
+// effortLevelsFor is the list of levels the chat model takes. What a model takes
+// depends on the model (some have `max`, some lack `medium`, some only switch
+// thinking off and on), so the core owns the table and sends each model's list with
+// `model list`; the menu shows exactly that. known is false when the core did not say
+// (an older core, or no model chosen yet), and the common three are offered then.
+func effortLevelsFor(levels []string, known bool) []string {
+	if !known {
+		return defaultEffortLevels
 	}
-	switch {
-	case strings.Contains(m, "claude"):
-		return nil
-	case strings.HasPrefix(m, "gpt-"), strings.HasPrefix(m, "o1"), strings.HasPrefix(m, "o3"), strings.HasPrefix(m, "o4"):
-		return []effortLevel{levelMinimal, levelLow, levelMedium, levelHigh}
-	}
-	return []effortLevel{levelLow, levelMedium, levelHigh}
+	return levels
 }
 
 // effortAllowed reports whether level is one of the levels the model takes.
-func effortAllowed(modelRef, level string) bool {
-	for _, l := range effortLevelsFor(modelRef) {
-		if l.name == level {
+func effortAllowed(levels []string, known bool, level string) bool {
+	for _, l := range effortLevelsFor(levels, known) {
+		if l == level {
 			return true
 		}
 	}
 	return false
 }
 
-// effortMenuOpen reports whether the buffer opens the effort menu, and the filter.
-func effortMenuOpen(input string) (filter string, open bool) {
-	return menuOpen(effortPrefix, input)
+// effortLabel is how the status bar names a level: the two switch words read as
+// what they do.
+func effortLabel(level string) string {
+	switch level {
+	case "off":
+		return "thinking off"
+	case "on":
+		return "thinking on"
+	}
+	return level
 }
 
-// effortMenuData builds the menu rows for a model, marking the level in use. The
-// highlight starts on it. A model with no levels gets a single row that says so; it
-// carries no reference, so picking it changes nothing.
-func effortMenuData(modelRef, current string) []fold.ModelMatch {
-	levels := effortLevelsFor(modelRef)
+// effortMenuData builds the menu rows for the chat model's levels, marking the level
+// in use. The highlight starts on it. A model with no levels gets a single row that
+// says so; it carries no reference, so picking it changes nothing.
+func effortMenuData(levels []string, known bool, current string) []fold.ModelMatch {
+	levels = effortLevelsFor(levels, known)
 	if len(levels) == 0 {
 		return []fold.ModelMatch{{Name: "no levels", Provider: "this model does not take a thinking level"}}
 	}
 	var out []fold.ModelMatch
 	for _, l := range levels {
-		out = append(out, fold.ModelMatch{Ref: l.name, Name: l.name, Provider: l.hint, Current: l.name == current})
+		out = append(out, fold.ModelMatch{Ref: l, Name: l, Provider: effortHints[l], Current: l == current})
 	}
 	return out
+}
+
+// effortMenuOpen reports whether the buffer opens the effort menu, and the filter.
+func effortMenuOpen(input string) (filter string, open bool) {
+	return menuOpen(effortPrefix, input)
 }
 
 // effortCommand reports whether Enter on this line (or on the highlighted command-menu
