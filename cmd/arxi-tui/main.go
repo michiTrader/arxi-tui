@@ -769,6 +769,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// the keyboard like hub does, but reads everything from the folded log.
 	var flow *flowScreen
 	flowDoc, flowDocErr := loadFlowScene()
+	// team is the open /team screen: the architecture of ./agents/*.yaml, read
+	// from the core on a worker (teamCh carries the answer back).
+	var team *teamScreen
+	teamDoc, teamDocErr := loadTeamScene()
+	teamCh := make(chan teamOutcome, 1)
 	var hubWant hubOpen
 	var hubBusy bool
 	// hubDefault is the default model the core last reported ("provider/id"); the
@@ -1157,6 +1162,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// binds to none of the fold state, so the swap is purely which document is
 			// walked.
 			activeDoc = bundleMod.consent.doc
+		case team != nil:
+			// The team screen is open: it replaces the scene on display.
+			activeDoc = teamDoc
+			team.publish(&state)
 		case flow != nil:
 			// The flow screen is open: it replaces the scene on display and
 			// draws the team from the same folded state the chat reads.
@@ -1327,6 +1336,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						panicGesture.Reset()
 						if allow, decided := approvalKey(ev.Key); decided {
 							ap.Decide(allow)
+						}
+					} else if team != nil {
+						// The team screen owns the keyboard like the flow screen:
+						// Esc closes it, nothing typed here reaches the chat.
+						panicGesture.Reset()
+						if team.key(ev.Key) {
+							team = nil
+							sceneNotice = ""
 						}
 					} else if flow != nil {
 						// The flow screen owns the keyboard, after the Ctrl-C
@@ -1649,6 +1666,27 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								modeMn.loaded = false
 								sceneNotice = ""
 							}
+						} else if ev.Key.Type == term.KeyEnter && teamCommand(input, slashSel, slashCat) {
+							// `/team` shows the architecture of the teams in ./agents.
+							// It needs the core to describe the files; without one it
+							// says so instead of vanishing.
+							var tc teamCore
+							if hc, _ := drv.(interface{ Hub() hubCore }); hc != nil && hc.Hub() != nil {
+								tc, _ = hc.Hub().(teamCore)
+							}
+							switch {
+							case teamDocErr != nil:
+								sceneNotice = "/team: " + teamDocErr.Error()
+							case tc == nil || !helloImplements(tc.Hello(), "blueprint.validate"):
+								sceneNotice = noTeamCoreNotice
+							default:
+								team = &teamScreen{loading: true}
+								sceneNotice = ""
+								startTeamRead(ctx, tc, cwd, teamCh)
+							}
+							input = ""
+							caret = 0
+							slashSel = 0
 						} else if ev.Key.Type == term.KeyEnter && flowCommand(input, slashSel, slashCat) {
 							// `/flow` opens the team screen. With a broken embedded
 							// document it says why instead of vanishing.
@@ -1941,6 +1979,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				sceneNotice = "/ui plugin bundle: you rejected " + out.url + "; nothing was installed"
 			default:
 				sceneNotice = "/ui plugin bundle: " + out.err.Error()
+			}
+			repaint()
+
+		case out := <-teamCh:
+			// The team worker finished; a user who pressed Esc meanwhile does not
+			// see the screen reappear.
+			if team != nil {
+				team.apply(out)
 			}
 			repaint()
 
