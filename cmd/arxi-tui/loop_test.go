@@ -660,6 +660,9 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	case "flow":
 		// /flow opens its own screen; a conversation with no team says so.
 		want = "plain chat with one agent"
+	case "team":
+		// /team needs the core to describe the blueprints; with none it says so.
+		want = "/team needs the arxi core"
 	case "search":
 		// /search is a local setting: its screen opens with no core and lists the services.
 		want = "Brave Search"

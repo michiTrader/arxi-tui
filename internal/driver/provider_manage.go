@@ -399,3 +399,55 @@ func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params
 		return nil
 	}
 }
+
+// BlueprintStage is one stage of a validated blueprint.
+type BlueprintStage struct {
+	Name        string `json:"name"`
+	AdvanceWhen string `json:"advance_when"`
+	OnTimeout   string `json:"on_timeout"`
+	TimeoutMs   int64  `json:"timeout_ms"`
+}
+
+// BlueprintMember is one member of a validated blueprint. Empty Stages means the
+// member takes part in every stage, which is how the blueprint declares it.
+type BlueprintMember struct {
+	Name     string   `json:"name"`
+	Role     string   `json:"role"`
+	Model    string   `json:"model"`
+	Tools    []string `json:"tools"`
+	Advisory bool     `json:"advisory"`
+	Stages   []string `json:"stages"`
+}
+
+// BlueprintWatcher is one watcher of a validated blueprint.
+type BlueprintWatcher struct {
+	Agent   string `json:"agent"`
+	Pattern string `json:"pattern"`
+	Action  string `json:"action"`
+}
+
+// BlueprintInfo is the structured answer of blueprint.validate: everything needed
+// to draw a team's architecture without running it.
+type BlueprintInfo struct {
+	Name            string             `json:"name"`
+	SHA             string             `json:"sha"`
+	Workspace       string             `json:"workspace"`
+	WorkspaceReason string             `json:"workspace_reason"`
+	Stages          []BlueprintStage   `json:"stages"`
+	Members         []BlueprintMember  `json:"members"`
+	Watchers        []BlueprintWatcher `json:"watchers"`
+}
+
+// SubmitBlueprintValidate asks the core to load and validate the blueprint file at
+// path and describe it. A blueprint the core refuses comes back as an error whose
+// text says why, so a screen can show the reason beside the file.
+func (d *NDJSONDriver) SubmitBlueprintValidate(ctx context.Context, path string) (*BlueprintInfo, error) {
+	if path == "" {
+		return nil, fmt.Errorf("ndjson: blueprint.validate with an empty path; there is no blueprint to read")
+	}
+	var r BlueprintInfo
+	if err := d.call(ctx, "blueprint-validate", "blueprint.validate", map[string]any{"path": path}, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}

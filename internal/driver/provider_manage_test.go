@@ -462,3 +462,30 @@ func TestChatSendPutsAPageToTheUserLikeACommand(t *testing.T) {
 		t.Fatalf("decisions = %v", dec)
 	}
 }
+
+func TestBlueprintValidateDecodesTheTeamAndSendsThePath(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent, `{"id":"blueprint-validate","ok":true,"result":{"name":"duo","sha":"abc","workspace":"worktree","workspace_reason":"backend writes",`+
+		`"stages":[{"name":"build","advance_when":"all","on_timeout":"escalate","timeout_ms":60000}],`+
+		`"members":[{"name":"backend","role":"implementer","model":"m","tools":["read"],"stages":["build"]},{"name":"sec","advisory":true}],`+
+		`"watchers":[{"agent":"sec","pattern":"run.quiescent","action":"notify"}]}}`)
+	info, err := d.SubmitBlueprintValidate(context.Background(), "/p/agents/duo.yaml")
+	if err != nil {
+		t.Fatalf("SubmitBlueprintValidate: %v", err)
+	}
+	if info.Name != "duo" || len(info.Stages) != 1 || info.Stages[0].TimeoutMs != 60000 {
+		t.Fatalf("stages lost: %+v", info)
+	}
+	if len(info.Members) != 2 || info.Members[0].Role != "implementer" || info.Members[0].Stages[0] != "build" || !info.Members[1].Advisory {
+		t.Fatalf("members lost: %+v", info.Members)
+	}
+	if len(info.Watchers) != 1 || info.Watchers[0].Action != "notify" {
+		t.Fatalf("watchers lost: %+v", info.Watchers)
+	}
+	if line := sent.String(); !strings.Contains(line, `"type":"blueprint.validate"`) || !strings.Contains(line, `"path":"/p/agents/duo.yaml"`) {
+		t.Fatalf("request = %s", line)
+	}
+	if _, err := d.SubmitBlueprintValidate(context.Background(), ""); err == nil {
+		t.Fatal("an empty path was sent")
+	}
+}
