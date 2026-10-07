@@ -209,21 +209,7 @@ type roleDefaults struct {
 // they named the role to get, and the only sign would be a note in output they
 // have already scrolled past.
 func applyRole(r *agentstore.Record, name string) roleDefaults {
-	rd := roleDefaults{name: name}
-	if strings.TrimSpace(name) == "" {
-		return rd
-	}
-
-	st := readRoles()
-	rec, err := st.Load(name)
-	if errors.Is(err, rolestore.ErrNotExist) {
-		// The error from Names is dropped, and the note degrades to "none defined".
-		// Load has just answered ErrNotExist, which means the read got as far as a
-		// missing file, so the directory is readable or absent -- and neither is
-		// worth failing a create over when the agent is about to be written anyway.
-		rd.defined, _ = st.Names()
-		return rd
-	}
+	rd, err := applyRoleErr(r, name)
 	if err != nil {
 		// The second line says why a bad role file stops a create rather than
 		// degrading to one, and it deliberately does not repeat rolestore's own
@@ -234,6 +220,30 @@ func applyRole(r *agentstore.Record, name string) roleDefaults {
 		fmt.Fprint(os.Stderr, "  no agent was written: --role names that file, so its defaults are part\n"+
 			"  of this agent. fix it, or leave --role out and type the fields yourself.\n")
 		os.Exit(1)
+	}
+	return rd
+}
+
+// applyRoleErr is applyRole for a caller that must not exit: the protocol handler
+// answers a bad role file with an error and keeps the connection alive.
+func applyRoleErr(r *agentstore.Record, name string) (roleDefaults, error) {
+	rd := roleDefaults{name: name}
+	if strings.TrimSpace(name) == "" {
+		return rd, nil
+	}
+
+	st := readRoles()
+	rec, err := st.Load(name)
+	if errors.Is(err, rolestore.ErrNotExist) {
+		// The error from Names is dropped, and the note degrades to "none defined".
+		// Load has just answered ErrNotExist, which means the read got as far as a
+		// missing file, so the directory is readable or absent -- and neither is
+		// worth failing a create over when the agent is about to be written anyway.
+		rd.defined, _ = st.Names()
+		return rd, nil
+	}
+	if err != nil {
+		return rd, err
 	}
 	rd.found = true
 	rd.path = st.Path(name)
@@ -263,7 +273,7 @@ func applyRole(r *agentstore.Record, name string) roleDefaults {
 		r.Advisory = true
 		rd.advisory = true
 	}
-	return rd
+	return rd, nil
 }
 
 // printRoleInherited says what the role gave this agent, and where it came from.

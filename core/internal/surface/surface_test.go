@@ -360,10 +360,10 @@ func TestLookupProtocolIsTheInverseOfProtocolType(t *testing.T) {
 // not Protocol, and those three carry Protocol WITHOUT AgentTool. The sibling
 // test below pins exactly that: on the wire for the host, never offered to the
 // agent loop. The entries kept here (agent.tool.policy, role.define, blueprint
-// install/create) stay CLIOnly outright, reachable over no socket at all.
+// install) stay CLIOnly outright, reachable over no socket at all.
 func TestLookupProtocolRefusesWhatIsNotOnTheWire(t *testing.T) {
 	for _, name := range []string{"design", "serve",
-		"agent.tool.policy", "role.define", "blueprint.create", "blueprint.install"} {
+		"agent.tool.policy", "role.define", "blueprint.install"} {
 		if c := LookupProtocol(name); c != nil {
 			t.Errorf("LookupProtocol(%q) resolved to %s, which is not Kind|Protocol.\n"+
 				"  consequence: a capability held back from the wire on purpose is "+

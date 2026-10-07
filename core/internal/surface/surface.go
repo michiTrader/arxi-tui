@@ -416,8 +416,11 @@ var Registry = []Cmd{
 	// accepted by internal/blueprint on purpose -- a run with no members is caught
 	// when the run starts -- which would make `blueprint create t` write a file
 	// that validates and can never take a turn. Required here, not there.
+	// Protocol but NOT AgentTool, like provider.add: the TUI composes teams on the
+	// user's behalf over the wire, and an agent must not assemble the team that
+	// will run it. Composing a team is an owner decision, not a tool call.
 	{Path: []string{"blueprint", "create"}, Desc: "create a blueprint",
-		Kind: CLIOnly, Mutates: true, Since: 1,
+		Kind: CLIOnly | Protocol, Mutates: true, Since: 1,
 		Params: []Param{pos(p("name", "string", "name")),
 			req(p("members", "string", "agents to compose, comma-separated")),
 			p("stages", "string", "stage names in order, comma-separated (default: one stage, work)")}},

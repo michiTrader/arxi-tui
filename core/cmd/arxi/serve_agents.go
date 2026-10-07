@@ -1,0 +1,169 @@
+package main
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/michiTrader/arxi/internal/agentstore"
+	"github.com/michiTrader/arxi/internal/kernel"
+)
+
+// This file is what a person does to agents and teams over the protocol, so a
+// screen can list, create and compose them with no command line. Each handler is
+// the CLI's sequence minus os.Exit: a refusal is an error answered on the
+// connection, which stays up. The refusals themselves come from the same store
+// the CLI writes through (agentstore.Record.Validate, Team.Validate), so a file
+// written here is a file `arxi blueprint validate` accepts.
+//
+// Like provider.add, these are Protocol without being offered to the agent loop
+// as write tools for teams: composing the team that will run an agent is the
+// owner's decision.
+
+// handleAgentList answers `agent.list`: every stored agent and team, a file that
+// does not load carried with its reason instead of dropped.
+func handleAgentList(map[string]any) (any, error) {
+	entries, err := readAgents().List()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]agentJSON, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, agentPayload(e, false))
+	}
+	// Wrapped, like provider.list, so the document can grow a field without
+	// breaking a client that reads a bare array.
+	return struct {
+		Agents []agentJSON `json:"agents"`
+	}{Agents: out}, nil
+}
+
+// handleAgentCreate answers `agent.create`.
+func handleAgentCreate(params map[string]any) (any, error) {
+	r := agentstore.Record{
+		Name:     stringParam(params, "name"),
+		Model:    stringParam(params, "model"),
+		Role:     stringParam(params, "role"),
+		Tools:    splitCSV(stringParam(params, "tools")),
+		Advisory: boolParam(params, "advisory"),
+	}
+	// The role fills what was left blank, BEFORE Validate, so the record that is
+	// checked is the record that is written (the same order the CLI keeps).
+	rd, err := applyRoleErr(&r, r.Role)
+	if err != nil {
+		return nil, fmt.Errorf("no agent was written: its role names a file that does not load: %w", err)
+	}
+	if err := r.Validate(); err != nil {
+		return nil, err
+	}
+	path, err := openAgents().Create(r)
+	if err != nil {
+		if errors.Is(err, agentstore.ErrExists) {
+			return nil, fmt.Errorf("%q already exists; nothing was written. choose another name: `agent create` never overwrites", r.Name)
+		}
+		return nil, err
+	}
+	return struct {
+		Name     string   `json:"name"`
+		Path     string   `json:"path"`
+		Tools    []string `json:"tools,omitempty"`
+		Advisory bool     `json:"advisory,omitempty"`
+		RoleNote string   `json:"role_note,omitempty"`
+	}{Name: r.Name, Path: path, Tools: r.Tools, Advisory: r.Advisory, RoleNote: roleNote(rd)}, nil
+}
+
+// roleNote says in one line what a role contributed, or that it is not defined.
+// An undefined role is a note and not a refusal (see applyRole): `role:` is a
+// free-form label, so the caller must be told it supplied nothing.
+func roleNote(rd roleDefaults) string {
+	switch {
+	case rd.name == "":
+		return ""
+	case !rd.found:
+		return fmt.Sprintf("role %q is not defined, so it supplied no defaults", rd.name)
+	case rd.tools && rd.advisory:
+		return fmt.Sprintf("role %q supplied the tools and the advisory trait", rd.name)
+	case rd.tools:
+		return fmt.Sprintf("role %q supplied the tools", rd.name)
+	case rd.advisory:
+		return fmt.Sprintf("role %q made this agent advisory", rd.name)
+	}
+	return ""
+}
+
+// composeMembers copies each named agent's single member out of the store, the
+// error-returning twin of resolveMembers. Every refusal is the CLI's: a missing
+// agent, a file that does not load, an agent with no member, a team given where
+// an agent belongs, and two members with one name.
+func composeMembers(names []string) ([]kernel.MemberConfig, error) {
+	st := readAgents()
+	var out []kernel.MemberConfig
+	seen := map[string]string{}
+	for _, name := range names {
+		bp, err := st.Load(name)
+		if err != nil {
+			if errors.Is(err, agentstore.ErrNotExist) {
+				return nil, fmt.Errorf("member %q: there is no such agent. a team is composed from agents that exist", name)
+			}
+			return nil, fmt.Errorf("member %q did not load, so it cannot be copied: %w", name, err)
+		}
+		ms := bp.Config.Members
+		switch {
+		case len(ms) == 0:
+			return nil, fmt.Errorf("member %q has no members of its own, so there is nothing to copy out of it", name)
+		case len(ms) > 1:
+			who := make([]string, 0, len(ms))
+			for _, m := range ms {
+				who = append(who, m.Name)
+			}
+			return nil, fmt.Errorf("member %q is itself a team of %d (%s); name its members instead",
+				name, len(ms), strings.Join(who, ", "))
+		}
+		m := ms[0]
+		if prev, dup := seen[m.Name]; dup {
+			return nil, fmt.Errorf("two members would be named %q (%s and %s); a run could not address them apart", m.Name, prev, name)
+		}
+		seen[m.Name] = name
+		out = append(out, m)
+	}
+	return out, nil
+}
+
+// handleBlueprintCreate answers `blueprint.create`: a team composed from stored
+// agents. Stage names only; timeouts and advance rules are decisions about the
+// team's process that no member can supply, so the file gets the default (all).
+func handleBlueprintCreate(params map[string]any) (any, error) {
+	names := splitCSV(stringParam(params, "members"))
+	if len(names) == 0 {
+		return nil, errors.New("a team needs at least one member")
+	}
+	members, err := composeMembers(names)
+	if err != nil {
+		return nil, err
+	}
+	t := agentstore.Team{
+		Name:    stringParam(params, "name"),
+		Members: members,
+		Stages:  splitCSV(stringParam(params, "stages")),
+	}
+	if err := t.Validate(); err != nil {
+		return nil, err
+	}
+	path, err := openAgents().CreateTeam(t)
+	if err != nil {
+		if errors.Is(err, agentstore.ErrExists) {
+			return nil, fmt.Errorf("%q already exists; nothing was written. an agent and a team share one file name", t.Name)
+		}
+		return nil, err
+	}
+	stages := t.Stages
+	if len(stages) == 0 {
+		stages = []string{"work"}
+	}
+	return struct {
+		Name    string   `json:"name"`
+		Path    string   `json:"path"`
+		Members []string `json:"members"`
+		Stages  []string `json:"stages"`
+	}{Name: t.Name, Path: path, Members: names, Stages: stages}, nil
+}
