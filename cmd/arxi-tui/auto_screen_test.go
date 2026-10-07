@@ -622,7 +622,15 @@ func TestRealCoreAutomationsRoundTripAndTheSchedulerFiresOne(t *testing.T) {
 	if _, err := ac.SubmitTriggerPause(ctx, "tick"); err != nil {
 		t.Fatalf("pause: %v", err)
 	}
-	o := readAuto(ctx, ac, work)
+	// The scheduler may still be writing the firing down: wait for it, and check the
+	// pause survived it (the trigger must not be switched back on by that write).
+	var o autoOutcome
+	for end := time.Now().Add(60 * time.Second); ; time.Sleep(500 * time.Millisecond) {
+		o = readAuto(ctx, ac, work)
+		if len(o.rows) == 1 && o.rows[0].Record.LastFiredAt != "" || time.Now().After(end) {
+			break
+		}
+	}
 	if len(o.rows) != 1 || o.rows[0].Record.Status != "paused" || o.rows[0].NextAbsent != "paused" || o.rows[0].Record.LastFiredAt == "" {
 		t.Fatalf("after pause = %+v", o.rows)
 	}

@@ -524,6 +524,16 @@ func (s *Scheduler) recordFiring(r trigger.Record, now time.Time, started int, a
 		r.ID = r.Identity()
 	}
 	r.LastFiredAt = now.Format(time.RFC3339)
+	// The record in hand was read before the action started, which can take a
+	// while. Somebody may have paused the trigger since, and writing this copy
+	// back would silently switch it on again. The stored status wins.
+	if stored, err := s.store.List(); err == nil {
+		for _, cur := range stored {
+			if cur.Name == r.Name && cur.Status != r.Status {
+				r.Status = cur.Status
+			}
+		}
+	}
 	consumed := append(append([]time.Time(nil), d.Slots...), d.SkippedSlots...)
 	if len(consumed) > 0 {
 		latest := consumed[0]
