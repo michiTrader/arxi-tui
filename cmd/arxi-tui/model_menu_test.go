@@ -255,3 +255,27 @@ func TestLoopModelMenuEndToEnd(t *testing.T) {
 		t.Errorf("the status bar never showed the new model:\n%s", out)
 	}
 }
+
+// TestStatusModelNamesTheChatModelBeforeAnyReply pins the status bar's model: the
+// core's default shows from the first frame, a reply's model is the fallback, and
+// once the core has answered with none the bar says how to pick one.
+func TestStatusModelNamesTheChatModelBeforeAnyReply(t *testing.T) {
+	cases := []struct {
+		name    string
+		def     string
+		known   bool
+		replied string
+		want    string
+	}{
+		{"still reading, nothing known", "", false, "", ""},
+		{"default known, no reply yet", "deepseek/v4-flash", true, "", "deepseek/v4-flash"},
+		{"default wins over a reply", "a/b", true, "c/d", "a/b"},
+		{"reply is the fallback", "", false, "c/d", "c/d"},
+		{"core answered with no model", "", true, "", noModelLabel},
+	}
+	for _, c := range cases {
+		if got := statusModel(c.def, c.known, c.replied); got != c.want {
+			t.Errorf("%s: statusModel = %q, want %q", c.name, got, c.want)
+		}
+	}
+}

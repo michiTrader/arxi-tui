@@ -789,6 +789,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// hubDefault is the default model the core last reported ("provider/id"); the
 	// status bar shows it until a reply names the model that really answered.
 	var hubDefault string
+	// hubDefaultKnown turns true once the core has answered (or there is no core
+	// to ask), so the status bar can tell "still reading" from "no model chosen".
+	var hubDefaultKnown bool
 	// cwd is where the TUI was started, shown in the bottom bar. effort is the
 	// thinking level the next request asks for; empty sends nothing until the user
 	// sets one with /effort. mode is how much the agent may do unasked (/mode).
@@ -949,10 +952,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	repaint := func() {
 		state := fold.Fold(collected)
 		state.UserInput = input // view state: the host owns the input buffer
-		if hubDefault != "" {
-			// Chat always uses the default model, so the status bar shows it.
-			state.ModelName = hubDefault
-		}
+		state.ModelName = statusModel(hubDefault, hubDefaultKnown, state.ModelName)
 		state.UserInputCaret = caret
 		// ui.hidden is host-owned view state the loop keeps across frames, so it
 		// is re-attached on every repaint for the same reason the input buffer
@@ -999,7 +999,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						sceneNotice = err.Error()
 					} else {
 						modelMn.loading = true
-						startModelRead(ctx, hc.Hub(), modelCh)
+						startModelRead(ctx, hc.Hub(), modelCh, false)
 					}
 				}
 			}
@@ -1229,6 +1229,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		armBlink(!frame.Cursor.Hidden || state.AgentWorking)
 	}
 
+	// The status bar names the chat model from the first frame, not only after a
+	// reply: the default is read from the core on a worker right now.
+	if hc, _ := drv.(interface{ Hub() hubCore }); hc != nil && hc.Hub() != nil &&
+		requireHubVerbs(hc.Hub().Hello()) == nil {
+		startModelRead(ctx, hc.Hub(), modelCh, true)
+	} else {
+		hubDefaultKnown = true
+	}
 	repaint()
 
 	termEvents := tty.Events()
@@ -2137,6 +2145,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			sceneNotice = out.notice
 			if out.hasData {
 				hubDefault = out.data.def
+				hubDefaultKnown = true
 			}
 			if out.opened && hub == nil {
 				var why string
@@ -2155,6 +2164,16 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		case out := <-modelCh:
 			// The model worker finished: a read refreshes the menu; a pick reports
 			// the new chat model in the status bar, or why it failed.
+			hubDefaultKnown = true
+			if out.quiet {
+				// The startup read: it only names the model in the status bar. A
+				// failure leaves the bar saying "no model", never a notice.
+				if out.err == "" {
+					hubDefault = out.data.def
+				}
+				repaint()
+				continue
+			}
 			modelMn.loading = false
 			switch {
 			case out.err != "":
