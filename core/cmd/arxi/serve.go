@@ -366,6 +366,9 @@ func defaultProtoHost() (*hostv1.Host, error) {
 var protoHandlers = map[string]protoHandler{
 	"schema":             handleSchema,
 	"blueprint.validate": handleBlueprintValidate,
+	"blueprint.create":   handleBlueprintCreate,
+	"agent.list":         handleAgentList,
+	"agent.create":       handleAgentCreate,
 	"provider.add":       handleProviderAdd,
 	"provider.key":       handleProviderKey,
 	"provider.list":      handleProviderList,
