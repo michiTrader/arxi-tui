@@ -540,3 +540,58 @@ func TestAgentListDecodesMembersAndAKeptError(t *testing.T) {
 		t.Fatalf("decoded = %+v", r.Agents)
 	}
 }
+
+func TestTriggerListDecodesRecordAndNext(t *testing.T) {
+	d := session(t, `{"id":"trigger-list","ok":true,"result":{"triggers":[`+
+		`{"record":{"name":"nightly","on":"every:30m","then":"run start duo -- x","budget":2,"budget_period":"day","status":"active","last_status":"ok","last_fired_at":"2026-10-07T10:00:00Z"},"next":"2026-10-07T10:30:00Z"},`+
+		`{"record":{"name":"old","status":"paused"},"next_absent":"paused","missed":3}]}}`)
+	r, err := d.SubmitTriggerList(context.Background())
+	if err != nil || len(r.Triggers) != 2 {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	a, b := r.Triggers[0], r.Triggers[1]
+	if a.Record.Name != "nightly" || a.Record.Budget != 2 || a.Record.BudgetPeriod != "day" || a.Next == "" || a.Record.LastStatus != "ok" {
+		t.Fatalf("decoded = %+v", a)
+	}
+	if b.NextAbsent != "paused" || b.Missed != 3 || b.Record.Status != "paused" {
+		t.Fatalf("decoded = %+v", b)
+	}
+}
+
+func TestTriggerCreateSendsEveryFieldAndRefusesWhatTheCoreWould(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"id":"trigger-create","ok":true,"result":{"record":{"name":"n","status":"active"},"next":"2026-10-07T10:30:00Z"}}`)
+	r, err := d.SubmitTriggerCreate(context.Background(), TriggerCreateParams{Name: "n", On: "every:1h", Then: "run start duo -- x", Budget: 1.5, BudgetPeriod: "week"})
+	if err != nil || r.Record.Name != "n" {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	line := sent.String()
+	for _, want := range []string{`"type":"trigger.create"`, `"on":"every:1h"`, `"then":"run start duo -- x"`, `"budget":1.5`, `"budget_period":"week"`} {
+		if !strings.Contains(line, want) {
+			t.Errorf("request lacks %s: %s", want, line)
+		}
+	}
+	if _, err := d.SubmitTriggerCreate(context.Background(), TriggerCreateParams{Name: " ", Budget: 1}); err == nil {
+		t.Fatal("an unnamed trigger was sent")
+	}
+	if _, err := d.SubmitTriggerCreate(context.Background(), TriggerCreateParams{Name: "x"}); err == nil {
+		t.Fatal("a trigger with no spend ceiling was sent")
+	}
+}
+
+func TestTriggerPauseSendsTheName(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"id":"trigger-pause","ok":true,"result":{"record":{"name":"n","status":"paused"},"next_absent":"paused"}}`)
+	r, err := d.SubmitTriggerPause(context.Background(), "n")
+	if err != nil || r.Record.Status != "paused" {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	if line := sent.String(); !strings.Contains(line, `"type":"trigger.pause"`) || !strings.Contains(line, `"name":"n"`) {
+		t.Fatalf("request = %s", line)
+	}
+	if _, err := d.SubmitTriggerPause(context.Background(), ""); err == nil {
+		t.Fatal("an empty name was sent")
+	}
+}

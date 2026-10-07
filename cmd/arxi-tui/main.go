@@ -776,6 +776,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	var team *teamScreen
 	teamDoc, teamDocErr := loadTeamScene()
 	teamCh := make(chan teamOutcome, 1)
+	// auto is the open /auto screen: the automations in ./triggers, read from the
+	// core on a worker (autoCh carries the answer back).
+	var auto *autoScreen
+	autoDoc, autoDocErr := loadAutoScene()
+	autoCh := make(chan autoOutcome, 1)
 	// flowCh carries the result of an approval or rejection given from /flow; it
 	// holds two because an answer reports twice (saved, then the run's end).
 	flowCh := make(chan flowOutcome, 2)
@@ -1167,6 +1172,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// binds to none of the fold state, so the swap is purely which document is
 			// walked.
 			activeDoc = bundleMod.consent.doc
+		case auto != nil:
+			// The automations screen is open: it replaces the scene on display.
+			activeDoc = autoDoc
+			if as, ok := drv.(autoScheduler); ok {
+				auto.hasScheduler = true
+				auto.schedRunning, auto.schedWhy = as.SchedulerState()
+			}
+			auto.publish(&state)
 		case team != nil:
 			// The team screen is open: it replaces the scene on display.
 			activeDoc = teamDoc
@@ -1341,6 +1354,29 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						panicGesture.Reset()
 						if allow, decided := approvalKey(ev.Key); decided {
 							ap.Decide(allow)
+						}
+					} else if auto != nil {
+						// The automations screen owns the keyboard like /team:
+						// Esc closes it, nothing typed here reaches the chat.
+						panicGesture.Reset()
+						closeAuto, task := auto.key(ev.Key)
+						var ac autoCore
+						if hc, _ := drv.(interface{ Hub() hubCore }); hc != nil && hc.Hub() != nil {
+							ac, _ = hc.Hub().(autoCore)
+						}
+						switch {
+						case closeAuto:
+							auto = nil
+							sceneNotice = ""
+						case task == nil:
+						case ac == nil:
+							autoCh <- autoOutcome{refused: "this session has no arxi core to keep automations"}
+						case task.create != nil:
+							startAutoCreate(ctx, ac, cwd, *task.create, autoCh)
+						case task.pause != "":
+							startAutoPause(ctx, ac, cwd, task.pause, autoCh)
+						case task.reload:
+							startAutoRead(ctx, ac, cwd, autoCh)
 						}
 					} else if team != nil {
 						// The team screen owns the keyboard like the flow screen:
@@ -1716,6 +1752,32 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							input = ""
 							caret = 0
 							slashSel = 0
+						} else if ev.Key.Type == term.KeyEnter && autoCommand(input, slashSel, slashCat) {
+							// `/auto` lists and creates the scheduled runs. It needs
+							// the core to keep them; without one it says so.
+							var ac autoCore
+							if hc, _ := drv.(interface{ Hub() hubCore }); hc != nil && hc.Hub() != nil {
+								ac, _ = hc.Hub().(autoCore)
+							}
+							switch {
+							case autoDocErr != nil:
+								sceneNotice = "/auto: " + autoDocErr.Error()
+							case ac == nil || !helloImplements(ac.Hello(), "trigger.list"):
+								sceneNotice = noAutoCoreNotice
+							default:
+								auto = newAutoScreen(ac.Hello())
+								sceneNotice = ""
+								startAutoRead(ctx, ac, cwd, autoCh)
+								// Automations only fire while something watches the
+								// clock: keep the core's scheduler going, unseen, as
+								// long as one is active.
+								if as, ok := drv.(autoScheduler); ok && activeTriggers(cwd) > 0 {
+									_ = as.EnsureScheduler(ctx)
+								}
+							}
+							input = ""
+							caret = 0
+							slashSel = 0
 						} else if ev.Key.Type == term.KeyEnter && flowCommand(input, slashSel, slashCat) {
 							// `/flow` opens the team screen. With a broken embedded
 							// document it says why instead of vanishing.
@@ -1900,6 +1962,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						hub.paste(ev.Text)
 						break
 					}
+					if auto != nil {
+						auto.paste(ev.Text)
+						break
+					}
 					if team != nil {
 						// A pasted name goes to the team form's focused field.
 						team.paste(ev.Text)
@@ -2026,6 +2092,20 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// does not see it reappear.
 			if flow != nil {
 				flow.apply(out)
+			}
+			repaint()
+
+		case out := <-autoCh:
+			// The automations worker finished; a user who pressed Esc meanwhile does
+			// not see the screen reappear.
+			if auto != nil {
+				auto.apply(out)
+				// A saved automation has to fire, so the scheduler starts now.
+				if out.created != "" {
+					if as, ok := drv.(autoScheduler); ok {
+						_ = as.EnsureScheduler(ctx)
+					}
+				}
 			}
 			repaint()
 

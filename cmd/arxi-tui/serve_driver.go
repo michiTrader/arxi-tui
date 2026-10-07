@@ -95,6 +95,9 @@ type serveDriver struct {
 	// bin and dir are the core executable and the folder runs are started in
 	// (LaunchRun); empty on a connection built without them.
 	bin, dir string
+
+	// sched is the invisible scheduler that fires automations (auto_sched.go).
+	sched schedulerProc
 }
 
 // LaunchRun starts a run of a stored agent or team through the core and follows it,
