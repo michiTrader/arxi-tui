@@ -68,6 +68,26 @@ type teamOutcome struct {
 	name    string
 	// refused is the core's own sentence when a create was turned down.
 	refused string
+	// launched is the id of a run that has just started: the screen hands over to /flow.
+	launched string
+}
+
+// runLauncher is a driver that can start a run of a stored agent or team and begin
+// following it. Only the live connection to the core can.
+type runLauncher interface {
+	LaunchRun(ctx context.Context, r runLaunch) (string, error)
+}
+
+// startTeamRun starts a run on a worker; the form's refusal is the core's sentence.
+func startTeamRun(ctx context.Context, l runLauncher, r runLaunch, done chan<- teamOutcome) {
+	go func() {
+		id, err := l.LaunchRun(ctx, r)
+		if err != nil {
+			done <- teamOutcome{refused: err.Error()}
+			return
+		}
+		done <- teamOutcome{launched: id}
+	}()
 }
 
 // readTeams lists ./agents/*.yaml under root and asks the core to describe each.
@@ -179,10 +199,11 @@ type teamScreen struct {
 	form              *teamForm
 	working           string // set while the core writes a file
 	banner            string // the last thing that happened, good or bad
+	launched          string // set when a run started: the loop opens /flow
 }
 
 const (
-	teamHint     = "↑↓ choose · enter select · esc close"
+	teamHint     = "↑↓ choose · enter run or open · esc close"
 	teamFormHint = "tab or ↑↓ field · ←/→ or space choose · enter next / create · esc back"
 )
 
@@ -202,6 +223,13 @@ func (t *teamScreen) apply(o teamOutcome) {
 		// The form stays open with what the person typed: a refusal is a reason to
 		// fix one field, not to start over.
 		t.banner = "✗ " + o.refused
+		if strings.Contains(o.refused, "name no model") {
+			t.banner += " — choose a model in the Model field"
+		}
+		return
+	}
+	if o.launched != "" {
+		t.launched = o.launched
 		return
 	}
 	t.loading = false
@@ -437,7 +465,7 @@ func (t *teamScreen) publish(st *fold.State) {
 			detail += "\n\n" + noAgentsYet
 		}
 	default:
-		detail = teamDetail(t.items[t.sel-teamActions])
+		detail = teamDetail(t.items[t.sel-teamActions]) + "\n\nPress enter to run it."
 	}
 	if t.note != "" {
 		detail = t.note + "\n\n" + detail
@@ -528,6 +556,15 @@ func (t *teamScreen) key(k term.Key) (closeIt bool, task *teamTask) {
 // open acts on Enter over an action row.
 func (t *teamScreen) open() {
 	if t.loading || t.working != "" {
+		return
+	}
+	if t.sel >= teamActions {
+		it := t.items[t.sel-teamActions]
+		if it.Err != "" {
+			t.banner = "✗ the core refuses this file, so it cannot run"
+			return
+		}
+		t.form = newRunForm(it.Name, t.models)
 		return
 	}
 	switch t.sel {

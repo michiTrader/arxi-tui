@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/michiTrader/arxi_tui/internal/driver"
@@ -47,6 +48,7 @@ type teamFormKind int
 const (
 	formNewAgent teamFormKind = iota
 	formNewTeam
+	formRunTeam
 )
 
 // teamForm is the open form; it lives only while it is on screen.
@@ -62,6 +64,7 @@ type teamForm struct {
 type teamTask struct {
 	agent *driver.AgentCreateParams
 	team  *driver.BlueprintCreateParams
+	run   *runLaunch
 }
 
 // shown is what the row's right-hand column says.
@@ -139,6 +142,33 @@ func newTeamForm(agents []string) *teamForm {
 		help: "The steps the work goes through, in order, separated by commas: build, review. " +
 			"Leave it empty for a single stage called work in which everybody takes part."})
 	return f
+}
+
+// runFormBudget is what the Run form offers: small enough that a first try cannot
+// hurt, and visible so the person decides to raise it.
+const runFormBudget = "1"
+
+// eachMember is the Model choice that leaves every member on its own model.
+const eachMember = "(each member's own)"
+
+// newRunForm builds the form that starts a run of a stored agent or team.
+func newRunForm(name string, models []string) *teamForm {
+	return &teamForm{
+		kind:  formRunTeam,
+		title: "Run " + name,
+		help: "Give " + name + " a task and a spending ceiling. The run is shown in /flow as soon as it starts, " +
+			"and it stops by itself if it would spend more than the ceiling.",
+		fields: []teamField{
+			{label: "Task", kind: fieldText, spaces: true, required: true,
+				help: "What the team should do, in your own words."},
+			{label: "Budget (USD)", kind: fieldText, value: runFormBudget,
+				help: "The most this run may spend, in dollars. It must be above zero."},
+			{label: "Model", kind: fieldChoice, choices: append([]string{eachMember}, models...),
+				help: "One model for every member, or each member's own. Members with no model of their own need one here."},
+			{label: "Rehearsal", kind: fieldToggle,
+				help: "A practice run: no model is called and nothing is spent. It shows how the stages go."},
+		},
+	}
 }
 
 // typed is the text under the cursor (what the input line shows); only a text
@@ -248,6 +278,9 @@ func (f *teamForm) value(label string) string {
 
 // submit validates only what the form itself can know and builds the task.
 func (f *teamForm) submit() (*teamTask, string) {
+	if f.kind == formRunTeam {
+		return f.submitRun()
+	}
 	name := f.value("Name")
 	if name == "" {
 		return nil, "Name is required"
@@ -286,8 +319,33 @@ func (f *teamForm) submit() (*teamTask, string) {
 	return nil, "unknown form"
 }
 
+// submitRun builds the launch from the Run form; the team name rides in the title.
+func (f *teamForm) submitRun() (*teamTask, string) {
+	task := f.value("Task")
+	if task == "" {
+		return nil, "Task is required"
+	}
+	b, err := strconv.ParseFloat(f.value("Budget (USD)"), 64)
+	if err != nil || b <= 0 {
+		return nil, "Budget (USD) must be a number above 0, like 1 or 0.50"
+	}
+	r := runLaunch{Team: strings.TrimPrefix(f.title, "Run "), Task: task, Budget: b}
+	for _, fl := range f.fields {
+		switch {
+		case fl.label == "Model" && fl.idx > 0:
+			r.Model = fl.choices[fl.idx]
+		case fl.label == "Rehearsal":
+			r.Sim = fl.on
+		}
+	}
+	return &teamTask{run: &r}, ""
+}
+
 // working is the line shown while the core writes the file.
 func (t *teamTask) working() string {
+	if t.run != nil {
+		return "Starting " + t.run.Team + " …"
+	}
 	if t.agent != nil {
 		return "Creating agent " + t.agent.Name + " …"
 	}
