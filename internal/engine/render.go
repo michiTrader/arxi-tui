@@ -1354,83 +1354,116 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 // inputVisualRows splits the typed text into visual rows: it breaks on an
 // explicit newline (a multi-line prompt the user pasted or entered with
 // Shift/Ctrl+Enter) and, within each line, wraps at `room` display columns so a
-// line wider than the pane flows onto continuation rows. It walks runes and
-// measures display width so a wide glyph is never split across the wrap, and it
-// walks them the same way inputCaretRowCol does so the drawn rows and the caret
-// can never disagree about where a break falls. When the last content row fills
-// the width exactly a trailing empty row is added: an editor puts the caret
-// where the next character will land, and after a full row that is a fresh row
-// below — not welded to the last cell, where the terminal would clamp it. A text
-// ending in a newline already ends on an empty row, so no extra one is added.
+// line wider than the pane flows onto continuation rows. Wrapping is by word: a
+// word that does not fit in what is left of the row moves whole to the next one,
+// and only a word wider than a whole row is cut at the edge. The drawn rows and
+// the caret both come from inputLayout, so they can never disagree about where a
+// break falls. When the last content row fills the width exactly a trailing empty
+// row is added: an editor puts the caret where the next character will land, and
+// after a full row that is a fresh row below — not welded to the last cell, where
+// the terminal would clamp it. A text ending in a newline already ends on an empty
+// row, so no extra one is added.
 func inputVisualRows(text string, room int) []string {
 	if room <= 0 {
 		return []string{text}
 	}
+	rows, _ := inputLayout(text, room)
+	return rows
+}
+
+// inputCell is where the caret sits when it is just before a given rune.
+type inputCell struct{ row, col int }
+
+// inputLayout lays the text out in rows `room` columns wide and reports, for every
+// caret index 0..len(runes), the cell the caret occupies there.
+//
+// Words are kept whole: when a word does not fit in the rest of the row it starts
+// the next one, so "…blueprint por defecto?" breaks after "por " rather than in
+// the middle of "defecto". A word wider than a whole row cannot be kept whole and
+// is cut at the edge, starting on a fresh row. A space that lands past the edge hangs there without taking
+// a cell (it is not drawn), so a row never grows beyond `room` columns. Widths are
+// display widths, so a wide glyph is never split and never overflows the row.
+//
+// A caret that exactly fills a row sits at the start of the next one, matching the
+// trailing empty row that is appended, so the cursor is already where the next
+// glyph will wrap to.
+func inputLayout(text string, room int) ([]string, []inputCell) {
 	rs := []rune(text)
+	cells := make([]inputCell, len(rs)+1)
 	var rows []string
-	line := make([]rune, 0, room)
-	col := 0
+	var line []rune
+	row, col := 0, 0
 	flush := func() {
 		rows = append(rows, string(line))
 		line = line[:0]
+		row++
 		col = 0
 	}
-	for _, r := range rs {
-		if r == '\n' {
+	isBreak := func(r rune) bool { return r == ' ' || r == '\t' }
+	for i := 0; i < len(rs); {
+		r := rs[i]
+		switch {
+		case r == '\n':
+			cells[i] = inputCell{row, col}
 			flush()
-			continue
+			i++
+		case isBreak(r):
+			cells[i] = inputCell{row, col}
+			if w := ansiStringWidth(string(r)); col+w <= room {
+				line = append(line, r)
+				col += w
+			} // else it hangs past the edge: no cell, not drawn
+			i++
+		default:
+			j, ww := i, 0
+			for j < len(rs) && rs[j] != '\n' && !isBreak(rs[j]) {
+				ww += ansiStringWidth(string(rs[j]))
+				j++
+			}
+			if col > 0 && col+ww > room {
+				flush() // the word starts the next row; if it is still too wide it is cut below
+			}
+			for ; i < j; i++ {
+				w := ansiStringWidth(string(rs[i]))
+				if col+w > room {
+					flush() // only a word wider than the row is cut
+				}
+				cells[i] = inputCell{row, col}
+				line = append(line, rs[i])
+				col += w
+			}
 		}
-		w := ansiStringWidth(string(r))
-		if col+w > room {
-			flush()
-		}
-		line = append(line, r)
-		col += w
 	}
+	cells[len(rs)] = inputCell{row, col}
 	rows = append(rows, string(line))
 	if col >= room && col > 0 {
 		rows = append(rows, "")
 	}
-	return rows
+	for i := range cells {
+		if cells[i].col >= room {
+			cells[i] = inputCell{cells[i].row + 1, 0}
+		}
+	}
+	return rows, cells
 }
 
 // inputCaretRowCol maps a rune caret index into the (row, col) it occupies once
-// the text is laid out, walking the runes exactly as inputVisualRows does: an
-// explicit newline advances to the start of the next row and occupies no column,
-// and a run wider than `room` wraps. col is a display width, so a wide glyph
-// before the caret advances it two cells — a rune count would drift on CJK/emoji
-// input. A caret that exactly fills a row sits at the start of the next one,
-// matching the trailing empty row inputVisualRows appends, so the cursor is
-// already where the next glyph will wrap to.
+// the text is laid out by inputLayout: an explicit newline advances to the start
+// of the next row and occupies no column, a word that does not fit moves down
+// whole, and col is a display width, so a wide glyph before the caret advances it
+// two cells — a rune count would drift on CJK/emoji input.
 func inputCaretRowCol(text string, caret, room int) (row, col int) {
 	if room <= 0 {
 		return 0, 0
 	}
-	rs := []rune(text)
+	_, cells := inputLayout(text, room)
 	if caret < 0 {
 		caret = 0
 	}
-	if caret > len(rs) {
-		caret = len(rs)
+	if caret >= len(cells) {
+		caret = len(cells) - 1
 	}
-	for i := 0; i < caret; i++ {
-		if rs[i] == '\n' {
-			row++
-			col = 0
-			continue
-		}
-		w := ansiStringWidth(string(rs[i]))
-		if col+w > room {
-			row++
-			col = 0
-		}
-		col += w
-	}
-	if col >= room {
-		row++
-		col = 0
-	}
-	return row, col
+	return cells[caret].row, cells[caret].col
 }
 
 // InputCaretVerticalMove returns the caret index one wrapped row up (dir < 0) or
@@ -1454,10 +1487,11 @@ func InputCaretVerticalMove(text string, caret, room, dir int) int {
 	}
 	// Every caret index's (row, col), computed the one way the renderer does, so a
 	// vertical move can never disagree with where the row breaks are drawn.
+	_, cells := inputLayout(text, room)
 	rows := make([]int, len(rs)+1)
 	cols := make([]int, len(rs)+1)
-	for i := range rows {
-		rows[i], cols[i] = inputCaretRowCol(text, i, room)
+	for i, c := range cells {
+		rows[i], cols[i] = c.row, c.col
 	}
 	targetRow := rows[caret] + dir
 	if targetRow < 0 {
