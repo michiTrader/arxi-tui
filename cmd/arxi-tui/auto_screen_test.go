@@ -619,19 +619,23 @@ func TestRealCoreAutomationsRoundTripAndTheSchedulerFiresOne(t *testing.T) {
 		time.Sleep(time.Second)
 	}
 
+	// Let the scheduler finish writing the firing down before pausing, so this test
+	// does not race it (that race is covered deterministically in the core's
+	// scheduler tests).
+	for end := time.Now().Add(90 * time.Second); ; time.Sleep(500 * time.Millisecond) {
+		o := readAuto(ctx, ac, work)
+		if len(o.rows) == 1 && o.rows[0].Record.LastFiredAt != "" {
+			break
+		}
+		if time.Now().After(end) {
+			t.Fatalf("the firing was never recorded: %+v", o.rows)
+		}
+	}
 	if _, err := ac.SubmitTriggerPause(ctx, "tick"); err != nil {
 		t.Fatalf("pause: %v", err)
 	}
-	// The scheduler may still be writing the firing down: wait for it, and check the
-	// pause survived it (the trigger must not be switched back on by that write).
-	var o autoOutcome
-	for end := time.Now().Add(60 * time.Second); ; time.Sleep(500 * time.Millisecond) {
-		o = readAuto(ctx, ac, work)
-		if len(o.rows) == 1 && o.rows[0].Record.LastFiredAt != "" || time.Now().After(end) {
-			break
-		}
-	}
-	if len(o.rows) != 1 || o.rows[0].Record.Status != "paused" || o.rows[0].NextAbsent != "paused" || o.rows[0].Record.LastFiredAt == "" {
+	o := readAuto(ctx, ac, work)
+	if len(o.rows) != 1 || o.rows[0].Record.Status != "paused" || o.rows[0].NextAbsent != "paused" {
 		t.Fatalf("after pause = %+v", o.rows)
 	}
 	if activeTriggers(work) != 0 {
