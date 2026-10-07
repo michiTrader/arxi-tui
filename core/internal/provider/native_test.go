@@ -550,3 +550,41 @@ func (l *nativeTestLog) Fold(config kernel.Config, untilSeq int64) (kernel.State
 }
 
 func (l *nativeTestLog) WriteSnapshot(kernel.State, int64) error { return nil }
+
+// TestEffortReachesTheWireInEachProtocolsWords pins the translation of one level
+// word into each wire's own fields: Anthropic's output_config.effort and its
+// thinking switch, and Chat Completions' reasoning_effort and thinking switch.
+func TestEffortReachesTheWireInEachProtocolsWords(t *testing.T) {
+	mk := func(model, effort string) turn.Request {
+		return turn.Request{
+			Schema: turn.Schema, Model: model, MaxTokens: 10, Effort: effort,
+			Messages: []turn.Message{{Role: turn.RoleUser, Content: []turn.ContentBlock{{Type: turn.BlockText, Text: "hi"}}}},
+		}
+	}
+	a, err := anthropicTurnRequest(mk("claude-opus-4-7", "xhigh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.OutputConfig == nil || a.OutputConfig.Effort != "xhigh" || a.Thinking != nil {
+		t.Errorf("anthropic xhigh: output_config=%+v thinking=%+v", a.OutputConfig, a.Thinking)
+	}
+	a, _ = anthropicTurnRequest(mk("claude-haiku-5-5", "off"))
+	if a.OutputConfig != nil || a.Thinking == nil || a.Thinking.Type != "disabled" {
+		t.Errorf("anthropic off: output_config=%+v thinking=%+v", a.OutputConfig, a.Thinking)
+	}
+	a, _ = anthropicTurnRequest(mk("claude-opus-4-7", ""))
+	if a.OutputConfig != nil || a.Thinking != nil {
+		t.Errorf("anthropic unset must send nothing: %+v %+v", a.OutputConfig, a.Thinking)
+	}
+	o, err := openAIRequest(mk("deepseek-v4.1-flash", "off"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o.ReasoningEffort != "" || o.Thinking == nil || o.Thinking.Type != "disabled" {
+		t.Errorf("deepseek off: effort=%q thinking=%+v", o.ReasoningEffort, o.Thinking)
+	}
+	o, _ = openAIRequest(mk("gpt-5.6", "max"))
+	if o.ReasoningEffort != "max" || o.Thinking != nil {
+		t.Errorf("gpt max: effort=%q thinking=%+v", o.ReasoningEffort, o.Thinking)
+	}
+}

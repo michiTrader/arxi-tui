@@ -198,7 +198,7 @@ var Registry = []Cmd{
 		Params: []Param{pos(p("prompt", "string", "the message")),
 			p("model", "string", "model id or provider/id; defaults to the chosen model"),
 			p("system", "string", "instructions for the model"),
-			p("effort", "string", "thinking level: minimal, low, medium or high; omit to let the model decide"),
+			p("effort", "string", "thinking level: off, on, minimal, low, medium, high, xhigh or max, whichever the model takes (model list shows them); omit to let the model decide"),
 			p("history", "string", "earlier turns as a JSON list of {role,text} (wire only)"),
 			p("stream-thinking", "bool", "send the model's thinking as chat.thinking notifications before the reply (wire only)"),
 			p("workdir", "string", "a folder the model may look into with read-only tools; each call is sent as a chat.tool notification (wire only)"),

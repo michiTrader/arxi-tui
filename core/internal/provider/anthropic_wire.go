@@ -12,6 +12,20 @@ type anthropicRequest struct {
 	Tools       []anthropicTool    `json:"tools,omitempty"`
 	Temperature *float64           `json:"temperature,omitempty"`
 	Stream      bool               `json:"stream"`
+
+	// OutputConfig carries the effort level; Thinking switches thinking off.
+	// Both are nil unless the caller asked, so a model that does not know them
+	// never sees them.
+	OutputConfig *anthropicOutputConfig `json:"output_config,omitempty"`
+	Thinking     *anthropicThinking     `json:"thinking,omitempty"`
+}
+
+type anthropicOutputConfig struct {
+	Effort string `json:"effort"`
+}
+
+type anthropicThinking struct {
+	Type string `json:"type"`
 }
 
 type anthropicMessage struct {

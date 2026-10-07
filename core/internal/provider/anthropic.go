@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/michiTrader/arxi/internal/model"
 	"github.com/michiTrader/arxi/internal/turn"
 )
 
@@ -18,6 +19,13 @@ func anthropicTurnRequest(req turn.Request) (anthropicRequest, error) {
 	out := anthropicRequest{
 		Model: req.Model, MaxTokens: req.MaxTokens,
 		Temperature: req.Temperature, Stream: req.Stream,
+	}
+	wire := model.AnthropicWire(req.Effort)
+	if wire.Effort != "" {
+		out.OutputConfig = &anthropicOutputConfig{Effort: wire.Effort}
+	}
+	if wire.ThinkingOff {
+		out.Thinking = &anthropicThinking{Type: "disabled"}
 	}
 	for i, msg := range req.Messages {
 		if msg.Role == turn.RoleSystem {
