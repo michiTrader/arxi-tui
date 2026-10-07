@@ -368,6 +368,7 @@ var protoHandlers = map[string]protoHandler{
 	"blueprint.validate": handleBlueprintValidate,
 	"blueprint.create":   handleBlueprintCreate,
 	"blueprint.stage":    handleBlueprintStage,
+	"blueprint.member":   handleBlueprintMember,
 	"agent.list":         handleAgentList,
 	"agent.create":       handleAgentCreate,
 	"trigger.list":       handleTriggerList,

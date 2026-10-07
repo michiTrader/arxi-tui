@@ -111,6 +111,10 @@ func main() {
 			cmdBlueprintStage(args[2:])
 			return
 		}
+		if len(args) > 1 && args[1] == "member" {
+			cmdBlueprintMember(args[2:])
+			return
+		}
 	case "run":
 		if len(args) > 1 && args[1] == "start" {
 			cmdRunStart(args[2:])
