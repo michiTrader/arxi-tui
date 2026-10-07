@@ -90,10 +90,20 @@ func startTeamRun(ctx context.Context, l runLauncher, r runLaunch, done chan<- t
 	}()
 }
 
+// blueprintReader is the one thing reading ./agents needs from the core.
+type blueprintReader interface {
+	SubmitBlueprintValidate(ctx context.Context, path string) (*driver.BlueprintInfo, error)
+}
+
+// modelLister is the one thing reading the enabled models needs from the core.
+type modelLister interface {
+	SubmitModelList(ctx context.Context) (*driver.ModelListResult, error)
+}
+
 // readTeams lists ./agents/*.yaml under root and asks the core to describe each.
 // A file the core refuses stays in the list with its reason: hiding it would make
 // a broken team look like a team that was never written.
-func readTeams(ctx context.Context, core teamCore, root string) ([]teamItem, error) {
+func readTeams(ctx context.Context, core blueprintReader, root string) ([]teamItem, error) {
 	dir := filepath.Join(root, teamDir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -122,7 +132,7 @@ func readTeams(ctx context.Context, core teamCore, root string) ([]teamItem, err
 
 // readModels lists the models the chat can already use, as "provider/id". A core
 // that cannot list them just offers none: an agent may be left to the default model.
-func readModels(ctx context.Context, core teamCore) []string {
+func readModels(ctx context.Context, core modelLister) []string {
 	res, err := core.SubmitModelList(ctx)
 	if err != nil || res == nil {
 		return nil

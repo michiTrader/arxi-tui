@@ -35,12 +35,13 @@ type teamField struct {
 	label    string
 	help     string
 	kind     teamFieldKind
-	value    string   // fieldText
-	spaces   bool     // fieldText: a space is part of the text
-	required bool     // fieldText
-	choices  []string // fieldChoice: index 0 is the "nothing chosen" answer
-	idx      int      // fieldChoice
-	on       bool     // fieldToggle
+	value    string                 // fieldText
+	spaces   bool                   // fieldText: a space is part of the text
+	required bool                   // fieldText
+	dynHelp  func(*teamForm) string // when set, the help depends on other fields
+	choices  []string               // fieldChoice: index 0 is the "nothing chosen" answer
+	idx      int                    // fieldChoice
+	on       bool                   // fieldToggle
 }
 
 type teamFormKind int
@@ -49,6 +50,7 @@ const (
 	formNewAgent teamFormKind = iota
 	formNewTeam
 	formRunTeam
+	formNewAuto
 )
 
 // teamForm is the open form; it lives only while it is on screen.
@@ -65,6 +67,7 @@ type teamTask struct {
 	agent *driver.AgentCreateParams
 	team  *driver.BlueprintCreateParams
 	run   *runLaunch
+	auto  *driver.TriggerCreateParams
 }
 
 // shown is what the row's right-hand column says.
@@ -278,8 +281,11 @@ func (f *teamForm) value(label string) string {
 
 // submit validates only what the form itself can know and builds the task.
 func (f *teamForm) submit() (*teamTask, string) {
-	if f.kind == formRunTeam {
+	switch f.kind {
+	case formRunTeam:
 		return f.submitRun()
+	case formNewAuto:
+		return f.submitAuto()
 	}
 	name := f.value("Name")
 	if name == "" {
@@ -343,6 +349,9 @@ func (f *teamForm) submitRun() (*teamTask, string) {
 
 // working is the line shown while the core writes the file.
 func (t *teamTask) working() string {
+	if t.auto != nil {
+		return "Saving automation " + t.auto.Name + " …"
+	}
 	if t.run != nil {
 		return "Starting " + t.run.Team + " …"
 	}

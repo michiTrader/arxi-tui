@@ -555,3 +555,88 @@ func (d *NDJSONDriver) SubmitBlueprintCreate(ctx context.Context, p BlueprintCre
 	}
 	return &r, nil
 }
+
+// TriggerRecord is one stored trigger as the core reports it. On and Then are the
+// strings the trigger was created with; the Last* fields say what has happened.
+type TriggerRecord struct {
+	Name            string  `json:"name"`
+	ID              string  `json:"id"`
+	On              string  `json:"on"`
+	Then            string  `json:"then"`
+	Budget          float64 `json:"budget"`
+	BudgetPeriod    string  `json:"budget_period"`
+	OnMissed        string  `json:"on_missed"`
+	Overlap         string  `json:"overlap"`
+	Status          string  `json:"status"`
+	CreatedAt       string  `json:"created_at"`
+	LastFiredAt     string  `json:"last_fired_at"`
+	LastScheduledAt string  `json:"last_scheduled_at"`
+	LastStatus      string  `json:"last_status"`
+}
+
+// TriggerRow is a trigger and when it fires next. Next is RFC 3339 (UTC) when the
+// core could work it out; otherwise NextAbsent says why (paused, external).
+type TriggerRow struct {
+	Record     TriggerRecord `json:"record"`
+	Next       string        `json:"next"`
+	NextAbsent string        `json:"next_absent"`
+	Note       string        `json:"note"`
+	Missed     int           `json:"missed"`
+}
+
+// TriggerListResult wraps trigger.list. Empty is a valid answer.
+type TriggerListResult struct {
+	Triggers []TriggerRow `json:"triggers"`
+}
+
+// SubmitTriggerList reads every stored trigger. It mutates nothing.
+func (d *NDJSONDriver) SubmitTriggerList(ctx context.Context) (*TriggerListResult, error) {
+	var r TriggerListResult
+	if err := d.call(ctx, "trigger-list", "trigger.list", map[string]any{}, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// TriggerCreateParams are the wire parameters of trigger.create. Budget and
+// BudgetPeriod are mandatory: the core refuses a trigger with no spend ceiling.
+type TriggerCreateParams struct {
+	Name         string
+	On           string
+	Then         string
+	Budget       float64
+	BudgetPeriod string
+}
+
+// SubmitTriggerCreate stores one trigger. It never overwrites: a taken name is
+// refused with the core's own sentence.
+func (d *NDJSONDriver) SubmitTriggerCreate(ctx context.Context, p TriggerCreateParams) (*TriggerRow, error) {
+	switch {
+	case strings.TrimSpace(p.Name) == "":
+		return nil, fmt.Errorf("ndjson: trigger.create with an empty name; a trigger is addressed by its name")
+	case p.Budget <= 0:
+		return nil, fmt.Errorf("ndjson: trigger.create without a spend ceiling above zero; an unattended run with no limit is refused")
+	}
+	params := map[string]any{
+		"name": p.Name, "on": p.On, "then": p.Then,
+		"budget": p.Budget, "budget_period": p.BudgetPeriod,
+	}
+	var r TriggerRow
+	if err := d.call(ctx, "trigger-create", "trigger.create", params, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// SubmitTriggerPause stops a trigger from firing. Pausing a paused trigger is not
+// an error.
+func (d *NDJSONDriver) SubmitTriggerPause(ctx context.Context, name string) (*TriggerRow, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("ndjson: trigger.pause with an empty name")
+	}
+	var r TriggerRow
+	if err := d.call(ctx, "trigger-pause", "trigger.pause", map[string]any{"name": name}, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}

@@ -1044,3 +1044,41 @@ func TestAnEventTriggerIsNeverFiredByTheClock(t *testing.T) {
 		t.Error("an event trigger's record was rewritten by a clock tick")
 	}
 }
+
+// pausingRunner pauses the trigger in the store while its action is starting, the
+// way a person pressing pause does between the scheduler reading a trigger and
+// writing the firing back.
+type pausingRunner struct {
+	fakeRunner
+	store *fakeStore
+}
+
+func (p *pausingRunner) Start(rec trigger.Record, a trigger.Action) (Execution, error) {
+	for i := range p.store.recs {
+		if p.store.recs[i].Name == rec.Name {
+			p.store.recs[i].Status = trigger.StatusPaused
+		}
+	}
+	return p.fakeRunner.Start(rec, a)
+}
+
+func TestAPauseMadeWhileAnActionStartsIsNotUndoneByRecordingTheFiring(t *testing.T) {
+	st := &fakeStore{recs: []trigger.Record{nightly()}}
+	rn := &pausingRunner{store: st}
+	s, err := New(st, rn, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Tick(rfc("2026-08-02T03:00:00Z")); err != nil {
+		t.Fatal(err)
+	}
+	if len(rn.started) != 1 || len(st.saved) != 1 {
+		t.Fatalf("started %d, recorded %d; want 1 and 1", len(rn.started), len(st.saved))
+	}
+	if st.saved[0].Status != trigger.StatusPaused || st.recs[0].Status != trigger.StatusPaused {
+		t.Errorf("recording the firing switched a paused trigger back on: %q", st.recs[0].Status)
+	}
+	if st.saved[0].LastFiredAt == "" {
+		t.Error("the firing itself was not recorded")
+	}
+}
