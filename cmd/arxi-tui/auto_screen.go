@@ -39,6 +39,7 @@ type autoCore interface {
 	SubmitTriggerList(ctx context.Context) (*driver.TriggerListResult, error)
 	SubmitTriggerCreate(ctx context.Context, p driver.TriggerCreateParams) (*driver.TriggerRow, error)
 	SubmitTriggerPause(ctx context.Context, name string) (*driver.TriggerRow, error)
+	SubmitTriggerResume(ctx context.Context, name string) (*driver.TriggerRow, error)
 	SubmitBlueprintValidate(ctx context.Context, path string) (*driver.BlueprintInfo, error)
 	SubmitModelList(ctx context.Context) (*driver.ModelListResult, error)
 }
@@ -54,6 +55,7 @@ type autoOutcome struct {
 
 	created string // the sentence to show after a create
 	paused  string // the sentence to show after a pause
+	resumed string // the sentence to show after a resume
 	name    string // the automation to land on
 	refused string // the core's own sentence when a request was turned down
 }
@@ -112,10 +114,25 @@ func startAutoPause(ctx context.Context, core autoCore, root, name string, done 
 	}()
 }
 
+// startAutoResume lets one paused automation fire again and re-reads.
+func startAutoResume(ctx context.Context, core autoCore, root, name string, done chan<- autoOutcome) {
+	go func() {
+		if _, err := core.SubmitTriggerResume(ctx, name); err != nil {
+			done <- autoOutcome{refused: err.Error()}
+			return
+		}
+		out := readAuto(ctx, core, root)
+		out.name = name
+		out.resumed = "automation " + name + " is on again"
+		done <- out
+	}()
+}
+
 // autoTask is what a key asks the loop to start.
 type autoTask struct {
 	create *driver.TriggerCreateParams
 	pause  string // the automation to pause
+	resume string // the automation to switch back on
 	reload bool
 }
 
@@ -128,10 +145,10 @@ type autoScreen struct {
 	models  []string
 	note    string // why there is nothing to list
 
-	canCreate, canPause bool
-	form                *teamForm
-	working             string
-	banner              string
+	canCreate, canPause, canResume bool
+	form                           *teamForm
+	working                        string
+	banner                         string
 
 	// scheduler is read each frame from the driver: whether automations can fire now.
 	schedRunning bool
@@ -140,7 +157,7 @@ type autoScreen struct {
 }
 
 const (
-	autoHint     = "↑↓ choose · enter create · p pause · r refresh · esc close"
+	autoHint     = "↑↓ choose · enter create · p pause or resume · r refresh · esc close"
 	autoFormHint = "tab or ↑↓ field · ←/→ or space choose · enter next / save · esc back"
 )
 
@@ -150,6 +167,7 @@ func newAutoScreen(h *driver.Hello) *autoScreen {
 		loading:   true,
 		canCreate: helloImplements(h, "trigger.create"),
 		canPause:  helloImplements(h, "trigger.pause"),
+		canResume: helloImplements(h, "trigger.resume"),
 	}
 }
 
@@ -168,6 +186,8 @@ func (a *autoScreen) apply(o autoOutcome) {
 		a.banner = "✓ " + o.created
 	case o.paused != "":
 		a.banner = "✓ " + o.paused
+	case o.resumed != "":
+		a.banner = "✓ " + o.resumed
 	}
 	for i, r := range a.rows {
 		if r.Record.Name == o.name && o.name != "" {
@@ -260,6 +280,8 @@ func autoDetail(r driver.TriggerRow) string {
 	}
 	if rec.Status != "paused" {
 		lines = append(lines, "", "Press p to pause it.")
+	} else {
+		lines = append(lines, "", "It is paused. Press p to switch it on again.")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -426,8 +448,12 @@ func (a *autoScreen) pause() *autoTask {
 		a.banner = "✗ " + oldCoreNotice
 		return nil
 	case r.Record.Status == "paused":
-		a.banner = "✓ " + r.Record.Name + " is already paused"
-		return nil
+		if !a.canResume {
+			a.banner = "✗ " + oldCoreNotice
+			return nil
+		}
+		a.working = "Switching " + r.Record.Name + " on …"
+		return &autoTask{resume: r.Record.Name}
 	}
 	a.working = "Pausing " + r.Record.Name + " …"
 	return &autoTask{pause: r.Record.Name}

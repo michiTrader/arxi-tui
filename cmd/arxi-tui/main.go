@@ -1375,6 +1375,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							startAutoCreate(ctx, ac, cwd, *task.create, autoCh)
 						case task.pause != "":
 							startAutoPause(ctx, ac, cwd, task.pause, autoCh)
+						case task.resume != "":
+							startAutoResume(ctx, ac, cwd, task.resume, autoCh)
 						case task.reload:
 							startAutoRead(ctx, ac, cwd, autoCh)
 						}
@@ -2101,8 +2103,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// not see the screen reappear.
 			if auto != nil {
 				auto.apply(out)
-				// A saved automation has to fire, so the scheduler starts now.
-				if out.created != "" {
+				// A saved or switched-on automation has to fire, so the scheduler
+				// starts now.
+				if out.created != "" || out.resumed != "" {
 					if as, ok := drv.(autoScheduler); ok {
 						_ = as.EnsureScheduler(ctx)
 					}

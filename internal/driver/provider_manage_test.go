@@ -595,3 +595,19 @@ func TestTriggerPauseSendsTheName(t *testing.T) {
 		t.Fatal("an empty name was sent")
 	}
 }
+
+func TestTriggerResumeSendsTheName(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"id":"trigger-resume","ok":true,"result":{"record":{"name":"n","status":"active"},"next":"2026-01-01T00:00:00Z"}}`)
+	r, err := d.SubmitTriggerResume(context.Background(), "n")
+	if err != nil || r.Record.Status != "active" || r.Next == "" {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	if line := sent.String(); !strings.Contains(line, `"type":"trigger.resume"`) || !strings.Contains(line, `"name":"n"`) {
+		t.Fatalf("request = %s", line)
+	}
+	if _, err := d.SubmitTriggerResume(context.Background(), " "); err == nil {
+		t.Fatal("an empty name was sent")
+	}
+}
