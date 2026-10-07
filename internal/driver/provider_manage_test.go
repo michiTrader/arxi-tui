@@ -489,3 +489,54 @@ func TestBlueprintValidateDecodesTheTeamAndSendsThePath(t *testing.T) {
 		t.Fatal("an empty path was sent")
 	}
 }
+
+func TestAgentCreateSendsOnlyWhatWasFilledAndDecodes(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"id":"agent-create","ok":true,"result":{"name":"backend","path":"agents/backend.yaml","tools":["read","write"],"role_note":"role \"x\" is not defined"}}`)
+	r, err := d.SubmitAgentCreate(context.Background(), AgentCreateParams{Name: "backend", Tools: []string{"read", "write"}})
+	if err != nil || r.Path != "agents/backend.yaml" || r.RoleNote == "" {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	line := sent.String()
+	if !strings.Contains(line, `"type":"agent.create"`) || !strings.Contains(line, `"tools":"read,write"`) {
+		t.Fatalf("request = %s", line)
+	}
+	for _, unwanted := range []string{`"model"`, `"role"`, `"advisory"`} {
+		if strings.Contains(line, unwanted) {
+			t.Errorf("an empty field was sent (%s), which would override the core's defaults: %s", unwanted, line)
+		}
+	}
+	if _, err := d.SubmitAgentCreate(context.Background(), AgentCreateParams{Name: "  "}); err == nil {
+		t.Fatal("an unnamed agent was sent")
+	}
+}
+
+func TestBlueprintCreateSendsMembersAndStagesAsLists(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"id":"blueprint-create","ok":true,"result":{"name":"duo","path":"agents/duo.yaml","members":["a","b"],"stages":["work"]}}`)
+	r, err := d.SubmitBlueprintCreate(context.Background(), BlueprintCreateParams{Name: "duo", Members: []string{"a", "b"}})
+	if err != nil || len(r.Stages) != 1 {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	if line := sent.String(); !strings.Contains(line, `"members":"a,b"`) || strings.Contains(line, `"stages"`) {
+		t.Fatalf("request = %s", line)
+	}
+	if _, err := d.SubmitBlueprintCreate(context.Background(), BlueprintCreateParams{Name: "x"}); err == nil {
+		t.Fatal("a team with no members was sent")
+	}
+}
+
+func TestAgentListDecodesMembersAndAKeptError(t *testing.T) {
+	d := session(t, `{"id":"agent-list","ok":true,"result":{"agents":[`+
+		`{"name":"bad","path":"agents/bad.yaml","members":[],"error":"nope"},`+
+		`{"name":"duo","path":"agents/duo.yaml","sha":"s","members":[{"name":"a","role":"r","tools":["read"]},{"name":"b"}],"stages":["x","y"]}]}}`)
+	r, err := d.SubmitAgentList(context.Background())
+	if err != nil || len(r.Agents) != 2 {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	if r.Agents[0].Error != "nope" || len(r.Agents[1].Members) != 2 || r.Agents[1].Members[0].Role != "r" || len(r.Agents[1].Stages) != 2 {
+		t.Fatalf("decoded = %+v", r.Agents)
+	}
+}

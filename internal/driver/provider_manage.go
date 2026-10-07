@@ -451,3 +451,107 @@ func (d *NDJSONDriver) SubmitBlueprintValidate(ctx context.Context, path string)
 	}
 	return &r, nil
 }
+
+// AgentRow is one stored agent or team as agent.list reports it. A file that does
+// not load carries its reason in Error instead of being dropped.
+type AgentRow struct {
+	Name    string            `json:"name"`
+	Path    string            `json:"path"`
+	SHA     string            `json:"sha"`
+	Members []BlueprintMember `json:"members"`
+	Stages  []string          `json:"stages"`
+	Error   string            `json:"error"`
+}
+
+// AgentListResult wraps agent.list. Empty is a valid answer.
+type AgentListResult struct {
+	Agents []AgentRow `json:"agents"`
+}
+
+// SubmitAgentList reads every stored agent and team. It mutates nothing.
+func (d *NDJSONDriver) SubmitAgentList(ctx context.Context) (*AgentListResult, error) {
+	var r AgentListResult
+	if err := d.call(ctx, "agent-list", "agent.list", map[string]any{}, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// AgentCreateParams are the wire parameters of agent.create. Empty fields are
+// omitted so the core applies its own defaults (and the role's).
+type AgentCreateParams struct {
+	Name     string
+	Model    string
+	Role     string
+	Tools    []string
+	Advisory bool
+}
+
+// AgentCreateResult is what agent.create answers.
+type AgentCreateResult struct {
+	Name     string   `json:"name"`
+	Path     string   `json:"path"`
+	Tools    []string `json:"tools"`
+	Advisory bool     `json:"advisory"`
+	RoleNote string   `json:"role_note"`
+}
+
+// SubmitAgentCreate writes one agent. It never overwrites: a taken name is
+// refused with the core's own sentence.
+func (d *NDJSONDriver) SubmitAgentCreate(ctx context.Context, p AgentCreateParams) (*AgentCreateResult, error) {
+	if strings.TrimSpace(p.Name) == "" {
+		return nil, fmt.Errorf("ndjson: agent.create with an empty name; an agent is addressed by its name")
+	}
+	params := map[string]any{"name": p.Name}
+	if p.Model != "" {
+		params["model"] = p.Model
+	}
+	if p.Role != "" {
+		params["role"] = p.Role
+	}
+	if len(p.Tools) > 0 {
+		params["tools"] = strings.Join(p.Tools, ",")
+	}
+	if p.Advisory {
+		params["advisory"] = true
+	}
+	var r AgentCreateResult
+	if err := d.call(ctx, "agent-create", "agent.create", params, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// BlueprintCreateParams are the wire parameters of blueprint.create.
+type BlueprintCreateParams struct {
+	Name    string
+	Members []string
+	Stages  []string
+}
+
+// BlueprintCreateResult is what blueprint.create answers.
+type BlueprintCreateResult struct {
+	Name    string   `json:"name"`
+	Path    string   `json:"path"`
+	Members []string `json:"members"`
+	Stages  []string `json:"stages"`
+}
+
+// SubmitBlueprintCreate composes a team out of stored agents.
+func (d *NDJSONDriver) SubmitBlueprintCreate(ctx context.Context, p BlueprintCreateParams) (*BlueprintCreateResult, error) {
+	if strings.TrimSpace(p.Name) == "" {
+		return nil, fmt.Errorf("ndjson: blueprint.create with an empty name; a team is addressed by its name")
+	}
+	if len(p.Members) == 0 {
+		return nil, fmt.Errorf("ndjson: blueprint.create with no members; a team with nobody in it never takes a turn")
+	}
+	params := map[string]any{"name": p.Name, "members": strings.Join(p.Members, ",")}
+	if len(p.Stages) > 0 {
+		params["stages"] = strings.Join(p.Stages, ",")
+	}
+	var r BlueprintCreateResult
+	if err := d.call(ctx, "blueprint-create", "blueprint.create", params, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
