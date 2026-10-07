@@ -89,10 +89,11 @@ type fakeTeamCore struct {
 	teams   []driver.BlueprintCreateParams
 	stages  []driver.BlueprintStageParams
 	members []driver.BlueprintMemberParams
+	watches []driver.BlueprintWatchParams
 }
 
 func (f *fakeTeamCore) Hello() *driver.Hello {
-	return &driver.Hello{Implemented: []string{"blueprint.validate", "agent.create", "blueprint.create", "blueprint.stage", "blueprint.member"}}
+	return &driver.Hello{Implemented: []string{"blueprint.validate", "agent.create", "blueprint.create", "blueprint.stage", "blueprint.member", "blueprint.watch"}}
 }
 
 func (f *fakeTeamCore) SubmitModelList(context.Context) (*driver.ModelListResult, error) {
@@ -129,6 +130,14 @@ func (f *fakeTeamCore) SubmitBlueprintMember(_ context.Context, p driver.Bluepri
 	}
 	f.members = append(f.members, p)
 	return &driver.BlueprintMemberResult{Name: p.Name}, nil
+}
+
+func (f *fakeTeamCore) SubmitBlueprintWatch(_ context.Context, p driver.BlueprintWatchParams) (*driver.BlueprintWatchResult, error) {
+	if f.refuse != "" {
+		return nil, errors.New(f.refuse)
+	}
+	f.watches = append(f.watches, p)
+	return &driver.BlueprintWatchResult{Name: p.Name}, nil
 }
 
 func (f *fakeTeamCore) SubmitBlueprintValidate(_ context.Context, path string) (*driver.BlueprintInfo, error) {
