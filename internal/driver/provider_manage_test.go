@@ -634,3 +634,27 @@ func TestBlueprintStageSendsOnlyWhatChangesAndAZeroTimeout(t *testing.T) {
 		t.Fatal("a request without a stage was sent")
 	}
 }
+
+func TestBlueprintMemberSendsOnlyWhatChangesAndEmptyMeansRemove(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"id":"blueprint-member","ok":true,"result":{"name":"duo","members":[{"name":"dev","model":"p/m","advisory":true}]}}`)
+	model, none, yes := "p/m", []string{}, true
+	r, err := d.SubmitBlueprintMember(context.Background(), BlueprintMemberParams{
+		Name: "duo", Member: "dev", Model: &model, Tools: &none, Advisory: &yes})
+	if err != nil || len(r.Members) != 1 || r.Members[0].Model != "p/m" || !r.Members[0].Advisory {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	line := sent.String()
+	for _, want := range []string{`"type":"blueprint.member"`, `"member":"dev"`, `"model":"p/m"`, `"tools":""`, `"advisory":true`} {
+		if !strings.Contains(line, want) {
+			t.Errorf("request %s lacks %s", line, want)
+		}
+	}
+	if strings.Contains(line, `"role"`) {
+		t.Errorf("an unchanged field was sent: %s", line)
+	}
+	if _, err := d.SubmitBlueprintMember(context.Background(), BlueprintMemberParams{Name: "duo"}); err == nil {
+		t.Fatal("a request without a member was sent")
+	}
+}

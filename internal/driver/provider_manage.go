@@ -596,6 +596,50 @@ func (d *NDJSONDriver) SubmitBlueprintStage(ctx context.Context, p BlueprintStag
 	return &r, nil
 }
 
+// BlueprintMemberParams changes one member of a stored blueprint. A nil field is
+// left as it is; a pointer to an empty string (or an empty tool list) removes it.
+type BlueprintMemberParams struct {
+	Name     string
+	Member   string
+	Model    *string
+	Role     *string
+	Tools    *[]string
+	Advisory *bool
+}
+
+// BlueprintMemberResult is the members as the core saved them.
+type BlueprintMemberResult struct {
+	Name    string            `json:"name"`
+	Members []BlueprintMember `json:"members"`
+}
+
+// SubmitBlueprintMember changes the model, role, tools or advisory flag of one
+// member of a stored blueprint. The core validates the whole file before replacing
+// it, so a refusal leaves the file as it was and comes back as its own sentence.
+func (d *NDJSONDriver) SubmitBlueprintMember(ctx context.Context, p BlueprintMemberParams) (*BlueprintMemberResult, error) {
+	if strings.TrimSpace(p.Name) == "" || strings.TrimSpace(p.Member) == "" {
+		return nil, fmt.Errorf("ndjson: blueprint.member needs the blueprint and the member to change")
+	}
+	params := map[string]any{"name": p.Name, "member": p.Member}
+	if p.Model != nil {
+		params["model"] = *p.Model
+	}
+	if p.Role != nil {
+		params["role"] = *p.Role
+	}
+	if p.Tools != nil {
+		params["tools"] = strings.Join(*p.Tools, ",")
+	}
+	if p.Advisory != nil {
+		params["advisory"] = *p.Advisory
+	}
+	var r BlueprintMemberResult
+	if err := d.call(ctx, "blueprint-member", "blueprint.member", params, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // TriggerRecord is one stored trigger as the core reports it. On and Then are the
 // strings the trigger was created with; the Last* fields say what has happened.
 type TriggerRecord struct {

@@ -49,6 +49,7 @@ type teamCore interface {
 	SubmitAgentCreate(ctx context.Context, p driver.AgentCreateParams) (*driver.AgentCreateResult, error)
 	SubmitBlueprintCreate(ctx context.Context, p driver.BlueprintCreateParams) (*driver.BlueprintCreateResult, error)
 	SubmitBlueprintStage(ctx context.Context, p driver.BlueprintStageParams) (*driver.BlueprintStageResult, error)
+	SubmitBlueprintMember(ctx context.Context, p driver.BlueprintMemberParams) (*driver.BlueprintMemberResult, error)
 }
 
 // teamItem is one file in ./agents and what the core said about it.
@@ -180,6 +181,12 @@ func startTeamCreate(ctx context.Context, core teamCore, root string, task teamT
 				return
 			}
 			out.created, out.name = task.done(nil, res), res.Name
+		case task.member != nil:
+			if _, err := core.SubmitBlueprintMember(ctx, *task.member); err != nil {
+				done <- teamOutcome{refused: err.Error()}
+				return
+			}
+			out.created, out.name = task.done(nil, nil), task.member.Name
 		case task.stage != nil:
 			if _, err := core.SubmitBlueprintStage(ctx, *task.stage); err != nil {
 				done <- teamOutcome{refused: err.Error()}
@@ -214,6 +221,7 @@ type teamScreen struct {
 
 	canAgent, canTeam bool // the core implements the create verbs
 	canStage          bool // ... and the one that changes a stage's rules
+	canMember         bool // ... and the one that changes a member
 	form              *teamForm
 	working           string // set while the core writes a file
 	banner            string // the last thing that happened, good or bad
@@ -221,17 +229,18 @@ type teamScreen struct {
 }
 
 const (
-	teamHint     = "↑↓ choose · enter run or open · e edit stages · esc close"
+	teamHint     = "↑↓ choose · enter run or open · e edit stages · m edit a member · esc close"
 	teamFormHint = "tab or ↑↓ field · ←/→ or space choose · enter next / create · esc back"
 )
 
 // newTeamScreen opens the manager. What the core can create is read off its hello.
 func newTeamScreen(h *driver.Hello) *teamScreen {
 	return &teamScreen{
-		loading:  true,
-		canAgent: helloImplements(h, "agent.create"),
-		canTeam:  helloImplements(h, "blueprint.create"),
-		canStage: helloImplements(h, "blueprint.stage"),
+		loading:   true,
+		canAgent:  helloImplements(h, "agent.create"),
+		canTeam:   helloImplements(h, "blueprint.create"),
+		canStage:  helloImplements(h, "blueprint.stage"),
+		canMember: helloImplements(h, "blueprint.member"),
 	}
 }
 
@@ -489,6 +498,9 @@ func (t *teamScreen) publish(st *fold.State) {
 		if it.Info != nil && len(it.Info.Stages) > 0 {
 			detail += " Press e to change how its stages finish or how long they may take."
 		}
+		if it.Info != nil && len(it.Info.Members) > 0 {
+			detail += " Press m to change a member's model, role or tools."
+		}
 	}
 	if t.note != "" {
 		detail = t.note + "\n\n" + detail
@@ -569,6 +581,8 @@ func (t *teamScreen) key(k term.Key) (closeIt bool, task *teamTask) {
 			return true, nil
 		case 'e', 'E':
 			t.editStages()
+		case 'm', 'M':
+			t.editMember()
 		}
 		return false, nil
 	case term.KeyUp:
@@ -600,6 +614,24 @@ func (t *teamScreen) editStages() {
 		t.banner = "✗ " + oldCoreNotice
 	default:
 		t.form = newStagesForm(it.Name, it.Info.Stages)
+	}
+}
+
+// editMember opens the form that changes one member of the highlighted agent or team.
+func (t *teamScreen) editMember() {
+	if t.loading || t.working != "" || t.sel < teamActions {
+		return
+	}
+	it := t.items[t.sel-teamActions]
+	switch {
+	case it.Err != "":
+		t.banner = "✗ the core refuses this file, so there is nothing to edit until it is fixed"
+	case len(it.Info.Members) == 0:
+		t.banner = "✗ " + it.Name + " has no members to edit"
+	case !t.canMember:
+		t.banner = "✗ " + oldCoreNotice
+	default:
+		t.form = newMemberForm(it.Name, it.Info.Members, t.models)
 	}
 }
 

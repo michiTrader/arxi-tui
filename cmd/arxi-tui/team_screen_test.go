@@ -85,13 +85,14 @@ type fakeTeamCore struct {
 	models []driver.ModelRow
 	refuse string // when set, every create is refused with this sentence
 
-	agents []driver.AgentCreateParams
-	teams  []driver.BlueprintCreateParams
-	stages []driver.BlueprintStageParams
+	agents  []driver.AgentCreateParams
+	teams   []driver.BlueprintCreateParams
+	stages  []driver.BlueprintStageParams
+	members []driver.BlueprintMemberParams
 }
 
 func (f *fakeTeamCore) Hello() *driver.Hello {
-	return &driver.Hello{Implemented: []string{"blueprint.validate", "agent.create", "blueprint.create", "blueprint.stage"}}
+	return &driver.Hello{Implemented: []string{"blueprint.validate", "agent.create", "blueprint.create", "blueprint.stage", "blueprint.member"}}
 }
 
 func (f *fakeTeamCore) SubmitModelList(context.Context) (*driver.ModelListResult, error) {
@@ -120,6 +121,14 @@ func (f *fakeTeamCore) SubmitBlueprintStage(_ context.Context, p driver.Blueprin
 	}
 	f.stages = append(f.stages, p)
 	return &driver.BlueprintStageResult{Name: p.Name}, nil
+}
+
+func (f *fakeTeamCore) SubmitBlueprintMember(_ context.Context, p driver.BlueprintMemberParams) (*driver.BlueprintMemberResult, error) {
+	if f.refuse != "" {
+		return nil, errors.New(f.refuse)
+	}
+	f.members = append(f.members, p)
+	return &driver.BlueprintMemberResult{Name: p.Name}, nil
 }
 
 func (f *fakeTeamCore) SubmitBlueprintValidate(_ context.Context, path string) (*driver.BlueprintInfo, error) {

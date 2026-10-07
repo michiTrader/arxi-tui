@@ -52,25 +52,28 @@ const (
 	formRunTeam
 	formNewAuto
 	formEditStages
+	formEditMember
 )
 
 // teamForm is the open form; it lives only while it is on screen.
 type teamForm struct {
-	kind   teamFormKind
-	title  string
-	help   string
-	fields []teamField
-	focus  int
-	target string // formEditStages: the team being changed
+	kind    teamFormKind
+	title   string
+	help    string
+	fields  []teamField
+	focus   int
+	target  string                   // formEditStages, formEditMember: the blueprint being changed
+	members []driver.BlueprintMember // formEditMember: its members as they are now
 }
 
 // teamTask is what the worker is asked to create.
 type teamTask struct {
-	agent *driver.AgentCreateParams
-	team  *driver.BlueprintCreateParams
-	run   *runLaunch
-	auto  *driver.TriggerCreateParams
-	stage *driver.BlueprintStageParams
+	agent  *driver.AgentCreateParams
+	team   *driver.BlueprintCreateParams
+	run    *runLaunch
+	auto   *driver.TriggerCreateParams
+	stage  *driver.BlueprintStageParams
+	member *driver.BlueprintMemberParams
 }
 
 // shown is what the row's right-hand column says.
@@ -208,6 +211,9 @@ func (f *teamForm) flip(delta int) {
 	case fieldChoice:
 		n := len(fl.choices)
 		fl.idx = ((fl.idx+delta)%n + n) % n
+		if f.kind == formEditMember && fl.label == memberLabel {
+			f.loadMember()
+		}
 	}
 }
 
@@ -291,6 +297,8 @@ func (f *teamForm) submit() (*teamTask, string) {
 		return f.submitAuto()
 	case formEditStages:
 		return f.submitStages()
+	case formEditMember:
+		return f.submitMember()
 	}
 	name := f.value("Name")
 	if name == "" {
@@ -354,6 +362,9 @@ func (f *teamForm) submitRun() (*teamTask, string) {
 
 // working is the line shown while the core writes the file.
 func (t *teamTask) working() string {
+	if t.member != nil {
+		return "Saving " + t.member.Member + " in " + t.member.Name + " …"
+	}
 	if t.stage != nil {
 		return "Saving the rules of " + t.stage.Stage + " in " + t.stage.Name + " …"
 	}
@@ -380,6 +391,9 @@ func (t *teamTask) done(agent *driver.AgentCreateResult, team *driver.BlueprintC
 		return s
 	case team != nil:
 		return fmt.Sprintf("team %s created with %s", team.Name, plural(len(team.Members), "member", "members"))
+	}
+	if t.member != nil {
+		return fmt.Sprintf("member %s of %s saved; it applies to runs you start from now on", t.member.Member, t.member.Name)
 	}
 	if t.stage != nil {
 		return fmt.Sprintf("stage %s of %s saved; it applies to runs you start from now on", t.stage.Stage, t.stage.Name)
