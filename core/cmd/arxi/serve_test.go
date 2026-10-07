@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -903,6 +906,51 @@ func TestBlueprintValidateReturnsResolvedStructure(t *testing.T) {
 	}
 	if len(out.Members) == 0 {
 		t.Error("no members returned")
+	}
+}
+
+// A client that DRAWS the team needs each member's role and model and the stages
+// it takes part in, not only its name and tools. They are additive: a member that
+// declares none of them must not grow empty keys, so an older client reads the
+// same document it always did.
+func TestBlueprintValidateCarriesWhatIsNeededToDrawTheTeam(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "team.yaml")
+	const bp = "name: team\n" +
+		"members:\n" +
+		"  - {name: lead, role: planner, model: prov/big, tools: [read]}\n" +
+		"  - {name: helper}\n" +
+		"stages:\n" +
+		"  - {name: plan, advance_when: any}\n" +
+		"  - {name: build, advance_when: all}\n"
+	if err := os.WriteFile(path, []byte(bp), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got := one(t, `{"id":"1","type":"blueprint.validate","params":{"path":`+strconv.Quote(path)+`}}`)
+	if !got.OK {
+		t.Fatalf("validate failed: %+v", got.Error)
+	}
+	raw, err := json.Marshal(got.Result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out struct {
+		Members []map[string]any `json:"members"`
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Members) != 2 {
+		t.Fatalf("members = %s", raw)
+	}
+	lead, helper := out.Members[0], out.Members[1]
+	if lead["role"] != "planner" || lead["model"] != "prov/big" {
+		t.Errorf("lead lost its role or model: %v", lead)
+	}
+	for _, k := range []string{"role", "model", "stages", "tools", "advisory"} {
+		if _, has := helper[k]; has {
+			t.Errorf("a member that declares no %q must not carry the key: %v", k, helper)
+		}
 	}
 }
 
