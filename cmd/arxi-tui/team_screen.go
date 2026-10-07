@@ -48,6 +48,7 @@ type teamCore interface {
 	SubmitModelList(ctx context.Context) (*driver.ModelListResult, error)
 	SubmitAgentCreate(ctx context.Context, p driver.AgentCreateParams) (*driver.AgentCreateResult, error)
 	SubmitBlueprintCreate(ctx context.Context, p driver.BlueprintCreateParams) (*driver.BlueprintCreateResult, error)
+	SubmitBlueprintStage(ctx context.Context, p driver.BlueprintStageParams) (*driver.BlueprintStageResult, error)
 }
 
 // teamItem is one file in ./agents and what the core said about it.
@@ -179,6 +180,12 @@ func startTeamCreate(ctx context.Context, core teamCore, root string, task teamT
 				return
 			}
 			out.created, out.name = task.done(nil, res), res.Name
+		case task.stage != nil:
+			if _, err := core.SubmitBlueprintStage(ctx, *task.stage); err != nil {
+				done <- teamOutcome{refused: err.Error()}
+				return
+			}
+			out.created, out.name = task.done(nil, nil), task.stage.Name
 		}
 		items, err := readTeams(ctx, core, root)
 		if err != nil {
@@ -206,6 +213,7 @@ type teamScreen struct {
 	note    string // why there is nothing to list (no core, a failed read)
 
 	canAgent, canTeam bool // the core implements the create verbs
+	canStage          bool // ... and the one that changes a stage's rules
 	form              *teamForm
 	working           string // set while the core writes a file
 	banner            string // the last thing that happened, good or bad
@@ -213,7 +221,7 @@ type teamScreen struct {
 }
 
 const (
-	teamHint     = "↑↓ choose · enter run or open · esc close"
+	teamHint     = "↑↓ choose · enter run or open · e edit stages · esc close"
 	teamFormHint = "tab or ↑↓ field · ←/→ or space choose · enter next / create · esc back"
 )
 
@@ -223,6 +231,7 @@ func newTeamScreen(h *driver.Hello) *teamScreen {
 		loading:  true,
 		canAgent: helloImplements(h, "agent.create"),
 		canTeam:  helloImplements(h, "blueprint.create"),
+		canStage: helloImplements(h, "blueprint.stage"),
 	}
 }
 
@@ -475,7 +484,11 @@ func (t *teamScreen) publish(st *fold.State) {
 			detail += "\n\n" + noAgentsYet
 		}
 	default:
-		detail = teamDetail(t.items[t.sel-teamActions]) + "\n\nPress enter to run it."
+		it := t.items[t.sel-teamActions]
+		detail = teamDetail(it) + "\n\nPress enter to run it."
+		if it.Info != nil && len(it.Info.Stages) > 0 {
+			detail += " Press e to change how its stages finish or how long they may take."
+		}
 	}
 	if t.note != "" {
 		detail = t.note + "\n\n" + detail
@@ -548,7 +561,16 @@ func (t *teamScreen) key(k term.Key) (closeIt bool, task *teamTask) {
 	case term.KeyEscape:
 		return true, nil
 	case term.KeyRunes:
-		return k.Mod&term.ModCtrl == 0 && len(k.Runes) == 1 && (k.Runes[0] == 'q' || k.Runes[0] == 'Q'), nil
+		if k.Mod&term.ModCtrl != 0 || len(k.Runes) != 1 {
+			return false, nil
+		}
+		switch k.Runes[0] {
+		case 'q', 'Q':
+			return true, nil
+		case 'e', 'E':
+			t.editStages()
+		}
+		return false, nil
 	case term.KeyUp:
 		t.sel--
 	case term.KeyDown:
@@ -561,6 +583,24 @@ func (t *teamScreen) key(k term.Key) (closeIt bool, task *teamTask) {
 		t.open()
 	}
 	return false, nil
+}
+
+// editStages opens the form that changes the rules of the highlighted team's stages.
+func (t *teamScreen) editStages() {
+	if t.loading || t.working != "" || t.sel < teamActions {
+		return
+	}
+	it := t.items[t.sel-teamActions]
+	switch {
+	case it.Err != "":
+		t.banner = "✗ the core refuses this file, so there is nothing to edit until it is fixed"
+	case len(it.Info.Stages) == 0:
+		t.banner = "✗ " + it.Name + " has no stages to edit: an agent works on its own, and a team gets its stages when you create it"
+	case !t.canStage:
+		t.banner = "✗ " + oldCoreNotice
+	default:
+		t.form = newStagesForm(it.Name, it.Info.Stages)
+	}
 }
 
 // open acts on Enter over an action row.

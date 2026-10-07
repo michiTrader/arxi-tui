@@ -556,6 +556,46 @@ func (d *NDJSONDriver) SubmitBlueprintCreate(ctx context.Context, p BlueprintCre
 	return &r, nil
 }
 
+// BlueprintStageParams changes the rules of one stage of a stored blueprint. Empty
+// fields are left as they are; TimeoutMs nil leaves the timeout alone and 0 removes it.
+type BlueprintStageParams struct {
+	Name        string
+	Stage       string
+	AdvanceWhen string
+	TimeoutMs   *int64
+	OnTimeout   string
+}
+
+// BlueprintStageResult is the stages as the core saved them.
+type BlueprintStageResult struct {
+	Name   string           `json:"name"`
+	Stages []BlueprintStage `json:"stages"`
+}
+
+// SubmitBlueprintStage changes how one stage of a stored blueprint advances or when
+// it gives up. The core validates the whole file before replacing it, so a refusal
+// leaves the file as it was and comes back as its own sentence.
+func (d *NDJSONDriver) SubmitBlueprintStage(ctx context.Context, p BlueprintStageParams) (*BlueprintStageResult, error) {
+	if strings.TrimSpace(p.Name) == "" || strings.TrimSpace(p.Stage) == "" {
+		return nil, fmt.Errorf("ndjson: blueprint.stage needs the team and the stage to change")
+	}
+	params := map[string]any{"name": p.Name, "stage": p.Stage}
+	if p.AdvanceWhen != "" {
+		params["advance_when"] = p.AdvanceWhen
+	}
+	if p.OnTimeout != "" {
+		params["on_timeout"] = p.OnTimeout
+	}
+	if p.TimeoutMs != nil {
+		params["timeout_ms"] = *p.TimeoutMs
+	}
+	var r BlueprintStageResult
+	if err := d.call(ctx, "blueprint-stage", "blueprint.stage", params, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // TriggerRecord is one stored trigger as the core reports it. On and Then are the
 // strings the trigger was created with; the Last* fields say what has happened.
 type TriggerRecord struct {
