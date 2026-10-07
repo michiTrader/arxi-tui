@@ -987,10 +987,18 @@ func handleBlueprintValidate(params map[string]any) (any, error) {
 		OnTimeout   string `json:"on_timeout"`
 		TimeoutMs   int64  `json:"timeout_ms,omitempty"`
 	}
+	// Role, model and stages are what a client needs to DRAW the team (who is a
+	// reviewer, what each member thinks with, in which stages it takes part). They
+	// are additive and omitted when empty, so a client written before them reads
+	// the same document it always did. An empty `stages` means "every stage",
+	// which is how the blueprint declares it; the client must not read it as "none".
 	type memberOut struct {
 		Name     string   `json:"name"`
+		Role     string   `json:"role,omitempty"`
+		Model    string   `json:"model,omitempty"`
 		Tools    []string `json:"tools,omitempty"`
 		Advisory bool     `json:"advisory,omitempty"`
+		Stages   []string `json:"stages,omitempty"`
 	}
 	type watcherOut struct {
 		Agent   string `json:"agent"`
@@ -1030,7 +1038,8 @@ func handleBlueprintValidate(params map[string]any) (any, error) {
 	}
 	for _, m := range c.Members {
 		out.Members = append(out.Members, memberOut{
-			Name: m.Name, Tools: m.Tools, Advisory: m.Advisory,
+			Name: m.Name, Role: m.Role, Model: m.Model, Tools: m.Tools,
+			Advisory: m.Advisory, Stages: m.Stages,
 		})
 	}
 	for _, w := range c.Watchers {
