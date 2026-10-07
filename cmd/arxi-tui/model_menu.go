@@ -164,14 +164,17 @@ func choiceMenuKey(mm *modelMenu, prefix, input string, caret int, k term.Key) (
 
 // startModelRead reads the model list and the default on a worker, so a slow core
 // never freezes the loop. The answer comes back on done.
-func startModelRead(ctx context.Context, core hubCore, done chan<- modelRead) {
+//
+// quiet marks the read made at startup, whose answer only names the model in the
+// status bar and never opens the menu or raises a notice.
+func startModelRead(ctx context.Context, core hubCore, done chan<- modelRead, quiet bool) {
 	go func() {
 		d, err := readHubData(ctx, core)
 		if err != nil {
-			done <- modelRead{err: err.Error()}
+			done <- modelRead{err: err.Error(), quiet: quiet}
 			return
 		}
-		done <- modelRead{data: d}
+		done <- modelRead{data: d, quiet: quiet}
 	}()
 }
 
@@ -194,4 +197,23 @@ type modelRead struct {
 	notice  string
 	err     string
 	picked  string
+	quiet   bool // the startup read: no menu, no notice
+}
+
+// noModelLabel is what the status bar says when the core has no chat model set.
+const noModelLabel = "no model · /model"
+
+// statusModel is the model the status bar names: the one the core reports as the
+// chat model; failing that the one a reply named; once the core has answered and
+// there is none, a hint saying how to choose one (never a blank).
+func statusModel(def string, known bool, replied string) string {
+	switch {
+	case def != "":
+		return def
+	case replied != "":
+		return replied
+	case known:
+		return noModelLabel
+	}
+	return ""
 }
