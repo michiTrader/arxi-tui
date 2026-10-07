@@ -179,7 +179,7 @@ func rowOf(name, on, status string) driver.TriggerRow {
 
 func TestAutoScreenListsDetailsAndPausesWithOneKey(t *testing.T) {
 	fixedClock(t)
-	a := newAutoScreen(&driver.Hello{Implemented: []string{"trigger.list", "trigger.create", "trigger.pause"}})
+	a := newAutoScreen(&driver.Hello{Implemented: []string{"trigger.list", "trigger.create", "trigger.pause", "trigger.resume"}})
 	a.apply(autoOutcome{rows: []driver.TriggerRow{
 		func() driver.TriggerRow {
 			r := rowOf("nightly", "every:30m", "active")
@@ -224,8 +224,27 @@ func TestAutoScreenListsDetailsAndPausesWithOneKey(t *testing.T) {
 	if !strings.Contains(st.HubDetail, "✓ automation nightly paused") || a.sel != 1 {
 		t.Errorf("after pausing: sel=%d\n%s", a.sel, st.HubDetail)
 	}
-	if _, task := a.key(keyP()); task != nil || !strings.Contains(a.banner, "already paused") {
-		t.Errorf("pausing a paused one: task=%v banner=%q", task, a.banner)
+	if !strings.Contains(st.HubDetail, "Press p to switch it on again") {
+		t.Errorf("a paused automation must say how to switch it on:\n%s", st.HubDetail)
+	}
+	// On a paused one the same key switches it back on.
+	_, task = a.key(keyP())
+	if task == nil || task.resume != "nightly" || task.pause != "" || a.working == "" {
+		t.Fatalf("p on a paused one: task=%+v working=%q", task, a.working)
+	}
+	a.apply(autoOutcome{rows: []driver.TriggerRow{rowOf("nightly", "every:30m", "active")}, name: "nightly", resumed: "automation nightly is on again"})
+	a.publish(&st)
+	if !strings.Contains(st.HubDetail, "✓ automation nightly is on again") {
+		t.Errorf("after resuming:\n%s", st.HubDetail)
+	}
+}
+
+func TestResumeNeedsACoreThatCanDoIt(t *testing.T) {
+	a := newAutoScreen(&driver.Hello{Implemented: []string{"trigger.list", "trigger.pause"}})
+	a.apply(autoOutcome{rows: []driver.TriggerRow{rowOf("n", "every:1h", "paused")}})
+	a.sel = 1
+	if _, task := a.key(keyP()); task != nil || !strings.Contains(a.banner, "rebuild") {
+		t.Fatalf("task=%v banner=%q", task, a.banner)
 	}
 }
 
@@ -322,11 +341,12 @@ type fakeAutoCore struct {
 	rows    []driver.TriggerRow
 	created []driver.TriggerCreateParams
 	paused  []string
+	resumed []string
 	refuse  string
 }
 
 func (f *fakeAutoCore) Hello() *driver.Hello {
-	return &driver.Hello{Implemented: []string{"blueprint.validate", "trigger.list", "trigger.create", "trigger.pause"}}
+	return &driver.Hello{Implemented: []string{"blueprint.validate", "trigger.list", "trigger.create", "trigger.pause", "trigger.resume"}}
 }
 
 func (f *fakeAutoCore) SubmitTriggerList(context.Context) (*driver.TriggerListResult, error) {
@@ -351,6 +371,19 @@ func (f *fakeAutoCore) SubmitTriggerPause(_ context.Context, name string) (*driv
 	for i := range f.rows {
 		if f.rows[i].Record.Name == name {
 			f.rows[i].Record.Status = "paused"
+		}
+	}
+	return &f.rows[0], nil
+}
+
+func (f *fakeAutoCore) SubmitTriggerResume(_ context.Context, name string) (*driver.TriggerRow, error) {
+	if f.refuse != "" {
+		return nil, errors.New(f.refuse)
+	}
+	f.resumed = append(f.resumed, name)
+	for i := range f.rows {
+		if f.rows[i].Record.Name == name {
+			f.rows[i].Record.Status = "active"
 		}
 	}
 	return &f.rows[0], nil
@@ -396,6 +429,10 @@ func TestCreateAndPauseWorkersReReadAndLandOnTheRow(t *testing.T) {
 	o = waitAuto(t, ch)
 	if o.paused == "" || o.rows[0].Record.Status != "paused" {
 		t.Fatalf("pause outcome = %+v", o)
+	}
+	startAutoResume(context.Background(), core, root, "n", ch)
+	if o = waitAuto(t, ch); o.resumed == "" || o.rows[0].Record.Status != "active" {
+		t.Fatalf("resume outcome = %+v", o)
 	}
 	core.refuse = "no such trigger"
 	startAutoPause(context.Background(), core, root, "ghost", ch)
@@ -456,8 +493,12 @@ func TestLoopAutoCreatesAnAutomationAndStartsTheScheduler(t *testing.T) {
 	}
 	script := []scheduledEvent{{120 * time.Millisecond, keyEvent('/')}}
 	script = append(script, typeKeys("auto")...)
-	script = append(script, scheduledEvent{40 * time.Millisecond, enterEvent()}, scheduledEvent{200 * time.Millisecond, enterEvent()})
-	script = append(script, typeKeys("nightly")...)
+	script = append(script, scheduledEvent{40 * time.Millisecond, enterEvent()},
+		// The list is read on a worker; a slow machine needs time before Enter can open
+		// the form, and the form needs a moment before the first letter.
+		scheduledEvent{1500 * time.Millisecond, enterEvent()})
+	script = append(script, scheduledEvent{500 * time.Millisecond, keyEvent('n')})
+	script = append(script, typeKeys("ightly")...)
 	script = append(script, key(term.KeyEnter)) // Team
 	script = append(script, key(term.KeyEnter)) // Task
 	script = append(script, typeKeys("audit the deps")...)
@@ -640,5 +681,18 @@ func TestRealCoreAutomationsRoundTripAndTheSchedulerFiresOne(t *testing.T) {
 	}
 	if activeTriggers(work) != 0 {
 		t.Error("a paused automation still counts as active")
+	}
+
+	// Switching it on again brings it back with a next firing; then off for good, so
+	// nothing is left to fire while the folder is removed.
+	back, err := ac.SubmitTriggerResume(ctx, "tick")
+	if err != nil || back.Record.Status != "active" || back.Next == "" || activeTriggers(work) != 1 {
+		t.Fatalf("resume = %+v, %v", back, err)
+	}
+	if _, err := ac.SubmitTriggerPause(ctx, "tick"); err != nil {
+		t.Fatal(err)
+	}
+	if activeTriggers(work) != 0 {
+		t.Error("paused again, still counts as active")
 	}
 }

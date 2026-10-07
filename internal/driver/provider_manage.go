@@ -628,6 +628,19 @@ func (d *NDJSONDriver) SubmitTriggerCreate(ctx context.Context, p TriggerCreateP
 	return &r, nil
 }
 
+// SubmitTriggerResume lets a paused trigger fire again. Resuming an active trigger
+// is not an error.
+func (d *NDJSONDriver) SubmitTriggerResume(ctx context.Context, name string) (*TriggerRow, error) {
+	if strings.TrimSpace(name) == "" {
+		return nil, fmt.Errorf("ndjson: trigger.resume with an empty name")
+	}
+	var r TriggerRow
+	if err := d.call(ctx, "trigger-resume", "trigger.resume", map[string]any{"name": name}, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // SubmitTriggerPause stops a trigger from firing. Pausing a paused trigger is not
 // an error.
 func (d *NDJSONDriver) SubmitTriggerPause(ctx context.Context, name string) (*TriggerRow, error) {
