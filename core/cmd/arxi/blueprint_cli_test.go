@@ -695,3 +695,34 @@ func TestAStageEditedFromTheCommandLineStillRuns(t *testing.T) {
 		t.Errorf("a timeout that is not a number: exit %d, want 2:\n%s", m.code, m.out)
 	}
 }
+
+// TestAMemberEditedFromTheCommandLineStillRuns: compose, change one member, run the
+// changed team. The refusal half checks the file is left alone.
+func TestAMemberEditedFromTheCommandLineStillRuns(t *testing.T) {
+	dir := workdir(t)
+	storeTeam(t, dir)
+	if c := arxi(t, dir, "blueprint", "create", "feature-team", "--members", "backend,frontend"); c.code != 0 {
+		t.Fatalf("blueprint create: exit %d:\n%s", c.code, c.out)
+	}
+	c := arxi(t, dir, "blueprint", "member", "feature-team", "--member", "frontend", "--role", "designer", "--tools", "read")
+	if c.code != 0 {
+		t.Fatalf("blueprint member: exit %d:\n%s", c.code, c.out)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "agents", "feature-team.yaml"))
+	if !strings.Contains(string(raw), "role: designer") {
+		t.Fatalf("the role is not in the file:\n%s", raw)
+	}
+	if r := arxi(t, dir, "run", "start", "feature-team", "ship it", "--budget", "1", "--sim", "--run-id", "member-edited"); r.code != 0 {
+		t.Fatalf("a run from the edited team: exit %d:\n%s", r.code, r.out)
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, "agents", "feature-team.yaml"))
+	if bad := arxi(t, dir, "blueprint", "member", "feature-team", "--member", "frontend", "--tools", "bahs"); bad.code == 0 || !strings.Contains(bad.out, "bahs") {
+		t.Fatalf("a tool that does not exist: exit %d:\n%s", bad.code, bad.out)
+	}
+	if after, _ := os.ReadFile(filepath.Join(dir, "agents", "feature-team.yaml")); string(after) != string(before) {
+		t.Errorf("a refused edit changed the file:\n%s", after)
+	}
+	if m := arxi(t, dir, "blueprint", "member", "feature-team", "--member", "frontend", "--advisory=maybe"); m.code != 2 {
+		t.Errorf("an advisory that is not a boolean: exit %d, want 2:\n%s", m.code, m.out)
+	}
+}

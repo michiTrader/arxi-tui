@@ -220,3 +220,74 @@ func blueprintStagesPayload(st *agentstore.Store, name string) (any, error) {
 	}
 	return out, nil
 }
+
+// memberEditFrom builds the edit from what a caller said. Presence is the signal:
+// a parameter that is absent leaves the field alone and one that is there, even
+// empty, replaces it.
+func memberEditFrom(member string, model, role, tools *string, advisory *bool) agentstore.MemberEdit {
+	e := agentstore.MemberEdit{Member: member, Model: model, Role: role, Advisory: advisory}
+	if tools != nil {
+		list := splitCSV(*tools)
+		e.Tools = &list
+	}
+	return e
+}
+
+// optString reads a string parameter that may be absent.
+func optString(params map[string]any, name string) *string {
+	raw, ok := params[name]
+	if !ok || raw == nil {
+		return nil
+	}
+	s, _ := raw.(string)
+	return &s
+}
+
+// handleBlueprintMember answers `blueprint.member`: new model, role, tools or
+// advisory flag for one member of a stored blueprint, validated before it replaces
+// the file.
+func handleBlueprintMember(params map[string]any) (any, error) {
+	var advisory *bool
+	if raw, ok := params["advisory"]; ok && raw != nil {
+		b, isBool := raw.(bool)
+		if !isBool {
+			return nil, errors.New("advisory must be true or false")
+		}
+		advisory = &b
+	}
+	for _, k := range []string{"model", "role", "tools"} {
+		if raw, ok := params[k]; ok && raw != nil {
+			if _, isStr := raw.(string); !isStr {
+				return nil, fmt.Errorf("%s must be text", k)
+			}
+		}
+	}
+	name := stringParam(params, "name")
+	e := memberEditFrom(stringParam(params, "member"),
+		optString(params, "model"), optString(params, "role"), optString(params, "tools"), advisory)
+	st := readAgents()
+	if err := st.SetMember(name, e); err != nil {
+		return nil, err
+	}
+	bp, err := st.Load(name)
+	if err != nil {
+		return nil, err
+	}
+	type memberOut struct {
+		Name     string   `json:"name"`
+		Role     string   `json:"role,omitempty"`
+		Model    string   `json:"model,omitempty"`
+		Tools    []string `json:"tools,omitempty"`
+		Advisory bool     `json:"advisory,omitempty"`
+		Stages   []string `json:"stages,omitempty"`
+	}
+	out := struct {
+		Name    string      `json:"name"`
+		Members []memberOut `json:"members"`
+	}{Name: name, Members: []memberOut{}}
+	for _, m := range bp.Config.Members {
+		out.Members = append(out.Members, memberOut{Name: m.Name, Role: m.Role, Model: m.Model,
+			Tools: m.Tools, Advisory: m.Advisory, Stages: m.Stages})
+	}
+	return out, nil
+}

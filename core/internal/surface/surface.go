@@ -437,6 +437,19 @@ var Registry = []Cmd{
 			p("advance-when", "string", "all, any or quorum:N"),
 			p("timeout-ms", "number", "give up on the stage after this many milliseconds; 0 removes the timeout"),
 			p("on-timeout", "string", "what happens when the timeout runs out: escalate, advance, fail or ask")}},
+	// blueprint member changes ONE member of a stored blueprint: what it thinks with,
+	// what it is called, which tools it may touch, whether it only advises. For an
+	// agent the member is the agent itself. Until now the only way was a text editor.
+	// Protocol but NOT AgentTool, for `blueprint stage`'s reason and a sharper one: an
+	// agent able to grant itself `bash` would be rewriting its own tool policy.
+	{Path: []string{"blueprint", "member"}, Desc: "change one member of a stored blueprint",
+		Kind: CLIOnly | Protocol, Mutates: true, Idempotent: true, Since: 1,
+		Params: []Param{pos(p("name", "string", "blueprint name")),
+			req(p("member", "string", "the member to change")),
+			p("model", "string", "model the member thinks with; empty removes it"),
+			p("role", "string", "free label for what the member does; empty removes it"),
+			p("tools", "string", "tools the member may use, comma-separated; empty removes them all"),
+			p("advisory", "bool", "the member gives an opinion but does not count toward advancing")}},
 	// `as` was ADDED when this verb was wired, for `blueprint create`'s reason one
 	// entry up: the entry was written when a ref was assumed to name the thing it
 	// installs, and a ref does not. The default is the blueprint's own `name:`

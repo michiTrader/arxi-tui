@@ -976,7 +976,7 @@ func (s *Store) SetStage(name string, e StageEdit) error {
 		return fmt.Errorf("%q has no stage called %q (its stages: %s)", name, e.Stage, strings.Join(have, ", "))
 	}
 
-	out, err := replaceStagesBlock(bp.Raw, lines)
+	out, err := replaceBlock(bp.Raw, "stages", lines)
 	if err != nil {
 		return err
 	}
@@ -1005,13 +1005,15 @@ func renderStageMap(m map[string]any) string {
 	return "{" + strings.Join(parts, ", ") + "}"
 }
 
-// replaceStagesBlock swaps the top-level `stages:` block of raw for the given
-// list items and leaves every other byte alone.
+// replaceBlock swaps the top-level `key:` block of raw for the given lines and
+// leaves every other byte alone.
 //
-// The block runs from the `stages:` line to the next top-level key. Blank and
+// The block runs from the `key:` line to the next top-level key. Blank and
 // comment lines trailing it belong to whatever follows, so they stay where they
-// were. A file with no top-level `stages:` is refused rather than appended to.
-func replaceStagesBlock(raw []byte, items []string) ([]byte, error) {
+// were. A file with no such block is refused rather than appended to, and so is
+// one that writes the value on the key's own line (`stages: [..]`): replacing
+// only the lines below it would leave two values for one key.
+func replaceBlock(raw []byte, key string, items []string) ([]byte, error) {
 	eol := "\n"
 	if bytes.Contains(raw, []byte("\r\n")) {
 		eol = "\r\n"
@@ -1019,13 +1021,17 @@ func replaceStagesBlock(raw []byte, items []string) ([]byte, error) {
 	lines := strings.Split(string(raw), "\n")
 	start := -1
 	for i, l := range lines {
-		if strings.HasPrefix(strings.TrimRight(l, "\r"), "stages:") {
+		if t := strings.TrimRight(l, "\r"); strings.HasPrefix(t, key+":") {
+			if strings.TrimSpace(strings.TrimPrefix(t, key+":")) != "" {
+				return nil, fmt.Errorf("this blueprint writes %s on one line (%s); "+
+					"it can only be changed here when it is written as a list under %s:", key, strings.TrimSpace(t), key)
+			}
 			start = i
 			break
 		}
 	}
 	if start < 0 {
-		return nil, errors.New("this blueprint has no top-level stages: block to change")
+		return nil, fmt.Errorf("this blueprint has no top-level %s: block to change", key)
 	}
 	end := len(lines)
 	for i := start + 1; i < len(lines); i++ {
@@ -1051,7 +1057,7 @@ func replaceStagesBlock(raw []byte, items []string) ([]byte, error) {
 		b.WriteString(l)
 		b.WriteString("\n")
 	}
-	b.WriteString("stages:" + eol)
+	b.WriteString(key + ":" + eol)
 	for _, it := range items {
 		b.WriteString(it + eol)
 	}
@@ -1063,4 +1069,145 @@ func replaceStagesBlock(raw []byte, items []string) ([]byte, error) {
 		}
 	}
 	return []byte(b.String()), nil
+}
+
+// MemberEdit is a change to ONE member of a stored blueprint. A nil field is left
+// alone; a non-nil one replaces the value, and an empty one removes it (no model
+// of its own, no role, no tools).
+type MemberEdit struct {
+	Member   string  // which member; required. For an agent, its own name
+	Model    *string // "provider/id" or "id"
+	Role     *string
+	Tools    *[]string
+	Advisory *bool
+}
+
+// SetMember rewrites what one member of a stored blueprint thinks with, is called
+// and may touch, and nothing else.
+//
+// It is SetStage's twin and keeps its promises: only the `members:` block is
+// rewritten (everything outside it is carried over byte for byte), every field of
+// every member is carried over as the file declared it except the ones the edit
+// names (so `activation` and a per-member `stages:` survive), the result is loaded
+// before it is published, and a request that makes the file invalid -- a tool that
+// does not exist -- is refused with the loader's sentence and leaves the file as
+// it was. A comment written between two members is the one thing that does not
+// survive.
+//
+// Members of a team were COPIED from the agents they came from, so editing one
+// here changes this team and nothing else, as the package doc promises. Runs
+// already started keep the member they froze.
+func (s *Store) SetMember(name string, e MemberEdit) error {
+	if e.Member == "" {
+		return errors.New("say which member to change")
+	}
+	if e.Model == nil && e.Role == nil && e.Tools == nil && e.Advisory == nil {
+		return errors.New("nothing to change: give a new model, role, tool grant or advisory setting")
+	}
+	if e.Model != nil && (strings.TrimSpace(*e.Model) != *e.Model || strings.Count(*e.Model, "/") > 1) {
+		return fmt.Errorf("model %q is not spelled `id` or `provider/id`", *e.Model)
+	}
+	if e.Role != nil && (strings.TrimSpace(*e.Role) != *e.Role || strings.IndexFunc(*e.Role, unicode.IsControl) >= 0) {
+		return fmt.Errorf("role %q has surrounding whitespace or a control character", *e.Role)
+	}
+	if e.Tools != nil {
+		if err := tool.ValidateGrants(*e.Tools); err != nil {
+			return err
+		}
+	}
+	bp, err := s.Load(name)
+	if err != nil {
+		return err
+	}
+	doc, err := blueprint.Parse(bp.Raw)
+	if err != nil {
+		return err
+	}
+	root, _ := doc.(map[string]any)
+	items, _ := root["members"].([]any)
+
+	var lines []string
+	found := false
+	var have []string
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		have = append(have, fmt.Sprint(m["name"]))
+		if m["name"] == e.Member {
+			found = true
+			setOrDrop(m, "model", e.Model)
+			setOrDrop(m, "role", e.Role)
+			if e.Tools != nil {
+				if len(*e.Tools) == 0 {
+					delete(m, "tools")
+				} else {
+					list := make([]any, len(*e.Tools))
+					for i, t := range *e.Tools {
+						list[i] = t
+					}
+					m["tools"] = list
+				}
+			}
+			if e.Advisory != nil {
+				m["advisory"] = *e.Advisory
+			}
+		}
+		lines = append(lines, renderMemberMap(m)...)
+	}
+	if !found {
+		return fmt.Errorf("%q has no member called %q (its members: %s)", name, e.Member, strings.Join(have, ", "))
+	}
+	out, err := replaceBlock(bp.Raw, "members", lines)
+	if err != nil {
+		return err
+	}
+	if _, err := blueprint.Load(out); err != nil {
+		return err
+	}
+	return s.write(name, out)
+}
+
+// setOrDrop sets a string field, or removes it when the new value is empty.
+func setOrDrop(m map[string]any, key string, v *string) {
+	switch {
+	case v == nil:
+	case *v == "":
+		delete(m, key)
+	default:
+		m[key] = *v
+	}
+}
+
+// renderMemberMap writes one member in the shape Team.Render uses, from what the
+// file declared. Unknown keys cannot be here: the loader refuses them.
+func renderMemberMap(m map[string]any) []string {
+	var out []string
+	first := true
+	emit := func(k, v string) {
+		prefix := "    "
+		if first {
+			prefix, first = "  - ", false
+		}
+		out = append(out, prefix+k+": "+v)
+	}
+	for _, k := range []string{"name", "role", "model", "tools", "activation", "stages", "advisory"} {
+		v, ok := m[k]
+		if !ok || v == nil {
+			continue
+		}
+		switch x := v.(type) {
+		case string:
+			emit(k, yamlScalar(x))
+		case bool:
+			emit(k, strconv.FormatBool(x))
+		case []any:
+			strs := make([]string, len(x))
+			for i, e := range x {
+				strs[i] = fmt.Sprint(e)
+			}
+			emit(k, "["+yamlList(strs)+"]")
+		default:
+			emit(k, fmt.Sprint(x))
+		}
+	}
+	return out
 }

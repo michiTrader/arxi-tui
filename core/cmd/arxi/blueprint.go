@@ -18,6 +18,7 @@ const blueprintUsage = "usage: arxi blueprint create <name> --members a,b,c [--s
 	"       arxi blueprint install <path|https URL> [--as <name>]\n" +
 	"       arxi blueprint stage <name> --stage <s> [--advance-when all|any|quorum:N]\n" +
 	"                            [--timeout-ms N] [--on-timeout escalate|advance|fail|ask]\n" +
+	"       arxi blueprint member <name> --member <m> [--model M] [--role R] [--tools a,b] [--advisory=true|false]\n" +
 	"       arxi blueprint validate <file.yaml>\n" +
 	"  create composes agents already in " + agentstore.DefaultDir + "/ into one file of the\n" +
 	"  same kind, in the same directory: `arxi agent list` shows it and\n" +
@@ -534,4 +535,38 @@ func cmdBlueprintStage(args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("%s: stage %s updated (applies to runs started from now on)\n", vals["name"], vals["stage"])
+}
+
+// cmdBlueprintMember implements `arxi blueprint member <name> --member <m> ...`.
+//
+// The same SetMember the protocol calls. A flag that is given, even empty, replaces
+// the field (`--tools ""` takes every tool away); one that is not given leaves it.
+func cmdBlueprintMember(args []string) {
+	c := surface.Lookup("blueprint", "member")
+	vals, err := parseInvocation(c, args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi blueprint member: %v\n\n%s", err, blueprintUsage)
+		os.Exit(2)
+	}
+	opt := func(k string) *string {
+		if v, ok := vals[k]; ok {
+			return &v
+		}
+		return nil
+	}
+	var advisory *bool
+	if raw, ok := vals["advisory"]; ok {
+		b, perr := strconv.ParseBool(raw)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "arxi blueprint member: --advisory %q is not true or false\n", raw)
+			os.Exit(2)
+		}
+		advisory = &b
+	}
+	e := memberEditFrom(vals["member"], opt("model"), opt("role"), opt("tools"), advisory)
+	if err := readAgents().SetMember(vals["name"], e); err != nil {
+		fmt.Fprintf(os.Stderr, "arxi blueprint member: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("%s: member %s updated (applies to runs started from now on)\n", vals["name"], vals["member"])
 }
