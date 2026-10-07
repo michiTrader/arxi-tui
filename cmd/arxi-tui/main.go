@@ -1341,9 +1341,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// The team screen owns the keyboard like the flow screen:
 						// Esc closes it, nothing typed here reaches the chat.
 						panicGesture.Reset()
-						if team.key(ev.Key) {
+						closeTeam, task := team.key(ev.Key)
+						if closeTeam {
 							team = nil
 							sceneNotice = ""
+						} else if task != nil {
+							// The form produced a file to write: the core does it
+							// on a worker, so a slow disk never freezes the loop.
+							if hc, _ := drv.(interface{ Hub() hubCore }); hc != nil && hc.Hub() != nil {
+								if tc, ok := hc.Hub().(teamCore); ok {
+									startTeamCreate(ctx, tc, cwd, *task, teamCh)
+								}
+							}
 						}
 					} else if flow != nil {
 						// The flow screen owns the keyboard, after the Ctrl-C
@@ -1680,7 +1689,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							case tc == nil || !helloImplements(tc.Hello(), "blueprint.validate"):
 								sceneNotice = noTeamCoreNotice
 							default:
-								team = &teamScreen{loading: true}
+								team = newTeamScreen(tc.Hello())
 								sceneNotice = ""
 								startTeamRead(ctx, tc, cwd, teamCh)
 							}
@@ -1869,6 +1878,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// A pasted key goes to the hub's focused field or filter,
 						// never to the chat input.
 						hub.paste(ev.Text)
+						break
+					}
+					if team != nil {
+						// A pasted name goes to the team form's focused field.
+						team.paste(ev.Text)
 						break
 					}
 					input, caret = insertText(input, caret, cleanPaste(ev.Text))

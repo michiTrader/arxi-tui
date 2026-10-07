@@ -80,12 +80,37 @@ func TestTeamDetailShowsTheCoresReasonForARefusedFile(t *testing.T) {
 }
 
 type fakeTeamCore struct {
-	infos map[string]*driver.BlueprintInfo
-	asked []string
+	infos  map[string]*driver.BlueprintInfo
+	asked  []string
+	models []driver.ModelRow
+	refuse string // when set, every create is refused with this sentence
+
+	agents []driver.AgentCreateParams
+	teams  []driver.BlueprintCreateParams
 }
 
 func (f *fakeTeamCore) Hello() *driver.Hello {
-	return &driver.Hello{Implemented: []string{"blueprint.validate"}}
+	return &driver.Hello{Implemented: []string{"blueprint.validate", "agent.create", "blueprint.create"}}
+}
+
+func (f *fakeTeamCore) SubmitModelList(context.Context) (*driver.ModelListResult, error) {
+	return &driver.ModelListResult{Models: f.models}, nil
+}
+
+func (f *fakeTeamCore) SubmitAgentCreate(_ context.Context, p driver.AgentCreateParams) (*driver.AgentCreateResult, error) {
+	if f.refuse != "" {
+		return nil, errors.New(f.refuse)
+	}
+	f.agents = append(f.agents, p)
+	return &driver.AgentCreateResult{Name: p.Name, Path: "/w/agents/" + p.Name + ".yaml", Tools: p.Tools}, nil
+}
+
+func (f *fakeTeamCore) SubmitBlueprintCreate(_ context.Context, p driver.BlueprintCreateParams) (*driver.BlueprintCreateResult, error) {
+	if f.refuse != "" {
+		return nil, errors.New(f.refuse)
+	}
+	f.teams = append(f.teams, p)
+	return &driver.BlueprintCreateResult{Name: p.Name, Members: p.Members, Stages: p.Stages}, nil
 }
 
 func (f *fakeTeamCore) SubmitBlueprintValidate(_ context.Context, path string) (*driver.BlueprintInfo, error) {
@@ -148,10 +173,10 @@ func TestReadTeamsWithNoAgentsFolderIsEmptyNotAnError(t *testing.T) {
 func TestTeamScreenPublishesTheHighlightedTeamAndMoves(t *testing.T) {
 	a, b := featureTeamInfo(), featureTeamInfo()
 	b.Stages = nil
-	ts := &teamScreen{items: []teamItem{{Name: "one", Info: a}, {Name: "two", Info: b}}}
+	ts := &teamScreen{sel: teamActions, items: []teamItem{{Name: "one", Info: a}, {Name: "two", Info: b}}}
 	var st fold.State
 	ts.publish(&st)
-	if len(st.HubRows) != 2 || !st.HubRows[0].Selected || !strings.Contains(st.HubDetail, "Stages  build → review") {
+	if len(st.HubRows) != 4 || !st.HubRows[2].Selected || !strings.Contains(st.HubDetail, "Stages  build → review") {
 		t.Fatalf("first publish: %+v / %s", st.HubRows, st.HubDetail)
 	}
 	if !strings.Contains(st.HubTitle, "2 in agents/") {
@@ -160,7 +185,7 @@ func TestTeamScreenPublishesTheHighlightedTeamAndMoves(t *testing.T) {
 	ts.key(term.Key{Type: term.KeyDown})
 	ts.key(term.Key{Type: term.KeyDown}) // past the end
 	ts.publish(&st)
-	if ts.sel != 1 || !st.HubRows[1].Selected || !strings.Contains(st.HubDetail, "No stages") {
+	if ts.sel != teamActions+1 || !st.HubRows[3].Selected || !strings.Contains(st.HubDetail, "No stages") {
 		t.Fatalf("after moving: sel=%d %s", ts.sel, st.HubDetail)
 	}
 }
@@ -168,12 +193,12 @@ func TestTeamScreenPublishesTheHighlightedTeamAndMoves(t *testing.T) {
 func TestTeamScreenExplainsAnEmptyFolderAndALoadingRead(t *testing.T) {
 	var st fold.State
 	(&teamScreen{loading: true}).publish(&st)
-	if !strings.Contains(st.HubDetail, "Reading the teams") {
+	if !strings.Contains(st.HubDetail, "Reading agents/") {
 		t.Errorf("loading: %q", st.HubDetail)
 	}
 	(&teamScreen{}).publish(&st)
-	for _, want := range []string{"no teams in this folder", "agents/<name>.yaml", "arxi blueprint create"} {
-		if !strings.Contains(st.HubDetail, want) {
+	for _, want := range []string{"Nothing is stored in agents/", "New agent", "New team"} {
+		if !strings.Contains(st.HubDetail, want) && !strings.Contains(st.HubRows[0].Label+st.HubRows[1].Label, want) {
 			t.Errorf("empty detail lacks %q:\n%s", want, st.HubDetail)
 		}
 	}
@@ -181,10 +206,11 @@ func TestTeamScreenExplainsAnEmptyFolderAndALoadingRead(t *testing.T) {
 
 func TestTeamScreenKeysOnlyEscAndQClose(t *testing.T) {
 	ts := &teamScreen{}
-	if ts.key(term.Key{Type: term.KeyRunes, Runes: []rune{'x'}}) || ts.key(term.Key{Type: term.KeyEnter}) {
+	closes := func(k term.Key) bool { c, _ := ts.key(k); return c }
+	if closes(term.Key{Type: term.KeyRunes, Runes: []rune{'x'}}) || closes(term.Key{Type: term.KeyEnter}) {
 		t.Error("an ordinary key must not close the screen")
 	}
-	if !ts.key(term.Key{Type: term.KeyEscape}) || !ts.key(term.Key{Type: term.KeyRunes, Runes: []rune{'q'}}) {
+	if !closes(term.Key{Type: term.KeyEscape}) || !closes(term.Key{Type: term.KeyRunes, Runes: []rune{'q'}}) {
 		t.Error("Esc and q close it")
 	}
 }
@@ -240,6 +266,8 @@ func TestLoopTeamOpensListsAndEscCloses(t *testing.T) {
 	script = append(script, keys("team")...)
 	script = append(script,
 		scheduledEvent{40 * time.Millisecond, enterEvent()},
+		scheduledEvent{60 * time.Millisecond, term.Event{Kind: term.EventKey, Key: term.Key{Type: term.KeyDown}}},
+		scheduledEvent{20 * time.Millisecond, term.Event{Kind: term.EventKey, Key: term.Key{Type: term.KeyDown}}},
 		scheduledEvent{60 * time.Millisecond, keyEvent('z')},
 		scheduledEvent{250 * time.Millisecond, term.Event{Kind: term.EventKey, Key: term.Key{Type: term.KeyEscape}}},
 		scheduledEvent{150 * time.Millisecond, ctrlCharEvent('c')},
@@ -261,7 +289,7 @@ func TestLoopTeamOpensListsAndEscCloses(t *testing.T) {
 	if open == "" {
 		t.Fatalf("no frame drew the team:\n%s", stripANSI(tty.output()))
 	}
-	for _, want := range []string{"team", "feature-team", "3 members · 2 stages", "security watches run.quiescent", "esc close"} {
+	for _, want := range []string{"Agents & teams", "feature-team", "3 members · 2 stages", "security watches run.quiescent", "esc close"} {
 		if !strings.Contains(open, want) {
 			t.Errorf("team screen lacks %q:\n%s", want, open)
 		}
@@ -350,4 +378,9 @@ watchers:
 			t.Errorf("detail lacks %q:\n%s", want, d)
 		}
 	}
+}
+
+// Both embedded cores answer model.list; the one under test is the team fake.
+func (c teamHubCore) SubmitModelList(ctx context.Context) (*driver.ModelListResult, error) {
+	return c.fakeTeamCore.SubmitModelList(ctx)
 }

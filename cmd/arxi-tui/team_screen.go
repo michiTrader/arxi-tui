@@ -45,6 +45,9 @@ func loadTeamScene() (*scene.Document, error) {
 type teamCore interface {
 	Hello() *driver.Hello
 	SubmitBlueprintValidate(ctx context.Context, path string) (*driver.BlueprintInfo, error)
+	SubmitModelList(ctx context.Context) (*driver.ModelListResult, error)
+	SubmitAgentCreate(ctx context.Context, p driver.AgentCreateParams) (*driver.AgentCreateResult, error)
+	SubmitBlueprintCreate(ctx context.Context, p driver.BlueprintCreateParams) (*driver.BlueprintCreateResult, error)
 }
 
 // teamItem is one file in ./agents and what the core said about it.
@@ -57,8 +60,14 @@ type teamItem struct {
 
 // teamOutcome is the worker's one answer to the loop.
 type teamOutcome struct {
-	items []teamItem
-	err   string
+	items  []teamItem
+	models []string // enabled "provider/id" refs, for the agent form
+	err    string   // why the list could not be read
+	// created is set after a create: the sentence to show and the name to land on.
+	created string
+	name    string
+	// refused is the core's own sentence when a create was turned down.
+	refused string
 }
 
 // readTeams lists ./agents/*.yaml under root and asks the core to describe each.
@@ -91,6 +100,23 @@ func readTeams(ctx context.Context, core teamCore, root string) ([]teamItem, err
 	return items, nil
 }
 
+// readModels lists the models the chat can already use, as "provider/id". A core
+// that cannot list them just offers none: an agent may be left to the default model.
+func readModels(ctx context.Context, core teamCore) []string {
+	res, err := core.SubmitModelList(ctx)
+	if err != nil || res == nil {
+		return nil
+	}
+	var out []string
+	for _, m := range res.Models {
+		if m.Enabled {
+			out = append(out, modelRef(m))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // startTeamRead reads the teams on a worker so a slow core never freezes the loop.
 func startTeamRead(ctx context.Context, core teamCore, root string, done chan<- teamOutcome) {
 	go func() {
@@ -99,24 +125,108 @@ func startTeamRead(ctx context.Context, core teamCore, root string, done chan<- 
 			done <- teamOutcome{err: err.Error()}
 			return
 		}
-		done <- teamOutcome{items: items}
+		done <- teamOutcome{items: items, models: readModels(ctx, core)}
 	}()
 }
 
-// teamScreen is the open screen: the list it was given and the highlight.
-type teamScreen struct {
-	sel     int
-	loading bool
-	items   []teamItem
-	note    string // why there is nothing to list (no core, a failed read)
+// startTeamCreate writes one agent or team through the core and then re-reads the
+// folder, so the list the person sees is what is on disk and not what was hoped.
+func startTeamCreate(ctx context.Context, core teamCore, root string, task teamTask, done chan<- teamOutcome) {
+	go func() {
+		var out teamOutcome
+		switch {
+		case task.agent != nil:
+			res, err := core.SubmitAgentCreate(ctx, *task.agent)
+			if err != nil {
+				done <- teamOutcome{refused: err.Error()}
+				return
+			}
+			out.created, out.name = task.done(res, nil), res.Name
+		case task.team != nil:
+			res, err := core.SubmitBlueprintCreate(ctx, *task.team)
+			if err != nil {
+				done <- teamOutcome{refused: err.Error()}
+				return
+			}
+			out.created, out.name = task.done(nil, res), res.Name
+		}
+		items, err := readTeams(ctx, core, root)
+		if err != nil {
+			out.err = err.Error()
+		}
+		out.items, out.models = items, readModels(ctx, core)
+		done <- out
+	}()
 }
 
-const teamHint = "↑↓ choose · esc close"
+// Rows above the stored files: the two things the screen can create.
+const (
+	rowNewAgent = iota
+	rowNewTeam
+	teamActions
+)
+
+// teamScreen is the open screen: the list, the highlight and, when one is open, the
+// form that creates an agent or a team.
+type teamScreen struct {
+	sel     int // 0..teamActions-1 are the actions, then one row per stored file
+	loading bool
+	items   []teamItem
+	models  []string
+	note    string // why there is nothing to list (no core, a failed read)
+
+	canAgent, canTeam bool // the core implements the create verbs
+	form              *teamForm
+	working           string // set while the core writes a file
+	banner            string // the last thing that happened, good or bad
+}
+
+const (
+	teamHint     = "↑↓ choose · enter select · esc close"
+	teamFormHint = "tab or ↑↓ field · ←/→ or space choose · enter next / create · esc back"
+)
+
+// newTeamScreen opens the manager. What the core can create is read off its hello.
+func newTeamScreen(h *driver.Hello) *teamScreen {
+	return &teamScreen{
+		loading:  true,
+		canAgent: helloImplements(h, "agent.create"),
+		canTeam:  helloImplements(h, "blueprint.create"),
+	}
+}
 
 // apply stores a worker's answer.
 func (t *teamScreen) apply(o teamOutcome) {
+	t.working = ""
+	if o.refused != "" {
+		// The form stays open with what the person typed: a refusal is a reason to
+		// fix one field, not to start over.
+		t.banner = "✗ " + o.refused
+		return
+	}
 	t.loading = false
-	t.items, t.note = o.items, o.err
+	t.items, t.models, t.note = o.items, o.models, o.err
+	if o.created != "" {
+		t.form = nil
+		t.banner = "✓ " + o.created
+		for i, it := range t.items {
+			if it.Name == o.name {
+				t.sel = teamActions + i
+			}
+		}
+	}
+}
+
+// members are the stored agents a team can be made of: files that load with exactly
+// one member (a team of several is not an agent).
+func (t *teamScreen) members() []string {
+	var out []string
+	for _, it := range t.items {
+		if it.Info != nil && len(it.Info.Members) == 1 {
+			out = append(out, it.Name)
+		}
+	}
+	return out
 }
 
 // duration spells a millisecond timeout the way a person would say it.
@@ -167,7 +277,7 @@ func advanceText(rule string, counted []string) string {
 func teamDetail(it teamItem) string {
 	if it.Err != "" {
 		return "✗ the core refuses this blueprint:\n\n" + it.Err +
-			"\n\nFix " + filepath.ToSlash(filepath.Join(teamDir, it.Name+".yaml")) + " and open /team again."
+			"\n\nThe file is " + filepath.ToSlash(filepath.Join(teamDir, it.Name+".yaml")) + "."
 	}
 	b := it.Info
 	var parts []string
@@ -258,6 +368,10 @@ func teamRowStatus(it teamItem) string {
 	if it.Err != "" {
 		return "✗ not valid"
 	}
+	if isAgent(it.Info) {
+		m := it.Info.Members[0]
+		return "agent · " + orWord(m.Role, "no role") + " · " + orWord(m.Model, "default model")
+	}
 	n := len(it.Info.Members)
 	word := "members"
 	if n == 1 {
@@ -274,17 +388,32 @@ func teamRowStatus(it teamItem) string {
 	return s
 }
 
-// emptyTeams is what the screen says when ./agents holds nothing.
-const emptyTeams = "There are no teams in this folder yet.\n\n" +
-	"A team is a file named " + teamDir + "/<name>.yaml that lists its members, the stages they go through " +
-	"and who watches for trouble. Create one with:\n\n" +
-	"  arxi agent create <name> --model <provider/model> --role <role>\n" +
-	"  arxi blueprint create <team> --members <a>,<b>\n\n" +
-	"Then open /team again to see its architecture."
+// isAgent reports whether a described file is a single agent rather than a team.
+func isAgent(info *driver.BlueprintInfo) bool {
+	return info != nil && len(info.Members) == 1 && len(info.Stages) == 0
+}
+
+const newAgentDetail = "Create an agent: a name, the model it thinks with and the tools it may touch.\n\n" +
+	"Agents are the pieces; a team is built out of them."
+
+const newTeamDetail = "Compose a team out of the agents you have: pick the members and name the stages the work goes through."
+
+const noAgentsYet = "A team is made of agents, and there are none yet. Create an agent first."
+
+const oldCoreNotice = "this arxi core cannot create files yet; " + rebuildRemedy
+
+// emptyTeams is what the screen says under the actions when ./agents holds nothing.
+const emptyTeams = "Nothing is stored in " + teamDir + "/ yet.\n\n" +
+	"Start with “New agent”: give it a name, a model and the tools it may use. " +
+	"Then “New team” puts agents together, with the stages they go through."
 
 // publish writes the screen's binds onto the state the renderer reads.
 func (t *teamScreen) publish(st *fold.State) {
-	n := len(t.items)
+	if t.form != nil {
+		t.publishForm(st)
+		return
+	}
+	n := teamActions + len(t.items)
 	if t.sel >= n {
 		t.sel = n - 1
 	}
@@ -292,37 +421,96 @@ func (t *teamScreen) publish(st *fold.State) {
 		t.sel = 0
 	}
 	st.UserInput, st.UserInputCaret = "", 0
-	title := "Teams"
-	if n > 0 {
-		title += fmt.Sprintf(" · %d in %s/", n, teamDir)
+	title := "Agents & teams"
+	if k := len(t.items); k > 0 {
+		title += fmt.Sprintf(" · %d in %s/", k, teamDir)
 	}
 	var detail string
 	switch {
 	case t.loading:
-		detail = "Reading the teams …"
-	case t.note != "":
-		detail = t.note
-	case n == 0:
-		detail = emptyTeams
+		detail = "Reading " + teamDir + "/ …"
+	case t.sel == rowNewAgent:
+		detail = newAgentDetail
+	case t.sel == rowNewTeam:
+		detail = newTeamDetail
+		if len(t.members()) == 0 {
+			detail += "\n\n" + noAgentsYet
+		}
 	default:
-		detail = teamDetail(t.items[t.sel])
+		detail = teamDetail(t.items[t.sel-teamActions])
+	}
+	if t.note != "" {
+		detail = t.note + "\n\n" + detail
+	}
+	if t.sel < teamActions && len(t.items) == 0 && !t.loading {
+		detail += "\n\n" + emptyTeams
+	}
+	if t.banner != "" {
+		detail = t.banner + "\n\n" + detail
+	}
+	if t.working != "" {
+		detail = "⏳ " + t.working + "\n\n" + detail
 	}
 	var rows []fold.HubRow
 	lo, hi := window(t.sel, n, hubPageSize)
 	for i := lo; i < hi; i++ {
-		rows = append(rows, fold.HubRow{Label: t.items[i].Name, Status: teamRowStatus(t.items[i]), Selected: i == t.sel})
+		var r fold.HubRow
+		switch {
+		case i == rowNewAgent:
+			r = fold.HubRow{Label: "＋ New agent…", Status: orWord(t.createGap(t.canAgent), "one worker")}
+		case i == rowNewTeam:
+			r = fold.HubRow{Label: "＋ New team…", Status: orWord(t.createGap(t.canTeam), "agents working together")}
+		default:
+			it := t.items[i-teamActions]
+			r = fold.HubRow{Label: it.Name, Status: teamRowStatus(it)}
+		}
+		r.Selected = i == t.sel
+		rows = append(rows, r)
 	}
 	st.HubTitle, st.HubRows, st.HubHint, st.HubDetail = title, rows, teamHint, detail
 }
 
-// key applies one key and reports whether the screen should close. Only Esc and q
-// close it, so nothing typed here can leak into the chat.
-func (t *teamScreen) key(k term.Key) (closeIt bool) {
+// createGap is the row's status when the core cannot do what the row promises.
+func (t *teamScreen) createGap(can bool) string {
+	if can {
+		return ""
+	}
+	return "needs a newer core"
+}
+
+// publishForm draws the open form: one row per field, its help under it.
+func (t *teamScreen) publishForm(st *fold.State) {
+	f := t.form
+	var rows []fold.HubRow
+	lo, hi := window(f.focus, len(f.fields), hubPageSize)
+	for i := lo; i < hi; i++ {
+		rows = append(rows, fold.HubRow{Label: f.fields[i].label, Status: f.fields[i].shown(), Selected: i == f.focus})
+	}
+	detail := f.help + "\n\n" + f.fields[f.focus].help
+	if t.banner != "" {
+		detail = t.banner + "\n\n" + detail
+	}
+	if t.working != "" {
+		detail = "⏳ " + t.working + "\n\n" + detail
+	}
+	st.UserInput = f.typed()
+	st.UserInputCaret = len([]rune(st.UserInput))
+	st.HubTitle, st.HubRows, st.HubHint, st.HubDetail = f.title, rows, teamFormHint, detail
+}
+
+// key applies one key. closeIt asks the loop to leave the screen; task asks it to
+// start the worker that writes the file. Only Esc and q close the screen, so
+// nothing typed here can leak into the chat.
+func (t *teamScreen) key(k term.Key) (closeIt bool, task *teamTask) {
+	if t.form != nil {
+		return false, t.formKey(k)
+	}
+	t.banner = ""
 	switch k.Type {
 	case term.KeyEscape:
-		return true
+		return true, nil
 	case term.KeyRunes:
-		return k.Mod&term.ModCtrl == 0 && len(k.Runes) == 1 && (k.Runes[0] == 'q' || k.Runes[0] == 'Q')
+		return k.Mod&term.ModCtrl == 0 && len(k.Runes) == 1 && (k.Runes[0] == 'q' || k.Runes[0] == 'Q'), nil
 	case term.KeyUp:
 		t.sel--
 	case term.KeyDown:
@@ -331,8 +519,60 @@ func (t *teamScreen) key(k term.Key) (closeIt bool) {
 		t.sel -= hubPageSize
 	case term.KeyPgDn:
 		t.sel += hubPageSize
+	case term.KeyEnter:
+		t.open()
 	}
-	return false
+	return false, nil
+}
+
+// open acts on Enter over an action row.
+func (t *teamScreen) open() {
+	if t.loading || t.working != "" {
+		return
+	}
+	switch t.sel {
+	case rowNewAgent:
+		if !t.canAgent {
+			t.banner = "✗ " + oldCoreNotice
+			return
+		}
+		t.form = newAgentForm(t.models)
+	case rowNewTeam:
+		switch {
+		case !t.canTeam:
+			t.banner = "✗ " + oldCoreNotice
+		case len(t.members()) == 0:
+			t.banner = "✗ " + noAgentsYet
+		default:
+			t.form = newTeamForm(t.members())
+		}
+	}
+}
+
+// formKey applies a key to the open form and returns the task Enter produced.
+func (t *teamScreen) formKey(k term.Key) *teamTask {
+	if t.working != "" && k.Type != term.KeyEscape {
+		return nil
+	}
+	closeForm, task, msg := t.form.key(k)
+	switch {
+	case closeForm:
+		t.form, t.banner, t.working = nil, "", ""
+	case msg != "":
+		t.banner = "✗ " + msg
+	case task != nil:
+		t.banner, t.working = "", task.working()
+	default:
+		t.banner = ""
+	}
+	return task
+}
+
+// paste inserts clipboard text into the focused text field.
+func (t *teamScreen) paste(text string) {
+	if t.form != nil && t.working == "" {
+		t.form.insert(text)
+	}
 }
 
 // teamCommand reports whether Enter on this line (or on the highlighted menu row)
@@ -357,3 +597,5 @@ func helloImplements(h *driver.Hello, verb string) bool {
 	}
 	return false
 }
+
+var _ teamCore = (*driver.NDJSONDriver)(nil)

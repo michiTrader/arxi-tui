@@ -1659,7 +1659,7 @@ var Commands = []SlashMatch{
 	{"resume", "Session", "Bring back an earlier conversation"},
 	{"style", "Model", "Choose how your messages look in the conversation"},
 	{"flow", "Session", "Show what the team is doing and what holds the run up"},
-	{"team", "Session", "Show the architecture of the teams in ./agents"},
+	{"team", "Session", "Create and see agents and teams"},
 	// /login is a host-owned screen like /provider: it round-trips the serve
 	// protocol (provider.add / provider.key / model.add), so it is not a patch verb.
 }
