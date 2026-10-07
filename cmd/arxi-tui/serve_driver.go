@@ -91,6 +91,26 @@ type serveDriver struct {
 	// (tests, the mock).
 	chat *chatSession
 	hub  hubCore
+
+	// bin and dir are the core executable and the folder runs are started in
+	// (LaunchRun); empty on a connection built without them.
+	bin, dir string
+}
+
+// LaunchRun starts a run of a stored agent or team through the core and follows it,
+// so /flow draws it. It returns the run's id.
+func (d *serveDriver) LaunchRun(ctx context.Context, r runLaunch) (string, error) {
+	if d.bin == "" {
+		return "", fmt.Errorf("this session has no arxi core to start runs with")
+	}
+	id, logPath, err := launchRun(ctx, d.bin, d.dir, r)
+	if err != nil {
+		return "", err
+	}
+	if err := d.attach(ctx, logPath, r.Team); err != nil {
+		return "", err
+	}
+	return id, nil
 }
 
 // Hub is the provider/model management seam, or nil when this connection has none.
@@ -127,10 +147,20 @@ func (d *serveDriver) submitPrompt(ctx context.Context, text string) error {
 	if err != nil {
 		return err
 	}
+	return d.attach(ctx, logPath, actorLabel)
+}
 
+// FollowRun makes the run whose event log is at logPath the one the screen draws:
+// the same switch a new prompt makes, for a run that something else started (the
+// team launcher). The previous run stops being relayed.
+func (d *serveDriver) FollowRun(ctx context.Context, logPath, label string) error {
+	return d.attach(ctx, logPath, label)
+}
+
+// attach follows logPath and makes it the current run.
+func (d *serveDriver) attach(ctx context.Context, logPath, actorLabel string) error {
 	// Cancel the previous run's follow before arming the next, so the two do not
-	// relay onto the channel at once. Done under the lock together with the
-	// state update so a concurrent SubmitPrompt cannot interleave a half-swap.
+	// relay onto the channel at once.
 	d.mu.Lock()
 	prevCancel := d.runCancel
 	d.mu.Unlock()

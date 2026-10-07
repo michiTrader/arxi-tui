@@ -542,6 +542,7 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 		runsRoot: runsRoot,
 		follow:   driver.LogFollow,
 		relay:    make(chan fold.Event, 64),
+		bin:      arxiBin,
 		closer: func() error {
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
@@ -553,6 +554,7 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 	// The model may look into the folder arxi-tui was opened in.
 	if cwd, err := os.Getwd(); err == nil {
 		sd.chat.setWorkdir(cwd)
+		sd.dir = cwd
 	}
 	sd.chat.dial = func(ctx context.Context) (chatSender, func(), error) {
 		return dialChatConn(ctx, arxiBin)
@@ -1348,7 +1350,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						} else if task != nil {
 							// The form produced a file to write: the core does it
 							// on a worker, so a slow disk never freezes the loop.
-							if hc, _ := drv.(interface{ Hub() hubCore }); hc != nil && hc.Hub() != nil {
+							if task.run != nil {
+								if rl, ok := drv.(runLauncher); ok {
+									startTeamRun(ctx, rl, *task.run, teamCh)
+								} else {
+									teamCh <- teamOutcome{refused: "this session cannot start runs: it has no arxi core"}
+								}
+							} else if hc, _ := drv.(interface{ Hub() hubCore }); hc != nil && hc.Hub() != nil {
 								if tc, ok := hc.Hub().(teamCore); ok {
 									startTeamCreate(ctx, tc, cwd, *task, teamCh)
 								}
@@ -2001,6 +2009,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// see the screen reappear.
 			if team != nil {
 				team.apply(out)
+				if team.launched != "" && flowDocErr == nil {
+					// A run started: hand the screen over to /flow, which draws it.
+					team = nil
+					flow = &flowScreen{}
+					sceneNotice = ""
+				}
 			}
 			repaint()
 
