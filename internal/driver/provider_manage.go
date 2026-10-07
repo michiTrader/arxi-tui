@@ -424,6 +424,7 @@ type BlueprintWatcher struct {
 	Agent   string `json:"agent"`
 	Pattern string `json:"pattern"`
 	Action  string `json:"action"`
+	Tool    string `json:"tool"`
 }
 
 // BlueprintInfo is the structured answer of blueprint.validate: everything needed
@@ -635,6 +636,48 @@ func (d *NDJSONDriver) SubmitBlueprintMember(ctx context.Context, p BlueprintMem
 	}
 	var r BlueprintMemberResult
 	if err := d.call(ctx, "blueprint-member", "blueprint.member", params, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
+// BlueprintWatchParams adds, replaces or removes one watcher of a stored blueprint.
+// A watcher is identified by the member it wakes and the event pattern; Action is
+// activate, notify or run_tool (empty means activate), and Tool goes with run_tool.
+type BlueprintWatchParams struct {
+	Name    string
+	Agent   string
+	Pattern string
+	Action  string
+	Tool    string
+	Remove  bool
+}
+
+// BlueprintWatchResult is the watchers as the core saved them.
+type BlueprintWatchResult struct {
+	Name     string             `json:"name"`
+	Watchers []BlueprintWatcher `json:"watchers"`
+}
+
+// SubmitBlueprintWatch saves or removes one watcher of a stored blueprint. The core
+// validates the whole file before replacing it, so a refusal leaves the file as it
+// was and comes back as its own sentence.
+func (d *NDJSONDriver) SubmitBlueprintWatch(ctx context.Context, p BlueprintWatchParams) (*BlueprintWatchResult, error) {
+	if strings.TrimSpace(p.Name) == "" || strings.TrimSpace(p.Agent) == "" || strings.TrimSpace(p.Pattern) == "" {
+		return nil, fmt.Errorf("ndjson: blueprint.watch needs the blueprint, the member and the events to watch")
+	}
+	params := map[string]any{"name": p.Name, "agent": p.Agent, "pattern": p.Pattern}
+	if p.Action != "" {
+		params["action"] = p.Action
+	}
+	if p.Tool != "" {
+		params["tool"] = p.Tool
+	}
+	if p.Remove {
+		params["remove"] = true
+	}
+	var r BlueprintWatchResult
+	if err := d.call(ctx, "blueprint-watch", "blueprint.watch", params, &r); err != nil {
 		return nil, err
 	}
 	return &r, nil

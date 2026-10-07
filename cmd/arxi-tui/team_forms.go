@@ -53,17 +53,19 @@ const (
 	formNewAuto
 	formEditStages
 	formEditMember
+	formEditWatch
 )
 
 // teamForm is the open form; it lives only while it is on screen.
 type teamForm struct {
-	kind    teamFormKind
-	title   string
-	help    string
-	fields  []teamField
-	focus   int
-	target  string                   // formEditStages, formEditMember: the blueprint being changed
-	members []driver.BlueprintMember // formEditMember: its members as they are now
+	kind     teamFormKind
+	title    string
+	help     string
+	fields   []teamField
+	focus    int
+	target   string                    // formEditStages, formEditMember: the blueprint being changed
+	members  []driver.BlueprintMember  // formEditMember, formEditWatch: its members as they are now
+	watchers []driver.BlueprintWatcher // formEditWatch: its rules as they are now
 }
 
 // teamTask is what the worker is asked to create.
@@ -74,6 +76,7 @@ type teamTask struct {
 	auto   *driver.TriggerCreateParams
 	stage  *driver.BlueprintStageParams
 	member *driver.BlueprintMemberParams
+	watch  *driver.BlueprintWatchParams
 }
 
 // shown is what the row's right-hand column says.
@@ -211,8 +214,11 @@ func (f *teamForm) flip(delta int) {
 	case fieldChoice:
 		n := len(fl.choices)
 		fl.idx = ((fl.idx+delta)%n + n) % n
-		if f.kind == formEditMember && fl.label == memberLabel {
+		switch {
+		case f.kind == formEditMember && fl.label == memberLabel:
 			f.loadMember()
+		case f.kind == formEditWatch && fl.label == watchRuleLabel:
+			f.loadWatch()
 		}
 	}
 }
@@ -299,6 +305,8 @@ func (f *teamForm) submit() (*teamTask, string) {
 		return f.submitStages()
 	case formEditMember:
 		return f.submitMember()
+	case formEditWatch:
+		return f.submitWatch()
 	}
 	name := f.value("Name")
 	if name == "" {
@@ -362,6 +370,9 @@ func (f *teamForm) submitRun() (*teamTask, string) {
 
 // working is the line shown while the core writes the file.
 func (t *teamTask) working() string {
+	if t.watch != nil {
+		return "Saving the watchers of " + t.watch.Name + " …"
+	}
 	if t.member != nil {
 		return "Saving " + t.member.Member + " in " + t.member.Name + " …"
 	}
@@ -391,6 +402,12 @@ func (t *teamTask) done(agent *driver.AgentCreateResult, team *driver.BlueprintC
 		return s
 	case team != nil:
 		return fmt.Sprintf("team %s created with %s", team.Name, plural(len(team.Members), "member", "members"))
+	}
+	if t.watch != nil {
+		if t.watch.Remove {
+			return fmt.Sprintf("watcher of %s on %s removed from %s; it applies to runs you start from now on", t.watch.Agent, t.watch.Pattern, t.watch.Name)
+		}
+		return fmt.Sprintf("watcher of %s on %s saved in %s; it applies to runs you start from now on", t.watch.Agent, t.watch.Pattern, t.watch.Name)
 	}
 	if t.member != nil {
 		return fmt.Sprintf("member %s of %s saved; it applies to runs you start from now on", t.member.Member, t.member.Name)

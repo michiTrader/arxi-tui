@@ -658,3 +658,33 @@ func TestBlueprintMemberSendsOnlyWhatChangesAndEmptyMeansRemove(t *testing.T) {
 		t.Fatal("a request without a member was sent")
 	}
 }
+
+func TestBlueprintWatchSendsTheRuleAndOnlyWhatIsSet(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"id":"blueprint-watch","ok":true,"result":{"name":"duo","watchers":[{"agent":"b","pattern":"stage.*","action":"run_tool","tool":"read"}]}}`)
+	r, err := d.SubmitBlueprintWatch(context.Background(), BlueprintWatchParams{
+		Name: "duo", Agent: "b", Pattern: "stage.*", Action: "run_tool", Tool: "read"})
+	if err != nil || len(r.Watchers) != 1 || r.Watchers[0].Tool != "read" {
+		t.Fatalf("got %+v, %v", r, err)
+	}
+	line := sent.String()
+	for _, want := range []string{`"type":"blueprint.watch"`, `"agent":"b"`, `"pattern":"stage.*"`, `"action":"run_tool"`, `"tool":"read"`} {
+		if !strings.Contains(line, want) {
+			t.Errorf("request %s lacks %s", line, want)
+		}
+	}
+	if strings.Contains(line, "remove") {
+		t.Errorf("a remove flag was sent for a save: %s", line)
+	}
+	sent.Reset()
+	if _, err := d.SubmitBlueprintWatch(context.Background(), BlueprintWatchParams{Name: "duo", Agent: "b", Pattern: "stage.*", Remove: true}); err == nil {
+		// the fake session has no second answer; what matters is the request
+	}
+	if line := sent.String(); !strings.Contains(line, `"remove":true`) || strings.Contains(line, `"action"`) {
+		t.Errorf("a removal must send the pair and the flag only: %s", line)
+	}
+	if _, err := d.SubmitBlueprintWatch(context.Background(), BlueprintWatchParams{Name: "duo", Agent: "b"}); err == nil {
+		t.Fatal("a request without events to watch was sent")
+	}
+}
