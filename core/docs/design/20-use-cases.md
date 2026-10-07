@@ -2,7 +2,7 @@
 
 ## 20.0 What this document is for
 
-`arxi surface` lists the 60 declared capabilities. A list is not a design: it
+`arxi surface` lists the 61 declared capabilities. A list is not a design: it
 tells you what exists and nothing about whether the set is *coherent*. Two
 questions a list cannot answer:
 
@@ -20,9 +20,9 @@ against the registry in both directions, so a capability no scenario reaches and
 a scenario invoking a verb that does not exist each turn the build red and name
 themselves.
 
-**Status of the commands.** All 60 run today. Every capability `arxi surface`
+**Status of the commands.** All 61 run today. Every capability `arxi surface`
 declares has a command behind it, `design` last of them, and the count is
-measured rather than asserted: `cmd/arxi/surface_coverage_test.go` invokes all 60
+measured rather than asserted: `cmd/arxi/surface_coverage_test.go` invokes all 61
 against the built binary and compares the tally with the figure README.md states.
 ADR-0001 explains why declaring the whole surface before building any of it was
 deliberate.
@@ -515,6 +515,22 @@ The team lands in `agents/`, beside the files it was composed from, and is a fil
 of the same kind: `agent list` shows it, `run start feature-team` runs it,
 `blueprint validate` checks it after an edit. A one-member blueprint was always a
 blueprint; this is the same shape with three members in it.
+
+The rules of a stage are the one thing the composed file does not decide for you,
+and `arxi blueprint stage` is how they are changed without a text editor:
+
+```
+$ arxi blueprint stage feature-team --stage work --advance-when quorum:2 --timeout-ms 600000 --on-timeout ask
+feature-team: stage work updated (applies to runs started from now on)
+```
+
+Only the `stages:` block is rewritten; members, watchers and comments elsewhere in
+the file are left byte for byte, and the result goes through the same loader as
+`blueprint validate` before it replaces the file, so a quorum larger than the team
+is refused and the file stays as it was. It is deliberately **not** an agent tool:
+how a process decides it is finished is what the agent is judged by, and an agent
+able to turn `all` into `any` would be editing its own marking scheme. Runs already
+started keep the rules they froze; an edit applies from the next one.
 
 Three lines of that screen are the ones worth their width.
 
@@ -1072,14 +1088,14 @@ message type are three **mechanical projections of one registry entry** —
 synonym anywhere would fork the vocabulary and require a hand-maintained mapping
 forever.
 
-Of 60 declared capabilities, **34 are exposed as agent tools**. The 26 that are
+Of 61 declared capabilities, **34 are exposed as agent tools**. The 26 that are
 not are a security boundary, not an oversight:
 
 | not an agent tool | why an agent must not have it |
 |---|---|
 | `provider add`, `provider key`, `provider list`, `provider update`, `provider remove`, `model add`, `model discover`, `model remove`, `model default`, `model enable`, `model disable`, `chat send` | credentials and model availability are operator decisions; an agent that can enable models can route itself to a more expensive one. `provider key` is the sharpest of them: an agent that could replace a key could redirect every later run's spend to an account of its choosing. `model add` writes the price a run is budgeted against, so an agent that could add a model could add it at zero. `chat send` spends the operator's money with no run, no budget ceiling and no log, so it is the operator's call and never a tool |
 | `agent tool policy` | an agent that can widen its own tool policy does not have a policy |
-| `role define`, `blueprint create`, `blueprint install` | these define what agents *are* and how they are judged; installing a blueprint is closer to installing code than to doing work |
+| `role define`, `blueprint create`, `blueprint stage`, `blueprint install` | these define what agents *are* and how they are judged; installing a blueprint is closer to installing code than to doing work |
 | `inbox approve`, `inbox reject`, `inbox reply` | these are the human's side of the conversation. An agent that could approve its own inbox item turns `ToolPolicy: ask` into `allow` |
 | `run attach` | a blocking stream that burns a turn while waiting (§20.1) |
 | `design`, `serve` | operator surface: an interactive designer and a socket server |

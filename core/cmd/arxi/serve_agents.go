@@ -167,3 +167,56 @@ func handleBlueprintCreate(params map[string]any) (any, error) {
 		Stages  []string `json:"stages"`
 	}{Name: t.Name, Path: path, Members: names, Stages: stages}, nil
 }
+
+// stageEditFrom reads the three optional rule fields. A timeout that is absent is
+// "leave it" and a timeout of 0 is "remove it", so presence is what is checked.
+func stageEditFrom(stage, advance, onTimeout string, timeout *int64) agentstore.StageEdit {
+	return agentstore.StageEdit{Stage: stage, AdvanceWhen: advance, TimeoutMs: timeout, OnTimeout: onTimeout}
+}
+
+// handleBlueprintStage answers `blueprint.stage`: new rules for one stage of a
+// stored blueprint. The file is validated before it is replaced, so a refusal
+// (a quorum bigger than the team, a rule that does not exist) leaves it as it was.
+func handleBlueprintStage(params map[string]any) (any, error) {
+	name := stringParam(params, "name")
+	var timeout *int64
+	if raw, ok := params["timeout_ms"]; ok && raw != nil {
+		f, isNum := raw.(float64)
+		if !isNum || f != float64(int64(f)) {
+			return nil, errors.New("timeout_ms must be a whole number of milliseconds")
+		}
+		n := int64(f)
+		timeout = &n
+	}
+	e := stageEditFrom(stringParam(params, "stage"), stringParam(params, "advance_when"),
+		stringParam(params, "on_timeout"), timeout)
+	st := readAgents()
+	if err := st.SetStage(name, e); err != nil {
+		return nil, err
+	}
+	return blueprintStagesPayload(st, name)
+}
+
+// blueprintStagesPayload is the answer: the stages as they are on disk now, so a
+// client shows what was saved rather than what it asked for.
+func blueprintStagesPayload(st *agentstore.Store, name string) (any, error) {
+	bp, err := st.Load(name)
+	if err != nil {
+		return nil, err
+	}
+	type stageOut struct {
+		Name        string `json:"name"`
+		AdvanceWhen string `json:"advance_when"`
+		OnTimeout   string `json:"on_timeout"`
+		TimeoutMs   int64  `json:"timeout_ms,omitempty"`
+	}
+	out := struct {
+		Name   string     `json:"name"`
+		Stages []stageOut `json:"stages"`
+	}{Name: name, Stages: []stageOut{}}
+	for _, s := range bp.Config.Stages {
+		out.Stages = append(out.Stages, stageOut{Name: s.Name, AdvanceWhen: s.AdvanceWhen,
+			OnTimeout: s.OnTimeout, TimeoutMs: s.TimeoutMs})
+	}
+	return out, nil
+}

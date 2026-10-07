@@ -424,6 +424,19 @@ var Registry = []Cmd{
 		Params: []Param{pos(p("name", "string", "name")),
 			req(p("members", "string", "agents to compose, comma-separated")),
 			p("stages", "string", "stage names in order, comma-separated (default: one stage, work)")}},
+	// blueprint stage changes the rules of ONE stage of a stored blueprint. `blueprint
+	// create` writes `advance_when: all` and no timeouts on purpose, and until this
+	// verb the only way to change them was a text editor. Protocol but NOT AgentTool,
+	// for blueprint create's reason: how a team's process is run (who must finish,
+	// when a stage gives up) is the owner's decision, and an agent able to loosen
+	// `all` to `any` or lift a timeout would be editing the rules it is judged by.
+	{Path: []string{"blueprint", "stage"}, Desc: "change the rules of one stage of a stored blueprint",
+		Kind: CLIOnly | Protocol, Mutates: true, Idempotent: true, Since: 1,
+		Params: []Param{pos(p("name", "string", "blueprint name")),
+			req(p("stage", "string", "the stage to change")),
+			p("advance-when", "string", "all, any or quorum:N"),
+			p("timeout-ms", "number", "give up on the stage after this many milliseconds; 0 removes the timeout"),
+			p("on-timeout", "string", "what happens when the timeout runs out: escalate, advance, fail or ask")}},
 	// `as` was ADDED when this verb was wired, for `blueprint create`'s reason one
 	// entry up: the entry was written when a ref was assumed to name the thing it
 	// installs, and a ref does not. The default is the blueprint's own `name:`

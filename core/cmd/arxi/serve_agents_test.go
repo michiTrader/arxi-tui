@@ -167,3 +167,67 @@ func TestAgentListKeepsABrokenFileWithItsReason(t *testing.T) {
 		t.Fatalf("the broken file lost its reason: %v", bad)
 	}
 }
+
+func TestBlueprintStageChangesTheRulesAndAnswersWithWhatIsSaved(t *testing.T) {
+	inAgentsDir(t)
+	wireOK(t, `{"id":"1","type":"agent.create","params":{"name":"a","tools":"read"}}`)
+	wireOK(t, `{"id":"2","type":"agent.create","params":{"name":"b","tools":"read"}}`)
+	wireOK(t, `{"id":"3","type":"blueprint.create","params":{"name":"duo","members":"a,b","stages":"build,review"}}`)
+
+	got := wireOK(t, `{"id":"4","type":"blueprint.stage","params":{"name":"duo","stage":"review","advance_when":"quorum:2","timeout_ms":60000,"on_timeout":"ask"}}`)
+	stages := got["stages"].([]any)
+	if len(stages) != 2 {
+		t.Fatalf("stages = %v", stages)
+	}
+	review := stages[1].(map[string]any)
+	if review["advance_when"] != "quorum:2" || review["timeout_ms"] != float64(60000) || review["on_timeout"] != "ask" {
+		t.Errorf("review = %v", review)
+	}
+	if build := stages[0].(map[string]any); build["advance_when"] != "all" {
+		t.Errorf("an untouched stage changed: %v", build)
+	}
+
+	// What was saved is what the validator reads back.
+	v := wireOK(t, `{"id":"5","type":"blueprint.validate","params":{"path":`+quoteJSON(filepath.Join(agentDir, "duo.yaml"))+`}}`)
+	if vs := v["stages"].([]any); vs[1].(map[string]any)["advance_when"] != "quorum:2" {
+		t.Errorf("validate = %v", v)
+	}
+
+	// A timeout of 0 removes it, and leaves the rest.
+	got = wireOK(t, `{"id":"6","type":"blueprint.stage","params":{"name":"duo","stage":"review","timeout_ms":0}}`)
+	review = got["stages"].([]any)[1].(map[string]any)
+	if _, has := review["timeout_ms"]; has || review["advance_when"] != "quorum:2" {
+		t.Errorf("review after removing the timeout = %v", review)
+	}
+}
+
+func TestBlueprintStageRefusesWhatTheLoaderRefusesAndKeepsTheFile(t *testing.T) {
+	dir := inAgentsDir(t)
+	wireOK(t, `{"id":"1","type":"agent.create","params":{"name":"solo","tools":"read"}}`)
+	before, _ := os.ReadFile(filepath.Join(dir, "solo.yaml"))
+
+	cases := []struct{ name, line, want string }{
+		{"a quorum bigger than the team",
+			`{"id":"2","type":"blueprint.stage","params":{"name":"solo","stage":"work","advance_when":"quorum:3"}}`, "quorum"},
+		{"a stage that is not there",
+			`{"id":"3","type":"blueprint.stage","params":{"name":"solo","stage":"ship","advance_when":"any"}}`, "no stage called"},
+		{"a team that does not exist",
+			`{"id":"4","type":"blueprint.stage","params":{"name":"ghost","stage":"work","advance_when":"any"}}`, "no such agent"},
+		{"nothing to change",
+			`{"id":"5","type":"blueprint.stage","params":{"name":"solo","stage":"work"}}`, "nothing to change"},
+		{"a timeout with a fraction",
+			`{"id":"6","type":"blueprint.stage","params":{"name":"solo","stage":"work","timeout_ms":1.5}}`, "whole number"},
+		{"a path in the name",
+			`{"id":"7","type":"blueprint.stage","params":{"name":"../solo","stage":"work","advance_when":"any"}}`, "path separator"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if msg := wireRefused(t, c.line); !strings.Contains(msg, c.want) {
+				t.Errorf("message = %q, want it to contain %q", msg, c.want)
+			}
+		})
+	}
+	if after, _ := os.ReadFile(filepath.Join(dir, "solo.yaml")); string(after) != string(before) {
+		t.Errorf("a refused edit changed the file:\n%s", after)
+	}
+}

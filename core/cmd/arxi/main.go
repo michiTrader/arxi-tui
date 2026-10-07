@@ -107,6 +107,10 @@ func main() {
 			cmdBlueprintInstall(args[2:])
 			return
 		}
+		if len(args) > 1 && args[1] == "stage" {
+			cmdBlueprintStage(args[2:])
+			return
+		}
 	case "run":
 		if len(args) > 1 && args[1] == "start" {
 			cmdRunStart(args[2:])

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/michiTrader/arxi/internal/agentstore"
@@ -15,6 +16,8 @@ import (
 
 const blueprintUsage = "usage: arxi blueprint create <name> --members a,b,c [--stages s1,s2]\n" +
 	"       arxi blueprint install <path|https URL> [--as <name>]\n" +
+	"       arxi blueprint stage <name> --stage <s> [--advance-when all|any|quorum:N]\n" +
+	"                            [--timeout-ms N] [--on-timeout escalate|advance|fail|ask]\n" +
 	"       arxi blueprint validate <file.yaml>\n" +
 	"  create composes agents already in " + agentstore.DefaultDir + "/ into one file of the\n" +
 	"  same kind, in the same directory: `arxi agent list` shows it and\n" +
@@ -502,4 +505,33 @@ func humanMs(ms int64) string {
 	default:
 		return fmt.Sprintf("%dms", ms)
 	}
+}
+
+// cmdBlueprintStage implements `arxi blueprint stage <name> --stage <s> ...`.
+//
+// The same SetStage the protocol calls, so a rule changed from the TUI and one
+// changed here pass the same checks and leave the same file.
+func cmdBlueprintStage(args []string) {
+	c := surface.Lookup("blueprint", "stage")
+	vals, err := parseInvocation(c, args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi blueprint stage: %v\n\n%s", err, blueprintUsage)
+		os.Exit(2)
+	}
+	var timeout *int64
+	if raw, ok := vals["timeout-ms"]; ok {
+		n, perr := strconv.ParseInt(raw, 10, 64)
+		if perr != nil {
+			fmt.Fprintf(os.Stderr, "arxi blueprint stage: --timeout-ms %q is not a whole number of milliseconds\n", raw)
+			os.Exit(2)
+		}
+		timeout = &n
+	}
+	st := readAgents()
+	e := stageEditFrom(vals["stage"], vals["advance-when"], vals["on-timeout"], timeout)
+	if err := st.SetStage(vals["name"], e); err != nil {
+		fmt.Fprintf(os.Stderr, "arxi blueprint stage: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("%s: stage %s updated (applies to runs started from now on)\n", vals["name"], vals["stage"])
 }

@@ -282,7 +282,7 @@ func TestUseCasesDocumentToolCount(t *testing.T) {
 	// The two halves are reported separately on purpose: "the registry changed"
 	// and "the prose no longer matches the registry" need different fixes, and a
 	// message that blurs them sends the reader to the wrong file.
-	const statedTools, statedTotal = 34, 60
+	const statedTools, statedTotal = 34, 61
 	const statedPhrase = "**34 are exposed as agent tools**"
 
 	if tools != statedTools || total != statedTotal {
