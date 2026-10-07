@@ -589,6 +589,13 @@ var Registry = []Cmd{
 	{Path: []string{"trigger", "pause"}, Desc: "pause a trigger",
 		Kind: CLIOnly | AgentTool | Protocol, ToolPolicy: PolicyAsk, Mutates: true, Since: 1,
 		Params: []Param{pos(p("name", "string", "name"))}},
+	// resume is the other half of pause. Without it a paused trigger can never fire
+	// again, and the only way back is editing the file by hand. It is Idempotent:
+	// resuming an active trigger changes nothing. Missed firings are not replayed;
+	// the trigger's own --on-missed policy decides what happens to them.
+	{Path: []string{"trigger", "resume"}, Desc: "resume a paused trigger",
+		Kind: CLIOnly | Protocol, Mutates: true, Idempotent: true, Since: 1,
+		Params: []Param{pos(p("name", "string", "name"))}},
 
 	// `trigger run` and NOT `scheduler run`, because the noun already exists.
 	// A second top-level verb would make the scheduler look like a separate

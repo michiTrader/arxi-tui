@@ -61,6 +61,8 @@ func cmdTrigger(args []string) {
 		cmdTriggerShow(args[1:])
 	case "pause":
 		cmdTriggerPause(args[1:])
+	case "resume":
+		cmdTriggerResume(args[1:])
 	case "run":
 		cmdTriggerRun(args[1:])
 	default:
@@ -309,8 +311,33 @@ func cmdTriggerPause(args []string) {
 		fmt.Fprintf(os.Stderr, "arxi trigger pause: %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("trigger %s paused (it will not fire; resume is not implemented yet)\n",
-		r.Name)
+	fmt.Printf("trigger %s paused (it will not fire until you run `arxi trigger resume %s`)\n",
+		r.Name, r.Name)
+}
+
+func cmdTriggerResume(args []string) {
+	c := surface.Lookup("trigger", "resume")
+	vals, err := parseInvocation(c, args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi trigger resume: %v\n", err)
+		os.Exit(2)
+	}
+	st := openStore()
+	r, err := st.Load(vals["name"])
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi trigger resume: %v\n", err)
+		os.Exit(1)
+	}
+	if r.Status == trigger.StatusActive {
+		fmt.Printf("trigger %s is already active\n", r.Name)
+		return
+	}
+	r.Status = trigger.StatusActive
+	if err := st.Save(r); err != nil {
+		fmt.Fprintf(os.Stderr, "arxi trigger resume: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("trigger %s resumed (firings missed while it was paused follow its --on-missed policy)\n", r.Name)
 }
 
 // nextColumn is the NEXT cell, and every way of having no answer is a different

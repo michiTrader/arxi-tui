@@ -43,6 +43,14 @@ func TestTriggersCanBeCreatedListedAndPausedOverTheProtocol(t *testing.T) {
 	}
 	// Pausing twice is not an error: a screen may be showing a stale row.
 	wireOK(t, `{"id":"5","type":"trigger.pause","params":{"name":"nightly"}}`)
+
+	// Resuming brings it back with a next firing again; resuming twice is fine too.
+	resumed := wireOK(t, `{"id":"6","type":"trigger.resume","params":{"name":"nightly"}}`)
+	if resumed["record"].(map[string]any)["status"] != "active" || resumed["next"] == nil || resumed["next"] == "" {
+		t.Fatalf("resumed = %v", resumed)
+	}
+	wireOK(t, `{"id":"7","type":"trigger.resume","params":{"name":"nightly"}}`)
+	wireRefused(t, `{"id":"8","type":"trigger.resume","params":{"name":"nope"}}`)
 }
 
 func TestTriggerCreateRefusalsComeFromTheSameValidationAsTheCLI(t *testing.T) {
