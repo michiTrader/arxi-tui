@@ -493,8 +493,12 @@ func TestLoopAutoCreatesAnAutomationAndStartsTheScheduler(t *testing.T) {
 	}
 	script := []scheduledEvent{{120 * time.Millisecond, keyEvent('/')}}
 	script = append(script, typeKeys("auto")...)
-	script = append(script, scheduledEvent{40 * time.Millisecond, enterEvent()}, scheduledEvent{200 * time.Millisecond, enterEvent()})
-	script = append(script, typeKeys("nightly")...)
+	script = append(script, scheduledEvent{40 * time.Millisecond, enterEvent()},
+		// The list is read on a worker; a slow machine needs time before Enter can open
+		// the form, and the form needs a moment before the first letter.
+		scheduledEvent{1500 * time.Millisecond, enterEvent()})
+	script = append(script, scheduledEvent{500 * time.Millisecond, keyEvent('n')})
+	script = append(script, typeKeys("ightly")...)
 	script = append(script, key(term.KeyEnter)) // Team
 	script = append(script, key(term.KeyEnter)) // Task
 	script = append(script, typeKeys("audit the deps")...)
