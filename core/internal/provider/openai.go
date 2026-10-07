@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/michiTrader/arxi/internal/model"
 	"github.com/michiTrader/arxi/internal/turn"
 )
 
@@ -19,7 +20,13 @@ func openAIRequest(req turn.Request) (chatRequest, error) {
 	out := chatRequest{
 		Model: req.Model, MaxTokens: req.MaxTokens,
 		Temperature: req.Temperature, Stream: req.Stream,
-		ReasoningEffort: req.Effort,
+	}
+	// The level is a word of the shared vocabulary; what the model's API calls
+	// it is decided per model (internal/model/effort.go).
+	wire := model.OpenAIWire(req.Model, req.Effort)
+	out.ReasoningEffort = wire.Reasoning
+	if wire.Thinking != "" {
+		out.Thinking = &chatThinking{Type: wire.Thinking}
 	}
 	for i, msg := range req.Messages {
 		wire, err := openAIMessage(msg)

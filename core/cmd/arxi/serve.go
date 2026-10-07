@@ -907,15 +907,26 @@ func handleModelList(map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// efforts is what each model takes for thinking (an empty list: nothing to
+	// choose), so a client builds its menu from the core's one table.
 	type row struct {
-		Provider string `json:"provider"`
-		ID       string `json:"id"`
-		Enabled  bool   `json:"enabled"`
+		Provider string   `json:"provider"`
+		ID       string   `json:"id"`
+		Enabled  bool     `json:"enabled"`
+		Efforts  []string `json:"efforts"`
+	}
+	protocol := map[string]string{}
+	for _, p := range ps {
+		protocol[p.Name] = p.EffectiveProtocol()
 	}
 	rows := model.Rows(ps)
 	out := make([]row, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, row{Provider: r.Provider, ID: r.Name, Enabled: r.Enabled})
+		levels := model.EffortLevels(protocol[r.Provider], r.Name)
+		if levels == nil {
+			levels = []string{}
+		}
+		out = append(out, row{Provider: r.Provider, ID: r.Name, Enabled: r.Enabled, Efforts: levels})
 	}
 	return struct {
 		Models []row `json:"models"`

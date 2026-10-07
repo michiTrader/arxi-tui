@@ -283,20 +283,31 @@ func chatSend(ctx context.Context, prompt, historyJSON, system, ref string) (cha
 	return chatSendEffort(ctx, prompt, historyJSON, system, ref, "")
 }
 
-// chatEfforts are the thinking levels a caller may ask for. "auto" and the empty
-// string both mean "send nothing and let the model decide".
-var chatEfforts = map[string]bool{"minimal": true, "low": true, "medium": true, "high": true}
-
-// normalizeEffort maps what a caller typed to what goes on the wire.
+// normalizeEffort maps what a caller typed to the word that goes on. "auto" and
+// the empty string both mean "send nothing and let the model decide". Which words
+// a particular model takes is checked once the model is known (chatSendEffort).
 func normalizeEffort(effort string) (string, error) {
 	e := strings.ToLower(strings.TrimSpace(effort))
 	if e == "" || e == "auto" {
 		return "", nil
 	}
-	if !chatEfforts[e] {
-		return "", badInvocation{fmt.Errorf("effort %q is not one of auto, minimal, low, medium, high", effort)}
+	if !model.IsEffortWord(e) {
+		return "", badInvocation{fmt.Errorf("effort %q is not one of auto, %s", effort, strings.Join(model.EffortWords, ", "))}
 	}
 	return e, nil
+}
+
+// checkEffort refuses a level the resolved model does not take, naming the ones
+// it does, before anything is billed.
+func checkEffort(res model.Resolution, level string) error {
+	if level == "" || model.EffortAllowed(res.Protocol, res.Model, level) {
+		return nil
+	}
+	have := model.EffortLevels(res.Protocol, res.Model)
+	if len(have) == 0 {
+		return badInvocation{fmt.Errorf("%s/%s takes no thinking level; leave the effort unset", res.Provider, res.Model)}
+	}
+	return badInvocation{fmt.Errorf("%s/%s does not take effort %q; it takes: %s", res.Provider, res.Model, level, strings.Join(have, ", "))}
 }
 
 // chatSendEffort is chatSend with a thinking level.
@@ -338,6 +349,9 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	}
 	res, err := model.Resolve(ps, ref)
 	if err != nil {
+		return chatResult{}, err
+	}
+	if err := checkEffort(res, level); err != nil {
 		return chatResult{}, err
 	}
 

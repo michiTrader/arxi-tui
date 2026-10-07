@@ -29,6 +29,7 @@ type fakeLLM struct {
 	failCode int
 	calls    int      // chat requests seen
 	efforts  []string // reasoning_effort of each chat request ("" when absent)
+	thinking []string // thinking.type of each chat request ("" when absent)
 	models   []string
 	status   int
 	streams  int      // chat requests that asked for server-sent events
@@ -72,8 +73,11 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 			var body struct {
 				Messages        []map[string]any `json:"messages"`
 				ReasoningEffort string           `json:"reasoning_effort"`
-				Stream          bool             `json:"stream"`
-				Tools           []struct {
+				Thinking        *struct {
+					Type string `json:"type"`
+				} `json:"thinking"`
+				Stream bool `json:"stream"`
+				Tools  []struct {
 					Function struct {
 						Name string `json:"name"`
 					} `json:"function"`
@@ -82,6 +86,12 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 			json.NewDecoder(r.Body).Decode(&body)
 			f.messages = append(f.messages, body.Messages)
 			f.efforts = append(f.efforts, body.ReasoningEffort)
+			switch {
+			case body.Thinking != nil:
+				f.thinking = append(f.thinking, body.Thinking.Type)
+			default:
+				f.thinking = append(f.thinking, "")
+			}
 			var offered []string
 			for _, tl := range body.Tools {
 				offered = append(offered, tl.Function.Name)
@@ -418,14 +428,49 @@ func TestChatSendsTheThinkingLevelOnlyWhenAsked(t *testing.T) {
 	if _, err := discoverModels(context.Background(), "fake"); err != nil {
 		t.Fatal(err)
 	}
-	for _, effort := range []string{"", "auto", "AUTO", "high", " Low ", "minimal", "medium"} {
+	for _, effort := range []string{"", "auto", "AUTO", "high", " Low ", "medium"} {
 		if _, err := chatSendEffort(context.Background(), "hi", "", "", "", effort); err != nil {
 			t.Fatalf("effort %q: %v", effort, err)
 		}
 	}
-	want := []string{"", "", "", "high", "low", "minimal", "medium"}
+	want := []string{"", "", "", "high", "low", "medium"}
 	if strings.Join(f.efforts, ",") != strings.Join(want, ",") {
 		t.Errorf("reasoning_effort on the wire = %q, want %q", f.efforts, want)
+	}
+}
+
+// TestChatThinkingLevelsFollowTheModel pins the per-model rules end to end: a
+// DeepSeek V4 model has no medium, switches thinking off with the `thinking`
+// field and takes max; a level the model lacks is refused before billing, with
+// the levels it does take named.
+func TestChatThinkingLevelsFollowTheModel(t *testing.T) {
+	isolate(t)
+	f := newFakeLLM(t, "deepseek-v4.1-flash")
+	if _, err := registerProvider("fake", f.url(), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverModels(context.Background(), "fake"); err != nil {
+		t.Fatal(err)
+	}
+	for _, effort := range []string{"max", "low", "off"} {
+		if _, err := chatSendEffort(context.Background(), "hi", "", "", "", effort); err != nil {
+			t.Fatalf("effort %q: %v", effort, err)
+		}
+	}
+	if got, want := strings.Join(f.efforts, ","), "max,low,"; got != want {
+		t.Errorf("reasoning_effort = %q, want %q", got, want)
+	}
+	if got, want := strings.Join(f.thinking, ","), ",,disabled"; got != want {
+		t.Errorf("thinking.type = %q, want %q", got, want)
+	}
+	for _, bad := range []string{"medium", "minimal", "xhigh"} {
+		_, err := chatSendEffort(context.Background(), "hi", "", "", "", bad)
+		if err == nil || !strings.Contains(err.Error(), "off, low, high, max") {
+			t.Errorf("effort %q: err = %v; want a refusal listing off, low, high, max", bad, err)
+		}
+	}
+	if len(f.efforts) != 3 {
+		t.Errorf("the provider was called %d times, want 3 (refusals must not bill)", len(f.efforts))
 	}
 }
 

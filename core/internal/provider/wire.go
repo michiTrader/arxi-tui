@@ -44,9 +44,13 @@ type chatRequest struct {
 	// while appearing to honour it.
 	Temperature *float64 `json:"temperature,omitempty"`
 
-	// ReasoningEffort is the thinking level ("minimal" .. "high"). Empty is
+	// ReasoningEffort is the thinking depth ("minimal" .. "max"). Empty is
 	// omitted so a provider that does not know the field never sees it.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+
+	// Thinking is the on/off switch some models carry (DeepSeek V4, Kimi K2).
+	// Nil is omitted for the same reason.
+	Thinking *chatThinking `json:"thinking,omitempty"`
 
 	// Stream stays false for runs: streaming would deliver the reply in
 	// fragments and the usage block last, which means the cost of a turn would be
@@ -58,6 +62,11 @@ type chatRequest struct {
 
 	// StreamOptions asks a streaming server to send the usage block last.
 	StreamOptions *streamOptions `json:"stream_options,omitempty"`
+}
+
+// chatThinking is {"type": "enabled" | "disabled"}.
+type chatThinking struct {
+	Type string `json:"type"`
 }
 
 type streamOptions struct {

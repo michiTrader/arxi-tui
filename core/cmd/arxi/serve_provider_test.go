@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/michiTrader/arxi/internal/modelstore"
@@ -215,9 +216,10 @@ func TestModelListAndToggleOverTheWire(t *testing.T) {
 	}
 	var res struct {
 		Models []struct {
-			Provider string `json:"provider"`
-			ID       string `json:"id"`
-			Enabled  bool   `json:"enabled"`
+			Provider string   `json:"provider"`
+			ID       string   `json:"id"`
+			Enabled  bool     `json:"enabled"`
+			Efforts  []string `json:"efforts"`
 		} `json:"models"`
 	}
 	raw, _ := json.Marshal(got.Result)
@@ -228,6 +230,11 @@ func TestModelListAndToggleOverTheWire(t *testing.T) {
 	for _, m := range res.Models {
 		if m.ID == "gpt-5.1" {
 			seen = true
+			// Each row carries the thinking levels the model takes, so the TUI
+			// builds /effort from the core's table instead of guessing.
+			if strings.Join(m.Efforts, " ") != "off low medium high" {
+				t.Errorf("model.list efforts for gpt-5.1 = %v, want off low medium high", m.Efforts)
+			}
 			if m.Enabled {
 				t.Errorf("model.list still shows gpt-5.1 enabled after disabling it.\n" +
 					"  consequence: the toggle did not persist, so the list the TUI " +
