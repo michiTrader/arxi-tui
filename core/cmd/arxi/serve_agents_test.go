@@ -279,3 +279,48 @@ func TestBlueprintMemberRefusesWhatTheLoaderRefusesAndKeepsTheFile(t *testing.T)
 		t.Errorf("a refused edit changed the file:\n%s", after)
 	}
 }
+
+func TestBlueprintWatchAddsReplacesAndRemovesAndAnswersWithWhatIsSaved(t *testing.T) {
+	inAgentsDir(t)
+	wireOK(t, `{"id":"1","type":"agent.create","params":{"name":"a","tools":"read"}}`)
+	wireOK(t, `{"id":"2","type":"agent.create","params":{"name":"b","tools":"read"}}`)
+	wireOK(t, `{"id":"3","type":"blueprint.create","params":{"name":"duo","members":"a,b"}}`)
+
+	got := wireOK(t, `{"id":"4","type":"blueprint.watch","params":{"name":"duo","agent":"b","pattern":"stage.*","action":"notify"}}`)
+	ws := got["watchers"].([]any)
+	if len(ws) != 1 || ws[0].(map[string]any)["agent"] != "b" || ws[0].(map[string]any)["action"] != "notify" {
+		t.Fatalf("watchers = %v", ws)
+	}
+	got = wireOK(t, `{"id":"5","type":"blueprint.watch","params":{"name":"duo","agent":"b","pattern":"stage.*"}}`)
+	ws = got["watchers"].([]any)
+	if len(ws) != 1 || ws[0].(map[string]any)["action"] != nil {
+		t.Fatalf("saying the pair again must replace the rule: %v", ws)
+	}
+	got = wireOK(t, `{"id":"6","type":"blueprint.watch","params":{"name":"duo","agent":"b","pattern":"stage.*","remove":true}}`)
+	if ws = got["watchers"].([]any); len(ws) != 0 {
+		t.Fatalf("after removing: %v", ws)
+	}
+}
+
+func TestBlueprintWatchRefusesWhatTheLoaderRefusesAndKeepsTheFile(t *testing.T) {
+	dir := inAgentsDir(t)
+	wireOK(t, `{"id":"1","type":"agent.create","params":{"name":"solo","tools":"read"}}`)
+	before, _ := os.ReadFile(filepath.Join(dir, "solo.yaml"))
+	cases := []struct{ name, line, want string }{
+		{"a watcher on nobody", `{"id":"2","type":"blueprint.watch","params":{"name":"solo","agent":"ghost","pattern":"stage.*"}}`, "not declared in members"},
+		{"a wildcard in the middle", `{"id":"3","type":"blueprint.watch","params":{"name":"solo","agent":"solo","pattern":"st*age"}}`, "trailing wildcard"},
+		{"removing what is not there", `{"id":"4","type":"blueprint.watch","params":{"name":"solo","agent":"solo","pattern":"stage.*","remove":true}}`, "no watcher"},
+		{"a team that does not exist", `{"id":"5","type":"blueprint.watch","params":{"name":"ghost","agent":"x","pattern":"stage.*"}}`, "no such agent"},
+		{"remove that is not a boolean", `{"id":"6","type":"blueprint.watch","params":{"name":"solo","agent":"solo","pattern":"stage.*","remove":"yes"}}`, "must be a bool"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if msg := wireRefused(t, c.line); !strings.Contains(msg, c.want) {
+				t.Errorf("message = %q, want it to contain %q", msg, c.want)
+			}
+		})
+	}
+	if after, _ := os.ReadFile(filepath.Join(dir, "solo.yaml")); string(after) != string(before) {
+		t.Errorf("a refused edit changed the file:\n%s", after)
+	}
+}

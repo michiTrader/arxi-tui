@@ -450,6 +450,17 @@ var Registry = []Cmd{
 			p("role", "string", "free label for what the member does; empty removes it"),
 			p("tools", "string", "tools the member may use, comma-separated; empty removes them all"),
 			p("advisory", "bool", "the member gives an opinion but does not count toward advancing")}},
+	// Protocol but NOT AgentTool, for the sharpest reason of the three: a watcher is the
+	// one declaration that spends money on its own, and an agent able to add one could
+	// wake itself or a peer without anybody having asked for a turn.
+	{Path: []string{"blueprint", "watch"}, Desc: "add, replace or remove one watcher of a stored blueprint",
+		Kind: CLIOnly | Protocol, Mutates: true, Idempotent: true, Since: 1,
+		Params: []Param{pos(p("name", "string", "blueprint name")),
+			req(p("agent", "string", "the member the watcher wakes")),
+			req(p("pattern", "string", "the event type it listens to, like stage.advanced or stage.*")),
+			p("action", "string", "what it does: activate, notify or run_tool"),
+			p("tool", "string", "with run_tool: the tool to dispatch"),
+			p("remove", "bool", "drop the watcher instead of saving it")}},
 	// `as` was ADDED when this verb was wired, for `blueprint create`'s reason one
 	// entry up: the entry was written when a ref was assumed to name the thing it
 	// installs, and a ref does not. The default is the blueprint's own `name:`

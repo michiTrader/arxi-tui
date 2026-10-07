@@ -2,7 +2,7 @@
 
 ## 20.0 What this document is for
 
-`arxi surface` lists the 62 declared capabilities. A list is not a design: it
+`arxi surface` lists the 63 declared capabilities. A list is not a design: it
 tells you what exists and nothing about whether the set is *coherent*. Two
 questions a list cannot answer:
 
@@ -20,9 +20,9 @@ against the registry in both directions, so a capability no scenario reaches and
 a scenario invoking a verb that does not exist each turn the build red and name
 themselves.
 
-**Status of the commands.** All 62 run today. Every capability `arxi surface`
+**Status of the commands.** All 63 run today. Every capability `arxi surface`
 declares has a command behind it, `design` last of them, and the count is
-measured rather than asserted: `cmd/arxi/surface_coverage_test.go` invokes all 62
+measured rather than asserted: `cmd/arxi/surface_coverage_test.go` invokes all 63
 against the built binary and compares the tally with the figure README.md states.
 ADR-0001 explains why declaring the whole surface before building any of it was
 deliberate.
@@ -538,6 +538,15 @@ of that one team, and only it. Members were copied out of their agents, so editi
 the copy does not touch the agent it came from. For a single agent the member is
 the agent itself. It is not an agent tool for a sharper reason than the stage
 rules: an agent able to grant itself `bash` would be rewriting its own tool policy.
+
+And what wakes a member is the same kind of decision. `arxi blueprint watch
+feature-team --agent security --pattern 'stage.advanced' --action notify` adds a
+watcher, saying the same member and pattern again replaces that rule, and `--remove`
+drops it. Only the `watchers:` block is rewritten, and the result goes through the
+loader first, so a watcher on someone who is not a member, or a pattern with a
+wildcard in the middle, is refused with the loader's sentence and the file stays as
+it was. It is not an agent tool: a watcher is the one declaration that spends money
+without anybody asking for a turn, and an agent able to add one could wake itself.
 
 Three lines of that screen are the ones worth their width.
 
@@ -1095,14 +1104,14 @@ message type are three **mechanical projections of one registry entry** —
 synonym anywhere would fork the vocabulary and require a hand-maintained mapping
 forever.
 
-Of 62 declared capabilities, **34 are exposed as agent tools**. The 26 that are
+Of 63 declared capabilities, **34 are exposed as agent tools**. The 27 that are
 not are a security boundary, not an oversight:
 
 | not an agent tool | why an agent must not have it |
 |---|---|
 | `provider add`, `provider key`, `provider list`, `provider update`, `provider remove`, `model add`, `model discover`, `model remove`, `model default`, `model enable`, `model disable`, `chat send` | credentials and model availability are operator decisions; an agent that can enable models can route itself to a more expensive one. `provider key` is the sharpest of them: an agent that could replace a key could redirect every later run's spend to an account of its choosing. `model add` writes the price a run is budgeted against, so an agent that could add a model could add it at zero. `chat send` spends the operator's money with no run, no budget ceiling and no log, so it is the operator's call and never a tool |
 | `agent tool policy` | an agent that can widen its own tool policy does not have a policy |
-| `role define`, `blueprint create`, `blueprint stage`, `blueprint member`, `blueprint install` | these define what agents *are* and how they are judged; installing a blueprint is closer to installing code than to doing work |
+| `role define`, `blueprint create`, `blueprint stage`, `blueprint member`, `blueprint watch`, `blueprint install` | these define what agents *are* and how they are judged; installing a blueprint is closer to installing code than to doing work |
 | `inbox approve`, `inbox reject`, `inbox reply` | these are the human's side of the conversation. An agent that could approve its own inbox item turns `ToolPolicy: ask` into `allow` |
 | `run attach` | a blocking stream that burns a turn while waiting (§20.1) |
 | `design`, `serve` | operator surface: an interactive designer and a socket server |

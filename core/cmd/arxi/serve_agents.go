@@ -291,3 +291,42 @@ func handleBlueprintMember(params map[string]any) (any, error) {
 	}
 	return out, nil
 }
+
+// handleBlueprintWatch answers `blueprint.watch`: add, replace or remove one watcher
+// of a stored blueprint, validated before it replaces the file. The answer is the
+// watchers as they are on disk now.
+func handleBlueprintWatch(params map[string]any) (any, error) {
+	remove := false
+	if raw, ok := params["remove"]; ok && raw != nil {
+		b, isBool := raw.(bool)
+		if !isBool {
+			return nil, errors.New("remove must be true or false")
+		}
+		remove = b
+	}
+	name := stringParam(params, "name")
+	st := readAgents()
+	if err := st.SetWatcher(name, agentstore.WatchEdit{Agent: stringParam(params, "agent"),
+		Pattern: stringParam(params, "pattern"), Action: stringParam(params, "action"),
+		Tool: stringParam(params, "tool"), Remove: remove}); err != nil {
+		return nil, err
+	}
+	bp, err := st.Load(name)
+	if err != nil {
+		return nil, err
+	}
+	type watchOut struct {
+		Agent   string `json:"agent"`
+		Pattern string `json:"pattern"`
+		Action  string `json:"action,omitempty"`
+		Tool    string `json:"tool,omitempty"`
+	}
+	out := struct {
+		Name     string     `json:"name"`
+		Watchers []watchOut `json:"watchers"`
+	}{Name: name, Watchers: []watchOut{}}
+	for _, w := range bp.Config.Watchers {
+		out.Watchers = append(out.Watchers, watchOut{Agent: w.Agent, Pattern: w.Pattern, Action: w.Action, Tool: w.Tool})
+	}
+	return out, nil
+}

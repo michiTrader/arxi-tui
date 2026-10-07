@@ -726,3 +726,35 @@ func TestAMemberEditedFromTheCommandLineStillRuns(t *testing.T) {
 		t.Errorf("an advisory that is not a boolean: exit %d, want 2:\n%s", m.code, m.out)
 	}
 }
+
+func TestAWatcherEditedFromTheCommandLineStillRuns(t *testing.T) {
+	dir := workdir(t)
+	storeTeam(t, dir)
+	if c := arxi(t, dir, "blueprint", "create", "feature-team", "--members", "backend,frontend"); c.code != 0 {
+		t.Fatalf("blueprint create: exit %d:\n%s", c.code, c.out)
+	}
+	c := arxi(t, dir, "blueprint", "watch", "feature-team", "--agent", "frontend", "--pattern", "stage.advanced", "--action", "notify")
+	if c.code != 0 {
+		t.Fatalf("blueprint watch: exit %d:\n%s", c.code, c.out)
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "agents", "feature-team.yaml"))
+	if !strings.Contains(string(raw), "pattern: stage.advanced") {
+		t.Fatalf("the watcher is not in the file:\n%s", raw)
+	}
+	if r := arxi(t, dir, "run", "start", "feature-team", "ship it", "--budget", "1", "--sim", "--run-id", "watcher-added"); r.code != 0 {
+		t.Fatalf("a run from the edited team: exit %d:\n%s", r.code, r.out)
+	}
+	before, _ := os.ReadFile(filepath.Join(dir, "agents", "feature-team.yaml"))
+	if bad := arxi(t, dir, "blueprint", "watch", "feature-team", "--agent", "ghost", "--pattern", "stage.*"); bad.code == 0 || !strings.Contains(bad.out, "ghost") {
+		t.Fatalf("a watcher on nobody: exit %d:\n%s", bad.code, bad.out)
+	}
+	if after, _ := os.ReadFile(filepath.Join(dir, "agents", "feature-team.yaml")); string(after) != string(before) {
+		t.Errorf("a refused edit changed the file:\n%s", after)
+	}
+	if rm := arxi(t, dir, "blueprint", "watch", "feature-team", "--agent", "frontend", "--pattern", "stage.advanced", "--remove"); rm.code != 0 {
+		t.Fatalf("removing: exit %d:\n%s", rm.code, rm.out)
+	}
+	if again := arxi(t, dir, "blueprint", "watch", "feature-team", "--agent", "frontend", "--pattern", "stage.advanced", "--remove"); again.code != 1 {
+		t.Errorf("removing what is gone: exit %d, want 1:\n%s", again.code, again.out)
+	}
+}
