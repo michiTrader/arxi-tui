@@ -358,7 +358,7 @@ func TestADeclaredSubcommandIsRecognisedEvenWhenNotDispatched(t *testing.T) {
 	// And the negative: something not declared must NOT be mistaken for a
 	// capability, or every typo becomes "declared but not implemented" and the
 	// user waits for a feature that was never promised.
-	for _, typo := range []string{"resume", "delete", "creat"} {
+	for _, typo := range []string{"unpause", "delete", "creat"} {
 		if surface.Lookup("trigger", typo) != nil {
 			t.Errorf("trigger %s resolves in the registry, so a typo would be "+
 				"reported as an unimplemented feature", typo)

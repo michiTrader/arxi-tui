@@ -372,6 +372,7 @@ var protoHandlers = map[string]protoHandler{
 	"trigger.list":       handleTriggerList,
 	"trigger.create":     handleTriggerCreate,
 	"trigger.pause":      handleTriggerPause,
+	"trigger.resume":     handleTriggerResume,
 	"provider.add":       handleProviderAdd,
 	"provider.key":       handleProviderKey,
 	"provider.list":      handleProviderList,

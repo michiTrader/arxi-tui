@@ -2,7 +2,7 @@
 
 ## 20.0 What this document is for
 
-`arxi surface` lists the 59 declared capabilities. A list is not a design: it
+`arxi surface` lists the 60 declared capabilities. A list is not a design: it
 tells you what exists and nothing about whether the set is *coherent*. Two
 questions a list cannot answer:
 
@@ -20,9 +20,9 @@ against the registry in both directions, so a capability no scenario reaches and
 a scenario invoking a verb that does not exist each turn the build red and name
 themselves.
 
-**Status of the commands.** All 59 run today. Every capability `arxi surface`
+**Status of the commands.** All 60 run today. Every capability `arxi surface`
 declares has a command behind it, `design` last of them, and the count is
-measured rather than asserted: `cmd/arxi/surface_coverage_test.go` invokes all 59
+measured rather than asserted: `cmd/arxi/surface_coverage_test.go` invokes all 60
 against the built binary and compares the tally with the figure README.md states.
 ADR-0001 explains why declaring the whole surface before building any of it was
 deliberate.
@@ -942,6 +942,17 @@ $ arxi trigger pause nightly-audit
 `pause`, not delete — the same reasoning as `run pause`. Silencing a noisy
 trigger while investigating should not destroy its configuration and history.
 
+`resume` is the way back. Without it a paused trigger could never fire again and
+the only exit was editing the file by hand, which is no exit for a person who
+manages their schedules from a screen. It is deliberately **not** an agent tool:
+a trigger a human paused is a decision, and an agent that could switch it back on
+would undo it. Firings missed while it was paused are not replayed; the trigger's
+own `--on-missed` policy decides.
+
+```
+$ arxi trigger resume nightly-audit
+```
+
 ### Something has to be watching the clock
 
 The four commands above are the whole of what a user *configures*, and none of
@@ -1061,7 +1072,7 @@ message type are three **mechanical projections of one registry entry** —
 synonym anywhere would fork the vocabulary and require a hand-maintained mapping
 forever.
 
-Of 59 declared capabilities, **34 are exposed as agent tools**. The 25 that are
+Of 60 declared capabilities, **34 are exposed as agent tools**. The 26 that are
 not are a security boundary, not an oversight:
 
 | not an agent tool | why an agent must not have it |
@@ -1073,6 +1084,7 @@ not are a security boundary, not an oversight:
 | `run attach` | a blocking stream that burns a turn while waiting (§20.1) |
 | `design`, `serve` | operator surface: an interactive designer and a socket server |
 | `surface`, `version` | operator surface, and redundant besides: `schema` already gives an agent the same capability list in a form it can parse, so exposing the human-readable rendering adds a second answer to one question. `version` describes the binary the agent is already running inside, which is a fact it cannot act on |
+| `trigger resume` | the other half of a human's `pause`: a trigger somebody paused is a decision, and an agent able to switch it back on would undo it |
 | `trigger run` | the only **transitive** exclusion: it starts whatever every stored trigger's `--then` names, unattended. An agent granted this one verb is granted the union of every action anybody ever scheduled, which no human reading the request can reconstruct |
 
 Note three that *are* tools and might look like they should not be. `agent create`

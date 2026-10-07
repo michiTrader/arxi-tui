@@ -88,6 +88,25 @@ func handleTriggerPause(params map[string]any) (any, error) {
 	return showPayload(r, nowFunc()), nil
 }
 
+// handleTriggerResume answers `trigger.resume`.
+func handleTriggerResume(params map[string]any) (any, error) {
+	st, err := readTriggers()
+	if err != nil {
+		return nil, err
+	}
+	r, err := st.Load(stringParam(params, "name"))
+	if err != nil {
+		return nil, err
+	}
+	if r.Status != trigger.StatusActive {
+		r.Status = trigger.StatusActive
+		if err := st.Save(r); err != nil {
+			return nil, fmt.Errorf("resuming %s: %w", r.Name, err)
+		}
+	}
+	return showPayload(r, nowFunc()), nil
+}
+
 func orDefault(v, def string) string {
 	if v == "" {
 		return def
