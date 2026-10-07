@@ -314,6 +314,9 @@ func (f *flowScreen) detail(st *fold.State) string {
 	if len(st.StageRun) > 0 || len(f.plan) > 0 {
 		parts = append(parts, stageLine(st.StageRun, f.plan))
 	}
+	if m := f.memberDetail(st); m != "" {
+		parts = append(parts, m)
+	}
 	if a := st.Attention; a.Kind != "" {
 		line := "⚠ " + a.Text
 		if a.Kind == "approval" {
@@ -338,6 +341,63 @@ func (f *flowScreen) detail(st *fold.State) string {
 		parts = append(parts, f.banner)
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// recentTools is how many of a member's latest tool calls the detail lists.
+const recentTools = 5
+
+// memberDetail says what the highlighted member has been doing: its state, its
+// turns and spend, and the last tools it used with what came of each. It is read
+// from the log like everything here, so a resumed session shows the same thing.
+// Empty when the run has no members to highlight.
+func (f *flowScreen) memberDetail(st *fold.State) string {
+	if f.sel < 0 || f.sel >= len(st.TeamMembers) {
+		return ""
+	}
+	m := st.TeamMembers[f.sel]
+	head := m.ID
+	if m.Role != "" {
+		head += " · " + m.Role
+	}
+	lines := []string{"▸ " + head + " — " + memberStatus(m, st.WaitingOn)}
+	var mine []fold.ToolActivity
+	for _, c := range st.ToolCalls {
+		if c.Actor == m.ID {
+			mine = append(mine, c)
+		}
+	}
+	if len(mine) == 0 {
+		return strings.Join(append(lines, "  has not used any tool yet"), "\n")
+	}
+	if len(mine) > recentTools {
+		lines = append(lines, fmt.Sprintf("  last %d of %s:", recentTools, plural(len(mine), "tool call", "tool calls")))
+		mine = mine[len(mine)-recentTools:]
+	} else {
+		lines = append(lines, "  tools used:")
+	}
+	for _, c := range mine {
+		lines = append(lines, "  "+toolLine(c))
+	}
+	return strings.Join(lines, "\n")
+}
+
+// toolLine is one tool call in words: what ran and how it ended. A denial that is
+// a question is said as a question, because that is what it is.
+func toolLine(c fold.ToolActivity) string {
+	name := c.Tool
+	if name == "" {
+		name = "a tool"
+	}
+	switch c.Outcome {
+	case "completed":
+		return "✓ " + name
+	case "denied":
+		if c.Policy == "ask" {
+			return "… " + name + " — waits for your approval"
+		}
+		return "✗ " + name + " — not allowed"
+	}
+	return "● " + name + " — running"
 }
 
 // approvalItem is the inbox item an approval attention waits on, or "".
