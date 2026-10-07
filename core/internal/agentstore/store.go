@@ -85,6 +85,7 @@
 package agentstore
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"os"
@@ -880,4 +881,186 @@ func (s *Store) write(name string, body []byte) error {
 		return fmt.Errorf("agentstore: publish agent %q: %w", name, err)
 	}
 	return fsdurability.SyncDirectory(s.dir)
+}
+
+// StageEdit is a change to the rules of ONE stage of a stored blueprint.
+//
+// Every field is optional and an empty one leaves the stage's value alone, so a
+// caller changing the timeout cannot clobber the advance rule by not knowing it.
+// TimeoutMs is a pointer for that reason: nil is "untouched" and 0 is "no
+// timeout", which are different requests.
+type StageEdit struct {
+	Stage       string // which stage; required
+	AdvanceWhen string // all | any | quorum:N
+	TimeoutMs   *int64 // nil: untouched; 0: remove the timeout
+	OnTimeout   string // escalate | advance | fail | ask
+}
+
+// SetStage rewrites the rules of one stage of a stored blueprint and nothing else.
+//
+// There was no way to change a team's process after `blueprint create`: Render
+// writes `advance_when: all` and no timeouts on purpose (they are decisions no
+// member can supply), and the only way to make them was a text editor. This is
+// that decision made from a screen.
+//
+// Only the `stages:` block is replaced. Everything outside it -- members,
+// watchers, the comments somebody wrote -- is carried over byte for byte, because
+// the file is authoritative and this store has no right to paraphrase it. Inside
+// the block, every field of every stage is carried over as the file declared it
+// (so a default is not turned into an explicit value), except the ones the edit
+// names; the block is rewritten one stage per line, so a comment placed between
+// two stages is the one thing that does not survive.
+//
+// The result is loaded before it is published, as every writer here does, so a
+// request that makes the file invalid (`quorum:5` in a team of two, a timeout that
+// is not positive) is refused with the loader's own sentence and the file on disk
+// is untouched. It is published through write, so a reader never sees half of it.
+// A file that does not load today is refused too: editing it would hide whatever
+// is wrong with it behind a change the user asked for.
+//
+// Runs already started keep the rules they froze (runs/<id>/blueprint.snapshot);
+// an edit applies from the next run.
+func (s *Store) SetStage(name string, e StageEdit) error {
+	if e.Stage == "" {
+		return errors.New("say which stage to change")
+	}
+	if e.AdvanceWhen == "" && e.TimeoutMs == nil && e.OnTimeout == "" {
+		return errors.New("nothing to change: give a new advance rule, a timeout or what happens when it runs out")
+	}
+	if e.TimeoutMs != nil && *e.TimeoutMs < 0 {
+		return fmt.Errorf("a timeout cannot be negative (got %d ms); use 0 for none", *e.TimeoutMs)
+	}
+	bp, err := s.Load(name)
+	if err != nil {
+		return err
+	}
+	doc, err := blueprint.Parse(bp.Raw)
+	if err != nil {
+		return err
+	}
+	root, _ := doc.(map[string]any)
+	items, _ := root["stages"].([]any)
+	if len(items) == 0 {
+		return fmt.Errorf("%q declares no stages, so there is nothing to change", name)
+	}
+
+	var lines []string
+	found := false
+	for _, it := range items {
+		m, _ := it.(map[string]any)
+		if m["name"] == e.Stage {
+			found = true
+			if e.AdvanceWhen != "" {
+				m["advance_when"] = e.AdvanceWhen
+			}
+			if e.OnTimeout != "" {
+				m["on_timeout"] = e.OnTimeout
+			}
+			if e.TimeoutMs != nil {
+				if *e.TimeoutMs == 0 {
+					delete(m, "timeout_ms")
+				} else {
+					m["timeout_ms"] = *e.TimeoutMs
+				}
+			}
+		}
+		lines = append(lines, "  - "+renderStageMap(m))
+	}
+	if !found {
+		var have []string
+		for _, it := range items {
+			if m, ok := it.(map[string]any); ok {
+				have = append(have, fmt.Sprint(m["name"]))
+			}
+		}
+		return fmt.Errorf("%q has no stage called %q (its stages: %s)", name, e.Stage, strings.Join(have, ", "))
+	}
+
+	out, err := replaceStagesBlock(bp.Raw, lines)
+	if err != nil {
+		return err
+	}
+	if _, err := blueprint.Load(out); err != nil {
+		return err
+	}
+	return s.write(name, out)
+}
+
+// renderStageMap writes one stage as a flow mapping, the shape Team.Render uses.
+// Keys come out in a fixed order so an edit changes only the line it is about.
+func renderStageMap(m map[string]any) string {
+	var parts []string
+	for _, k := range []string{"name", "advance_when", "timeout_ms", "on_timeout", "workspace", "on_conflict"} {
+		v, ok := m[k]
+		if !ok || v == nil {
+			continue
+		}
+		switch x := v.(type) {
+		case string:
+			parts = append(parts, k+": "+yamlScalar(x))
+		default:
+			parts = append(parts, fmt.Sprintf("%s: %v", k, x))
+		}
+	}
+	return "{" + strings.Join(parts, ", ") + "}"
+}
+
+// replaceStagesBlock swaps the top-level `stages:` block of raw for the given
+// list items and leaves every other byte alone.
+//
+// The block runs from the `stages:` line to the next top-level key. Blank and
+// comment lines trailing it belong to whatever follows, so they stay where they
+// were. A file with no top-level `stages:` is refused rather than appended to.
+func replaceStagesBlock(raw []byte, items []string) ([]byte, error) {
+	eol := "\n"
+	if bytes.Contains(raw, []byte("\r\n")) {
+		eol = "\r\n"
+	}
+	lines := strings.Split(string(raw), "\n")
+	start := -1
+	for i, l := range lines {
+		if strings.HasPrefix(strings.TrimRight(l, "\r"), "stages:") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return nil, errors.New("this blueprint has no top-level stages: block to change")
+	}
+	end := len(lines)
+	for i := start + 1; i < len(lines); i++ {
+		t := strings.TrimRight(lines[i], "\r")
+		if t == "" || t[0] == ' ' || t[0] == '\t' || t[0] == '-' || t[0] == '#' {
+			continue
+		}
+		end = i
+		break
+	}
+	// Give back the blank and comment lines that trail the block.
+	for end > start+1 {
+		t := strings.TrimSpace(lines[end-1])
+		if t == "" || t[0] == '#' {
+			end--
+			continue
+		}
+		break
+	}
+
+	var b strings.Builder
+	for _, l := range lines[:start] {
+		b.WriteString(l)
+		b.WriteString("\n")
+	}
+	b.WriteString("stages:" + eol)
+	for _, it := range items {
+		b.WriteString(it + eol)
+	}
+	rest := lines[end:]
+	for i, l := range rest {
+		b.WriteString(l)
+		if i < len(rest)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return []byte(b.String()), nil
 }

@@ -658,3 +658,40 @@ func TestEditingAMemberDoesNotChangeATeamAlreadyComposed(t *testing.T) {
 			"log to point at.", show.out)
 	}
 }
+
+// TestAStageEditedFromTheCommandLineStillRuns walks the edit the way a person
+// would: compose, change the rules of a stage, then start a run from the changed
+// file. The refusal half checks the file is left alone, because a half-applied
+// edit is the one outcome worse than a refused one.
+func TestAStageEditedFromTheCommandLineStillRuns(t *testing.T) {
+	dir := workdir(t)
+	storeTeam(t, dir)
+	if c := arxi(t, dir, "blueprint", "create", "feature-team", "--members", "backend,frontend"); c.code != 0 {
+		t.Fatalf("blueprint create: exit %d:\n%s", c.code, c.out)
+	}
+
+	c := arxi(t, dir, "blueprint", "stage", "feature-team", "--stage", "work",
+		"--advance-when", "any", "--timeout-ms", "600000", "--on-timeout", "ask")
+	if c.code != 0 {
+		t.Fatalf("blueprint stage: exit %d:\n%s", c.code, c.out)
+	}
+	v := arxi(t, dir, "blueprint", "validate", filepath.Join("agents", "feature-team.yaml"))
+	if v.code != 0 || !strings.Contains(v.out, "any") {
+		t.Fatalf("validate after the edit: exit %d:\n%s", v.code, v.out)
+	}
+	if r := arxi(t, dir, "run", "start", "feature-team", "ship it", "--budget", "1", "--sim", "--run-id", "edited"); r.code != 0 {
+		t.Fatalf("a run from the edited team: exit %d:\n%s", r.code, r.out)
+	}
+
+	before, _ := os.ReadFile(filepath.Join(dir, "agents", "feature-team.yaml"))
+	bad := arxi(t, dir, "blueprint", "stage", "feature-team", "--stage", "work", "--advance-when", "quorum:9")
+	if bad.code == 0 || !strings.Contains(bad.out, "quorum") {
+		t.Fatalf("a quorum bigger than the team: exit %d:\n%s", bad.code, bad.out)
+	}
+	if after, _ := os.ReadFile(filepath.Join(dir, "agents", "feature-team.yaml")); string(after) != string(before) {
+		t.Errorf("a refused edit changed the file:\n%s", after)
+	}
+	if m := arxi(t, dir, "blueprint", "stage", "feature-team", "--stage", "work", "--timeout-ms", "soon"); m.code != 2 {
+		t.Errorf("a timeout that is not a number: exit %d, want 2:\n%s", m.code, m.out)
+	}
+}
