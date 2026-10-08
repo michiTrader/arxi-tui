@@ -231,9 +231,13 @@ func uiColorCommand(input string) (tok, style string, ok bool) {
 // interfaceState is everything the user has made their own. Scene is nil when the
 // document is the built-in one, so a user who only changed colours keeps receiving
 // layout improvements with each release.
+//
+// The parts are strings, not raw JSON: a raw part that is absent would be written as
+// null and read back as the four bytes "null", a document with no root, which is how
+// the first undo after the first change came back as an empty screen.
 type interfaceState struct {
-	Scene  json.RawMessage `json:"scene"`
-	Tokens json.RawMessage `json:"tokens"`
+	Scene  string `json:"scene,omitempty"`
+	Tokens string `json:"tokens,omitempty"`
 }
 
 func previousInterfacePath() string {
@@ -248,12 +252,12 @@ func previousInterfacePath() string {
 func currentInterface() (interfaceState, error) {
 	var st interfaceState
 	if b, err := os.ReadFile(userScenePath()); err == nil {
-		st.Scene = b
+		st.Scene = string(b)
 	} else if !os.IsNotExist(err) {
 		return st, err
 	}
 	if b, err := os.ReadFile(userThemePath()); err == nil {
-		st.Tokens = b
+		st.Tokens = string(b)
 	} else if !os.IsNotExist(err) {
 		return st, err
 	}
@@ -268,7 +272,7 @@ func writeInterface(st interfaceState) error {
 	for _, part := range []struct {
 		path string
 		data []byte
-	}{{userScenePath(), st.Scene}, {userThemePath(), st.Tokens}} {
+	}{{userScenePath(), []byte(st.Scene)}, {userThemePath(), []byte(st.Tokens)}} {
 		if len(part.data) == 0 {
 			if err := os.Remove(part.path); err != nil && !os.IsNotExist(err) {
 				return err
@@ -302,10 +306,10 @@ func saveInterface(doc *scene.Document, u userTokens) error {
 	}
 	var next interfaceState
 	if !sameDocument(doc.Source(), defaultscene.JSON) {
-		next.Scene = doc.Source()
+		next.Scene = string(doc.Source())
 	}
 	if len(u) > 0 {
-		next.Tokens = encodeUserTokens(u)
+		next.Tokens = string(encodeUserTokens(u))
 	}
 	return writeInterface(next)
 }
@@ -322,7 +326,7 @@ func loadInterface(st interfaceState) (*scene.Document, userTokens, error) {
 	if len(st.Scene) == 0 {
 		doc, err = scene.ParseNamed(defaultscene.Name, defaultscene.JSON)
 	} else {
-		doc, err = scene.ParseNamed(userScenePath(), st.Scene)
+		doc, err = scene.ParseNamed(userScenePath(), []byte(st.Scene))
 		if err == nil {
 			err = doc.Validate()
 		}
@@ -330,7 +334,7 @@ func loadInterface(st interfaceState) (*scene.Document, userTokens, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	u, err := parseUserTokens(userThemePath(), st.Tokens)
+	u, err := parseUserTokens(userThemePath(), []byte(st.Tokens))
 	if err != nil {
 		return nil, nil, err
 	}
