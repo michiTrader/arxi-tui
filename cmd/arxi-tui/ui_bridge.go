@@ -51,6 +51,14 @@ import (
 // the eval corpus measured. Plugins propose, they never write; the agent is held to
 // the same rule.
 
+// uiSystemHint tells the model, on every turn the interface tools are lent, that the
+// app it is talking through is arxi-tui and that "the tui", "the interface", "the
+// colours" mean that app, not the user's project. It is one sentence (about 60
+// tokens) because it rides with every question; the how is in ui_guide.
+const uiSystemHint = "You are running inside arxi-tui, the terminal app the user is talking to you through. " +
+	"When they mention the TUI, the interface, the screen, or how you or your replies look (colours, layout, spacing), " +
+	"they mean this app, not their project: call ui_guide, never search their files for it."
+
 // Names of the two tools, as the model calls them.
 const (
 	uiToolGuide = "ui_guide"
@@ -63,7 +71,12 @@ const (
 type uiBridge struct {
 	mu  sync.Mutex
 	doc *scene.Document
-	thm *theme.Theme
+	// below is the theme under the user's colours (factory and plugins); user is
+	// the user's own colour layer, which a colour change edits. What is drawn is
+	// the one laid over the other, and keeping them apart is what lets a colour be
+	// taken off: it falls back to below, which the composed theme no longer knows.
+	below *theme.Theme
+	user  userTokens
 	// policy is what the agent mode says about changing the interface: deny (plan),
 	// ask, or allow (full access only).
 	policy string
@@ -77,7 +90,10 @@ type uiBridge struct {
 // reverting what the user did.
 type uiApply struct {
 	base, doc *scene.Document
-	done      chan error
+	// colors is the user's colour layer after the change, nil when the change
+	// touches no colour; baseColors is the layer it was drafted from.
+	colors, baseColors userTokens
+	done               chan error
 }
 
 func newUIBridge() *uiBridge {
@@ -86,16 +102,18 @@ func newUIBridge() *uiBridge {
 
 // publish records the document and theme on screen. The loop calls it on every
 // repaint, so a tool call always drafts against what the user is looking at.
-func (b *uiBridge) publish(doc *scene.Document, thm *theme.Theme) {
+func (b *uiBridge) publish(doc *scene.Document, below *theme.Theme, user userTokens) {
 	b.mu.Lock()
-	b.doc, b.thm = doc, thm
+	b.doc, b.below, b.user = doc, below, user
 	b.mu.Unlock()
 }
 
-func (b *uiBridge) snapshot() (*scene.Document, *theme.Theme) {
+// snapshot returns the document, the theme under the user's colours, the user's
+// colours, and the theme on screen (the two laid together).
+func (b *uiBridge) snapshot() (*scene.Document, *theme.Theme, userTokens, *theme.Theme) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.doc, b.thm
+	return b.doc, b.below, b.user, withUserTokens(b.below, b.user)
 }
 
 // setMode follows the agent mode. Changing the interface is asked about in every mode
@@ -120,12 +138,13 @@ func (b *uiBridge) setMode(name string) {
 func (b *uiBridge) definitions() []driver.ClientToolDef {
 	return []driver.ClientToolDef{
 		{Name: uiToolGuide,
-			Description: "Read how arxi-tui's OWN interface is built (this terminal app you are running in: banner, chat pane, input bar, status bar), with its live document. It is not in the project folder. Call it before ui_edit whenever the user asks to change how this interface looks or is laid out.",
+			Description: "Read how YOUR OWN interface is built: the terminal app you are running in and the user is looking at (banner, chat, input bar, status bar, and the colours of everything you write). It is NOT in the project folder; never search files for it. Call this first whenever the user asks to change anything about how you or this screen look: layout, spacing, colours, styles.",
 			Schema:      json.RawMessage(`{"type":"object","properties":{}}`)},
 		{Name: uiToolEdit,
-			Description: "Propose a change to arxi-tui's own interface. The user sees the diff and approves it; it is saved and kept across sessions. Pass either commands (/ui lines, applied in order) or scene (the complete new document). A refusal names file:line: fix that and retry.",
+			Description: "Change your own interface (call ui_guide first). The user sees the diff and approves it; it is kept across sessions. Pass colors to recolour, commands (/ui lines) or scene to change the layout. A refusal says what to fix: fix it and retry.",
 			Schema: json.RawMessage(`{"type":"object","properties":{` +
-				`"commands":{"type":"array","items":{"type":"string"},"description":"/ui add|move|set|style lines, as ui_guide explains"},` +
+				`"colors":{"type":"object","additionalProperties":{"type":"string"},"description":"token -> style, e.g. {\"markdown.code\":\"fg=magenta\"}"},` +
+				`"commands":{"type":"array","items":{"type":"string"},"description":"/ui add|move|set|style lines"},` +
 				`"scene":{"type":"string","description":"the complete new scene document, as JSON"},` +
 				`"summary":{"type":"string","description":"one sentence saying what changes, shown to the user"}}}`)},
 	}
@@ -135,7 +154,7 @@ func (b *uiBridge) definitions() []driver.ClientToolDef {
 func (b *uiBridge) call(ctx context.Context, c driver.ClientToolCall, ask func(driver.Approval) bool) driver.ClientToolResult {
 	switch c.Name {
 	case uiToolGuide:
-		doc, thm := b.snapshot()
+		doc, _, _, thm := b.snapshot()
 		if doc == nil {
 			return driver.ClientToolResult{Text: "the interface is not on screen yet; try again", Summary: "The interface is not ready"}
 		}
@@ -157,24 +176,47 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 		return refuse("Not available in plan mode", "the interface may not be changed in plan mode; say what you would change instead")
 	}
 	var args struct {
-		Commands []string `json:"commands"`
-		Scene    string   `json:"scene"`
-		Summary  string   `json:"summary"`
+		Colors   map[string]string `json:"colors"`
+		Commands []string          `json:"commands"`
+		Scene    string            `json:"scene"`
+		Summary  string            `json:"summary"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
-		return refuse("The change was refused", "ui_edit takes {commands: [...]} or {scene: \"...\"}: "+err.Error())
+		return refuse("The change was refused", "ui_edit takes {colors: {...}}, {commands: [...]} or {scene: \"...\"}: "+err.Error())
 	}
-	base, thm := b.snapshot()
+	base, below, user, thm := b.snapshot()
 	if base == nil {
 		return refuse("The interface is not ready", "the interface is not on screen yet; try again")
 	}
-	next, err := draftScene(base, thm, args.Commands, args.Scene)
-	if err != nil {
-		return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix what the message names and call ui_edit again.")
+	var colors userTokens
+	var diff string
+	nextThm := thm
+	if len(args.Colors) > 0 {
+		var err error
+		if colors, err = applyColors(user, thm, args.Colors); err != nil {
+			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
+		}
+		nextThm = withUserTokens(below, colors)
+		changed := make([]string, 0, len(args.Colors))
+		for k := range args.Colors {
+			changed = append(changed, k)
+		}
+		sort.Strings(changed)
+		diff = colorDiff(thm, nextThm, changed)
 	}
-	diff, err := uiDiffText(base.Source(), next.Source())
-	if err != nil {
-		return refuse("The change was refused", err.Error())
+	next := base
+	if len(args.Commands) > 0 || strings.TrimSpace(args.Scene) != "" {
+		var err error
+		if next, err = draftScene(base, nextThm, args.Commands, args.Scene); err != nil {
+			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix what the message names and call ui_edit again.")
+		}
+		d, err := uiDiffText(base.Source(), next.Source())
+		if err != nil {
+			return refuse("The change was refused", err.Error())
+		}
+		diff += d
+	} else if len(args.Colors) == 0 {
+		return refuse("The change was refused", "ui_edit needs colors, commands or scene")
 	}
 	if diff == "" {
 		return driver.ClientToolResult{OK: true, Arg: "interface", Summary: "Nothing to change", Text: "the new document is the same as the one on screen; nothing was changed"}
@@ -187,8 +229,9 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 		return refuse("You did not allow this change", "the user did not allow this change to the interface, so it was not made; do not retry it, ask what they want instead")
 	}
 	done := make(chan error, 1)
+	var err error
 	select {
-	case b.apply <- uiApply{base: base, doc: next, done: done}:
+	case b.apply <- uiApply{base: base, doc: next, colors: colors, baseColors: user, done: done}:
 	case <-ctx.Done():
 		return refuse("Cancelled", "the turn ended before the change was applied")
 	}
@@ -247,7 +290,7 @@ func draftScene(base *scene.Document, thm *theme.Theme, commands []string, whole
 		return nil, errors.New("ui_edit needs commands or scene")
 	}
 	if errs := scene.ValidateTokens(next, thm); len(errs) > 0 {
-		return nil, fmt.Errorf("%v (the defined tokens are listed in ui_guide)", errs[0])
+		return nil, fmt.Errorf("%v (the defined tokens are listed in ui_guide; to change what a token looks like use colors)", errs[0])
 	}
 	known := map[string]bool{}
 	for _, w := range base.Warnings() {
@@ -349,20 +392,15 @@ func uiDiffText(oldSrc, newSrc []byte) (string, error) {
 }
 
 // uiGuide is everything the model needs to change the interface, built from the live
-// document and the live vocabularies so it cannot fall behind either.
+// document, the live theme and the live vocabularies so it cannot fall behind any.
 func uiGuide(doc *scene.Document, thm *theme.Theme) string {
-	tokens := thm.Tokens()
-	sort.Strings(tokens)
 	var b strings.Builder
-	b.WriteString(`arxi-tui's interface is a JSON scene document, drawn top to bottom. You change it with ui_edit; the user approves every change, which is saved and kept across sessions.
+	b.WriteString(`This is your own interface: what the user sees while talking to you. Change it with ui_edit; the user approves every change, and it is kept across sessions (/ui undo takes it back).
 
-How it is built:
-- {"root": node}. A node is {"type": ..., "id": ..., ...}; containers (stack, row, box, overlay) have "children".
-- stack lays children out vertically, row horizontally. text draws "text" or the value of "bind". An empty line is {"type":"text","text":""}.
-- "when": <bind> shows a node only while that bind is truthy. "style": {"style": <token>} colours it.
-- Ids are addresses: give every node you add a new unique id.
+COLOURS. Every coloured thing is a style token. Your replies are Markdown, so the coloured words in them are markdown.* tokens (inline code and links are cyan by default). To recolour, pass colors: {token: style}. A style is "fg=<colour>" with optional "bg=<colour>" and attributes (bold dim italic underline reverse strike). A colour is a name (red green yellow blue magenta cyan white black, or bright-<name>), 0-255, or #rrggbb. Purple: magenta, bright-magenta or #a855f7. An empty style puts the default back. Example, purple inline code and links:
+  colors: {"markdown.code": "fg=magenta", "markdown.link": "fg=magenta underline"}
 
-Edit with commands (preferred, small and exact), applied in order:
+LAYOUT. The interface is a JSON scene document drawn top to bottom: {"root": node}; a node is {"type", "id", ...}; stack lays children out vertically, row horizontally; text draws "text" or the value of "bind"; an empty line is {"type":"text","text":""}; "when": <bind> shows a node only while the bind is truthy; "style": {"style": <token>} picks which token paints a node. Give every node you add a new unique id. Change the layout with commands (preferred), applied in order:
   /ui add node <where> <json-node>
   /ui move <id> <where>
   /ui set <id> <key> <value>
@@ -370,15 +408,14 @@ Edit with commands (preferred, small and exact), applied in order:
   where = above <id> | below <id> | into <id> [top] | above_input | below_input
 Example, one more blank line under the input bar:
   /ui add node below_input {"id":"input_gap_extra","type":"text","text":""}
-Or pass scene: the complete new document, changing as little as the order requires.
-
-Rules: every bind and when must come from the bind list; every style token from the token list; keep the node bound to user.input.
+Or pass scene: the complete new document, changing as little as the order requires. Every bind and when must come from the bind list; keep the node bound to user.input.
 
 `)
-	fmt.Fprintf(&b, "Node types: %s\n", strings.Join(scene.SignedNodeTypes(), ", "))
+	b.WriteString("Style tokens (token = current style  # what it paints):\n")
+	b.WriteString(colorTable(thm))
+	fmt.Fprintf(&b, "\nNode types: %s\n", strings.Join(scene.SignedNodeTypes(), ", "))
 	fmt.Fprintf(&b, "Node keys: %s\n", strings.Join(scene.Vocabulary(), ", "))
-	fmt.Fprintf(&b, "Binds: %s\n", strings.Join(scene.SignedBinds(), ", "))
-	fmt.Fprintf(&b, "Style tokens: %s\n\n", strings.Join(tokens, ", "))
+	fmt.Fprintf(&b, "Binds: %s\n\n", strings.Join(scene.SignedBinds(), ", "))
 	fmt.Fprintf(&b, "Current document (%s):\n%s\n", filepath.Base(doc.Name()), strings.TrimSpace(string(doc.Source())))
 	return b.String()
 }
@@ -396,15 +433,6 @@ func userScenePath() string {
 	return filepath.Join(d, "scene.json")
 }
 
-// previousScenePath keeps the interface as it was before the last change, for /ui undo.
-func previousScenePath() string {
-	p := userScenePath()
-	if p == "" {
-		return ""
-	}
-	return strings.TrimSuffix(p, ".json") + ".prev.json"
-}
-
 // persistsScene reports whether changes to doc are saved: only the default interface
 // (the built-in one, or the user's saved one) is. A scene booted with -scene is the
 // user's file to edit, and silently writing the settings copy from it would replace
@@ -414,31 +442,6 @@ func persistsScene(doc *scene.Document) bool {
 		return false
 	}
 	return doc.Name() == defaultscene.Name || (userScenePath() != "" && doc.Name() == userScenePath())
-}
-
-// saveUserScene keeps doc as the user's interface, and what was there as the one /ui
-// undo goes back to. The write goes through a temporary file and a rename, so a crash
-// mid-write leaves the old interface rather than half a document.
-func saveUserScene(doc *scene.Document) error {
-	path := userScenePath()
-	if path == "" {
-		return errNoConfigDir
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	prev := previousScenePath()
-	if old, err := os.ReadFile(path); err == nil {
-		if err := writeAtomic(prev, old); err != nil {
-			return err
-		}
-	} else if os.IsNotExist(err) {
-		// The first change: the interface it replaces is the built-in one.
-		if err := writeAtomic(prev, defaultscene.JSON); err != nil {
-			return err
-		}
-	}
-	return writeAtomic(path, doc.Source())
 }
 
 func writeAtomic(path string, data []byte) error {
@@ -499,56 +502,6 @@ func uiHistoryCommand(input string) (string, bool) {
 		return "reset", true
 	}
 	return "", false
-}
-
-// undoUserScene brings back the interface as it was before the last change, and keeps
-// the current one in its place, so a second undo is a redo.
-func undoUserScene() (*scene.Document, error) {
-	prev, cur := previousScenePath(), userScenePath()
-	if prev == "" {
-		return nil, errNoConfigDir
-	}
-	old, err := os.ReadFile(prev)
-	if os.IsNotExist(err) {
-		return nil, errors.New("there is no earlier interface to go back to")
-	}
-	if err != nil {
-		return nil, err
-	}
-	doc, err := scene.ParseNamed(cur, old)
-	if err == nil {
-		err = doc.Validate()
-	}
-	if err != nil {
-		return nil, fmt.Errorf("the earlier interface no longer loads: %w", err)
-	}
-	if now, err := os.ReadFile(cur); err == nil {
-		if err := writeAtomic(prev, now); err != nil {
-			return nil, err
-		}
-	}
-	if err := writeAtomic(cur, old); err != nil {
-		return nil, err
-	}
-	return doc, nil
-}
-
-// resetUserScene goes back to the built-in interface. The saved one is kept as the
-// one /ui undo returns to, so a reset is never the end of the user's work.
-func resetUserScene() (*scene.Document, error) {
-	cur := userScenePath()
-	if cur == "" {
-		return nil, errNoConfigDir
-	}
-	if now, err := os.ReadFile(cur); err == nil {
-		if err := writeAtomic(previousScenePath(), now); err != nil {
-			return nil, err
-		}
-		if err := os.Remove(cur); err != nil {
-			return nil, err
-		}
-	}
-	return scene.ParseNamed(defaultscene.Name, defaultscene.JSON)
 }
 
 // interfaceBridger is the optional capability a Driver has when its chat can change the
