@@ -486,36 +486,36 @@ func (t *teamScreen) publish(st *fold.State) {
 		t.sel = 0
 	}
 	st.UserInput, st.UserInputCaret = "", 0
-	title := "Agents & teams"
+	title := uiText("team.title")
 	if k := len(t.items); k > 0 {
-		title += fmt.Sprintf(" · %d in %s/", k, teamDir)
+		title += " · " + uiTextWith("team.count", "count", fmt.Sprint(k))
 	}
 	var detail string
 	switch {
 	case t.loading:
-		detail = "Reading " + teamDir + "/ …"
+		detail = uiText("team.reading")
 	case t.sel == rowNewAgent:
-		detail = newAgentDetail
+		detail = uiText("team.new_agent.detail")
 	case t.sel == rowNewTeam:
-		detail = newTeamDetail
+		detail = uiText("team.new_team.detail")
 		if len(t.members()) == 0 {
-			detail += "\n\n" + noAgentsYet
+			detail += "\n\n" + uiText("team.no_agents")
 		}
 	default:
 		it := t.items[t.sel-teamActions]
-		detail = teamDetail(it) + "\n\nPress enter to run it."
+		detail = teamDetail(it) + "\n\n" + uiText("team.item.run")
 		if it.Info != nil && len(it.Info.Stages) > 0 {
-			detail += " Press e to change how its stages finish or how long they may take."
+			detail += uiText("team.item.stages")
 		}
 		if it.Info != nil && len(it.Info.Members) > 0 {
-			detail += " Press m to change a member's model, role or tools, and w to change what wakes a member."
+			detail += uiText("team.item.members")
 		}
 	}
 	if t.note != "" {
 		detail = t.note + "\n\n" + detail
 	}
 	if t.sel < teamActions && len(t.items) == 0 && !t.loading {
-		detail += "\n\n" + emptyTeams
+		detail += "\n\n" + uiText("team.empty")
 	}
 	if t.banner != "" {
 		detail = t.banner + "\n\n" + detail
@@ -529,9 +529,9 @@ func (t *teamScreen) publish(st *fold.State) {
 		var r fold.HubRow
 		switch {
 		case i == rowNewAgent:
-			r = fold.HubRow{Label: "＋ New agent…", Status: orWord(t.createGap(t.canAgent), "one worker")}
+			r = fold.HubRow{Label: uiText("team.new_agent.label"), Status: orWord(t.createGap(t.canAgent), uiText("team.new_agent.status"))}
 		case i == rowNewTeam:
-			r = fold.HubRow{Label: "＋ New team…", Status: orWord(t.createGap(t.canTeam), "agents working together")}
+			r = fold.HubRow{Label: uiText("team.new_team.label"), Status: orWord(t.createGap(t.canTeam), uiText("team.new_team.status"))}
 		default:
 			it := t.items[i-teamActions]
 			r = fold.HubRow{Label: it.Name, Status: teamRowStatus(it)}
@@ -539,7 +539,7 @@ func (t *teamScreen) publish(st *fold.State) {
 		r.Selected = i == t.sel
 		rows = append(rows, r)
 	}
-	st.HubTitle, st.HubRows, st.HubHint, st.HubDetail = title, rows, teamHint, detail
+	st.HubTitle, st.HubRows, st.HubHint, st.HubDetail = title, rows, uiText("team.hint"), detail
 }
 
 // createGap is the row's status when the core cannot do what the row promises.
@@ -547,7 +547,7 @@ func (t *teamScreen) createGap(can bool) string {
 	if can {
 		return ""
 	}
-	return "needs a newer core"
+	return uiText("team.needs_core")
 }
 
 // publishForm draws the open form: one row per field, its help under it.
@@ -567,7 +567,7 @@ func (t *teamScreen) publishForm(st *fold.State) {
 	}
 	st.UserInput = f.typed()
 	st.UserInputCaret = len([]rune(st.UserInput))
-	st.HubTitle, st.HubRows, st.HubHint, st.HubDetail = f.title, rows, teamFormHint, detail
+	st.HubTitle, st.HubRows, st.HubHint, st.HubDetail = f.title, rows, uiText("team.form_hint"), detail
 }
 
 // key applies one key. closeIt asks the loop to leave the screen; task asks it to

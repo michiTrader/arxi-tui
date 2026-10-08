@@ -169,6 +169,18 @@ for your next session.
   (`fg=`/`bg=` with a name such as `magenta` or `bright-magenta`, `0-255` or `#rrggbb`,
   plus `bold`, `italic`, `underline`…); `/ui color markdown.code` alone puts the default
   back. Your colours are kept in `theme.json` in the settings folder.
+- **The words of the menus and screens.** The sentences the program writes itself are not
+  fixed in the code: what each command in the `/` menu is described as, the meaning beside
+  each level of `/effort`, mode of `/mode` and style of `/style`, the key legends, and the
+  whole of `/team` (its title, its rows, its explanations). Ask for them in any language:
+  "put /team in Spanish". By hand, `/ui text team.title Agentes y equipos`; a key alone
+  (`/ui text team.title`) puts the original back. The keys, each with what it says now and
+  where it appears, are in the guide the model reads. Your wording is kept in `texts.json`
+  in the settings folder and is undone and reset together with the layout and the colours.
+  What is not yet a key: the labels and messages inside forms and error messages. The model
+  is told this, so it says so instead of promising it. A text may not contain control
+  characters (a terminal would act on them instead of showing them), and a title or a hint
+  must be one line.
 - **The knowledge costs nothing until it is needed.** Only the two short tool descriptions
   travel with each question. The guide (about 1.5k tokens) is sent only on the turn where
   the model asks for it, so a plain question pays nothing for this feature.
@@ -179,7 +191,7 @@ for your next session.
   that would really work.
 - **Modes.** `plan` never changes the interface; `ask` and `auto` always ask (this is the tool
   you are using, so even `auto` asks); `full access` changes it unasked.
-- **Undo.** `/ui undo` puts back the interface (layout and colours) as it was before the last change (a second
+- **Undo.** `/ui undo` puts back the interface (layout, colours and words) as it was before the last change (a second
   undo redoes it). `/ui reset` returns to the built-in interface, and `/ui undo` brings yours
   back. Your interface is kept in `scene.json` in the `arxi` settings folder; if it ever stops
   loading, the built-in one is shown with a note, and `-raw` always boots the raw scene.

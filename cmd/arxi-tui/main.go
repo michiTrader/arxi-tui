@@ -899,13 +899,22 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// -scene boot exactly the document asked for, so the escape hatch can never be
 	// painted unreadable by a saved colour.
 	var userCols userTokens
+	// The user's wording is loaded under the same condition and for the same reason as
+	// their colours: -raw and -scene boot exactly what was asked for.
+	var userWords userTexts
 	if persistsScene(doc) {
 		if u, err := loadUserTokens(); err != nil {
 			sceneNotice = "your saved colours could not be used: " + err.Error() + " (/ui reset clears them)"
 		} else {
 			userCols = u
 		}
+		if tx, err := loadUserTexts(); err != nil {
+			sceneNotice = "your saved texts could not be used: " + err.Error() + " (/ui reset clears them)"
+		} else {
+			userWords = tx
+		}
 	}
+	setActiveTexts(userWords)
 	belowUser := theme
 	recomposeTheme := func() {
 		belowUser = composeTheme(baseTheme, pluginLayers)
@@ -989,7 +998,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			sceneNotice = summary + " (this scene was started with -scene, so the change is not saved)"
 			return
 		}
-		if err := saveInterface(doc, userCols); err != nil {
+		if err := saveInterface(doc, userCols, userWords); err != nil {
 			sceneNotice = summary + "; it could not be saved: " + err.Error()
 			return
 		}
@@ -998,7 +1007,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 
 	repaint := func() {
 		if uiBr != nil {
-			uiBr.publish(doc, belowUser, userCols)
+			uiBr.publish(doc, belowUser, userCols, userWords)
 		}
 		state := fold.Fold(collected)
 		state.UserInput = input // view state: the host owns the input buffer
@@ -1092,7 +1101,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			slashCat = fold.NormalizeSlashCategory(state.SlashTyped, slashCat)
 			state.SlashCategory = slashCat
 			state.SlashTabs = fold.SlashCategories(state.SlashTyped)
-			state.SlashMatches = fold.FilterSlashCategory(state.SlashTyped, slashCat)
+			state.SlashMatches = describeCommands(fold.FilterSlashCategory(state.SlashTyped, slashCat))
 			// The selection indexes the filtered list, so a keystroke that
 			// shrinks it must not leave the highlight past the last row: the
 			// menu would show no bright row while Enter would still submit
@@ -1122,7 +1131,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// The scene gates each row with `when`, so the host only has to publish
 		// the two view-state binds that drive it (BINDS.md §4.3).
 		if state.SlashActive {
-			state.SlashHint = "  ↑↓ navigate · tab category · enter open · esc close"
+			state.SlashHint = uiText("slash.hint")
 			state.StatusActive = "false"
 		} else {
 			state.SlashHint = ""
@@ -1700,10 +1709,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// the host answers them; a patch could not, because the
 							// interface they bring back is not the one on screen.
 							var cols userTokens
+							var words userTexts
 							var changed bool
-							sceneNotice, cols, changed = applyUIHistory(what, &doc)
+							sceneNotice, cols, words, changed = applyUIHistory(what, &doc)
 							if changed {
 								userCols = cols
+								userWords = words
+								setActiveTexts(userWords)
 								recomposeTheme()
 							}
 							input, caret = "", 0
@@ -1716,6 +1728,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								userCols = next
 								recomposeTheme()
 								keepScene("/ui color: " + tok + " is now " + styleWords(theme.Resolve(tok)))
+							}
+							input, caret = "", 0
+						} else if key, val, ok := uiTextCommand(input); ev.Key.Type == term.KeyEnter && ok {
+							// /ui text <key> [sentence]: the same wording change the agent
+							// proposes, typed by the user, so it is not asked about.
+							if next, err := applyTexts(userWords, map[string]string{key: val}); err != nil {
+								sceneNotice = "/ui text: " + err.Error()
+							} else {
+								userWords = next
+								setActiveTexts(userWords)
+								keepScene("/ui text: " + key + " now says " + strconvQuote(uiText(key)))
 							}
 							input, caret = "", 0
 						} else if handled, next := typedUICommand(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens, keepScene); handled {
@@ -2289,13 +2312,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// The user allowed the model's change. It was drafted from req.base; if
 			// the screen moved on meanwhile the change is refused rather than
 			// applied over it, which would silently undo what the user did.
-			if req.base != doc || (req.colors != nil && !sameTokens(req.baseColors, userCols)) {
+			if req.base != doc || (req.colors != nil && !sameTokens(req.baseColors, userCols)) ||
+				(req.texts != nil && !sameTexts(req.baseTexts, userWords)) {
 				req.done <- errors.New("the interface changed while the question was open; read it again with ui_guide and redo the change")
 			} else {
 				doc = req.doc
 				if req.colors != nil {
 					userCols = req.colors
 					recomposeTheme()
+				}
+				if req.texts != nil {
+					userWords = req.texts
+					setActiveTexts(userWords)
 				}
 				keepScene("the interface was changed")
 				req.done <- nil
@@ -2713,26 +2741,27 @@ func isPluginCommand(input string) bool {
 // applyUIHistory runs /ui undo or /ui reset: it returns the notice, the user's colours
 // after it, and whether the screen should take them. A scene booted with -scene is
 // left on screen: the saved interface changes and shows next time.
-func applyUIHistory(what string, doc **scene.Document) (string, userTokens, bool) {
+func applyUIHistory(what string, doc **scene.Document) (string, userTokens, userTexts, bool) {
 	var next *scene.Document
 	var cols userTokens
+	var words userTexts
 	var err error
 	if what == "undo" {
-		next, cols, err = undoInterface()
+		next, cols, words, err = undoInterface()
 	} else {
-		next, cols, err = resetInterface()
+		next, cols, words, err = resetInterface()
 	}
 	switch {
 	case err != nil:
-		return "/ui " + what + ": " + err.Error(), nil, false
+		return "/ui " + what + ": " + err.Error(), nil, nil, false
 	case !persistsScene(*doc):
-		return "/ui " + what + ": this scene was started with -scene; the saved interface was changed and shows next time", nil, false
+		return "/ui " + what + ": this scene was started with -scene; the saved interface was changed and shows next time", nil, nil, false
 	}
 	*doc = next
 	if what == "undo" {
-		return "/ui undo: the interface is back as it was before the last change", cols, true
+		return "/ui undo: the interface is back as it was before the last change", cols, words, true
 	}
-	return "/ui reset: the built-in interface is back (/ui undo brings yours back)", cols, true
+	return "/ui reset: the built-in interface is back (/ui undo brings yours back)", cols, words, true
 }
 
 // sameTokens reports whether two colour layers say the same thing.

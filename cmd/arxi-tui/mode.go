@@ -111,7 +111,7 @@ func modeMenuOpen(input string) (filter string, open bool) {
 func modeMenuData(current string) []fold.ModelMatch {
 	var out []fold.ModelMatch
 	for _, m := range agentModes {
-		out = append(out, fold.ModelMatch{Ref: m.name, Name: m.name, Provider: m.hint, Current: m.name == current})
+		out = append(out, fold.ModelMatch{Ref: m.name, Name: m.name, Provider: uiText("mode." + m.name), Current: m.name == current})
 	}
 	return out
 }

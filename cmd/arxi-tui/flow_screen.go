@@ -519,12 +519,12 @@ func (f *flowScreen) publish(st *fold.State) {
 	if f.item == "" {
 		f.rejecting, f.reason = false, ""
 	}
-	hint := flowHint
+	hint := uiText("flow.hint")
 	switch {
 	case f.rejecting:
-		hint = flowReasonHint
+		hint = uiText("flow.reason_hint")
 	case f.item != "":
-		hint = flowAskHint
+		hint = uiText("flow.ask_hint")
 	}
 	st.HubTitle, st.HubRows, st.HubHint, st.HubDetail = flowTitle(st), rows, hint, f.detail(st)
 }
