@@ -1092,7 +1092,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			slashCat = fold.NormalizeSlashCategory(state.SlashTyped, slashCat)
 			state.SlashCategory = slashCat
 			state.SlashTabs = fold.SlashCategories(state.SlashTyped)
-			state.SlashMatches = fold.FilterSlashCategory(state.SlashTyped, slashCat)
+			state.SlashMatches = describeCommands(fold.FilterSlashCategory(state.SlashTyped, slashCat))
 			// The selection indexes the filtered list, so a keystroke that
 			// shrinks it must not leave the highlight past the last row: the
 			// menu would show no bright row while Enter would still submit
@@ -1122,7 +1122,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// The scene gates each row with `when`, so the host only has to publish
 		// the two view-state binds that drive it (BINDS.md §4.3).
 		if state.SlashActive {
-			state.SlashHint = "  ↑↓ navigate · tab category · enter open · esc close"
+			state.SlashHint = uiText("slash.hint")
 			state.StatusActive = "false"
 		} else {
 			state.SlashHint = ""

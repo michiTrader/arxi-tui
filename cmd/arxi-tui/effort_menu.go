@@ -27,6 +27,10 @@ var effortHints = map[string]string{
 	"max":     "the deepest thinking, slowest",
 }
 
+// effortLevelOrder is every level word the hints above describe, in the order they
+// run from least to most thinking. It is what makes each hint an editable text.
+var effortLevelOrder = []string{"off", "on", "minimal", "low", "medium", "high", "xhigh", "max"}
+
 // defaultEffortLevels are what a model the core knows nothing about is offered: the
 // three depths every OpenAI-style server understands.
 var defaultEffortLevels = []string{"low", "medium", "high"}
@@ -75,7 +79,7 @@ func effortMenuData(levels []string, known bool, current string) []fold.ModelMat
 	}
 	var out []fold.ModelMatch
 	for _, l := range levels {
-		out = append(out, fold.ModelMatch{Ref: l, Name: l, Provider: effortHints[l], Current: l == current})
+		out = append(out, fold.ModelMatch{Ref: l, Name: l, Provider: uiText("effort." + l), Current: l == current})
 	}
 	return out
 }

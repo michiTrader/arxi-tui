@@ -89,7 +89,7 @@ func styleMenuOpen(input string) (filter string, open bool) {
 func styleMenuData(current string) []fold.ModelMatch {
 	var out []fold.ModelMatch
 	for _, o := range promptStyles {
-		out = append(out, fold.ModelMatch{Ref: o.name, Name: o.name, Provider: o.hint, Current: o.name == current})
+		out = append(out, fold.ModelMatch{Ref: o.name, Name: o.name, Provider: uiText("style." + o.name), Current: o.name == current})
 	}
 	return out
 }

@@ -369,7 +369,7 @@ func (a *autoScreen) publish(st *fold.State) {
 		r.Selected = i == a.sel
 		rows = append(rows, r)
 	}
-	st.HubTitle, st.HubRows, st.HubHint, st.HubDetail = title, rows, autoHint, detail
+	st.HubTitle, st.HubRows, st.HubHint, st.HubDetail = title, rows, uiText("auto.hint"), detail
 }
 
 func (a *autoScreen) publishForm(st *fold.State) {
@@ -396,7 +396,7 @@ func (a *autoScreen) publishForm(st *fold.State) {
 	}
 	st.UserInput = f.typed()
 	st.UserInputCaret = len([]rune(st.UserInput))
-	st.HubTitle, st.HubRows, st.HubHint, st.HubDetail = f.title, rows, autoFormHint, detail
+	st.HubTitle, st.HubRows, st.HubHint, st.HubDetail = f.title, rows, uiText("auto.form_hint"), detail
 }
 
 // key applies one key. closeIt asks the loop to leave the screen; task asks it to
