@@ -196,8 +196,11 @@ var tokenRoles = map[string]string{
 	"markdown.code.func": "function names in code blocks", "markdown.code.string": "strings in code blocks",
 	"markdown.code.number": "numbers in code blocks", "markdown.code.comment": "comments in code blocks",
 	"markdown.link": "links in answers", "markdown.link.url": "link addresses", "markdown.bullet": "list bullets",
-	"markdown.quote": "quoted text", "markdown.table.header": "table headers", "menu.name": "command names in the / menu",
+	"markdown.quote": "quoted text", "markdown.table.header": "table headers", "menu.name": "command names in the / menu and the level, mode or model names in /effort, /mode, /style and /model",
 	"menu.name.selected": "highlighted command", "menu.hint": "hint line under the menu",
+	"menu.desc":          "descriptions in the / menu and the meaning beside each row of /effort, /mode, /style and /model",
+	"menu.desc.selected": "the description of the highlighted row", "menu.tab": "category tabs and the match count of the / menu",
+	"menu.tab.selected": "the active category tab", "menu.rule": "the lines that frame the / menu",
 	"brand.1": "the Δ of the logo", "brand.2": "the r of the logo", "brand.3": "the × of the logo", "brand.4": "the i of the logo",
 }
 

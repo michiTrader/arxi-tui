@@ -147,10 +147,10 @@ func (b *uiBridge) definitions() []driver.ClientToolDef {
 			Description: "Read how YOUR OWN interface is built: the terminal app you are running in and the user is looking at (banner, chat, input bar, status bar, and the colours of everything you write). It is NOT in the project folder; never search files for it. Call this first whenever the user asks to change anything about how you or this screen look: layout, spacing, colours, styles.",
 			Schema:      json.RawMessage(`{"type":"object","properties":{}}`)},
 		{Name: uiToolEdit,
-			Description: "Change your own interface (call ui_guide first). The user sees the diff and approves it; it is kept across sessions. Pass colors to recolour, texts to reword the menus and screens (descriptions of / commands, hints, the /team copy, translations), commands (/ui lines) or scene to change the layout. A refusal says what to fix: fix it and retry.",
+			Description: "Change your own interface (call ui_guide first). The user sees the diff and approves it; it is kept across sessions. Pass colors to recolour, texts to reword the menus and screens (descriptions of / commands, hints, the /team copy, translations into any language), commands (/ui lines) or scene to change the layout. A refusal says what to fix: fix it and retry.",
 			Schema: json.RawMessage(`{"type":"object","properties":{` +
 				`"colors":{"type":"object","additionalProperties":{"type":"string"},"description":"token -> style, e.g. {\"markdown.code\":\"fg=magenta\"}"},` +
-				`"texts":{"type":"object","additionalProperties":{"type":"string"},"description":"key -> sentence, e.g. {\"team.title\":\"Agentes y equipos\"}; empty restores the factory one"},` +
+				`"texts":{"type":"object","additionalProperties":{"type":"string"},"description":"key -> sentence, e.g. {\"team.title\":\"Crews\"}; empty restores the factory one"},` +
 				`"commands":{"type":"array","items":{"type":"string"},"description":"/ui add|move|set|style lines"},` +
 				`"scene":{"type":"string","description":"the complete new scene document, as JSON"},` +
 				`"summary":{"type":"string","description":"one sentence saying what changes, shown to the user"}}}`)},
@@ -421,8 +421,8 @@ func uiGuide(doc *scene.Document, thm *theme.Theme) string {
 COLOURS. Every coloured thing is a style token. Your replies are Markdown, so the coloured words in them are markdown.* tokens (inline code and links are cyan by default). To recolour, pass colors: {token: style}. A style is "fg=<colour>" with optional "bg=<colour>" and attributes (bold dim italic underline reverse strike). A colour is a name (red green yellow blue magenta cyan white black, or bright-<name>), 0-255, or #rrggbb. Purple: magenta, bright-magenta or #a855f7. An empty style puts the default back. Example, purple inline code and links:
   colors: {"markdown.code": "fg=magenta", "markdown.link": "fg=magenta underline"}
 
-WORDS. Every sentence the app writes in its own menus and screens (what each / command is described as, the hint under /effort, /mode and /style, the key legends, the whole of /team and its buttons) is a text key. To reword or translate them pass texts: {key: sentence}; an empty sentence puts the factory one back, a few spaces hides it. Keys are listed below with what they say now. Keep a {placeholder} where the factory sentence has one. Example, /team in Spanish:
-  texts: {"team.title": "Agentes y equipos", "team.new_agent.label": "＋ Nuevo agente…"}
+WORDS. Every sentence the app writes in its own menus and screens (what each / command is described as, the hint under /effort, /mode and /style, the key legends, the whole of /team and its buttons) is a text key. To reword or translate them pass texts: {key: sentence}; an empty sentence puts the factory one back, a few spaces hides it. Keys are listed below with what they say now. Keep a {placeholder} where the factory sentence has one. Example, reword /team:
+  texts: {"team.title": "Crews", "team.new_agent.label": "+ Add an agent..."}
 Words that are not keys (the labels inside a form, error messages, the model's own replies) are not editable this way; say so rather than promising it.
 
 LAYOUT. The interface is a JSON scene document drawn top to bottom: {"root": node}; a node is {"type", "id", ...}; stack lays children out vertically, row horizontally; text draws "text" or the value of "bind"; an empty line is {"type":"text","text":""}; "when": <bind> shows a node only while the bind is truthy; "style": {"style": <token>} picks which token paints a node. Give every node you add a new unique id. Change the layout with commands (preferred), applied in order:
