@@ -51,6 +51,14 @@ import (
 // the eval corpus measured. Plugins propose, they never write; the agent is held to
 // the same rule.
 
+// uiSystemHint tells the model, on every turn the interface tools are lent, that the
+// app it is talking through is arxi-tui and that "the tui", "the interface", "the
+// colours" mean that app, not the user's project. It is one sentence (about 60
+// tokens) because it rides with every question; the how is in ui_guide.
+const uiSystemHint = "You are running inside arxi-tui, the terminal app the user is talking to you through. " +
+	"When they mention the TUI, the interface, the screen, or how you or your replies look (colours, layout, spacing), " +
+	"they mean this app, not their project: call ui_guide, never search their files for it."
+
 // Names of the two tools, as the model calls them.
 const (
 	uiToolGuide = "ui_guide"

@@ -413,6 +413,11 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 	}
 	if c.ui != nil && workdir != "" {
 		ui := c.ui
+		// The tool descriptions alone did not do it. Measured on a real model: asked
+		// to recolour "the tui", it searched the project eleven times, because the
+		// core's standing hint says the tools are for "the user's project" and
+		// nothing said the app it runs in is something else. One sentence names it.
+		params.System += " " + uiSystemHint
 		params.ClientTools = ui.definitions()
 		params.OnClientTool = func(ctx context.Context, call driver.ClientToolCall) driver.ClientToolResult {
 			return ui.call(ctx, call, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
