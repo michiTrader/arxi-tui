@@ -551,14 +551,19 @@ func handleChatSendThinking(streams *connStreams, params map[string]any) (any, e
 		if ctx, err = withWeb(ctx, stringParam(params, "web")); err != nil {
 			return nil, err
 		}
+		if ctx, err = withClientTools(ctx, stringParam(params, "client_tools"), streams.callClient); err != nil {
+			return nil, err
+		}
+	} else if stringParam(params, "client_tools") != "" {
+		return nil, badInvocation{errors.New("client_tools needs a workdir: they travel with the tools")}
 	}
 	return chatSendEffort(ctx, stringParam(params, "prompt"), stringParam(params, "history"),
 		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))
 }
 
 func handleChatSend(params map[string]any) (any, error) {
-	if stringParam(params, "workdir") != "" || stringParam(params, "edits") != "" || stringParam(params, "runs") != "" || stringParam(params, "web") != "" {
-		return nil, badInvocation{errors.New("workdir, edits, runs and web need a live connection to report the tool calls on")}
+	if stringParam(params, "workdir") != "" || stringParam(params, "edits") != "" || stringParam(params, "runs") != "" || stringParam(params, "web") != "" || stringParam(params, "client_tools") != "" {
+		return nil, badInvocation{errors.New("workdir, edits, runs, web and client_tools need a live connection to report the tool calls on")}
 	}
 	return chatSendEffort(context.Background(), stringParam(params, "prompt"), stringParam(params, "history"),
 		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))

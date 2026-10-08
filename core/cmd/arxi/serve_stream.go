@@ -242,19 +242,35 @@ func (c *connStreams) ask(n chatApprovalNotification) (bool, error) {
 	if err := c.w.write(n); err != nil {
 		return false, fmt.Errorf("ask the user: %w", err)
 	}
+	line, err := c.await("chat.decision", n.CallID)
+	if err != nil {
+		return false, fmt.Errorf("the connection ended before the user decided (nothing was changed): %w", err)
+	}
+	var d struct {
+		Allow *bool `json:"allow"`
+	}
+	_ = json.Unmarshal(line, &d)
+	return d.Allow != nil && *d.Allow, nil
+}
+
+// await reads the connection until the line of the given type that answers callID,
+// and returns it. It is the one reader both kinds of wait share (a decision, a client
+// tool's result), so the ordering rule is stated once: any other line is a request
+// that came early and is kept, in order, for the loop; an answer to some other call
+// is stale and dropped. The error is the connection ending first.
+func (c *connStreams) await(kind, callID string) ([]byte, error) {
 	src := c.src
 	for src.sc.Scan() {
 		line := sourceLine{text: src.sc.Text(), size: len(src.sc.Bytes())}
 		var d struct {
 			Type   string `json:"type"`
 			CallID string `json:"call_id"`
-			Allow  *bool  `json:"allow"`
 		}
-		if json.Unmarshal([]byte(line.text), &d) == nil && d.Type == "chat.decision" {
-			if d.CallID != n.CallID {
+		if json.Unmarshal([]byte(line.text), &d) == nil && d.Type == kind {
+			if d.CallID != callID {
 				continue
 			}
-			return d.Allow != nil && *d.Allow, nil
+			return []byte(line.text), nil
 		}
 		if line.text != "" {
 			src.deferred = append(src.deferred, line)
@@ -264,5 +280,48 @@ func (c *connStreams) ask(n chatApprovalNotification) (bool, error) {
 	if err == nil {
 		err = io.EOF
 	}
-	return false, fmt.Errorf("the connection ended before the user decided (nothing was changed): %w", err)
+	return nil, err
+}
+
+// clientToolCall hands one call of a client tool to the client, which runs it. It
+// has a type and no id, like every notification; the client answers with a line
+// {"type":"chat.client_result","call_id":...,"ok":...,"text":...}.
+type clientToolCall struct {
+	Type      string          `json:"type"`
+	CallID    string          `json:"call_id"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+}
+
+// clientToolResult is what the client reports for a client tool call: the text the
+// model reads back, and, for the user, the same summary/arg/diff any tool line has.
+type clientToolResult struct {
+	OK      bool   `json:"ok"`
+	Text    string `json:"text"`
+	Arg     string `json:"arg"`
+	Summary string `json:"summary"`
+	Diff    string `json:"diff"`
+}
+
+// callClient runs a client tool through the client and waits for its result. The
+// client may itself ask the user before answering (a change to its own state); the
+// core does not know or care, which is what lets a host lend the model tools over
+// things only the host owns.
+func (c *connStreams) callClient(n clientToolCall) (clientToolResult, error) {
+	if c == nil || c.src == nil {
+		return clientToolResult{}, fmt.Errorf("this connection cannot run client tools")
+	}
+	n.Type = "chat.client_tool"
+	if err := c.w.write(n); err != nil {
+		return clientToolResult{}, fmt.Errorf("hand %s to the client: %w", n.Name, err)
+	}
+	line, err := c.await("chat.client_result", n.CallID)
+	if err != nil {
+		return clientToolResult{}, fmt.Errorf("the connection ended before the client answered %s: %w", n.Name, err)
+	}
+	var r clientToolResult
+	if err := json.Unmarshal(line, &r); err != nil {
+		return clientToolResult{}, fmt.Errorf("the client's answer to %s is not JSON: %w", n.Name, err)
+	}
+	return r, nil
 }
