@@ -39,7 +39,7 @@ func newBridgeRig(t *testing.T, mode string) *bridgeRig {
 	t.Helper()
 	r := &bridgeRig{b: newUIBridge(), doc: builtinDoc(t)}
 	r.b.setMode(mode)
-	r.b.publish(r.doc, theme.SOBRIA())
+	r.b.publish(r.doc, theme.SOBRIA(), nil)
 	return r
 }
 
@@ -146,7 +146,7 @@ func TestTheUsersInterfaceIsSavedBootedAndUndone(t *testing.T) {
 	if res := r.edit(t, extraGap, true); !res.OK {
 		t.Fatal(res)
 	}
-	if err := saveUserScene(r.doc); err != nil {
+	if err := saveInterface(r.doc, nil); err != nil {
 		t.Fatal(err)
 	}
 	doc, notice, err := resolveBootScene(builtinScene)
@@ -156,15 +156,15 @@ func TestTheUsersInterfaceIsSavedBootedAndUndone(t *testing.T) {
 	if !persistsScene(doc) {
 		t.Error("the saved interface must stay saved when it changes again")
 	}
-	undone, err := undoUserScene()
+	undone, _, err := undoInterface()
 	if err != nil || indexOf(childIDs(undone), "input_gap_extra") >= 0 {
 		t.Fatalf("undo gave %v, %v; the first undo returns the built-in interface", childIDs(undone), err)
 	}
-	redone, err := undoUserScene()
+	redone, _, err := undoInterface()
 	if err != nil || indexOf(childIDs(redone), "input_gap_extra") < 0 {
 		t.Fatalf("a second undo gave %v, %v; it must bring the change back", childIDs(redone), err)
 	}
-	if _, err := resetUserScene(); err != nil {
+	if _, _, err := resetInterface(); err != nil {
 		t.Fatal(err)
 	}
 	if doc, _, _ := resolveBootScene(builtinScene); doc.Name() != defaultscene.Name {
@@ -227,4 +227,110 @@ func indexOf(xs []string, x string) int {
 		}
 	}
 	return -1
+}
+
+// The order from the second report: "change the blue words you send me to purple".
+// The coloured words in a reply are markdown.code and markdown.link (cyan by default);
+// the guide must say so, and ui_edit must recolour them.
+func TestTheAgentRecoloursTheWordsInItsReplies(t *testing.T) {
+	t.Setenv(configDirEnv, t.TempDir())
+	r := newBridgeRig(t, "ask")
+	guide := r.b.call(context.Background(), driver.ClientToolCall{Name: uiToolGuide}, nil).Text
+	for _, want := range []string{"markdown.code = fg=cyan", "inline `code` in answers", "Purple: magenta"} {
+		if !strings.Contains(guide, want) {
+			t.Errorf("the guide lacks %q.\nConsequence: the model cannot tell which token paints the coloured words in its replies, and guesses or gives up.\nRemedy: list every token with its value and role (colorTable).", want)
+		}
+	}
+	var got userTokens
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	go func() {
+		req := <-r.b.apply
+		got = req.colors
+		req.done <- nil
+	}()
+	res := r.b.call(ctx, driver.ClientToolCall{Name: uiToolEdit,
+		Arguments: json.RawMessage(`{"colors":{"markdown.code":"fg=magenta","markdown.link":"fg=magenta underline"},"summary":"Purple instead of blue"}`)},
+		func(a driver.Approval) bool { r.asked = append(r.asked, a); return true })
+	if !res.OK {
+		t.Fatalf("recolouring failed: %+v", res)
+	}
+	if len(r.asked) != 1 || !strings.Contains(r.asked[0].Diff, "- markdown.code: fg=cyan") || !strings.Contains(r.asked[0].Diff, "+ markdown.code: fg=magenta") {
+		t.Fatalf("the user was shown %+v; a colour change must be shown as was/now before it is made", r.asked)
+	}
+	if s := withUserTokens(theme.SOBRIA(), got).Resolve("markdown.code"); s.String() != "fg=magenta" {
+		t.Errorf("markdown.code resolves to %q after the change", s.String())
+	}
+}
+
+func TestAColourChangeIsRefusedWhenItWouldNotDraw(t *testing.T) {
+	for _, tc := range []struct{ name, colors, want string }{
+		{"typo token", `{"markdown.cod":"fg=magenta"}`, "markdown.cod"},
+		{"not a colour", `{"markdown.code":"fg=purpleish"}`, "purpleish"},
+		{"not a style", `{"markdown.code":"magenta"}`, "fg="},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newBridgeRig(t, "full access")
+			res := r.edit(t, `{"colors":`+tc.colors+`}`, true)
+			if res.OK || !strings.Contains(res.Text, tc.want) {
+				t.Fatalf("res = %+v.\nConsequence: a colour that cannot draw is reported as made, and the screen does not change.\nRemedy: applyColors must refuse unknown tokens and unreadable styles, naming them.", res)
+			}
+		})
+	}
+}
+
+func TestColoursAreSavedUndoneAndResetWithTheLayout(t *testing.T) {
+	t.Setenv(configDirEnv, t.TempDir())
+	doc := builtinDoc(t)
+	purple, err := applyColors(nil, theme.SOBRIA(), map[string]string{"markdown.code": "fg=magenta"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := saveInterface(doc, purple); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(userScenePath()); !os.IsNotExist(err) {
+		t.Error("a colour-only change saved a copy of the built-in layout; the user would stop receiving layout fixes from new releases")
+	}
+	got, err := loadUserTokens()
+	if err != nil || got["markdown.code"].String() != "fg=magenta" {
+		t.Fatalf("saved colours read back as %v, %v", got, err)
+	}
+	undone, back, err := undoInterface()
+	if err != nil || len(back) != 0 || undone == nil || undone.Root == nil {
+		t.Fatalf("undo gave colours %v, %v; it must return the built-in look with no user colours", back, err)
+	}
+	_, again, err := undoInterface()
+	if err != nil || again["markdown.code"].String() != "fg=magenta" {
+		t.Fatalf("a second undo gave %v, %v; it must bring the purple back", again, err)
+	}
+	if _, cols, err := resetInterface(); err != nil || len(cols) != 0 {
+		t.Fatalf("reset gave %v, %v", cols, err)
+	}
+	if _, err := os.Stat(userThemePath()); !os.IsNotExist(err) {
+		t.Error("/ui reset left the saved colours on disk; the next session would come back purple")
+	}
+}
+
+func TestTheModelIsToldItRunsInsideArxiTUI(t *testing.T) {
+	for _, want := range []string{"arxi-tui", "TUI", "colours", "ui_guide", "never search their files"} {
+		if !strings.Contains(uiSystemHint, want) {
+			t.Errorf("the standing hint lacks %q.\nConsequence: a real model asked about \"the tui\" searched the project eleven times and offered to write a theme file there.\nRemedy: name the app and what the words mean in uiSystemHint.", want)
+		}
+	}
+	if len(uiSystemHint) > 400 {
+		t.Errorf("the hint is %d bytes and rides with every question; keep the how in ui_guide", len(uiSystemHint))
+	}
+}
+
+func TestColorCommandReadsTokenAndStyle(t *testing.T) {
+	if tok, style, ok := uiColorCommand("/ui color markdown.code fg=magenta bold"); !ok || tok != "markdown.code" || style != "fg=magenta bold" {
+		t.Errorf("got %q %q %v", tok, style, ok)
+	}
+	if tok, style, ok := uiColorCommand("/ui color markdown.code"); !ok || tok != "markdown.code" || style != "" {
+		t.Errorf("a bare token must mean \"back to the default\": %q %q %v", tok, style, ok)
+	}
+	if _, _, ok := uiColorCommand("/ui colorful"); ok {
+		t.Error("/ui colorful is not a colour command")
+	}
 }

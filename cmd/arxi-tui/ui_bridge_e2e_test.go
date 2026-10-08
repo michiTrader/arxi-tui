@@ -116,7 +116,7 @@ func TestTheAgentChangesTheInterfaceThroughTheRealCore(t *testing.T) {
 
 	br := sd.InterfaceBridge()
 	doc := builtinDoc(t)
-	br.publish(doc, theme.SOBRIA())
+	br.publish(doc, theme.SOBRIA(), nil)
 	if err := sd.SubmitPrompt(ctx, "add a blank line between the input bar and the status bar"); err != nil {
 		t.Fatal(err)
 	}
