@@ -245,8 +245,17 @@ func stageLine(runs []fold.StageProgress, plan []driver.BlueprintStage) string {
 			parts = append(parts, p)
 		}
 	}
-	// Ahead: everything after the stage the run last entered, by the plan's order.
-	// A run that has entered nothing yet has the whole plan ahead of it.
+	for _, name := range aheadStages(runs, plan) {
+		parts = append(parts, name+" ○")
+	}
+	return strings.Join(parts, " → ")
+}
+
+// aheadStages is the names of the stages the plan still has after the stage the
+// run last entered, in the plan's order. A run that has entered nothing yet has the
+// whole plan ahead of it; a last stage the plan does not know has nothing invented
+// after it.
+func aheadStages(runs []fold.StageProgress, plan []driver.BlueprintStage) []string {
 	from := 0
 	if n := len(runs); n > 0 {
 		from = -1
@@ -256,12 +265,14 @@ func stageLine(runs []fold.StageProgress, plan []driver.BlueprintStage) string {
 			}
 		}
 	}
-	if from >= 0 {
-		for _, st := range plan[from:] {
-			parts = append(parts, st.Name+" ○")
-		}
+	if from < 0 {
+		return nil
 	}
-	return strings.Join(parts, " → ")
+	var names []string
+	for _, st := range plan[from:] {
+		names = append(names, st.Name)
+	}
+	return names
 }
 
 // flowIsChat reports whether the run has no team structure to draw: one agent
@@ -314,8 +325,17 @@ func (f *flowScreen) detail(st *fold.State) string {
 	if len(st.StageRun) > 0 || len(f.plan) > 0 {
 		parts = append(parts, stageLine(st.StageRun, f.plan))
 	}
-	if m := f.memberDetail(st); m != "" {
-		parts = append(parts, m)
+	tree, drawn := f.flowTree(st)
+	if tree != "" {
+		parts = append(parts, tree)
+	}
+	// The tree draws the highlighted member under its stage. When it could not (the
+	// log shows no open stage, or no stage at all) the member's story stands alone,
+	// as it always did.
+	if !drawn {
+		if m := f.memberDetail(st); m != "" {
+			parts = append(parts, m)
+		}
 	}
 	if a := st.Attention; a.Kind != "" {
 		line := "⚠ " + a.Text
@@ -346,6 +366,45 @@ func (f *flowScreen) detail(st *fold.State) string {
 // recentTools is how many of a member's latest tool calls the detail lists.
 const recentTools = 5
 
+// memberStory is what the log says about one member: a head line, then either a
+// caption over the member's latest tool calls or, when it has used none, a single
+// sentence saying so. It is the one source both the flat detail and the tree draw.
+type memberStory struct {
+	head    string   // "backend · implementer — … waiting for approval"
+	caption string   // "tools used:", "last 5 of 8 tool calls:" or "has not used any tool yet"
+	tools   []string // one toolLine per call, oldest first; empty with the "none yet" caption
+}
+
+// memberStoryOf reads the story of the member at index i of the fold's members.
+func memberStoryOf(st *fold.State, i int) memberStory {
+	m := st.TeamMembers[i]
+	head := m.ID
+	if m.Role != "" {
+		head += " · " + m.Role
+	}
+	story := memberStory{head: head + " — " + memberStatus(m, st.WaitingOn)}
+	var mine []fold.ToolActivity
+	for _, c := range st.ToolCalls {
+		if c.Actor == m.ID {
+			mine = append(mine, c)
+		}
+	}
+	if len(mine) == 0 {
+		story.caption = "has not used any tool yet"
+		return story
+	}
+	if len(mine) > recentTools {
+		story.caption = fmt.Sprintf("last %d of %s:", recentTools, plural(len(mine), "tool call", "tool calls"))
+		mine = mine[len(mine)-recentTools:]
+	} else {
+		story.caption = "tools used:"
+	}
+	for _, c := range mine {
+		story.tools = append(story.tools, toolLine(c))
+	}
+	return story
+}
+
 // memberDetail says what the highlighted member has been doing: its state, its
 // turns and spend, and the last tools it used with what came of each. It is read
 // from the log like everything here, so a resumed session shows the same thing.
@@ -354,31 +413,58 @@ func (f *flowScreen) memberDetail(st *fold.State) string {
 	if f.sel < 0 || f.sel >= len(st.TeamMembers) {
 		return ""
 	}
-	m := st.TeamMembers[f.sel]
-	head := m.ID
-	if m.Role != "" {
-		head += " · " + m.Role
-	}
-	lines := []string{"▸ " + head + " — " + memberStatus(m, st.WaitingOn)}
-	var mine []fold.ToolActivity
-	for _, c := range st.ToolCalls {
-		if c.Actor == m.ID {
-			mine = append(mine, c)
-		}
-	}
-	if len(mine) == 0 {
-		return strings.Join(append(lines, "  has not used any tool yet"), "\n")
-	}
-	if len(mine) > recentTools {
-		lines = append(lines, fmt.Sprintf("  last %d of %s:", recentTools, plural(len(mine), "tool call", "tool calls")))
-		mine = mine[len(mine)-recentTools:]
-	} else {
-		lines = append(lines, "  tools used:")
-	}
-	for _, c := range mine {
-		lines = append(lines, "  "+toolLine(c))
+	story := memberStoryOf(st, f.sel)
+	lines := []string{"▸ " + story.head, "  " + story.caption}
+	for _, t := range story.tools {
+		lines = append(lines, "  "+t)
 	}
 	return strings.Join(lines, "\n")
+}
+
+// flowTree draws the open stage as a nested tree: the stage at the root, its members
+// as branches, and under the highlighted member the tools it used. Only the
+// highlighted member is opened, so a big team still fits the screen and moving the
+// highlight is what walks the tree.
+//
+//	build ●
+//	├─ backend · implementer — … waiting for approval
+//	│    last 5 of 8 tool calls:
+//	│    ✓ read
+//	└─ frontend · implementer — ✓ submitted
+//
+// The log does not say which stage a member belongs to, so every member hangs under
+// the stage the run is in now; the stages already left are told by the line above.
+// The second result is false when there was nothing to draw (no open stage, no
+// members), and the caller then falls back to the flat member story.
+func (f *flowScreen) flowTree(st *fold.State) (string, bool) {
+	if len(st.TeamMembers) == 0 {
+		return "", false
+	}
+	open := ""
+	if n := len(st.StageRun); n > 0 && !st.StageRun[n-1].Left {
+		open = st.StageRun[n-1].Name
+	}
+	if open == "" {
+		return "", false
+	}
+	lines := []string{open + " ●"}
+	last := len(st.TeamMembers) - 1
+	for i := range st.TeamMembers {
+		branch, trunk := "├─ ", "│    "
+		if i == last {
+			branch, trunk = "└─ ", "     "
+		}
+		story := memberStoryOf(st, i)
+		if i != f.sel {
+			lines = append(lines, branch+story.head)
+			continue
+		}
+		lines = append(lines, branch+"▸ "+story.head, trunk+story.caption)
+		for _, t := range story.tools {
+			lines = append(lines, trunk+t)
+		}
+	}
+	return strings.Join(lines, "\n"), true
 }
 
 // toolLine is one tool call in words: what ran and how it ended. A denial that is
