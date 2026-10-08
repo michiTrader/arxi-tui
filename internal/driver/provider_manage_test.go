@@ -688,3 +688,54 @@ func TestBlueprintWatchSendsTheRuleAndOnlyWhatIsSet(t *testing.T) {
 		t.Fatal("a request without events to watch was sent")
 	}
 }
+
+func TestChatSendRunsClientToolsAndAnswersTheCore(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"type":"chat.client_tool","call_id":"u1","name":"ui_edit","arguments":{"commands":["/ui set x text hi"]}}`,
+		`{"id":"chat-send","ok":true,"result":{"text":"done"}}`)
+	var calls []ClientToolCall
+	res, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj",
+		ClientTools: []ClientToolDef{{Name: "ui_edit", Description: "Change the interface."}},
+		OnClientTool: func(_ context.Context, c ClientToolCall) ClientToolResult {
+			calls = append(calls, c)
+			return ClientToolResult{OK: true, Text: "applied", Summary: "Changed the interface", Diff: "    1 + x\n"}
+		}})
+	if err != nil || res.Text != "done" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if len(calls) != 1 || calls[0].CallID != "u1" || !strings.Contains(string(calls[0].Arguments), "/ui set x text hi") {
+		t.Fatalf("the client tool was called with %+v; it must get the call id and the raw arguments", calls)
+	}
+	lines := strings.Split(strings.TrimSpace(sent.String()), "\n")
+	if len(lines) != 2 || !strings.Contains(lines[0], `"client_tools":"[{\"name\":\"ui_edit\"`) {
+		t.Fatalf("request = %v; the lent tools must ride as the client_tools string", lines)
+	}
+	var answer map[string]any
+	if json.Unmarshal([]byte(lines[1]), &answer) != nil || answer["type"] != "chat.client_result" ||
+		answer["call_id"] != "u1" || answer["ok"] != true || answer["text"] != "applied" || answer["diff"] != "    1 + x\n" {
+		t.Fatalf("answer = %s; the core waits for exactly this line and the turn hangs without it", lines[1])
+	}
+}
+
+func TestChatSendWithoutAClientToolHandlerFailsTheCallNotTheTurn(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent,
+		`{"type":"chat.client_tool","call_id":"u1","name":"ui_edit","arguments":{}}`,
+		`{"id":"chat-send","ok":true,"result":{"text":"done"}}`)
+	if _, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sent.String(), `"type":"chat.client_result"`) || !strings.Contains(sent.String(), `"ok":false`) {
+		t.Fatalf("sent %s; an unanswered client call would leave the core waiting forever", sent.String())
+	}
+}
+
+func TestChatSendNamesAnOldCoreThatRefusesClientTools(t *testing.T) {
+	d := session(t, `{"id":"chat-send","ok":false,"error":{"code":"bad_params","message":"chat.send does not take client_tools. It takes: edits, workdir, web"}}`)
+	_, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj",
+		ClientTools: []ClientToolDef{{Name: "ui_edit"}}})
+	if !errors.Is(err, ErrClientToolsUnsupported) {
+		t.Fatalf("err = %v; the caller needs ErrClientToolsUnsupported to retry without the client tools", err)
+	}
+}

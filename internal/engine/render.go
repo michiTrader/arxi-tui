@@ -882,7 +882,7 @@ const (
 )
 
 // toolTitles are the names a person reads; an unknown tool shows its own name.
-var toolTitles = map[string]string{"list": "List", "read": "Read", "grep": "Search", "edit": "Edit", "write": "Write", "run": "Run", "web_fetch": "Fetch", "web_search": "Search web"}
+var toolTitles = map[string]string{"list": "List", "read": "Read", "grep": "Search", "edit": "Edit", "write": "Write", "run": "Run", "web_fetch": "Fetch", "web_search": "Search web", "ui_guide": "Read", "ui_edit": "Change"}
 
 // toolLines draws one tool line: "● Read(main.go)" and, under it, "  └ Read 12
 // lines". A long argument wraps under itself, and so does a long result.
@@ -965,6 +965,8 @@ func approvalLines(h fold.ChatLine, width int, expand bool) []ui.Line {
 		question = "Allow reading this page?"
 	case "web_search":
 		question = "Allow this search?"
+	case "ui_edit":
+		question = "Allow this change to the interface?"
 	}
 	return append(out, ui.Line{{Text: ansi.Truncate(hang+question+"  y yes · n no (Esc)", width, "…"), Style: askToken}})
 }

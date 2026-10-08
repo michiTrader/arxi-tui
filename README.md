@@ -149,6 +149,39 @@ the conversation's. Files are kept in the `sessions` folder of the `arxi` settin
 by you. The latest 100 are kept and older ones are deleted. A conversation can contain
 anything you typed, so set `ARXI_SESSIONS=off` to save nothing at all.
 
+### Asking the agent to change the interface
+
+Ask in your own words: "add a blank line between the input bar and the status bar", "make
+the status bar dim", "move the status bar above the chat". The model reads how this
+interface is built, proposes the change, and you see the diff before anything moves:
+`Allow this change to the interface?  y yes · n no`. Allowed, it is drawn at once and kept
+for your next session.
+
+- **It does not look in your project for it.** The interface lives inside the program (a
+  release has no source tree), so the model is given two tools of the program's own:
+  `ui_guide` (how the interface is built, with the live document and every node type, bind
+  and style token) and `ui_edit` (propose a change). It edits the interface the same way you
+  can with `/ui add|move|set|style`.
+- **The knowledge costs nothing until it is needed.** Only the two short tool descriptions
+  travel with each question. The guide (about 1.5k tokens) is sent only on the turn where
+  the model asks for it, so a plain question pays nothing for this feature.
+- **Every change is checked before you are asked.** A proposal is held to the same rules as
+  a scene loaded at start: the binds must exist, the style tokens must be in the theme, no
+  property may be invented, and the input bar must stay. A refusal goes back to the model
+  with its `file:line`, so it fixes it and tries again; you are only asked about a change
+  that would really work.
+- **Modes.** `plan` never changes the interface; `ask` and `auto` always ask (this is the tool
+  you are using, so even `auto` asks); `full access` changes it unasked.
+- **Undo.** `/ui undo` puts back the interface as it was before the last change (a second
+  undo redoes it). `/ui reset` returns to the built-in interface, and `/ui undo` brings yours
+  back. Your interface is kept in `scene.json` in the `arxi` settings folder; if it ever stops
+  loading, the built-in one is shown with a note, and `-raw` always boots the raw scene.
+  Changes you type with `/ui` are kept the same way. A scene started with `-scene file.json`
+  is shown but never saved over.
+
+This needs an arxi core that knows `client_tools`; an older one says so and the chat works
+without it.
+
 `/clear` takes no arguments, so `/clear now` is not a clear. Managed processes (the
 arxi core and plugins) are not restarted: the core keeps no chat state (`chat.send`
 is stateless), so forgetting the history on the TUI side is the whole reset.

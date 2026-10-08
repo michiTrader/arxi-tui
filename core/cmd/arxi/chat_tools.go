@@ -55,6 +55,96 @@ type chatToolbox struct {
 	// ask puts a change to the user. It is nil when the connection cannot ask, and
 	// a change that needs asking is then refused.
 	ask func(chatApprovalNotification) (bool, error)
+	// client are tools the client lent this turn: the core offers them to the model
+	// and hands every call back to the client (callClient), which runs it.
+	client []turn.ToolDefinition
+	// callClient runs one client tool on the client; nil when the connection cannot.
+	callClient func(clientToolCall) (clientToolResult, error)
+}
+
+// maxClientTools bounds how many tools a client may lend one turn. Every definition
+// rides along with every request, so a runaway list is a cost on every question.
+const maxClientTools = 8
+
+// withClientTools lets the turn's model call tools the client runs, as the client
+// described them in raw (a JSON list of {name, description, schema}). Like withRuns
+// it is a step on top of withTools: a client tool is still a tool call, reported and
+// bounded by the same loop.
+//
+// # Why the core lends the model tools it cannot run
+//
+// Some things only the client owns. arxi-tui's interface is a document that lives in
+// that process, compiled into its binary or kept in its settings; the core cannot see
+// it, and pointing the model at files on disk would be wrong twice over: there may be
+// no file, and the model would edit bytes the client never validates. A client tool
+// keeps the authority where the state is: the core only carries the call and the
+// result, and the client decides what the call may do and whether to ask the user.
+//
+// A client tool may not shadow a core tool: a name collision would let the client
+// silently replace what "read" or "run" means for the model, under the core's own
+// policies.
+func withClientTools(ctx context.Context, raw string, call func(clientToolCall) (clientToolResult, error)) (context.Context, error) {
+	if strings.TrimSpace(raw) == "" {
+		return ctx, nil
+	}
+	tb := toolsFrom(ctx)
+	if tb == nil {
+		return ctx, badInvocation{errors.New("client_tools needs a workdir: they travel with the tools")}
+	}
+	var defs []struct {
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		Schema      json.RawMessage `json:"schema"`
+	}
+	if err := json.Unmarshal([]byte(raw), &defs); err != nil {
+		return ctx, badInvocation{fmt.Errorf("client_tools is not a JSON list of {name, description, schema}: %w", err)}
+	}
+	if len(defs) > maxClientTools {
+		return ctx, badInvocation{fmt.Errorf("client_tools lends %d tools; at most %d are taken", len(defs), maxClientTools)}
+	}
+	reserved := map[string]bool{}
+	for _, d := range tb.definitionsAll() {
+		reserved[d.Name] = true
+	}
+	c := *tb
+	c.callClient = call
+	c.client = nil
+	for _, d := range defs {
+		if d.Name == "" || strings.ContainsAny(d.Name, " \t\n") {
+			return ctx, badInvocation{fmt.Errorf("client tool name %q must be one word", d.Name)}
+		}
+		if reserved[d.Name] {
+			return ctx, badInvocation{fmt.Errorf("client tool %q has the name of a tool the core already offers; choose another", d.Name)}
+		}
+		reserved[d.Name] = true
+		schema := d.Schema
+		if len(schema) == 0 {
+			schema = json.RawMessage(`{"type":"object","properties":{}}`)
+		}
+		c.client = append(c.client, turn.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: schema})
+	}
+	return context.WithValue(ctx, toolsKey{}, &c), nil
+}
+
+// definitionsAll is every core tool name, whatever the policy, so a client tool can
+// never take one of their names even in a mode where that tool is not offered.
+func (tb *chatToolbox) definitionsAll() []chattools.Definition {
+	all := append(chattools.Definitions(), chattools.EditDefinitions()...)
+	all = append(all, chattools.RunDefinitions()...)
+	for _, d := range append(webtools.Definitions(), webtools.SearchDefinition()) {
+		all = append(all, chattools.Definition{Name: d.Name})
+	}
+	return all
+}
+
+// clientTool reports whether name is a tool the client lent this turn.
+func (tb *chatToolbox) clientTool(name string) bool {
+	for _, d := range tb.client {
+		if d.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 // withTools returns a context whose chat turn may look into dir, and change files
@@ -191,7 +281,7 @@ func (tb *chatToolbox) definitions() []turn.ToolDefinition {
 			out = append(out, turn.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: d.Schema})
 		}
 	}
-	return out
+	return append(out, tb.client...)
 }
 
 // runToolLoop asks the model, runs the tools it requests, and asks again until
@@ -255,6 +345,9 @@ func runOneTool(ctx context.Context, tb *chatToolbox, call *turn.ToolCall) (*tur
 
 	if webtools.Is(call.Name) {
 		return runWebTool(ctx, tb, call, n, out, fail)
+	}
+	if tb.clientTool(call.Name) {
+		return runClientTool(tb, call, n, out, fail)
 	}
 	switch {
 	case chattools.Runs(call.Name):
@@ -386,6 +479,50 @@ func runWebTool(ctx context.Context, tb *chatToolbox, call *turn.ToolCall, n cha
 	}
 	out.Content = []turn.ContentBlock{{Type: turn.BlockText, Text: webtools.Untrusted(page)}}
 	n.Arg, n.OK, n.Summary = page.URL, true, webtools.Summary(page)
+	if tb.report != nil {
+		tb.report(n)
+	}
+	return out, nil
+}
+
+// runClientTool hands a client tool call to the client and gives the model its answer.
+// The client already asked the user if the call needed asking, so the core reports the
+// outcome as it would any tool's. A client that cannot be reached ends the turn, as a
+// user who cannot be asked does: the call may have been half-way through a change.
+func runClientTool(tb *chatToolbox, call *turn.ToolCall, n chatToolNotification,
+	out *turn.ToolResult, fail func(string) (*turn.ToolResult, error)) (*turn.ToolResult, error) {
+	if tb.callClient == nil {
+		return fail(call.Name + " is run by the client and this connection cannot reach it")
+	}
+	args := call.Arguments
+	if len(args) == 0 {
+		args = json.RawMessage(`{}`)
+	}
+	res, err := tb.callClient(clientToolCall{CallID: call.ID, Name: call.Name, Arguments: args})
+	if err != nil {
+		return nil, err
+	}
+	if res.Arg != "" {
+		n.Arg = res.Arg
+	}
+	if !res.OK {
+		msg := res.Text
+		if msg == "" {
+			msg = call.Name + " failed"
+		}
+		out.IsError = true
+		out.Content = []turn.ContentBlock{{Type: turn.BlockText, Text: "error: " + msg}}
+		n.Summary = res.Summary
+		if n.Summary == "" {
+			n.Summary = msg
+		}
+		if tb.report != nil {
+			tb.report(n)
+		}
+		return out, nil
+	}
+	out.Content = []turn.ContentBlock{{Type: turn.BlockText, Text: res.Text}}
+	n.OK, n.Summary, n.Diff = true, res.Summary, res.Diff
 	if tb.report != nil {
 		tb.report(n)
 	}

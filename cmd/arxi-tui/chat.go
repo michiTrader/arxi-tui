@@ -91,6 +91,10 @@ type chatSession struct {
 	// approval is the change the core is holding for the user, nil when none.
 	approval *pendingApproval
 
+	// ui lends the model the interface tools (ui_bridge.go); nil lends none. Like
+	// workdir it is a setting, and it travels with the tools, so it needs a workdir.
+	ui *uiBridge
+
 	// dial gives each turn its own connection (nil = every turn shares core, which
 	// is what the tests and the mock use; cancelling then only abandons the answer).
 	dial chatDialer
@@ -407,11 +411,24 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 			})
 		},
 	}
+	if c.ui != nil && workdir != "" {
+		ui := c.ui
+		params.ClientTools = ui.definitions()
+		params.OnClientTool = func(ctx context.Context, call driver.ClientToolCall) driver.ClientToolResult {
+			return ui.call(ctx, call, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
+		}
+	}
 	res, err := core.SubmitChatSend(ctx, params)
 	// An older core refuses what it does not know, one parameter at a time. Take away
 	// only that, say so, and ask again: the user still gets everything the core can do.
-	for i := 0; i < 3 && ctx.Err() == nil; i++ {
+	for i := 0; i < 4 && ctx.Err() == nil; i++ {
 		switch {
+		case errors.Is(err, driver.ErrClientToolsUnsupported):
+			// The interface tools are this client's own; a core that cannot carry
+			// them still answers, it just cannot change the interface.
+			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model change the interface, " +
+				"so it will not; " + rebuildRemedy})
+			params.ClientTools, params.OnClientTool = nil, nil
 		case errors.Is(err, driver.ErrEditsUnsupported):
 			// A core that can look but not change files: say so, and go on looking.
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model change files, " +
@@ -426,10 +443,12 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 				"so it will not; " + rebuildRemedy})
 			params.Web = ""
 		default:
-			i = 3
+			i = 4
 			continue
 		}
-		if params.Edits == "" && params.Runs == "" && params.Web == "" {
+		// ui_edit asks through the same channel, but on the client's side; it needs
+		// no approval from the core, so OnApproval stays for it.
+		if params.Edits == "" && params.Runs == "" && params.Web == "" && params.OnClientTool == nil {
 			params.OnApproval = nil
 		}
 		res, err = core.SubmitChatSend(ctx, params)
@@ -439,7 +458,7 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		// plain way: the user asked a question and still gets an answer.
 		c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot give the model access to your files, " +
 			"so it answers without looking; " + rebuildRemedy})
-		params.Workdir, params.OnTool = "", nil
+		params.Workdir, params.OnTool, params.ClientTools, params.OnClientTool = "", nil, nil, nil
 		res, err = core.SubmitChatSend(ctx, params)
 	}
 	if ctx.Err() != nil {
