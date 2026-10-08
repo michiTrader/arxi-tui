@@ -446,7 +446,9 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 			i = 4
 			continue
 		}
-		if params.Edits == "" && params.Runs == "" && params.Web == "" {
+		// ui_edit asks through the same channel, but on the client's side; it needs
+		// no approval from the core, so OnApproval stays for it.
+		if params.Edits == "" && params.Runs == "" && params.Web == "" && params.OnClientTool == nil {
 			params.OnApproval = nil
 		}
 		res, err = core.SubmitChatSend(ctx, params)

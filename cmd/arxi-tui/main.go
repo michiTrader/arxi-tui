@@ -954,7 +954,34 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// lives here with the other per-frame host state.
 	var turnStart time.Time
 
+	// The interface bridge (ui_bridge.go): the chat model drafts against the
+	// document published here and hands an approved change back on uiApplyCh. A
+	// driver with no bridge leaves the channel nil, so its case never fires.
+	var uiBr *uiBridge
+	var uiApplyCh chan uiApply
+	if ib, ok := drv.(interfaceBridger); ok && ib.InterfaceBridge() != nil {
+		uiBr = ib.InterfaceBridge()
+		uiApplyCh = uiBr.apply
+	}
+	// keepScene saves the interface after a change to the document, when it is the
+	// user's everyday one. A failed save is said, never swallowed: the change is on
+	// screen but will not survive the session, and the user should know that.
+	keepScene := func(summary string) {
+		if !persistsScene(doc) {
+			sceneNotice = summary + " (this scene was started with -scene, so the change is not saved)"
+			return
+		}
+		if err := saveUserScene(doc); err != nil {
+			sceneNotice = summary + "; it could not be saved: " + err.Error()
+			return
+		}
+		sceneNotice = summary + " · saved (/ui undo takes it back)"
+	}
+
 	repaint := func() {
+		if uiBr != nil {
+			uiBr.publish(doc, theme)
+		}
 		state := fold.Fold(collected)
 		state.UserInput = input // view state: the host owns the input buffer
 		state.ModelName = statusModel(hubDefault, hubDefaultKnown, state.ModelName)
@@ -1650,7 +1677,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							sceneNotice = "/ui plugin remove: stopped and unmounted plugin " + id
 							input = ""
 							caret = 0
-						} else if handled, next := uiCommandKey(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens); handled {
+						} else if what, ok := uiHistoryCommand(input); ev.Key.Type == term.KeyEnter && ok {
+							// /ui undo and /ui reset are about the saved interface, so
+							// the host answers them; a patch could not, because the
+							// interface they bring back is not the one on screen.
+							sceneNotice = applyUIHistory(what, &doc)
+							input, caret = "", 0
+						} else if handled, next := typedUICommand(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens, keepScene); handled {
 							input = next
 							caret = clampCaret(input, caret)
 						} else if ev.Key.Type == term.KeyTab && ev.Key.Mod&term.ModShift != 0 && !strings.HasPrefix(input, "/") {
@@ -2217,6 +2250,19 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			repaint()
 
+		case req := <-uiApplyCh:
+			// The user allowed the model's change. It was drafted from req.base; if
+			// the screen moved on meanwhile the change is refused rather than
+			// applied over it, which would silently undo what the user did.
+			if req.base != doc {
+				req.done <- errors.New("the interface changed while the question was open; read it again with ui_guide and redo the change")
+			} else {
+				doc = req.doc
+				keepScene("the interface was changed")
+				req.done <- nil
+			}
+			repaint()
+
 		case out := <-browseDoneCh:
 			// The registry fetch worker finished. Clear busy so a next browse may
 			// start. On success open the installer over the fetched index — browse
@@ -2603,6 +2649,49 @@ func uiCommandKey(input string, k term.Key, doc **scene.Document, notice *string
 	// agent-driven half, where the proposal arrives before it is applied.
 	*notice = "/ui: " + res.Summary
 	return true, ""
+}
+
+// typedUICommand is uiCommandKey plus keeping the result: a typed command that
+// changed the document is saved like an agent's change, because the user's interface
+// is one thing whoever edited it. A plugin command is not kept: a mounted plugin is
+// reinstalled from its source, and saving its fragments would freeze a copy of
+// someone else's code into the user's interface.
+func typedUICommand(input string, k term.Key, doc **scene.Document, notice *string, hidden map[string]bool,
+	fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), keep func(string)) (bool, string) {
+	before := *doc
+	handled, next := uiCommandKey(input, k, doc, notice, hidden, fetch, applyTokens)
+	if handled && *doc != before && !isPluginCommand(input) {
+		keep(*notice)
+	}
+	return handled, next
+}
+
+func isPluginCommand(input string) bool {
+	f := strings.Fields(input)
+	return len(f) >= 2 && f[1] == "plugin"
+}
+
+// applyUIHistory runs /ui undo or /ui reset and returns the notice. A scene booted
+// with -scene is left on screen: the saved interface changes and shows next time.
+func applyUIHistory(what string, doc **scene.Document) string {
+	var next *scene.Document
+	var err error
+	if what == "undo" {
+		next, err = undoUserScene()
+	} else {
+		next, err = resetUserScene()
+	}
+	switch {
+	case err != nil:
+		return "/ui " + what + ": " + err.Error()
+	case !persistsScene(*doc):
+		return "/ui " + what + ": this scene was started with -scene; the saved interface was changed and shows next time"
+	}
+	*doc = next
+	if what == "undo" {
+		return "/ui undo: the interface is back as it was before the last change"
+	}
+	return "/ui reset: the built-in interface is back (/ui undo brings yours back)"
 }
 
 // pluginThemeLayer is one mounted plugin's contributed token block, kept in the
