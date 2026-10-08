@@ -197,7 +197,7 @@ func run(scenePath string) error {
 	// Load scene document. The default is the sobria scene (Scene 2, the
 	// fx-inspired default per PLAN.md); if it fails to parse or validate, fall
 	// back to the factory RAW scene (Scene 1) so the interface always boots.
-	doc, sceneNotice, err := resolveStartScene(scenePath)
+	doc, sceneNotice, err := resolveBootScene(scenePath)
 	if err != nil {
 		return fmt.Errorf("scene load: %w", err)
 	}
@@ -550,6 +550,7 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 		},
 	}
 	sd.chat = newChatSession(nd, sd.relay)
+	sd.chat.ui = newUIBridge()
 	sd.SetMode(defaultMode)
 	// The model may look into the folder arxi-tui was opened in.
 	if cwd, err := os.Getwd(); err == nil {

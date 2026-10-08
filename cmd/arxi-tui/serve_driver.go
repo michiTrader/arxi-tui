@@ -256,11 +256,23 @@ func (d *serveDriver) SetEffort(level string) {
 
 // SetMode applies an agent mode: what the model may do to files follows it.
 func (d *serveDriver) SetMode(name string) {
+	if d.chat != nil && d.chat.ui != nil {
+		d.chat.ui.setMode(name)
+	}
 	if m, ok := modeByName(name); ok && d.chat != nil {
 		d.chat.setEdits(m.policy(classEdit))
 		d.chat.setRuns(m.policy(classRun))
 		d.chat.setWeb(m.policy(classWeb))
 	}
+}
+
+// InterfaceBridge is the bridge the chat lends the interface tools through, nil when
+// it lends none.
+func (d *serveDriver) InterfaceBridge() *uiBridge {
+	if d.chat == nil {
+		return nil
+	}
+	return d.chat.ui
 }
 
 // PendingApproval reports whether a change waits for the user's answer.
