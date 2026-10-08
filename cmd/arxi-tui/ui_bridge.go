@@ -77,6 +77,9 @@ type uiBridge struct {
 	// taken off: it falls back to below, which the composed theme no longer knows.
 	below *theme.Theme
 	user  userTokens
+	// texts is the user's own wording layer (ui_texts.go), kept apart from the factory
+	// sentences for the same reason user is kept apart from below.
+	texts userTexts
 	// policy is what the agent mode says about changing the interface: deny (plan),
 	// ask, or allow (full access only).
 	policy string
@@ -93,7 +96,10 @@ type uiApply struct {
 	// colors is the user's colour layer after the change, nil when the change
 	// touches no colour; baseColors is the layer it was drafted from.
 	colors, baseColors userTokens
-	done               chan error
+	// texts is the user's wording after the change, nil when the change touches no
+	// text; baseTexts is the layer it was drafted from.
+	texts, baseTexts userTexts
+	done             chan error
 }
 
 func newUIBridge() *uiBridge {
@@ -102,18 +108,18 @@ func newUIBridge() *uiBridge {
 
 // publish records the document and theme on screen. The loop calls it on every
 // repaint, so a tool call always drafts against what the user is looking at.
-func (b *uiBridge) publish(doc *scene.Document, below *theme.Theme, user userTokens) {
+func (b *uiBridge) publish(doc *scene.Document, below *theme.Theme, user userTokens, texts userTexts) {
 	b.mu.Lock()
-	b.doc, b.below, b.user = doc, below, user
+	b.doc, b.below, b.user, b.texts = doc, below, user, texts
 	b.mu.Unlock()
 }
 
 // snapshot returns the document, the theme under the user's colours, the user's
-// colours, and the theme on screen (the two laid together).
-func (b *uiBridge) snapshot() (*scene.Document, *theme.Theme, userTokens, *theme.Theme) {
+// colours, the theme on screen (the two laid together) and the user's wording.
+func (b *uiBridge) snapshot() (*scene.Document, *theme.Theme, userTokens, *theme.Theme, userTexts) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.doc, b.below, b.user, withUserTokens(b.below, b.user)
+	return b.doc, b.below, b.user, withUserTokens(b.below, b.user), b.texts
 }
 
 // setMode follows the agent mode. Changing the interface is asked about in every mode
@@ -141,9 +147,10 @@ func (b *uiBridge) definitions() []driver.ClientToolDef {
 			Description: "Read how YOUR OWN interface is built: the terminal app you are running in and the user is looking at (banner, chat, input bar, status bar, and the colours of everything you write). It is NOT in the project folder; never search files for it. Call this first whenever the user asks to change anything about how you or this screen look: layout, spacing, colours, styles.",
 			Schema:      json.RawMessage(`{"type":"object","properties":{}}`)},
 		{Name: uiToolEdit,
-			Description: "Change your own interface (call ui_guide first). The user sees the diff and approves it; it is kept across sessions. Pass colors to recolour, commands (/ui lines) or scene to change the layout. A refusal says what to fix: fix it and retry.",
+			Description: "Change your own interface (call ui_guide first). The user sees the diff and approves it; it is kept across sessions. Pass colors to recolour, texts to reword the menus and screens (descriptions of / commands, hints, the /team copy, translations), commands (/ui lines) or scene to change the layout. A refusal says what to fix: fix it and retry.",
 			Schema: json.RawMessage(`{"type":"object","properties":{` +
 				`"colors":{"type":"object","additionalProperties":{"type":"string"},"description":"token -> style, e.g. {\"markdown.code\":\"fg=magenta\"}"},` +
+				`"texts":{"type":"object","additionalProperties":{"type":"string"},"description":"key -> sentence, e.g. {\"team.title\":\"Agentes y equipos\"}; empty restores the factory one"},` +
 				`"commands":{"type":"array","items":{"type":"string"},"description":"/ui add|move|set|style lines"},` +
 				`"scene":{"type":"string","description":"the complete new scene document, as JSON"},` +
 				`"summary":{"type":"string","description":"one sentence saying what changes, shown to the user"}}}`)},
@@ -154,7 +161,7 @@ func (b *uiBridge) definitions() []driver.ClientToolDef {
 func (b *uiBridge) call(ctx context.Context, c driver.ClientToolCall, ask func(driver.Approval) bool) driver.ClientToolResult {
 	switch c.Name {
 	case uiToolGuide:
-		doc, _, _, thm := b.snapshot()
+		doc, _, _, thm, _ := b.snapshot()
 		if doc == nil {
 			return driver.ClientToolResult{Text: "the interface is not on screen yet; try again", Summary: "The interface is not ready"}
 		}
@@ -177,18 +184,20 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	}
 	var args struct {
 		Colors   map[string]string `json:"colors"`
+		Texts    map[string]string `json:"texts"`
 		Commands []string          `json:"commands"`
 		Scene    string            `json:"scene"`
 		Summary  string            `json:"summary"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
-		return refuse("The change was refused", "ui_edit takes {colors: {...}}, {commands: [...]} or {scene: \"...\"}: "+err.Error())
+		return refuse("The change was refused", "ui_edit takes {colors: {...}}, {texts: {...}}, {commands: [...]} or {scene: \"...\"}: "+err.Error())
 	}
-	base, below, user, thm := b.snapshot()
+	base, below, user, thm, userWords := b.snapshot()
 	if base == nil {
 		return refuse("The interface is not ready", "the interface is not on screen yet; try again")
 	}
 	var colors userTokens
+	var words userTexts
 	var diff string
 	nextThm := thm
 	if len(args.Colors) > 0 {
@@ -204,6 +213,18 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 		sort.Strings(changed)
 		diff = colorDiff(thm, nextThm, changed)
 	}
+	if len(args.Texts) > 0 {
+		var err error
+		if words, err = applyTexts(userWords, args.Texts); err != nil {
+			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
+		}
+		changed := make([]string, 0, len(args.Texts))
+		for k := range args.Texts {
+			changed = append(changed, k)
+		}
+		sort.Strings(changed)
+		diff += textDiff(userWords, words, changed)
+	}
 	next := base
 	if len(args.Commands) > 0 || strings.TrimSpace(args.Scene) != "" {
 		var err error
@@ -215,8 +236,8 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 			return refuse("The change was refused", err.Error())
 		}
 		diff += d
-	} else if len(args.Colors) == 0 {
-		return refuse("The change was refused", "ui_edit needs colors, commands or scene")
+	} else if len(args.Colors) == 0 && len(args.Texts) == 0 {
+		return refuse("The change was refused", "ui_edit needs colors, texts, commands or scene")
 	}
 	if diff == "" {
 		return driver.ClientToolResult{OK: true, Arg: "interface", Summary: "Nothing to change", Text: "the new document is the same as the one on screen; nothing was changed"}
@@ -231,7 +252,7 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	done := make(chan error, 1)
 	var err error
 	select {
-	case b.apply <- uiApply{base: base, doc: next, colors: colors, baseColors: user, done: done}:
+	case b.apply <- uiApply{base: base, doc: next, colors: colors, baseColors: user, texts: words, baseTexts: userWords, done: done}:
 	case <-ctx.Done():
 		return refuse("Cancelled", "the turn ended before the change was applied")
 	}
@@ -400,6 +421,10 @@ func uiGuide(doc *scene.Document, thm *theme.Theme) string {
 COLOURS. Every coloured thing is a style token. Your replies are Markdown, so the coloured words in them are markdown.* tokens (inline code and links are cyan by default). To recolour, pass colors: {token: style}. A style is "fg=<colour>" with optional "bg=<colour>" and attributes (bold dim italic underline reverse strike). A colour is a name (red green yellow blue magenta cyan white black, or bright-<name>), 0-255, or #rrggbb. Purple: magenta, bright-magenta or #a855f7. An empty style puts the default back. Example, purple inline code and links:
   colors: {"markdown.code": "fg=magenta", "markdown.link": "fg=magenta underline"}
 
+WORDS. Every sentence the app writes in its own menus and screens (what each / command is described as, the hint under /effort, /mode and /style, the key legends, the whole of /team and its buttons) is a text key. To reword or translate them pass texts: {key: sentence}; an empty sentence puts the factory one back, a few spaces hides it. Keys are listed below with what they say now. Keep a {placeholder} where the factory sentence has one. Example, /team in Spanish:
+  texts: {"team.title": "Agentes y equipos", "team.new_agent.label": "＋ Nuevo agente…"}
+Words that are not keys (the labels inside a form, error messages, the model's own replies) are not editable this way; say so rather than promising it.
+
 LAYOUT. The interface is a JSON scene document drawn top to bottom: {"root": node}; a node is {"type", "id", ...}; stack lays children out vertically, row horizontally; text draws "text" or the value of "bind"; an empty line is {"type":"text","text":""}; "when": <bind> shows a node only while the bind is truthy; "style": {"style": <token>} picks which token paints a node. Give every node you add a new unique id. Change the layout with commands (preferred), applied in order:
   /ui add node <where> <json-node>
   /ui move <id> <where>
@@ -413,6 +438,8 @@ Or pass scene: the complete new document, changing as little as the order requir
 `)
 	b.WriteString("Style tokens (token = current style  # what it paints):\n")
 	b.WriteString(colorTable(thm))
+	b.WriteString("\nText keys (key = what it says now  # where it appears):\n")
+	b.WriteString(textsGuide())
 	fmt.Fprintf(&b, "\nNode types: %s\n", strings.Join(scene.SignedNodeTypes(), ", "))
 	fmt.Fprintf(&b, "Node keys: %s\n", strings.Join(scene.Vocabulary(), ", "))
 	fmt.Fprintf(&b, "Binds: %s\n\n", strings.Join(scene.SignedBinds(), ", "))

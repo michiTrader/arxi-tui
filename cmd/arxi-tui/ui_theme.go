@@ -238,6 +238,10 @@ func uiColorCommand(input string) (tok, style string, ok bool) {
 type interfaceState struct {
 	Scene  string `json:"scene,omitempty"`
 	Tokens string `json:"tokens,omitempty"`
+	// Texts is the user's own wording (ui_texts.go). It travels with the layout and the
+	// colours so one /ui undo can never bring back the layout of one change with the
+	// words of another.
+	Texts string `json:"texts,omitempty"`
 }
 
 func previousInterfacePath() string {
@@ -261,6 +265,11 @@ func currentInterface() (interfaceState, error) {
 	} else if !os.IsNotExist(err) {
 		return st, err
 	}
+	if b, err := os.ReadFile(userTextsPath()); err == nil {
+		st.Texts = string(b)
+	} else if !os.IsNotExist(err) {
+		return st, err
+	}
 	return st, nil
 }
 
@@ -272,7 +281,7 @@ func writeInterface(st interfaceState) error {
 	for _, part := range []struct {
 		path string
 		data []byte
-	}{{userScenePath(), []byte(st.Scene)}, {userThemePath(), []byte(st.Tokens)}} {
+	}{{userScenePath(), []byte(st.Scene)}, {userThemePath(), []byte(st.Tokens)}, {userTextsPath(), []byte(st.Texts)}} {
 		if len(part.data) == 0 {
 			if err := os.Remove(part.path); err != nil && !os.IsNotExist(err) {
 				return err
@@ -289,7 +298,7 @@ func writeInterface(st interfaceState) error {
 // saveInterface keeps doc and the user's colours, and what was saved before as the
 // one /ui undo returns to. The previous state is one file, so an undo can never bring
 // back the layout of one change with the colours of another.
-func saveInterface(doc *scene.Document, u userTokens) error {
+func saveInterface(doc *scene.Document, u userTokens, tx userTexts) error {
 	if configDir() == "" {
 		return errNoConfigDir
 	}
@@ -311,6 +320,9 @@ func saveInterface(doc *scene.Document, u userTokens) error {
 	if len(u) > 0 {
 		next.Tokens = string(encodeUserTokens(u))
 	}
+	if len(tx) > 0 {
+		next.Texts = string(encodeUserTexts(tx))
+	}
 	return writeInterface(next)
 }
 
@@ -320,7 +332,7 @@ func sameDocument(a, b []byte) bool {
 }
 
 // loadInterface turns a saved state into what the loop draws.
-func loadInterface(st interfaceState) (*scene.Document, userTokens, error) {
+func loadInterface(st interfaceState) (*scene.Document, userTokens, userTexts, error) {
 	var doc *scene.Document
 	var err error
 	if len(st.Scene) == 0 {
@@ -332,69 +344,73 @@ func loadInterface(st interfaceState) (*scene.Document, userTokens, error) {
 		}
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	u, err := parseUserTokens(userThemePath(), []byte(st.Tokens))
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return doc, u, nil
+	tx, err := parseUserTexts(userTextsPath(), []byte(st.Texts))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return doc, u, tx, nil
 }
 
 // undoInterface brings back the interface as it was before the last change and keeps
 // the current one in its place, so a second undo is a redo.
-func undoInterface() (*scene.Document, userTokens, error) {
+func undoInterface() (*scene.Document, userTokens, userTexts, error) {
 	if configDir() == "" {
-		return nil, nil, errNoConfigDir
+		return nil, nil, nil, errNoConfigDir
 	}
 	b, err := os.ReadFile(previousInterfacePath())
 	if os.IsNotExist(err) {
-		return nil, nil, errors.New("there is no earlier interface to go back to")
+		return nil, nil, nil, errors.New("there is no earlier interface to go back to")
 	}
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	var prev interfaceState
 	if err := json.Unmarshal(b, &prev); err != nil {
-		return nil, nil, fmt.Errorf("the earlier interface cannot be read: %w", err)
+		return nil, nil, nil, fmt.Errorf("the earlier interface cannot be read: %w", err)
 	}
-	doc, u, err := loadInterface(prev)
+	doc, u, tx, err := loadInterface(prev)
 	if err != nil {
-		return nil, nil, fmt.Errorf("the earlier interface no longer loads: %w", err)
+		return nil, nil, nil, fmt.Errorf("the earlier interface no longer loads: %w", err)
 	}
 	cur, err := currentInterface()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	cb, _ := json.Marshal(cur)
 	if err := writeAtomic(previousInterfacePath(), cb); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return doc, u, writeInterface(prev)
+	return doc, u, tx, writeInterface(prev)
 }
 
 // resetInterface goes back to the built-in look. What was saved is kept as the one
 // /ui undo returns to, so a reset is never the end of the user's work.
-func resetInterface() (*scene.Document, userTokens, error) {
+func resetInterface() (*scene.Document, userTokens, userTexts, error) {
 	if configDir() == "" {
-		return nil, nil, errNoConfigDir
+		return nil, nil, nil, errNoConfigDir
 	}
 	cur, err := currentInterface()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	if len(cur.Scene) > 0 || len(cur.Tokens) > 0 {
+	if len(cur.Scene) > 0 || len(cur.Tokens) > 0 || len(cur.Texts) > 0 {
 		cb, _ := json.Marshal(cur)
 		if err := os.MkdirAll(configDir(), 0o700); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		if err := writeAtomic(previousInterfacePath(), cb); err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 	}
 	if err := writeInterface(interfaceState{}); err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	doc, err := scene.ParseNamed(defaultscene.Name, defaultscene.JSON)
-	return doc, nil, err
+	return doc, nil, nil, err
 }
