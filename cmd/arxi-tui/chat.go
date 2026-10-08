@@ -434,6 +434,9 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model change the interface, " +
 				"so it will not; " + rebuildRemedy})
 			params.ClientTools, params.OnClientTool = nil, nil
+			// The hint names ui_guide; without the tool it would send the model
+			// looking for one it does not have.
+			params.System = strings.TrimSuffix(params.System, " "+uiSystemHint)
 		case errors.Is(err, driver.ErrEditsUnsupported):
 			// A core that can look but not change files: say so, and go on looking.
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model change files, " +
@@ -464,6 +467,7 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot give the model access to your files, " +
 			"so it answers without looking; " + rebuildRemedy})
 		params.Workdir, params.OnTool, params.ClientTools, params.OnClientTool = "", nil, nil, nil
+		params.System = strings.TrimSuffix(params.System, " "+uiSystemHint)
 		res, err = core.SubmitChatSend(ctx, params)
 	}
 	if ctx.Err() != nil {
