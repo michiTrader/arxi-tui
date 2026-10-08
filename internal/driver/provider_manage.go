@@ -201,6 +201,38 @@ type ChatSendParams struct {
 	// with the tools. A core that does not know the parameter makes the call fail
 	// with ErrWebUnsupported.
 	Web string
+	// ClientTools are tools this client lends the model and runs itself: the core
+	// offers them and hands every call to OnClientTool, whose answer goes back to the
+	// model. They need Workdir, because they travel with the tools. A core that does
+	// not know the parameter makes the call fail with ErrClientToolsUnsupported.
+	ClientTools []ClientToolDef
+	// OnClientTool runs one call of a client tool. It may block (to ask the user) and
+	// must return when ctx ends. With no OnClientTool every call fails.
+	OnClientTool func(ctx context.Context, c ClientToolCall) ClientToolResult
+}
+
+// ClientToolDef is one tool a client lends the model: what the model is told about it.
+type ClientToolDef struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description"`
+	Schema      json.RawMessage `json:"schema"`
+}
+
+// ClientToolCall is one call the model made to a client tool.
+type ClientToolCall struct {
+	CallID    string
+	Name      string
+	Arguments json.RawMessage
+}
+
+// ClientToolResult is the client's answer: Text is what the model reads; Arg,
+// Summary and Diff are what the user's tool line shows.
+type ClientToolResult struct {
+	OK      bool   `json:"ok"`
+	Text    string `json:"text"`
+	Arg     string `json:"arg,omitempty"`
+	Summary string `json:"summary,omitempty"`
+	Diff    string `json:"diff,omitempty"`
 }
 
 // Approval is a change the model wants to make and the core is holding until the
@@ -235,6 +267,10 @@ var ErrRunsUnsupported = errors.New("this arxi core cannot let the model run com
 
 // ErrWebUnsupported is returned when the core is too old to let the model read the web.
 var ErrWebUnsupported = errors.New("this arxi core cannot let the model read web pages (it does not know web)")
+
+// ErrClientToolsUnsupported is returned when the core is too old to take tools the
+// client runs itself.
+var ErrClientToolsUnsupported = errors.New("this arxi core cannot take tools the client runs (it does not know client_tools)")
 
 // ErrToolsUnsupported is returned when the core is too old to give the model tools.
 var ErrToolsUnsupported = errors.New("this arxi core cannot give the model tools (it does not know workdir)")
@@ -283,6 +319,13 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 	if p.Web != "" && p.Workdir != "" {
 		params["web"] = p.Web
 	}
+	if len(p.ClientTools) > 0 && p.Workdir != "" {
+		b, err := json.Marshal(p.ClientTools)
+		if err != nil {
+			return nil, fmt.Errorf("ndjson: encode client tools: %w", err)
+		}
+		params["client_tools"] = string(b)
+	}
 	var r ChatSendResult
 	if p.OnThinking == nil && p.Workdir == "" {
 		if err := d.call(ctx, "chat-send", "chat.send", params, &r); err != nil {
@@ -293,13 +336,18 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 	if p.OnThinking != nil {
 		params["stream_thinking"] = true
 	}
-	err := d.callWatching(ctx, "chat-send", "chat.send", params, &r, p.OnThinking, p.OnTool, p.OnApproval)
+	err := d.callWatching(ctx, "chat-send", "chat.send", params, &r, p.OnThinking, p.OnTool, p.OnApproval, p.OnClientTool)
 	var ref *Refusal
 	if errors.As(err, &ref) && ref.Code == "bad_params" {
 		// Only the part that names what was refused: the rest of the message lists
 		// everything the core does take, which would match every parameter below.
 		refused := refusedPart(ref.Message)
 		switch {
+		// Checked first: "client_tools" is the one name that contains none of the
+		// others, but a later one might, and the newest parameter is the likeliest
+		// to be the one an older core refuses.
+		case strings.Contains(refused, "client_tools"):
+			return nil, fmt.Errorf("%w: %s", ErrClientToolsUnsupported, ref.Message)
 		case strings.Contains(refused, "workdir"):
 			return nil, fmt.Errorf("%w: %s", ErrToolsUnsupported, ref.Message)
 		case strings.Contains(refused, "edits"):
@@ -313,7 +361,7 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 			// would have streamed is simply asked again the plain way.
 			delete(params, "stream_thinking")
 			if p.Workdir != "" {
-				err = d.callWatching(ctx, "chat-send", "chat.send", params, &r, nil, p.OnTool, p.OnApproval)
+				err = d.callWatching(ctx, "chat-send", "chat.send", params, &r, nil, p.OnTool, p.OnApproval, p.OnClientTool)
 			} else {
 				err = d.call(ctx, "chat-send", "chat.send", params, &r)
 			}
@@ -340,7 +388,11 @@ func refusedPart(msg string) string {
 // back as a chat.decision line while the turn waits), and every other kind is
 // skipped. Any callback may be nil; with no onApproval every change is declined.
 // The first line carrying an id is the response.
-func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params map[string]any, out any, onThinking func(string), onTool func(ToolCall), onApproval func(context.Context, Approval) bool) error {
+//
+// chat.client_tool goes to onClient, and its answer goes back as a
+// chat.client_result line the same way; with no onClient the call fails, so the
+// turn goes on and the model is told.
+func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params map[string]any, out any, onThinking func(string), onTool func(ToolCall), onApproval func(context.Context, Approval) bool, onClient func(context.Context, ClientToolCall) ClientToolResult) error {
 	req := protoRequest{ID: id, Type: verb, Params: params}
 
 	d.mu.Lock()
@@ -365,6 +417,8 @@ func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params
 			Summary string `json:"summary"`
 			Output  string `json:"output"`
 			Diff    string `json:"diff"`
+			// Arguments is a client tool call's input, kept raw for the client.
+			Arguments json.RawMessage `json:"arguments"`
 		}
 		if err := json.Unmarshal([]byte(line), &head); err != nil {
 			return fmt.Errorf("ndjson: response is not JSON: %w", err)
@@ -378,6 +432,15 @@ func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params
 			case head.Type == "chat.approval":
 				allow := onApproval != nil && onApproval(ctx, Approval{CallID: head.CallID, Name: head.Name, Arg: head.Arg, Summary: head.Summary, Diff: head.Diff})
 				if err := d.enc.Encode(map[string]any{"type": "chat.decision", "call_id": head.CallID, "allow": allow}); err != nil {
+					return fmt.Errorf("ndjson: answer %s: %w", head.CallID, err)
+				}
+			case head.Type == "chat.client_tool":
+				res := ClientToolResult{Text: head.Name + " is not available in this client"}
+				if onClient != nil {
+					res = onClient(ctx, ClientToolCall{CallID: head.CallID, Name: head.Name, Arguments: head.Arguments})
+				}
+				if err := d.enc.Encode(map[string]any{"type": "chat.client_result", "call_id": head.CallID,
+					"ok": res.OK, "text": res.Text, "arg": res.Arg, "summary": res.Summary, "diff": res.Diff}); err != nil {
 					return fmt.Errorf("ndjson: answer %s: %w", head.CallID, err)
 				}
 			}
