@@ -152,16 +152,23 @@ anything you typed, so set `ARXI_SESSIONS=off` to save nothing at all.
 ### Asking the agent to change the interface
 
 Ask in your own words: "add a blank line between the input bar and the status bar", "make
-the status bar dim", "move the status bar above the chat". The model reads how this
+the blue words in your answers purple", "move the status bar above the chat". The model reads how this
 interface is built, proposes the change, and you see the diff before anything moves:
 `Allow this change to the interface?  y yes · n no`. Allowed, it is drawn at once and kept
 for your next session.
 
 - **It does not look in your project for it.** The interface lives inside the program (a
   release has no source tree), so the model is given two tools of the program's own:
-  `ui_guide` (how the interface is built, with the live document and every node type, bind
-  and style token) and `ui_edit` (propose a change). It edits the interface the same way you
-  can with `/ui add|move|set|style`.
+  `ui_guide` (how the interface is built: the live document, every node type and bind, and
+  every style token with its current colour and what it paints) and `ui_edit` (propose a
+  change). It is also told, in one sentence, that it runs inside arxi-tui, so "the TUI" or
+  "your colours" never send it searching your files.
+- **Colours and layout.** The layout is the scene document; the colours are style tokens.
+  The coloured words in an answer are `markdown.code` (inline code) and `markdown.link`,
+  cyan by default. You can do the same by hand: `/ui color markdown.code fg=magenta`
+  (`fg=`/`bg=` with a name such as `magenta` or `bright-magenta`, `0-255` or `#rrggbb`,
+  plus `bold`, `italic`, `underline`…); `/ui color markdown.code` alone puts the default
+  back. Your colours are kept in `theme.json` in the settings folder.
 - **The knowledge costs nothing until it is needed.** Only the two short tool descriptions
   travel with each question. The guide (about 1.5k tokens) is sent only on the turn where
   the model asks for it, so a plain question pays nothing for this feature.
@@ -172,7 +179,7 @@ for your next session.
   that would really work.
 - **Modes.** `plan` never changes the interface; `ask` and `auto` always ask (this is the tool
   you are using, so even `auto` asks); `full access` changes it unasked.
-- **Undo.** `/ui undo` puts back the interface as it was before the last change (a second
+- **Undo.** `/ui undo` puts back the interface (layout and colours) as it was before the last change (a second
   undo redoes it). `/ui reset` returns to the built-in interface, and `/ui undo` brings yours
   back. Your interface is kept in `scene.json` in the `arxi` settings folder; if it ever stops
   loading, the built-in one is shown with a note, and `-raw` always boots the raw scene.
