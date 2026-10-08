@@ -894,10 +894,28 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// rare case not worth risking the ticker invariants for.
 	baseTheme := theme
 	var pluginLayers []pluginThemeLayer
+	// The user's own colours are the top layer (user > plugin > factory,
+	// docs/TOKENS.md). They are loaded only for the everyday interface: -raw and
+	// -scene boot exactly the document asked for, so the escape hatch can never be
+	// painted unreadable by a saved colour.
+	var userCols userTokens
+	if persistsScene(doc) {
+		if u, err := loadUserTokens(); err != nil {
+			sceneNotice = "your saved colours could not be used: " + err.Error() + " (/ui reset clears them)"
+		} else {
+			userCols = u
+		}
+	}
+	belowUser := theme
+	recomposeTheme := func() {
+		belowUser = composeTheme(baseTheme, pluginLayers)
+		theme = withUserTokens(belowUser, userCols)
+		clock.resolveAnim = theme.Anim
+	}
+	recomposeTheme()
 	applyPluginTokens := func(op *patch.PluginTokens) {
 		pluginLayers = applyTokenLayer(pluginLayers, op)
-		theme = composeTheme(baseTheme, pluginLayers)
-		clock.resolveAnim = theme.Anim
+		recomposeTheme()
 	}
 	var animTicker *time.Ticker
 	var tickCh <-chan time.Time
@@ -971,7 +989,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			sceneNotice = summary + " (this scene was started with -scene, so the change is not saved)"
 			return
 		}
-		if err := saveUserScene(doc); err != nil {
+		if err := saveInterface(doc, userCols); err != nil {
 			sceneNotice = summary + "; it could not be saved: " + err.Error()
 			return
 		}
@@ -980,7 +998,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 
 	repaint := func() {
 		if uiBr != nil {
-			uiBr.publish(doc, theme)
+			uiBr.publish(doc, belowUser, userCols)
 		}
 		state := fold.Fold(collected)
 		state.UserInput = input // view state: the host owns the input buffer
@@ -1681,7 +1699,24 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// /ui undo and /ui reset are about the saved interface, so
 							// the host answers them; a patch could not, because the
 							// interface they bring back is not the one on screen.
-							sceneNotice = applyUIHistory(what, &doc)
+							var cols userTokens
+							var changed bool
+							sceneNotice, cols, changed = applyUIHistory(what, &doc)
+							if changed {
+								userCols = cols
+								recomposeTheme()
+							}
+							input, caret = "", 0
+						} else if tok, style, ok := uiColorCommand(input); ev.Key.Type == term.KeyEnter && ok {
+							// /ui color <token> [style]: the same colour change the agent
+							// proposes, typed by the user, so it is not asked about.
+							if next, err := applyColors(userCols, theme, map[string]string{tok: style}); err != nil {
+								sceneNotice = "/ui color: " + err.Error()
+							} else {
+								userCols = next
+								recomposeTheme()
+								keepScene("/ui color: " + tok + " is now " + styleWords(theme.Resolve(tok)))
+							}
 							input, caret = "", 0
 						} else if handled, next := typedUICommand(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens, keepScene); handled {
 							input = next
@@ -2254,10 +2289,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// The user allowed the model's change. It was drafted from req.base; if
 			// the screen moved on meanwhile the change is refused rather than
 			// applied over it, which would silently undo what the user did.
-			if req.base != doc {
+			if req.base != doc || (req.colors != nil && !sameTokens(req.baseColors, userCols)) {
 				req.done <- errors.New("the interface changed while the question was open; read it again with ui_guide and redo the change")
 			} else {
 				doc = req.doc
+				if req.colors != nil {
+					userCols = req.colors
+					recomposeTheme()
+				}
 				keepScene("the interface was changed")
 				req.done <- nil
 			}
@@ -2671,27 +2710,42 @@ func isPluginCommand(input string) bool {
 	return len(f) >= 2 && f[1] == "plugin"
 }
 
-// applyUIHistory runs /ui undo or /ui reset and returns the notice. A scene booted
-// with -scene is left on screen: the saved interface changes and shows next time.
-func applyUIHistory(what string, doc **scene.Document) string {
+// applyUIHistory runs /ui undo or /ui reset: it returns the notice, the user's colours
+// after it, and whether the screen should take them. A scene booted with -scene is
+// left on screen: the saved interface changes and shows next time.
+func applyUIHistory(what string, doc **scene.Document) (string, userTokens, bool) {
 	var next *scene.Document
+	var cols userTokens
 	var err error
 	if what == "undo" {
-		next, err = undoUserScene()
+		next, cols, err = undoInterface()
 	} else {
-		next, err = resetUserScene()
+		next, cols, err = resetInterface()
 	}
 	switch {
 	case err != nil:
-		return "/ui " + what + ": " + err.Error()
+		return "/ui " + what + ": " + err.Error(), nil, false
 	case !persistsScene(*doc):
-		return "/ui " + what + ": this scene was started with -scene; the saved interface was changed and shows next time"
+		return "/ui " + what + ": this scene was started with -scene; the saved interface was changed and shows next time", nil, false
 	}
 	*doc = next
 	if what == "undo" {
-		return "/ui undo: the interface is back as it was before the last change"
+		return "/ui undo: the interface is back as it was before the last change", cols, true
 	}
-	return "/ui reset: the built-in interface is back (/ui undo brings yours back)"
+	return "/ui reset: the built-in interface is back (/ui undo brings yours back)", cols, true
+}
+
+// sameTokens reports whether two colour layers say the same thing.
+func sameTokens(a, b userTokens) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if w, ok := b[k]; !ok || w != v {
+			return false
+		}
+	}
+	return true
 }
 
 // pluginThemeLayer is one mounted plugin's contributed token block, kept in the
