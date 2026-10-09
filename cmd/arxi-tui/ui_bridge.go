@@ -473,6 +473,7 @@ LAYOUT. The interface is a JSON scene document drawn top to bottom: {"root": nod
   where = above <id> | below <id> | into <id> [top] | above_input | below_input
 Example, one more blank line under the input bar:
   /ui add node below_input {"id":"input_gap_extra","type":"text","text":""}
+FRAMES. Only a box (or an overlay) draws a border; a border on any other node is refused. "border" is one of single, double, round (rounded corners), heavy, ascii, or {"shape":"round","style":"<token>"} to colour it. To put a rounded frame around the input bar: /ui add node above prompt {"id":"input_frame","type":"box","border":"round"} then /ui move prompt into input_frame. Do not invent other words ("rounded", "{type:round}"): they are refused.
 Or pass scene: the complete new document, changing as little as the order requires. Every bind and when must come from the bind list; keep the node bound to user.input.
 
 `)

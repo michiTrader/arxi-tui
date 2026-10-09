@@ -42,7 +42,7 @@ type Node struct {
 	Categories  []string `json:"categories,omitempty"`
 	RowTemplate *Node    `json:"row_template,omitempty"`
 	// Border renders a box-drawing frame around the node's content. It accepts
-	// either a string ("single", "double", "ascii") for shape-only, or an object
+	// either a string ("single", "double", "ascii", "round", "heavy") for shape-only, or an object
 	// { "shape": "single", "style": "warn" } for shape + style (Scene 3 tokens
 	// overlay). Uses json.RawMessage so both forms unmarshal without a custom
 	// UnmarshalJSON on the whole Node.
@@ -634,7 +634,13 @@ func (n *Node) border() (borderObject, bool) {
 	return obj, true
 }
 
-// BorderShape returns the border shape ("single", "double", "ascii") or ""
+// BorderShapes are the frame shapes a border may name. "round" has rounded corners
+// (╭ ╮ ╰ ╯), "heavy" a thick line; the engine draws them (borderGlyphs) and the
+// validator refuses any other word, so a shape that does not exist cannot silently
+// become the default square one.
+var BorderShapes = []string{"single", "double", "ascii", "round", "heavy"}
+
+// BorderShape returns the border shape ("single", "double", "ascii", "round", "heavy") or ""
 // if no border is set. Both string and object forms are accepted.
 func (n *Node) BorderShape() string {
 	if len(n.BorderRaw) == 0 {

@@ -282,6 +282,9 @@ type ChatSendResult struct {
 	Provider     string `json:"provider"`
 	InputTokens  int    `json:"input_tokens"`
 	OutputTokens int    `json:"output_tokens"`
+	// ContextTokens is what the model held at the last ask of the turn (0 from an older
+	// core). InputTokens is the sum over every ask, which a tool loop inflates.
+	ContextTokens int `json:"context_tokens"`
 }
 
 // SubmitChatSend sends one prompt to a model and waits for the whole answer. The
