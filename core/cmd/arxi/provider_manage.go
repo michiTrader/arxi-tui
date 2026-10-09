@@ -183,6 +183,40 @@ func removeModel(ref string) (provider, id string, err error) {
 	return p.Name, id, nil
 }
 
+// updateModel renames a model and/or changes its declared price (see
+// model.ModelEdit). The model keeps its enabled flag. When the model that was renamed is
+// the default, the default follows it: a default that names an id no provider offers
+// any more would make the next chat fail about a choice the user does not remember.
+func updateModel(ref string, e model.ModelEdit) (provider, oldID, newID string, changed bool, err error) {
+	store, err := providerStore()
+	if err != nil {
+		return "", "", "", false, err
+	}
+	p, oldID, err := store.Owner(ref)
+	if err != nil {
+		return "", "", "", false, err
+	}
+	newID, changed, err = p.UpdateModel(oldID, e)
+	if err != nil {
+		return "", "", "", false, badInvocation{err}
+	}
+	if !changed {
+		return p.Name, oldID, oldID, false, nil
+	}
+	if err := store.Save(p); err != nil {
+		return "", "", "", false, err
+	}
+	if newID != oldID {
+		if cur, _ := store.Default(); cur == p.Name+"/"+oldID {
+			if _, _, err := store.SetDefault(p.Name + "/" + newID); err != nil {
+				return "", "", "", false, fmt.Errorf("model %s was renamed to %s but the default model still names the old id: %w\n"+
+					"  choose it again: arxi model default %s/%s", oldID, newID, err, p.Name, newID)
+			}
+		}
+	}
+	return p.Name, oldID, newID, true, nil
+}
+
 // defaultModel reads (ref == "") or sets the model chat uses.
 func defaultModel(ref string) (string, error) {
 	store, err := providerStore()
@@ -503,6 +537,43 @@ func handleModelRemove(params map[string]any) (any, error) {
 		Model    string `json:"model"`
 		Removed  bool   `json:"removed"`
 	}{p, id, true}, nil
+}
+
+// handleModelUpdate answers `model.update`: a new id (`id`) and/or a price (`in` and
+// `out` together, or `no_price` to drop the declared one). Params that are absent are
+// left alone.
+func handleModelUpdate(params map[string]any) (any, error) {
+	var e model.ModelEdit
+	if v, ok := params["id"]; ok {
+		s, isStr := v.(string)
+		if !isStr {
+			return nil, badInvocation{errors.New("id must be a string: the model's new name")}
+		}
+		e.ID = &s
+	}
+	in, hasIn := params["in"].(float64)
+	out, hasOut := params["out"].(float64)
+	if hasIn != hasOut {
+		return nil, badInvocation{errors.New("a price needs both in and out (USD per million tokens); " +
+			"giving only one would price the other direction at zero and under-charge every run")}
+	}
+	if hasIn {
+		e.Price = &model.Price{InUSDPerMTok: in, OutUSDPerMTok: out}
+	}
+	e.ClearPrice = boolParam(params, "no_price")
+	if e.ID == nil && e.Price == nil && !e.ClearPrice {
+		return nil, badInvocation{errors.New("nothing to change: give id, in and out, or no_price")}
+	}
+	p, oldID, newID, changed, err := updateModel(stringParam(params, "model"), e)
+	if err != nil {
+		return nil, err
+	}
+	return struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+		Was      string `json:"was"`
+		Changed  bool   `json:"changed"`
+	}{p, newID, oldID, changed}, nil
 }
 
 // handleModelDefault reads the default when no model is given and sets it

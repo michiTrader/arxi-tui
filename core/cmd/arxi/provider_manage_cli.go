@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/michiTrader/arxi/internal/surface"
@@ -85,6 +86,50 @@ func cmdModelRemove(args []string) {
 		cliFail("model remove", err)
 	}
 	fmt.Printf("model %s removed from %s\n", id, p)
+}
+
+func cmdModelUpdate(args []string) {
+	vals, err := parseInvocation(surface.Lookup("model", "update"), args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi model update: %v\n", err)
+		os.Exit(2)
+	}
+	params := map[string]any{"model": vals["model"]}
+	if v, ok := vals["id"]; ok {
+		params["id"] = v
+	}
+	for _, k := range []string{"in", "out"} {
+		if v, ok := vals[k]; ok {
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "arxi model update: --%s %q is not a number\n", k, v)
+				os.Exit(2)
+			}
+			params[k] = f
+		}
+	}
+	if v, ok := vals["no-price"]; ok && v != "false" {
+		params["no_price"] = true
+	}
+	res, err := handleModelUpdate(params)
+	if err != nil {
+		cliFail("model update", err)
+	}
+	r := res.(struct {
+		Provider string `json:"provider"`
+		Model    string `json:"model"`
+		Was      string `json:"was"`
+		Changed  bool   `json:"changed"`
+	})
+	if !r.Changed {
+		fmt.Printf("model %s of %s already is that; nothing changed\n", r.Model, r.Provider)
+		return
+	}
+	fmt.Printf("model %s of %s updated", r.Was, r.Provider)
+	if r.Was != r.Model {
+		fmt.Printf(" (now %s)", r.Model)
+	}
+	fmt.Println()
 }
 
 func cmdModelDefault(args []string) {

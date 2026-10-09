@@ -30,6 +30,7 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -525,6 +526,79 @@ func validatePrice(id string, price *Price) error {
 			"credit the budget for every token the run spends", id)
 	}
 	return nil
+}
+
+// ModelEdit is what `model update` changes about one model. A nil field leaves that
+// part alone, which is why the fields are pointers: "do not touch the price" and "the
+// price is zero" are different answers, and so are "keep the id" and "an empty id".
+type ModelEdit struct {
+	// ID is the new id (the name sent to the provider).
+	ID *string
+	// Price is the declared price; ClearPrice takes the declared price off instead, so
+	// the model falls back to the shipped table (or to none).
+	Price      *Price
+	ClearPrice bool
+}
+
+// UpdateModel renames a model and/or changes its declared price. The enabled flag is
+// never touched. It reports the id the model has afterwards and whether anything
+// changed, so a caller can say "nothing to change" instead of a success that did nothing.
+//
+// A rename is refused when another model of the provider already has the new id: two
+// models with one id would make every ref to either of them ambiguous.
+func (p *Provider) UpdateModel(id string, e ModelEdit) (newID string, changed bool, err error) {
+	at := -1
+	for i := range p.Models {
+		if p.Models[i].ID == id {
+			at = i
+			break
+		}
+	}
+	if at < 0 {
+		return "", false, fmt.Errorf("provider %q does not offer a model called %q.\n"+
+			"  see what it offers: arxi model list", p.Name, id)
+	}
+	if e.Price != nil && e.ClearPrice {
+		return "", false, errors.New("a price cannot be set and cleared in one edit; give --in and --out, or --no-price")
+	}
+	m := p.Models[at]
+	if e.ID != nil {
+		nid := strings.TrimSpace(*e.ID)
+		if err := validateModelID(nid); err != nil {
+			return "", false, err
+		}
+		if nid != m.ID {
+			for _, other := range p.Models {
+				if other.ID == nid {
+					return "", false, fmt.Errorf("provider %q already offers a model called %q, so %q cannot be renamed to it.\n"+
+						"  remove one of them first: arxi model remove %s/%s", p.Name, nid, id, p.Name, nid)
+				}
+			}
+			m.ID = nid
+		}
+	}
+	switch {
+	case e.Price != nil:
+		if err := validatePrice(m.ID, e.Price); err != nil {
+			return "", false, err
+		}
+		pr := *e.Price
+		m.Price = &pr
+	case e.ClearPrice:
+		m.Price = nil
+	}
+	if m.ID == p.Models[at].ID && samePrice(m.Price, p.Models[at].Price) {
+		return m.ID, false, nil
+	}
+	p.Models[at] = m
+	return m.ID, true, nil
+}
+
+func samePrice(a, b *Price) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // SetEnabled turns one model on or off, reporting whether anything changed.

@@ -372,6 +372,7 @@ IMPLEMENTED TODAY
   model add <prov> <model>   add a model by hand (--in, --out USD per M tokens)
   model discover <prov>      ask the provider which models it serves and add them
   model remove <model>       remove a model from its provider
+  model update <model>       rename it (--id) or change its price (--in, --out, --no-price)
   model default [model]      show or choose the model chat uses
   chat send <prompt>         one message to the chosen model (--model, --system)
   model list                 see which models may be called, and their status

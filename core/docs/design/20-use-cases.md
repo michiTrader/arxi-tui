@@ -2,7 +2,7 @@
 
 ## 20.0 What this document is for
 
-`arxi surface` lists the 63 declared capabilities. A list is not a design: it
+`arxi surface` lists the 64 declared capabilities. A list is not a design: it
 tells you what exists and nothing about whether the set is *coherent*. Two
 questions a list cannot answer:
 
@@ -20,9 +20,9 @@ against the registry in both directions, so a capability no scenario reaches and
 a scenario invoking a verb that does not exist each turn the build red and name
 themselves.
 
-**Status of the commands.** All 63 run today. Every capability `arxi surface`
+**Status of the commands.** All 64 run today. Every capability `arxi surface`
 declares has a command behind it, `design` last of them, and the count is
-measured rather than asserted: `cmd/arxi/surface_coverage_test.go` invokes all 63
+measured rather than asserted: `cmd/arxi/surface_coverage_test.go` invokes all 64
 against the built binary and compares the tally with the figure README.md states.
 ADR-0001 explains why declaring the whole surface before building any of it was
 deliberate.
@@ -1104,12 +1104,12 @@ message type are three **mechanical projections of one registry entry** —
 synonym anywhere would fork the vocabulary and require a hand-maintained mapping
 forever.
 
-Of 63 declared capabilities, **34 are exposed as agent tools**. The 27 that are
+Of 64 declared capabilities, **34 are exposed as agent tools**. The 30 that are
 not are a security boundary, not an oversight:
 
 | not an agent tool | why an agent must not have it |
 |---|---|
-| `provider add`, `provider key`, `provider list`, `provider update`, `provider remove`, `model add`, `model discover`, `model remove`, `model default`, `model enable`, `model disable`, `chat send` | credentials and model availability are operator decisions; an agent that can enable models can route itself to a more expensive one. `provider key` is the sharpest of them: an agent that could replace a key could redirect every later run's spend to an account of its choosing. `model add` writes the price a run is budgeted against, so an agent that could add a model could add it at zero. `chat send` spends the operator's money with no run, no budget ceiling and no log, so it is the operator's call and never a tool |
+| `provider add`, `provider key`, `provider list`, `provider update`, `provider remove`, `model add`, `model discover`, `model remove`, `model update`, `model default`, `model enable`, `model disable`, `chat send` | credentials and model availability are operator decisions; an agent that can enable models can route itself to a more expensive one. `provider key` is the sharpest of them: an agent that could replace a key could redirect every later run's spend to an account of its choosing. `model add` and `model update` write the price a run is budgeted against, so an agent that could add a model, or reprice one, could set it at zero. `chat send` spends the operator's money with no run, no budget ceiling and no log, so it is the operator's call and never a tool |
 | `agent tool policy` | an agent that can widen its own tool policy does not have a policy |
 | `role define`, `blueprint create`, `blueprint stage`, `blueprint member`, `blueprint watch`, `blueprint install` | these define what agents *are* and how they are judged; installing a blueprint is closer to installing code than to doing work |
 | `inbox approve`, `inbox reject`, `inbox reply` | these are the human's side of the conversation. An agent that could approve its own inbox item turns `ToolPolicy: ask` into `allow` |

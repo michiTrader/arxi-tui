@@ -387,6 +387,7 @@ var protoHandlers = map[string]protoHandler{
 	"provider.remove":    handleProviderRemove,
 	"model.discover":     handleModelDiscover,
 	"model.remove":       handleModelRemove,
+	"model.update":       handleModelUpdate,
 	"model.default":      handleModelDefault,
 	"chat.send":          handleChatSend,
 }

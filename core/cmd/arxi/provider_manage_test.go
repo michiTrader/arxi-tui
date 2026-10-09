@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/michiTrader/arxi/internal/model"
 	"github.com/michiTrader/arxi/internal/modelstore"
 	"github.com/michiTrader/arxi/internal/provider"
 )
@@ -406,6 +407,7 @@ func TestTheNewVerbsAnswerOverTheProtocol(t *testing.T) {
 		{"model.default", map[string]any{"model": "m1"}},
 		{"chat.send", map[string]any{"prompt": "ping"}},
 		{"provider.update", map[string]any{"name": "fake", "base_url": f.url()}},
+		{"model.update", map[string]any{"model": "m1", "in": 1.0, "out": 2.0}},
 		{"model.remove", map[string]any{"model": "m1"}},
 		{"provider.remove", map[string]any{"name": "fake"}},
 	} {
@@ -626,5 +628,151 @@ func TestStreamedChatKeepsTheRetries(t *testing.T) {
 	}
 	if res.Text != "echo: hi" || f.calls != 2 {
 		t.Errorf("text=%q calls=%d; want the answer after one retry", res.Text, f.calls)
+	}
+}
+
+// ---- model update: rename a model, change its price -------------------------------
+
+func seedModels(t *testing.T, ids ...string) {
+	t.Helper()
+	isolate(t)
+	f := newFakeLLM(t, ids...)
+	if _, err := registerProvider("fake", f.url(), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverModels(context.Background(), "fake"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func modelOf(t *testing.T, id string) (enabled bool, price string, found bool) {
+	t.Helper()
+	store, err := providerStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, err := store.Load("fake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range p.Models {
+		if m.ID == id {
+			if m.Price != nil {
+				price = strconv.FormatFloat(m.Price.InUSDPerMTok, 'f', -1, 64) + "/" + strconv.FormatFloat(m.Price.OutUSDPerMTok, 'f', -1, 64)
+			}
+			return m.Enabled, price, true
+		}
+	}
+	return false, "", false
+}
+
+func TestModelUpdateRenamesAndPricesWithoutTouchingTheEnabledFlag(t *testing.T) {
+	seedModels(t, "old", "other")
+	if _, err := setModelEnabled(map[string]any{"model": "old"}, false); err != nil {
+		t.Fatal(err)
+	}
+	res, err := handleModelUpdate(map[string]any{"model": "old", "id": "new", "in": 1.5, "out": 7.0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(res)
+	for _, want := range []string{`"model":"new"`, `"was":"old"`, `"changed":true`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("answer %s lacks %s", b, want)
+		}
+	}
+	if _, _, found := modelOf(t, "old"); found {
+		t.Error("the old id is still there after a rename")
+	}
+	enabled, price, found := modelOf(t, "new")
+	if !found || price != "1.5/7" {
+		t.Fatalf("renamed model: found=%v price=%q; want 1.5/7", found, price)
+	}
+	if enabled {
+		t.Error("a disabled model came back enabled after an edit; an edit must not change availability")
+	}
+}
+
+func TestModelUpdateFollowsTheDefaultWhenItRenamesIt(t *testing.T) {
+	seedModels(t, "a", "b")
+	if _, err := defaultModel("a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, err := updateModel("a", model.ModelEdit{ID: strptr("a2")}); err != nil {
+		t.Fatal(err)
+	}
+	if ref, err := defaultModel(""); err != nil || ref != "fake/a2" {
+		t.Fatalf("default after renaming its model = %q, %v; want fake/a2.\nConsequence: the next chat fails about a model the user never removed.", ref, err)
+	}
+	// Renaming a model that is not the default leaves the default alone.
+	if _, _, _, _, err := updateModel("b", model.ModelEdit{ID: strptr("b2")}); err != nil {
+		t.Fatal(err)
+	}
+	if ref, _ := defaultModel(""); ref != "fake/a2" {
+		t.Errorf("default moved to %q when another model was renamed", ref)
+	}
+}
+
+func strptr(s string) *string { return &s }
+
+func TestModelUpdateRefusesWhatWouldBeAmbiguousOrWrong(t *testing.T) {
+	seedModels(t, "a", "b")
+	for _, tc := range []struct {
+		name   string
+		params map[string]any
+		want   string
+	}{
+		{"duplicate id", map[string]any{"model": "a", "id": "b"}, "already offers"},
+		{"empty id", map[string]any{"model": "a", "id": "  "}, "needs an id"},
+		{"space in id", map[string]any{"model": "a", "id": "x y"}, "whitespace"},
+		{"half a price", map[string]any{"model": "a", "in": 1.0}, "needs both"},
+		{"negative price", map[string]any{"model": "a", "in": -1.0, "out": 2.0}, "negative"},
+		{"set and clear", map[string]any{"model": "a", "in": 1.0, "out": 2.0, "no_price": true}, "cannot be set and cleared"},
+		{"nothing asked", map[string]any{"model": "a"}, "nothing to change"},
+		{"unknown model", map[string]any{"model": "zzz", "id": "q"}, "zzz"},
+		{"id not a string", map[string]any{"model": "a", "id": 3.0}, "must be a string"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := handleModelUpdate(tc.params)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v; want it to mention %q", err, tc.want)
+			}
+			if _, _, found := modelOf(t, "a"); !found {
+				t.Error("a refused edit lost the model")
+			}
+			if _, price, _ := modelOf(t, "a"); price != "" {
+				t.Errorf("a refused edit left a price %q behind", price)
+			}
+		})
+	}
+}
+
+func TestModelUpdateSaysSoWhenNothingChanges(t *testing.T) {
+	seedModels(t, "a")
+	if _, err := handleModelUpdate(map[string]any{"model": "a", "in": 1.0, "out": 2.0}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := handleModelUpdate(map[string]any{"model": "a", "id": "a", "in": 1.0, "out": 2.0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := json.Marshal(res); !strings.Contains(string(b), `"changed":false`) {
+		t.Errorf("an edit that changed nothing reported %s", b)
+	}
+}
+
+func TestModelUpdateCanDropTheDeclaredPrice(t *testing.T) {
+	seedModels(t, "a")
+	if _, err := handleModelUpdate(map[string]any{"model": "a", "in": 0.0, "out": 0.0}); err != nil {
+		t.Fatal(err)
+	}
+	if _, price, _ := modelOf(t, "a"); price != "0/0" {
+		t.Fatalf("a zero price is a real claim and must be kept; got %q", price)
+	}
+	if _, err := handleModelUpdate(map[string]any{"model": "a", "no_price": true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, price, _ := modelOf(t, "a"); price != "" {
+		t.Errorf("no_price left %q", price)
 	}
 }
