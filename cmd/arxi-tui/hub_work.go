@@ -25,6 +25,7 @@ const (
 	opDefault                  // choose the default model
 	opToggle                   // enable / disable one model
 	opRemoveModel              // delete one model
+	opUpdateModel              // rename a model and/or change its price
 	opRemove                   // delete a provider and its models
 	opSearch                   // choose (or turn off) the web search service; local, no core
 )
@@ -41,6 +42,8 @@ type hubWork struct {
 	In, Out *float64 // prices for the models above
 	On      bool     // opToggle: the state to set
 	Close   bool     // leave the hub when this succeeds
+	NewID   *string  // opUpdateModel: the new id (nil keeps it)
+	NoPrice bool     // opUpdateModel: drop the declared price
 }
 
 // hubCore is everything the hub needs from the core. *driver.NDJSONDriver satisfies
@@ -57,6 +60,9 @@ type hubCore interface {
 	SubmitModelDiscover(ctx context.Context, provider string) (*driver.ModelDiscoverResult, error)
 	SubmitModelRemove(ctx context.Context, ref string) (*driver.ModelRemoveResult, error)
 	SubmitModelDefault(ctx context.Context, ref string) (*driver.ModelDefaultResult, error)
+	// SubmitModelUpdate is used only when the core implements model.update (see
+	// hubData.canEditModels); it is not one of hubVerbs.
+	SubmitModelUpdate(ctx context.Context, p driver.ModelUpdateParams) (*driver.ModelUpdateResult, error)
 }
 
 var _ hubCore = (*driver.NDJSONDriver)(nil)
@@ -143,6 +149,13 @@ func readHubData(ctx context.Context, core hubCore) (hubData, error) {
 	d.providers, d.models = pl.Providers, ml.Models
 	if df, err := core.SubmitModelDefault(ctx, ""); err == nil && df != nil {
 		d.def = df.Default
+	}
+	if h := core.Hello(); h != nil {
+		for _, v := range h.Implemented {
+			if v == "model.update" {
+				d.canEditModels = true
+			}
+		}
 	}
 	return d, nil
 }
@@ -265,6 +278,24 @@ func runHubWork(ctx context.Context, core hubCore, w hubWork) hubOutcome {
 		out.nav = navModelList
 		out.notice = "✓ " + res.Model + " removed"
 
+	case opUpdateModel:
+		res, err := core.SubmitModelUpdate(ctx, driver.ModelUpdateParams{Ref: w.Ref, NewID: w.NewID, In: w.In, Out: w.Out, NoPrice: w.NoPrice})
+		if err != nil {
+			return fail(err)
+		}
+		out.prov, out.nav = res.Provider, navModels
+		switch {
+		case !res.Changed:
+			out.notice = "✓ " + res.Model + ": nothing to change"
+		case res.Was != res.Model:
+			out.notice = "✓ " + res.Was + " is now " + res.Model
+			if w.In != nil || w.NoPrice {
+				out.notice += ", price updated"
+			}
+		default:
+			out.notice = "✓ " + res.Model + ": price updated"
+		}
+
 	case opRemove:
 		if _, err := core.SubmitProviderRemove(ctx, w.Name); err != nil {
 			return fail(err)
@@ -359,6 +390,8 @@ func (o hubOp) String() string {
 		return "updating the model"
 	case opRemoveModel:
 		return "removing the model"
+	case opUpdateModel:
+		return "saving the model"
 	case opRemove:
 		return "removing the provider"
 	case opSearch:

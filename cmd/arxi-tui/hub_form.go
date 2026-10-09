@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/michiTrader/arxi_tui/internal/driver"
 )
 
 // This file is the typed-fields half of the provider hub: the forms for adding a
@@ -42,11 +44,12 @@ type hubField struct {
 type formKind int
 
 const (
-	formAdd      formKind = iota // a catalog service: only the key
-	formAddOther                 // any OpenAI-compatible service
-	formEdit                     // URL / key / key variable of a registered provider
-	formModels                   // model ids (and prices) added by hand
-	formSearch                   // the key or address of a web search service
+	formAdd       formKind = iota // a catalog service: only the key
+	formAddOther                  // any OpenAI-compatible service
+	formEdit                      // URL / key / key variable of a registered provider
+	formModels                    // model ids (and prices) added by hand
+	formSearch                    // the key or address of a web search service
+	formEditModel                 // the id and the declared price of one model
 )
 
 // hubForm is the open form. It is wiped when it closes: the key must not outlive it.
@@ -61,6 +64,9 @@ type hubForm struct {
 
 	origURL, origEnv string // formEdit: what the core holds now
 	backend          string // formSearch: brave, exa or searxng
+
+	// formEditModel: what the model has now, to tell what the user changed.
+	origID, origIn, origOut string
 }
 
 // isEnvName reports whether s is shaped like an environment variable NAME. A value
@@ -211,6 +217,47 @@ func newModelsForm(prov string) *hubForm {
 	}
 }
 
+// Labels of the edit-model form's fields.
+const (
+	labelModelID  = "Model id"
+	labelPriceIn  = "Price in (USD / 1M tokens)"
+	labelPriceOut = "Price out (USD / 1M tokens)"
+)
+
+// newEditModelForm edits one model: its id (the name sent to the provider) and the price
+// the user declares for it. The fields start with what the core holds.
+func newEditModelForm(m driver.ModelRow) *hubForm {
+	f := &hubForm{
+		kind:  formEditModel,
+		title: "Edit " + m.ID,
+		prov:  m.Provider,
+		help: "Change the name the service knows this model by (its id), and the price used to budget it " +
+			"(USD per million tokens; give both or neither; empty both removes the price you declared). " +
+			"Whether it is enabled or the default does not change.",
+		fields: []hubField{
+			{label: labelModelID, value: m.ID, required: true, kind: kindText},
+			{label: labelPriceIn, kind: kindPrice},
+			{label: labelPriceOut, kind: kindPrice},
+		},
+		origID: m.ID,
+	}
+	if m.Price != nil {
+		f.origIn, f.origOut = priceText(m.Price.In), priceText(m.Price.Out)
+		f.fields[1].value, f.fields[2].value = f.origIn, f.origOut
+	}
+	return f
+}
+
+// samePriceText reports whether two typed prices are the same number ("1.50" is "1.5").
+func samePriceText(a, b string) bool {
+	if a == b {
+		return true
+	}
+	x, ex := strconv.ParseFloat(a, 64)
+	y, ey := strconv.ParseFloat(b, 64)
+	return a != "" && b != "" && ex == nil && ey == nil && x == y
+}
+
 // parseModelIDs splits "a, b c,a" into ["a","b","c"]: commas and spaces separate,
 // duplicates collapse, order is kept.
 func parseModelIDs(s string) []string {
@@ -322,6 +369,29 @@ func (f *hubForm) submit() (hubWork, string) {
 			in, _ := strconv.ParseFloat(pin, 64)
 			out, _ := strconv.ParseFloat(pout, 64)
 			w.In, w.Out = &in, &out
+		}
+		return w, ""
+
+	case formEditModel:
+		id := f.get(labelModelID)
+		pin, pout := f.get(labelPriceIn), f.get(labelPriceOut)
+		if (pin == "") != (pout == "") {
+			return hubWork{}, "give both prices or neither; one alone would price the other direction at zero"
+		}
+		w := hubWork{Op: opUpdateModel, Ref: f.prov + "/" + f.origID}
+		if id != f.origID {
+			w.NewID = &id
+		}
+		switch {
+		case pin == "" && f.origIn != "":
+			w.NoPrice = true
+		case pin != "" && !(samePriceText(pin, f.origIn) && samePriceText(pout, f.origOut)):
+			in, _ := strconv.ParseFloat(pin, 64)
+			out, _ := strconv.ParseFloat(pout, 64)
+			w.In, w.Out = &in, &out
+		}
+		if w.NewID == nil && w.In == nil && !w.NoPrice {
+			return hubWork{}, "nothing changed"
 		}
 		return w, ""
 	}

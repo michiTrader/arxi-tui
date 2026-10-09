@@ -229,6 +229,9 @@ func (h *providerHub) enter() hubKeyResult {
 			return hubKeyResult{work: &hubWork{Op: opDefault, Ref: h.model}}
 		case "toggle":
 			return hubKeyResult{work: &hubWork{Op: opToggle, Ref: h.model, On: !h.modelEnabled(h.model)}}
+		case "edit":
+			m, _ := d.modelRow(h.model)
+			h.openForm(newEditModelForm(m))
 		case "remove":
 			return hubKeyResult{work: &hubWork{Op: opRemoveModel, Ref: h.model}}
 		}

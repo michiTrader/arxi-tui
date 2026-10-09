@@ -776,3 +776,45 @@ func TestModelUpdateCanDropTheDeclaredPrice(t *testing.T) {
 		t.Errorf("no_price left %q", price)
 	}
 }
+
+func TestModelListShowsThePriceOnlyWhenOneWasDeclared(t *testing.T) {
+	seedModels(t, "priced", "bare")
+	if _, err := handleModelUpdate(map[string]any{"model": "priced", "in": 2.0, "out": 9.0}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(res)
+	var got struct {
+		Models []struct {
+			ID    string `json:"id"`
+			Price *struct {
+				In  float64 `json:"in_usd_per_mtok"`
+				Out float64 `json:"out_usd_per_mtok"`
+			} `json:"price"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, m := range got.Models {
+		switch m.ID {
+		case "priced":
+			seen++
+			if m.Price == nil || m.Price.In != 2 || m.Price.Out != 9 {
+				t.Errorf("declared price missing from model.list: %s", b)
+			}
+		case "bare":
+			seen++
+			if m.Price != nil {
+				t.Errorf("an unpriced model listed a price: %s", b)
+			}
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("rows missing from %s", b)
+	}
+}

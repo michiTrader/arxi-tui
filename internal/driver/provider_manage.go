@@ -134,6 +134,49 @@ func (d *NDJSONDriver) SubmitModelRemove(ctx context.Context, ref string) (*Mode
 	return &r, nil
 }
 
+// ModelUpdateParams is what model.update changes: a new id and/or a price. Nil leaves
+// that part alone. Price needs both In and Out; NoPrice drops the declared price.
+type ModelUpdateParams struct {
+	Ref     string
+	NewID   *string
+	In, Out *float64
+	NoPrice bool
+}
+
+// ModelUpdateResult is the answer to model.update.
+type ModelUpdateResult struct {
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	Was      string `json:"was"`
+	Changed  bool   `json:"changed"`
+}
+
+// SubmitModelUpdate renames a model and/or changes its declared price.
+func (d *NDJSONDriver) SubmitModelUpdate(ctx context.Context, p ModelUpdateParams) (*ModelUpdateResult, error) {
+	if p.Ref == "" {
+		return nil, fmt.Errorf("ndjson: model.update needs a model ref")
+	}
+	if (p.In == nil) != (p.Out == nil) {
+		return nil, fmt.Errorf("ndjson: model.update needs both prices or neither; " +
+			"one alone would price the other direction at zero")
+	}
+	params := map[string]any{"model": p.Ref}
+	if p.NewID != nil {
+		params["id"] = *p.NewID
+	}
+	if p.In != nil {
+		params["in"], params["out"] = *p.In, *p.Out
+	}
+	if p.NoPrice {
+		params["no_price"] = true
+	}
+	var r ModelUpdateResult
+	if err := d.call(ctx, "model-update", "model.update", params, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // ModelDefaultResult is the answer to model.default. Default is "provider/id", or
 // empty when no default is chosen.
 type ModelDefaultResult struct {

@@ -915,10 +915,17 @@ func handleModelList(map[string]any) (any, error) {
 		ID       string   `json:"id"`
 		Enabled  bool     `json:"enabled"`
 		Efforts  []string `json:"efforts"`
+		// Price is the price the operator declared for this model; absent when none
+		// was (the shipped table prices it, or it is unpriced).
+		Price *model.Price `json:"price,omitempty"`
 	}
 	protocol := map[string]string{}
+	declared := map[string]*model.Price{}
 	for _, p := range ps {
 		protocol[p.Name] = p.EffectiveProtocol()
+		for _, m := range p.Models {
+			declared[p.Name+"/"+m.ID] = m.Price
+		}
 	}
 	rows := model.Rows(ps)
 	out := make([]row, 0, len(rows))
@@ -927,7 +934,7 @@ func handleModelList(map[string]any) (any, error) {
 		if levels == nil {
 			levels = []string{}
 		}
-		out = append(out, row{Provider: r.Provider, ID: r.Name, Enabled: r.Enabled, Efforts: levels})
+		out = append(out, row{Provider: r.Provider, ID: r.Name, Enabled: r.Enabled, Efforts: levels, Price: declared[r.Provider+"/"+r.Name]})
 	}
 	return struct {
 		Models []row `json:"models"`

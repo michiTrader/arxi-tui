@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/michiTrader/arxi_tui/internal/driver"
@@ -41,6 +42,9 @@ type hubData struct {
 	providers []driver.ProviderRow
 	models    []driver.ModelRow
 	def       string
+	// canEditModels is whether the core implements model.update. An older core still
+	// gets the rest of the hub; it only lacks the row that edits a model.
+	canEditModels bool
 }
 
 func (d hubData) provider(name string) (driver.ProviderRow, bool) {
@@ -50,6 +54,16 @@ func (d hubData) provider(name string) (driver.ProviderRow, bool) {
 		}
 	}
 	return driver.ProviderRow{}, false
+}
+
+// modelRow is the row of a model ref ("provider/id").
+func (d hubData) modelRow(ref string) (driver.ModelRow, bool) {
+	for _, m := range d.models {
+		if modelRef(m) == ref {
+			return m, true
+		}
+	}
+	return driver.ModelRow{}, false
 }
 
 func (d hubData) modelsOf(name string) []driver.ModelRow {
@@ -263,8 +277,11 @@ func (h *providerHub) allItems() []hubItem {
 		out = append(out,
 			hubItem{id: "default", label: "Use for chat (make default)"},
 			hubItem{id: "toggle", label: toggle + " this model"},
-			hubItem{id: "remove", label: "Remove this model"},
 		)
+		if d.canEditModels {
+			out = append(out, hubItem{id: "edit", label: "Edit name / price…"})
+		}
+		out = append(out, hubItem{id: "remove", label: "Remove this model"})
 
 	case lvSearch:
 		cur := loadSearchConfig(searchConfigPath()).Backend
@@ -441,10 +458,13 @@ func (h *providerHub) detail() string {
 		if len(d.modelsOf(h.prov)) == 0 {
 			b.WriteString("This provider has no models yet.\nGo back and choose “Fetch models from the service” or “Add models by hand…”.")
 		} else {
-			b.WriteString("Enter on a model to make it the default, enable or disable it, or remove it.")
+			b.WriteString("Enter on a model to make it the default, enable or disable it, edit its name or price, or remove it.")
 		}
 	case lvModelActions:
 		fmt.Fprintf(&b, "Model: %s\n", h.model)
+		if m, ok := d.modelRow(h.model); ok && m.Price != nil {
+			fmt.Fprintf(&b, "Price you declared: %s in, %s out (USD per million tokens)\n", priceText(m.Price.In), priceText(m.Price.Out))
+		}
 		switch {
 		case h.model == d.def:
 			b.WriteString("It is the model the chat uses now.")
@@ -540,3 +560,6 @@ func (h *providerHub) writeSearchSummary(b *strings.Builder) {
 		"their site; SearXNG is a search server you run yourself and needs only its address.\n" +
 		"The key is stored on this computer, never shown, and applies from your next question.")
 }
+
+// priceText writes a price the way a person types it: no trailing zeros.
+func priceText(v float64) string { return strconv.FormatFloat(v, 'f', -1, 64) }

@@ -130,6 +130,15 @@ type ModelRow struct {
 	// (off, on, minimal, low, medium, high, xhigh, max). Nil means the core did
 	// not say (an older core); empty means the model has no level to choose.
 	Efforts []string `json:"efforts"`
+	// Price is the price declared for this model (USD per million tokens); nil when the
+	// core holds none, or is an older one that does not say.
+	Price *ModelPrice `json:"price,omitempty"`
+}
+
+// ModelPrice is a declared price, USD per million tokens, in the core's own keys.
+type ModelPrice struct {
+	In  float64 `json:"in_usd_per_mtok"`
+	Out float64 `json:"out_usd_per_mtok"`
 }
 
 // ModelListResult wraps the rows model.list returns. An empty slice is a valid

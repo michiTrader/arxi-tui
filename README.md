@@ -609,6 +609,11 @@ From there you can:
 - **Edit a provider**: change its base URL, key or key variable name.
 - **Manage models**: fetch the list again, add several models by hand (comma or space
   separated, with optional prices), enable, disable or remove them.
+- **Edit a model**: on a model's actions pick "Edit name / price…" to change its name (the id the
+  service knows it by) and the price you declare for it. Only what you change is sent;
+  clearing both price fields removes the declared price. Renaming the default model
+  keeps it the default. Editing never changes whether the model is enabled. A core
+  without `model.update` simply does not show the row.
 - **Choose the model to chat with**: use `/model` (next section). The status bar shows
   the chosen one, and every chat message goes to it.
 
@@ -729,6 +734,10 @@ models (DeepSeek, gateways) take `low`, `medium` and `high`; Claude models take 
 the menu says so. Choosing the level already in use clears it. Until you choose, nothing
 is sent and the bar shows nothing. A chosen level is sent with every chat message as
 `reasoning_effort`; switching to a model that does not take it clears it. `/clear` keeps it.
+
+The model also reads what happened between questions: a turn that failed, a refused
+`ui_edit` (with the reason) and a change of chat model are written into the history it
+receives with the next question, so it does not claim a success that did not happen.
 
 The key is pasted into a masked field, shown as `••••`, and never printed back, logged
 or sent to the chat. If sending a message fails (no provider, no model, a refused key,

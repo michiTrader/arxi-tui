@@ -222,3 +222,21 @@ func TestModelEnableOkWithNoModelFailsLoud(t *testing.T) {
 		t.Fatalf("returned an unusable result: %+v", res)
 	}
 }
+
+// TestModelListCarriesTheDeclaredPriceOnlyWhenThereIsOne pins that a row with no
+// declared price decodes to a nil Price, so the hub shows "no declared price"
+// instead of a misleading 0/0.
+func TestModelListCarriesTheDeclaredPriceOnlyWhenThereIsOne(t *testing.T) {
+	resp := `{"id":"model-list","ok":true,"result":{"models":[{"provider":"a","id":"priced","enabled":true,"price":{"in_usd_per_mtok":1.5,"out_usd_per_mtok":7}},{"provider":"a","id":"bare","enabled":true}]}}`
+	d := session(t, resp)
+	res, err := d.SubmitModelList(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := res.Models[0].Price; p == nil || p.In != 1.5 || p.Out != 7 {
+		t.Errorf("declared price lost: %+v", p)
+	}
+	if res.Models[1].Price != nil {
+		t.Errorf("an unpriced model decoded with a price: %+v", res.Models[1].Price)
+	}
+}

@@ -739,3 +739,34 @@ func TestChatSendNamesAnOldCoreThatRefusesClientTools(t *testing.T) {
 		t.Fatalf("err = %v; the caller needs ErrClientToolsUnsupported to retry without the client tools", err)
 	}
 }
+
+func TestModelUpdateSendsOnlyWhatChanged(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent, `{"id":"model-update","ok":true,"result":{"provider":"groq","model":"new","was":"old","changed":true}}`)
+	newID := "new"
+	res, err := d.SubmitModelUpdate(context.Background(), ModelUpdateParams{Ref: "groq/old", NewID: &newID})
+	if err != nil {
+		t.Fatalf("SubmitModelUpdate: %v", err)
+	}
+	if res.Model != "new" || res.Was != "old" || !res.Changed {
+		t.Fatalf("answer lost: %+v", res)
+	}
+	line := sent.String()
+	if !strings.Contains(line, `"type":"model.update"`) || !strings.Contains(line, `"id":"new"`) {
+		t.Fatalf("request does not carry the verb and the new id: %s", line)
+	}
+	if strings.Contains(line, `"in"`) || strings.Contains(line, "no_price") {
+		t.Fatalf("an unchanged price was sent, which would overwrite the declared one: %s", line)
+	}
+}
+
+func TestModelUpdateRefusesOnePriceAloneAndAnUnnamedModel(t *testing.T) {
+	d := session(t)
+	in := 1.0
+	if _, err := d.SubmitModelUpdate(context.Background(), ModelUpdateParams{Ref: "a/b", In: &in}); err == nil {
+		t.Error("one price alone was sent; it would price the other direction at zero")
+	}
+	if _, err := d.SubmitModelUpdate(context.Background(), ModelUpdateParams{}); err == nil {
+		t.Error("an update without a model was sent")
+	}
+}

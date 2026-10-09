@@ -191,6 +191,10 @@ func (c *modelCore) SubmitModelRemove(context.Context, string) (*driver.ModelRem
 	return nil, errors.New("not used")
 }
 
+func (c *modelCore) SubmitModelUpdate(context.Context, driver.ModelUpdateParams) (*driver.ModelUpdateResult, error) {
+	return nil, errors.New("not used")
+}
+
 func (c *modelCore) SubmitModelDefault(_ context.Context, ref string) (*driver.ModelDefaultResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
