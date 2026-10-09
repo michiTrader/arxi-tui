@@ -45,9 +45,10 @@ The bottom bar reads `mode · model · thinking level · directory`, for example
 once you choose one.
 
 After the first answer the bar also shows how big the conversation is and what it has
-used: `ctx 1.2k · ↑3.4k ↓800`. `ctx` is the size of the latest request (what the model has
-to read again on every turn, so it grows as the chat does); `↑` and `↓` are the running
-totals sent and received. These are token counts: the provider does not report prices, so
+used: `ctx 1.2k · ↑3.4k ↓800`. `ctx` is the size of the last request the model was asked in
+the answer (what it has to read again on every turn, so it grows as the chat does and only
+drops after `/clear`); `↑` and `↓` are the running totals sent and received, and they add up
+every request of a turn, so a turn that reads many files moves them far more than `ctx`. These are token counts: the provider does not report prices, so
 no money figure is shown.
 
 The mode says how much the agent may do without asking. Pick it with `/mode` or cycle it
@@ -187,7 +188,7 @@ for your next session.
   anywhere a style token goes), `menu_keys` (the keys that steer the `/` menu and the
   `/effort`, `/mode`, `/style`, `/resume` and `/model` menus), `keys` (shortcuts: an F-key
   or a ctrl/alt chord that runs actions), `commands` (your own entries in the `/` menu) and
-  `hooks` (a reaction when you change effort, mode or style). Ask the model, or type it:
+  `hooks` (a reaction when you change effort, mode or style) and `enter_while_busy` (what Enter does with a line sent while the agent works: `queue` or `steer`). Ask the model, or type it:
   - A rainbow when the effort is `max`:
     `/ui animate rainbow red,yellow,green,cyan,blue,magenta spread=1 bold`, then
     `/ui set status_effort style_by {"max":"rainbow"}`. `style_by` works on any node that
@@ -640,10 +641,34 @@ failed request `✗ …`.
 
 **Esc or Ctrl-C stops the answer being waited for** and leaves
 `✗ request failed: Cancelled` under your question; you can send the next line at
-once. Each message runs on its own `arxi serve` process, so cancelling really stops the
+once. The model is told what the stopped turn had already done. Each message runs on its own `arxi serve` process, so cancelling really stops the
 request instead of leaving its late answer to be mistaken for the next one. When
 nothing is running, Ctrl-C keeps its usual meaning (clear the line; twice to leave) and
 Esc closes a menu.
+
+### Writing while the agent works: queue and steer
+
+A line sent while an answer is pending is not refused. By default it is **queued**: it shows
+under the conversation, marked `(queued)`, and goes to the model when the answer ends (up to
+8 lines wait; they go one at a time, each one asked with the earlier ones in the
+conversation). **Esc** or Ctrl-C stops the turn and puts the waiting lines back in the input
+box, to send or change: nothing you wrote is sent to a conversation you just stopped, and
+nothing is lost. A failed turn gives them back the same way, and `/clear` drops them.
+
+The other way is to **steer**: the work in flight is interrupted and your line goes at once,
+as a correction. Choose what plain Enter does with `/ui busy steer` (or `/ui busy queue`);
+**Alt+Enter** does the other one for a single line. The setting is `enter_while_busy` in
+`behaviour.json`, so the agent can propose it too, and it is always put to you first.
+
+### What the model remembers
+
+The model has no memory of its own: the app sends the conversation with every question.
+That conversation used to hold only the words you typed and the final answers, so what the
+model *did* (a change that was refused, a file it read, a turn you stopped) was gone by the
+next question. Now each answer carries a short record the app writes of the tool calls of
+that turn (at most 12 lines, each cut at 200 characters; a call that failed says `[did not
+succeed]`), and a turn that was stopped, steered away from or failed stays in the
+conversation with a note saying it was cut short. Resumed sessions rebuild the same record.
 
 ### Look
 

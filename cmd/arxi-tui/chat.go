@@ -39,8 +39,22 @@ func chatSystem() string {
 	return chatSystemPrompt + " Today is " + chatNow().Format("2006-01-02") + "."
 }
 
-// errChatBusy is returned when a second line is sent while an answer is pending.
-var errChatBusy = errors.New("still waiting for the previous answer; press Esc to cancel it, or wait for it to finish")
+// errChatBusy is returned when a second line is sent while an answer is pending and the
+// line cannot wait for it either (the queue is full).
+var errChatBusy = errors.New("still waiting for the previous answer and the queue of lines waiting for it is full; press Esc to cancel the turn, or wait for it to finish")
+
+// chatMaxQueue bounds the lines that may wait for the answer in flight. Each one is a
+// whole message the user wrote; past a handful they are no longer "the next thing" and
+// are better held back than piled up.
+const chatMaxQueue = 8
+
+// What Enter does when a line is sent while an answer is pending (behaviour.json,
+// enter_while_busy). Queue is the factory behaviour: the line waits and goes when the
+// answer ends. Steer interrupts the turn and sends the line at once.
+const (
+	busyQueue = "queue"
+	busySteer = "steer"
+)
 
 // chatDialer opens a connection of its own for one chat turn and returns it with the
 // function that closes it. Cancelling a turn is closing that connection: the core's
@@ -101,10 +115,34 @@ type chatSession struct {
 	// turn numbers the turns; cancel is the live turn's way to stop (nil when idle).
 	turn   int64
 	cancel context.CancelFunc
+
+	// The turn in flight, as far as the history is concerned: the line that started it
+	// and the record of what the model did with tools so far. They are what a turn that
+	// does not finish leaves behind (see chat_trace.go).
+	curText  string
+	curTrace []string
+
+	// queue holds the lines sent while a turn was in flight, oldest first; they go one
+	// at a time as each turn ends. parent is the context the program runs under, which
+	// a queued line's turn needs because the context of the turn that ended is spent.
+	queue  []string
+	parent context.Context
+
+	// whileBusy says what Enter does with a line sent during a turn (busyQueue or
+	// busySteer); the behaviour layer's setting unless a test replaces it.
+	whileBusy func() string
 }
 
 func newChatSession(core chatSender, out chan<- fold.Event) *chatSession {
-	return &chatSession{core: core, out: out}
+	return &chatSession{core: core, out: out, whileBusy: func() string { return currentBehaviour().EnterWhileBusy }}
+}
+
+// busyMode is what a line sent during a turn does by default.
+func (c *chatSession) busyMode() string {
+	if c.whileBusy != nil && c.whileBusy() == busySteer {
+		return busySteer
+	}
+	return busyQueue
 }
 
 // chatRequires says why this core cannot chat, or nil when it can.
@@ -217,10 +255,66 @@ func (c *chatSession) decide(allow bool) bool {
 	return true
 }
 
-// send starts one turn. It returns an error immediately for anything that can be
-// decided up front (old core, a turn already running); everything that happens on
-// the network is reported in the chat as a chat.error event.
+// send starts one turn, or, when one is already in flight, does with the line what the
+// user's setting says (queue it or steer with it). It returns an error immediately for
+// anything that can be decided up front (old core, a full queue); everything that
+// happens on the network is reported in the chat as a chat.error event.
 func (c *chatSession) send(ctx context.Context, text string) error {
+	return c.submit(ctx, text, "")
+}
+
+// sendOtherWay is send with the opposite of the user's setting for a line sent during a
+// turn (Alt+Enter): queue where Enter would steer, steer where Enter would queue. With
+// nothing in flight it is a plain send.
+func (c *chatSession) sendOtherWay(ctx context.Context, text string) error {
+	how := busySteer
+	if c.busyMode() == busySteer {
+		how = busyQueue
+	}
+	return c.submit(ctx, text, how)
+}
+
+// turnStart is everything one turn needs, read under the lock when the turn begins.
+type turnStart struct {
+	ctx              context.Context
+	text             string
+	hist             []driver.ChatTurn
+	gen, turn        int64
+	effort, workdir  string
+	edits, runs, web string
+}
+
+// beginLocked makes text the turn in flight. The caller holds c.mu and, once it has
+// released it, calls launch.
+func (c *chatSession) beginLocked(ctx context.Context, text string) turnStart {
+	c.busy = true
+	st := turnStart{text: text, gen: c.gen, effort: c.effort, workdir: c.workdir, edits: c.edits, runs: c.runs, web: c.web}
+	if st.runs == policyDeny {
+		// Denied is what a core that knows nothing about commands already does, and
+		// naming it would make an older core refuse the whole request.
+		st.runs = ""
+	}
+	if st.web == policyDeny {
+		st.web = ""
+	}
+	st.hist = trimHistory(c.history, chatMaxHistory, chatMaxHistoryBytes)
+	c.turn++
+	st.turn = c.turn
+	c.parent = ctx
+	turnCtx, cancel := context.WithCancel(ctx)
+	c.cancel = cancel
+	st.ctx = turnCtx
+	c.curText, c.curTrace = text, nil
+	return st
+}
+
+func (c *chatSession) launch(st turnStart) {
+	go c.run(st.ctx, st.text, st.hist, st.gen, st.effort, st.workdir, st.edits, st.runs, st.web, st.turn)
+}
+
+// submit is send with the way to treat a line sent during a turn chosen by the caller
+// (how = "" takes the user's setting).
+func (c *chatSession) submit(ctx context.Context, text, how string) error {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil
@@ -229,31 +323,79 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 		return err
 	}
 	c.mu.Lock()
-	if c.busy {
+	if !c.busy {
+		st := c.beginLocked(ctx, text)
+		c.mu.Unlock()
+		c.launch(st)
+		return nil
+	}
+	if how == "" {
+		how = c.busyMode()
+	}
+	gen := c.gen
+	if how == busySteer {
+		// Steering: the turn in flight is stopped where it is and the line goes at once.
+		// What the model did so far stays in the history, with the note that the turn was
+		// cut short, so the new line is read as a correction of that work and not as a
+		// message out of nowhere.
+		cancel := c.cancel
+		c.recordCutShortLocked()
+		c.cancel = nil
+		st := c.beginLocked(ctx, text)
+		c.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+		c.post(context.Background(), gen, "chat.warn", map[string]any{"text": "interrupted the turn in flight to steer it with your new line"})
+		c.launch(st)
+		return nil
+	}
+	if len(c.queue) >= chatMaxQueue {
 		c.mu.Unlock()
 		return errChatBusy
 	}
-	c.busy = true
-	gen := c.gen
-	effort := c.effort
-	workdir := c.workdir
-	edits, runs, web := c.edits, c.runs, c.web
-	if runs == policyDeny {
-		// Denied is what a core that knows nothing about commands already does, and
-		// naming it would make an older core refuse the whole request.
-		runs = ""
-	}
-	if web == policyDeny {
-		web = ""
-	}
-	hist := trimHistory(c.history, chatMaxHistory, chatMaxHistoryBytes)
-	c.turn++
-	turn := c.turn
-	turnCtx, cancel := context.WithCancel(ctx)
-	c.cancel = cancel
+	c.queue = append(c.queue, text)
+	c.parent = ctx
 	c.mu.Unlock()
-	go c.run(turnCtx, text, hist, gen, effort, workdir, edits, runs, web, turn)
+	c.post(context.Background(), gen, "chat.queued", map[string]any{"text": text})
 	return nil
+}
+
+// recordCutShortLocked keeps in the history a turn that will not finish: the line that
+// started it, what the model did with tools before it was stopped, and the note saying so.
+// The caller holds c.mu.
+func (c *chatSession) recordCutShortLocked() {
+	if c.curText == "" {
+		return
+	}
+	c.history = append(c.history,
+		driver.ChatTurn{Role: "user", Text: c.curText},
+		driver.ChatTurn{Role: "assistant", Text: withTrace(c.curTrace, "") + interruptedSuffix(c.curTrace)})
+	c.curText, c.curTrace = "", nil
+}
+
+// giveBackLocked forgets the lines still waiting for a turn and returns the event that
+// hands them back to the user, nil when none waited. A turn that was stopped or failed
+// does not send them on: they were written for a conversation that is no longer where
+// they assumed, so the words go back to the input box, to be sent or changed by the
+// person who wrote them. The caller holds c.mu and posts the event once it has let go.
+func (c *chatSession) giveBackLocked() map[string]any {
+	if len(c.queue) == 0 {
+		return nil
+	}
+	lines := make([]any, len(c.queue))
+	for i, q := range c.queue {
+		lines[i] = q
+	}
+	c.queue = nil
+	return map[string]any{"lines": lines}
+}
+
+// queuedNow is how many lines wait for the turn in flight.
+func (c *chatSession) queuedNow() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.queue)
 }
 
 // cancelTurn stops the turn in flight, if any, and puts a "request failed:
@@ -270,9 +412,15 @@ func (c *chatSession) cancelTurn() bool {
 	cancel, gen := c.cancel, c.gen
 	c.cancel = nil
 	c.busy = false
+	// A stopped turn still happened: the next question is asked with it in the history.
+	c.recordCutShortLocked()
+	back := c.giveBackLocked()
 	c.mu.Unlock()
 	cancel()
 	c.post(context.Background(), gen, "chat.cancelled", nil)
+	if back != nil {
+		c.post(context.Background(), gen, "chat.unqueued", back)
+	}
 	return true
 }
 
@@ -284,6 +432,8 @@ func (c *chatSession) reset() {
 	c.mu.Lock()
 	c.gen++
 	c.history = nil
+	c.queue = nil
+	c.curText, c.curTrace = "", nil
 	c.busy = false
 	cancel := c.cancel
 	c.cancel = nil
@@ -341,7 +491,9 @@ func (c *chatSession) fail(ctx context.Context, gen int64, msg string) {
 
 // post queues a conversation event without ever blocking its caller (see fail).
 func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload map[string]any) {
-	if !c.current(gen) {
+	// A turn that was stopped (cancelled, or steered away from) says nothing more: what
+	// it would add would land among the lines of the turn that replaced it.
+	if !c.current(gen) || ctx.Err() != nil {
 		return
 	}
 	ev := fold.Event{Type: typ, Seq: c.nextSeq(), Actor: "assistant", Payload: payload}
@@ -365,6 +517,16 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		if c.gen == gen && c.turn == turn {
 			c.busy = false
 			c.cancel = nil
+			// A turn that ended on its own hands over to the next line that was
+			// waiting for it. One that was stopped does not: the user stopped it.
+			if ctx.Err() == nil && len(c.queue) > 0 && c.parent != nil && c.parent.Err() == nil {
+				next := c.queue[0]
+				c.queue = c.queue[1:]
+				st := c.beginLocked(c.parent, next)
+				c.mu.Unlock()
+				c.launch(st)
+				return
+			}
 		}
 		c.mu.Unlock()
 	}()
@@ -376,8 +538,12 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		conn, closeConn, err := c.dial(ctx)
 		if err != nil {
 			if ctx.Err() == nil {
+				back := c.failedTurn(gen, turn)
 				c.emit(ctx, gen, "agent.failed", map[string]any{"agent": "assistant"})
 				c.fail(ctx, gen, chatErrorText(err))
+				if back != nil {
+					c.post(ctx, gen, "chat.unqueued", back)
+				}
 			}
 			return
 		}
@@ -406,6 +572,12 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		Workdir: workdir, Edits: edits, Runs: runs, Web: web,
 		OnApproval: func(ctx context.Context, a driver.Approval) bool { return c.askUser(ctx, gen, a) },
 		OnTool: func(t driver.ToolCall) {
+			// What was done is kept for the history, whether or not the turn finishes.
+			c.mu.Lock()
+			if c.gen == gen && c.turn == turn && ctx.Err() == nil {
+				c.curTrace = append(c.curTrace, traceLine(t.Name, t.Arg, t.Summary, t.OK))
+			}
+			c.mu.Unlock()
 			c.post(ctx, gen, "chat.tool", map[string]any{
 				"name": t.Name, "arg": t.Arg, "ok": t.OK, "summary": t.Summary, "output": t.Output, "diff": t.Diff,
 			})
@@ -476,8 +648,12 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		return
 	}
 	if err != nil {
+		back := c.failedTurn(gen, turn)
 		c.emit(ctx, gen, "agent.failed", map[string]any{"agent": "assistant"})
 		c.fail(ctx, gen, chatErrorText(err))
+		if back != nil {
+			c.post(ctx, gen, "chat.unqueued", back)
+		}
 		return
 	}
 	c.mu.Lock()
@@ -485,7 +661,8 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		c.mu.Unlock()
 		return
 	}
-	c.history = append(c.history, driver.ChatTurn{Role: "user", Text: text}, driver.ChatTurn{Role: "assistant", Text: res.Text})
+	c.history = append(c.history, driver.ChatTurn{Role: "user", Text: text}, driver.ChatTurn{Role: "assistant", Text: withTrace(c.curTrace, res.Text)})
+	c.curText, c.curTrace = "", nil
 	c.mu.Unlock()
 	model := res.Model
 	if res.Provider != "" && !strings.Contains(model, "/") {
@@ -498,6 +675,19 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		"duration_ms":    float64(time.Since(started).Milliseconds()),
 	})
 	c.emit(ctx, gen, "agent.turn_done", map[string]any{"agent": "assistant"})
+}
+
+// failedTurn keeps a turn that failed in the history (the question and what was done for
+// it are not lost to a failure) and returns the event that gives back the lines that were
+// waiting for it, nil when none were.
+func (c *chatSession) failedTurn(gen, turn int64) map[string]any {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.gen != gen || c.turn != turn {
+		return nil
+	}
+	c.recordCutShortLocked()
+	return c.giveBackLocked()
 }
 
 // chatErrorText is the sentence the user reads when a turn fails: the core's own

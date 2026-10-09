@@ -142,6 +142,23 @@ func (d *serveDriver) SubmitPrompt(ctx context.Context, text string) error {
 	return err
 }
 
+// SubmitPromptOtherWay is SubmitPrompt with the opposite of the user's setting for a line
+// sent while a turn is in flight (Alt+Enter).
+func (d *serveDriver) SubmitPromptOtherWay(ctx context.Context, text string) error {
+	if d.chat == nil {
+		return d.SubmitPrompt(ctx, text)
+	}
+	err := d.chat.sendOtherWay(ctx, text)
+	if err != nil && d.relay != nil {
+		ev := fold.Event{Type: "chat.error", Actor: "assistant", Payload: map[string]any{"text": err.Error()}}
+		select {
+		case d.relay <- ev:
+		default:
+		}
+	}
+	return err
+}
+
 func (d *serveDriver) submitPrompt(ctx context.Context, text string) error {
 	if d.chat != nil {
 		return d.chat.send(ctx, text)
