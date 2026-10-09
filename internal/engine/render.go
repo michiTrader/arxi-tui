@@ -1020,20 +1020,23 @@ func outputLines(h fold.ChatLine, indent string, width int, expand bool) []ui.Li
 // counted, not drawn, so one big edit cannot push the conversation off the screen.
 const maxDiffRows = 14
 
+// diffGutter is the width of the "%5d %c " that starts every diff row: the line number,
+// a space, the marker and a space.
+const diffGutter = 8
+
 // diffLines draws a change under its tool line: red rows for what left, green for
-// what came in, grey for the lines around. A row is cut at the edge rather than
-// wrapped, so a line number never ends up above a stray fragment of code.
+// what came in, grey for the lines around. A row longer than the frame continues on the
+// rows below it, under the code and with no line number of its own, so nothing the
+// change says is hidden behind a "…" and a number never heads a fragment that is not
+// its line. The cap counts the rows as drawn, so one enormous line cannot push the
+// conversation off the screen either; what is past it is counted, and ctrl+o opens it.
 func diffLines(diff, indent string, width, maxRows int) []ui.Line {
 	if diff == "" {
 		return nil
 	}
-	rows := strings.Split(strings.TrimRight(diff, "\n"), "\n")
-	hidden := 0
-	if len(rows) > maxRows {
-		hidden = len(rows) - maxRows
-		rows = rows[:maxRows]
-	}
-	var out []ui.Line
+	rows := strings.Split(strings.TrimRight(strings.ReplaceAll(diff, "\t", "    "), "\n"), "\n")
+	room := width - ansi.StringWidth(indent) - diffGutter
+	var drawn []ui.Line
 	for _, row := range rows {
 		style := diffCtxToken
 		// A row reads "%5d %c text": the marker is the seventh byte.
@@ -1045,12 +1048,26 @@ func diffLines(diff, indent string, width, maxRows int) []ui.Line {
 				style = diffDelToken
 			}
 		}
-		out = append(out, ui.Line{{Text: ansi.Truncate(indent+row, width, "…"), Style: style}})
+		if len(row) <= diffGutter || room < 8 || ansi.StringWidth(row) <= width-ansi.StringWidth(indent) {
+			drawn = append(drawn, ui.Line{{Text: ansi.Truncate(indent+row, width, "…"), Style: style}})
+			continue
+		}
+		pieces := strings.Split(ansi.Hardwrap(row[diffGutter:], room, true), "\n")
+		drawn = append(drawn, ui.Line{{Text: indent + row[:diffGutter] + pieces[0], Style: style}})
+		pad := strings.Repeat(" ", diffGutter)
+		for _, piece := range pieces[1:] {
+			drawn = append(drawn, ui.Line{{Text: indent + pad + piece, Style: style}})
+		}
+	}
+	hidden := 0
+	if len(drawn) > maxRows {
+		hidden = len(drawn) - maxRows
+		drawn = drawn[:maxRows]
 	}
 	if hidden > 0 {
-		out = append(out, ui.Line{{Text: ansi.Truncate(indent+fmt.Sprintf("… +%d more lines%s", hidden, expandHint), width, "…"), Style: diffCtxToken}})
+		drawn = append(drawn, ui.Line{{Text: ansi.Truncate(indent+fmt.Sprintf("… +%d more lines%s", hidden, expandHint), width, "…"), Style: diffCtxToken}})
 	}
-	return out
+	return drawn
 }
 
 // usageLine is what an answer cost, e.g. "2s (↑2 ↓57)": how long it took, then the
@@ -1656,6 +1673,23 @@ func borderStyleName(n *scene.Node) string {
 	return "border"
 }
 
+// borderGlyphs is the one table of frame characters, so the box and the overlay cannot
+// disagree about what a shape looks like. The names are scene.BorderShapes, which the
+// validator checks a document against; an empty or unknown name draws "single".
+func borderGlyphs(shape string) (tl, tr, bl, br, horiz, vert rune) {
+	switch shape {
+	case "double":
+		return '╔', '╗', '╚', '╝', '═', '║'
+	case "ascii":
+		return '+', '+', '+', '+', '-', '|'
+	case "round":
+		return '╭', '╮', '╰', '╯', '─', '│'
+	case "heavy":
+		return '┏', '┓', '┗', '┛', '━', '┃'
+	}
+	return '┌', '┐', '└', '┘', '─', '│'
+}
+
 // renderBox draws a bordered container with an optional title, then its
 // children inside. The border style is configurable: "single" uses light
 // box-drawing, "double" uses double box-drawing, "ascii" uses ASCII +/-/|
@@ -1666,18 +1700,7 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 		return r.renderStack(n, state, budget)
 	}
 
-	var tl, tr, bl, br, horiz, vert rune
-	switch n.BorderShape() {
-	case "double":
-		tl, tr, bl, br = '╔', '╗', '╚', '╝'
-		horiz, vert = '═', '║'
-	case "ascii":
-		tl, tr, bl, br = '+', '+', '+', '+'
-		horiz, vert = '-', '|'
-	default: // "single"
-		tl, tr, bl, br = '┌', '┐', '└', '┘'
-		horiz, vert = '─', '│'
-	}
+	tl, tr, bl, br, horiz, vert := borderGlyphs(n.BorderShape())
 
 	frameStyle := borderStyleName(n)
 
@@ -2111,18 +2134,7 @@ func (r *Renderer) renderOverlay(n *scene.Node, state fold.State) ui.Frame {
 func (r *Renderer) wrapWithBorder(lines []ui.Line, n *scene.Node, contentWidth int) []ui.Line {
 	frameStyle := borderStyleName(n)
 
-	var tl, tr, bl, br, horiz, vert rune
-	switch n.BorderShape() {
-	case "double":
-		tl, tr, bl, br = '╔', '╗', '╚', '╝'
-		horiz, vert = '═', '║'
-	case "ascii":
-		tl, tr, bl, br = '+', '+', '+', '+'
-		horiz, vert = '-', '|'
-	default:
-		tl, tr, bl, br = '┌', '┐', '└', '┘'
-		horiz, vert = '─', '│'
-	}
+	tl, tr, bl, br, horiz, vert := borderGlyphs(n.BorderShape())
 
 	innerWidth := contentWidth
 	if innerWidth <= 0 {

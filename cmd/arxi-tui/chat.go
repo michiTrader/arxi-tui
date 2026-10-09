@@ -494,7 +494,8 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 	c.emit(ctx, gen, "llm.response", map[string]any{
 		"text": res.Text, "model": model, "agent": "assistant",
 		"tokens_in": float64(res.InputTokens), "tokens_out": float64(res.OutputTokens),
-		"duration_ms": float64(time.Since(started).Milliseconds()),
+		"context_tokens": float64(res.ContextTokens),
+		"duration_ms":    float64(time.Since(started).Milliseconds()),
 	})
 	c.emit(ctx, gen, "agent.turn_done", map[string]any{"agent": "assistant"})
 }

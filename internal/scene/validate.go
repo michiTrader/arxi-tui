@@ -463,6 +463,9 @@ func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bo
 	if err := d.validateStyleByAndLayout(n, path); err != nil {
 		return err
 	}
+	if err := d.validateBorderShape(n, path); err != nil {
+		return err
+	}
 
 	// An enter with row:true needs a stagger token and rows to stagger over
 	// (G4 / SCENES.md Scene 4). Same walk, same reason as scroll and reveal
@@ -707,6 +710,41 @@ func (d *Document) validateReveal(n *Node, path string) error {
 		}
 	}
 	return nil
+}
+
+// validateBorderShape refuses a border that is not one of the shapes the engine draws.
+// An unknown word used to fall through to the square frame without a sound, so a user who
+// asked for round corners got square ones and no reason; that is the failure this ends.
+// The object form without a shape ({"style":"warn"}) keeps the default frame, as before.
+func (d *Document) validateBorderShape(n *Node, path string) error {
+	if !n.HasBorder() {
+		return nil
+	}
+	if n.Type != "box" && n.Type != "overlay" {
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("node type %q declares border, but only a box or an overlay draws a frame, so nothing would appear; wrap it instead: /ui add node above <id> {\"id\":\"frame\",\"type\":\"box\",\"border\":\"round\"} then /ui move <id> into frame", n.Type),
+		}
+	}
+	shape := n.BorderShape()
+	if shape == "" && n.BorderRaw[0] != '"' {
+		if _, ok := n.border(); ok {
+			return nil // object form with no shape: the default frame
+		}
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("the border of node type %q is not a shape name or an object; write \"border\": \"round\" (shapes: %s) or {\"shape\": \"round\", \"style\": \"<token>\"}", n.Type, strings.Join(BorderShapes, ", ")),
+		}
+	}
+	for _, ok := range BorderShapes {
+		if shape == ok {
+			return nil
+		}
+	}
+	return &Error{
+		Loc: d.locOf(path),
+		Msg: fmt.Sprintf("border shape %q does not exist, so the frame would be drawn square instead of what you asked for; use one of: %s — for rounded corners write \"border\": \"round\"", shape, strings.Join(BorderShapes, ", ")),
+	}
 }
 
 // LayoutVertical and LayoutHorizontal are the two geometries of a menu list.

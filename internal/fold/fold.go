@@ -800,6 +800,12 @@ func (s *State) apply(e Event) {
 			if in > 0 {
 				out, _ := e.Payload["tokens_out"].(float64)
 				s.LastContext = uint64(in) + uint64(out)
+				// A turn that used tools asks the model several times and tokens_in
+				// adds them all, so it overstates what the model holds; the core
+				// reports the last ask's size, which is the honest figure.
+				if c, ok := e.Payload["context_tokens"].(float64); ok && c > 0 {
+					s.LastContext = uint64(c)
+				}
 			}
 		}
 		if out, ok := e.Payload["tokens_out"].(float64); ok {

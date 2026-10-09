@@ -274,6 +274,11 @@ type chatResult struct {
 	Provider     string `json:"provider"`
 	InputTokens  int    `json:"input_tokens"`
 	OutputTokens int    `json:"output_tokens"`
+	// ContextTokens is how much the model held at the last ask of the turn: that ask's
+	// input plus its answer. InputTokens adds every ask of the turn, and a tool loop asks
+	// again with the whole conversation each round, so it is the cost of the turn and says
+	// nothing about how full the context is; this is the figure for that.
+	ContextTokens int `json:"context_tokens,omitempty"`
 }
 
 // chatSend sends one prompt, with earlier turns, to a model and returns the
@@ -389,6 +394,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	// complete asks the model once, retrying a transient refusal. Tokens are
 	// added up over every ask of the turn, so a tool loop reports its true cost.
 	var used turn.Usage
+	var last turn.Usage
 	complete := func(req turn.Request) (turn.Response, error) {
 		for attempt := 1; ; attempt++ {
 			resp, err := exec.CompleteTurn(ctx, req)
@@ -397,6 +403,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 			}
 			used.InputTokens += resp.Usage.InputTokens
 			used.OutputTokens += resp.Usage.OutputTokens
+			last = resp.Usage
 			if resp.FinishReason != turn.FinishRefusal || !transientRefusal(resp.Refusal) || attempt >= chatAttempts {
 				return resp, nil
 			}
@@ -429,6 +436,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	return chatResult{
 		Text: reply, Model: res.Model, Provider: res.Provider,
 		InputTokens: used.InputTokens, OutputTokens: used.OutputTokens,
+		ContextTokens: last.InputTokens + last.OutputTokens,
 	}, nil
 }
 

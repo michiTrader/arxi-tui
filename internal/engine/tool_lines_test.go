@@ -118,8 +118,8 @@ func TestDiffRowsAreColouredByWhatHappenedToThem(t *testing.T) {
 	}
 }
 
-// A long change is cut and counted, and a long row is cut at the edge, so a diff
-// can never push the conversation away or spill past the frame.
+// A long change is cut and counted by the rows it takes on screen, so a diff can never
+// push the conversation away or spill past the frame.
 func TestBigDiffIsCutAndCounted(t *testing.T) {
 	var b strings.Builder
 	for i := 1; i <= 30; i++ {
@@ -127,7 +127,7 @@ func TestBigDiffIsCutAndCounted(t *testing.T) {
 	}
 	rows := plainRows(t, []fold.Event{editEv(1, b.String())})
 	text := strings.Join(rows, "\n")
-	if !strings.Contains(text, "… +16 more lines") {
+	if !strings.Contains(text, "more lines (ctrl+o to expand)") {
 		t.Errorf("the hidden rows are not counted:\n%s", text)
 	}
 	if strings.Contains(text, "line 20 ") {
@@ -137,6 +137,52 @@ func TestBigDiffIsCutAndCounted(t *testing.T) {
 		if w := ansi.StringWidth(row); w > 100 {
 			t.Errorf("row is %d wide, past the frame: %q", w, row)
 		}
+	}
+}
+
+// A row wider than the frame continues on the rows below it, under the code and with no
+// line number, instead of ending in "…": the text of a change is the point of showing it.
+// This is the change a user could not read: one long line of JSON.
+func TestALongDiffRowContinuesBelowWithoutALineNumber(t *testing.T) {
+	long := `"border": "{type:round, color:input} /ui set prompt when agent.working /ui add node below_input {id:working_spacer, type:text, text:\" \", when:agent.working}"`
+	diff := fmt.Sprintf("%5d   %s\n%5d + %s\n%5d   %s\n", 93, `"bind": "user.input",`, 94, long, 95, `"id": "prompt",`)
+	rows := plainRows(t, []fold.Event{editEv(1, diff)})
+	var added []string
+	in := false
+	for _, r := range rows {
+		switch {
+		case strings.Contains(r, "94 +"):
+			in = true
+			added = append(added, r)
+		case in && strings.TrimSpace(r) != "" && !strings.Contains(r, "95"):
+			added = append(added, r)
+		default:
+			in = false
+		}
+	}
+	if len(added) < 2 {
+		t.Fatalf("the long row should continue on a second row:\n%s", strings.Join(rows, "\n"))
+	}
+	for _, r := range added {
+		if strings.Contains(r, "…") {
+			t.Errorf("a row was cut with an ellipsis: %q", r)
+		}
+	}
+	for _, r := range added[1:] {
+		if strings.ContainsAny(strings.TrimSpace(r)[:1], "0123456789") && strings.Contains(r, " + ") {
+			t.Errorf("a continuation row carries a line number: %q", r)
+		}
+	}
+	// Nothing was lost: the pieces joined are the whole line.
+	var joined strings.Builder
+	for i, r := range added {
+		if i == 0 {
+			r = r[strings.Index(r, "+")+2:]
+		}
+		joined.WriteString(strings.TrimSpace(r))
+	}
+	if !strings.Contains(strings.ReplaceAll(joined.String(), " ", ""), strings.ReplaceAll(long, " ", "")) {
+		t.Errorf("text was lost between the rows:\n got %q\nwant %q", joined.String(), long)
 	}
 }
 

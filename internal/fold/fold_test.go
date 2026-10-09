@@ -353,3 +353,22 @@ func TestLastContextIsTheSizeOfTheLatestRequest(t *testing.T) {
 		t.Errorf("LastContext after an answer without figures = %d, want 120", s.LastContext)
 	}
 }
+
+// A turn that used tools asks the model several times and tokens_in adds every ask, so
+// the status bar's ctx figure comes from context_tokens (the last ask) when the core
+// reports it, and falls back to in+out from an older core.
+func TestLastContextPrefersTheCoresLastAskOverTheSumOfTheTurn(t *testing.T) {
+	ev := func(extra map[string]any) Event {
+		p := map[string]any{"text": "x", "tokens_in": 160000.0, "tokens_out": 500.0}
+		for k, v := range extra {
+			p[k] = v
+		}
+		return Event{Type: "llm.response", Seq: 1, Payload: p}
+	}
+	if s := Fold([]Event{ev(map[string]any{"context_tokens": 2600.0})}); s.LastContext != 2600 {
+		t.Errorf("LastContext = %d, want the last ask's 2600, not the turn's sum", s.LastContext)
+	}
+	if s := Fold([]Event{ev(nil)}); s.LastContext != 160500 {
+		t.Errorf("an older core reports no context_tokens; LastContext = %d, want in+out 160500", s.LastContext)
+	}
+}
