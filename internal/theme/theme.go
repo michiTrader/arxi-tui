@@ -24,6 +24,10 @@ import (
 type Theme struct {
 	tokens map[string]ui.Style
 	anim   map[string]AnimDef
+	// cycles are the animated tokens (cycle.go). Each is also in tokens under the same
+	// name, as its resting look, so a reference check that asks "is this token defined"
+	// needs no second rule.
+	cycles map[string]Cycle
 }
 
 // tokenDef is the JSON representation of a style definition in a theme file.
@@ -90,6 +94,25 @@ func LoadBytes(name string, data []byte) (*Theme, error) {
 		}
 	}
 
+	// `cycle` is the animated-palette section (cycle.go), lifted out for the same reason
+	// `anim` is: it is not a style and must not be read as one.
+	var cycles map[string]Cycle
+	if raw, ok := rawTop["cycle"]; ok {
+		delete(rawTop, "cycle")
+		var defs map[string]CycleDef
+		if err := json.Unmarshal(raw, &defs); err != nil {
+			return nil, fmt.Errorf("%s: cycle section: %w", name, err)
+		}
+		cycles = make(map[string]Cycle, len(defs))
+		for cname, d := range defs {
+			c, err := ParseCycle(cname, d)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", name, err)
+			}
+			cycles[cname] = c
+		}
+	}
+
 	tokens := make(map[string]ui.Style, len(rawTop))
 	for tokenName, rawDef := range rawTop {
 		var def tokenDef
@@ -102,8 +125,11 @@ func LoadBytes(name string, data []byte) (*Theme, error) {
 		}
 		tokens[tokenName] = style
 	}
+	for cname, c := range cycles {
+		tokens[cname] = c.base()
+	}
 
-	return &Theme{tokens: tokens, anim: anim}, nil
+	return &Theme{tokens: tokens, anim: anim, cycles: cycles}, nil
 }
 
 // FromMap creates a Theme from an in-memory map of token names to styles. This
@@ -128,7 +154,7 @@ func FromMap(tokens map[string]ui.Style) *Theme {
 // per layer; the one place the order matters is the one place it is written down,
 // where the caller builds the active theme.
 func Merge(base, over *Theme) *Theme {
-	out := &Theme{tokens: map[string]ui.Style{}, anim: map[string]AnimDef{}}
+	out := &Theme{tokens: map[string]ui.Style{}, anim: map[string]AnimDef{}, cycles: map[string]Cycle{}}
 	if base != nil {
 		for k, v := range base.tokens {
 			out.tokens[k] = v
@@ -136,10 +162,21 @@ func Merge(base, over *Theme) *Theme {
 		for k, v := range base.anim {
 			out.anim[k] = v
 		}
+		for k, v := range base.cycles {
+			out.cycles[k] = v
+		}
 	}
 	if over != nil {
 		for k, v := range over.tokens {
 			out.tokens[k] = v
+			// A plain token laid over an animated one of the same name replaces it:
+			// the later layer said "this is one colour".
+			if _, animated := over.cycles[k]; !animated {
+				delete(out.cycles, k)
+			}
+		}
+		for k, v := range over.cycles {
+			out.cycles[k] = v
 		}
 		for k, v := range over.anim {
 			out.anim[k] = v
@@ -191,7 +228,14 @@ func (t *Theme) Resolve(name string) ui.Style {
 	if t == nil || t.tokens == nil {
 		return ui.Style{}
 	}
-	return t.tokens[name]
+	if s, ok := t.tokens[name]; ok {
+		return s
+	}
+	// `name\x00N`: one step of an animated token, minted by Cycled.
+	if s, ok := t.derived(name); ok {
+		return s
+	}
+	return ui.Style{}
 }
 
 // Has reports whether the theme defines a token with the given name.

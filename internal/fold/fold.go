@@ -3,6 +3,7 @@ package fold
 import (
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // State is the projected view-state from a log of events. It is the only thing
@@ -1621,6 +1622,46 @@ type HubRow struct {
 	Selected bool   `json:"selected"`
 }
 
+// userCommands are the commands the user (or their agent) added to the menu. They are kept
+// apart from Commands, which is the factory registry the tests and the text layer read, so
+// a user command can never be mistaken for one the release ships and removing it leaves
+// the factory registry exactly as it was.
+var (
+	userCommandsMu sync.RWMutex
+	userCommands   []SlashMatch
+)
+
+// SetUserCommands replaces the user's commands in the menu. A name that is already a
+// factory command is ignored: the user's layer adds to the menu, it does not shadow it.
+func SetUserCommands(cmds []SlashMatch) {
+	factory := map[string]bool{}
+	for _, c := range Commands {
+		factory[c.Name] = true
+	}
+	var keep []SlashMatch
+	for _, c := range cmds {
+		if !factory[c.Name] {
+			keep = append(keep, c)
+		}
+	}
+	userCommandsMu.Lock()
+	userCommands = keep
+	userCommandsMu.Unlock()
+}
+
+// allCommands is the factory registry followed by the user's commands. With none added it
+// is Commands itself, so the menu is byte-identical for everyone who has not added any.
+func allCommands() []SlashMatch {
+	userCommandsMu.RLock()
+	defer userCommandsMu.RUnlock()
+	if len(userCommands) == 0 {
+		return Commands
+	}
+	out := make([]SlashMatch, 0, len(Commands)+len(userCommands))
+	out = append(out, Commands...)
+	return append(out, userCommands...)
+}
+
 // Commands is the host's command registry, the source for slash.matches.
 // Each entry is {name, category, description} per docs/BINDS.md §4.3.
 var Commands = []SlashMatch{
@@ -1672,11 +1713,12 @@ const SlashAll = "All"
 // "/". An empty typed string returns all commands (the menu is open but
 // unfiltered).
 func FilterSlashMatches(typed string) []SlashMatch {
+	all := allCommands()
 	if typed == "" {
-		return Commands
+		return all
 	}
 	var out []SlashMatch
-	for _, c := range Commands {
+	for _, c := range all {
 		if strings.Contains(strings.ToLower(c.Name), strings.ToLower(typed)) {
 			out = append(out, c)
 		}

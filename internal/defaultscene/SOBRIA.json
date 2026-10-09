@@ -55,7 +55,7 @@
     { "type": "text", "bind": "model.name", "style": {"style": "dim"},
       "when": "model.name" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.effort" },
-    { "type": "text", "bind": "host.effort", "style": {"style": "dim"},
+    { "id": "status_effort", "type": "text", "bind": "host.effort", "style": {"style": "dim"},
       "when": "host.effort" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.usage" },
     { "type": "text", "bind": "host.usage", "style": {"style": "dim"},

@@ -122,7 +122,7 @@ func TestTheAgentChangesTheInterfaceThroughTheRealCore(t *testing.T) {
 
 	br := sd.InterfaceBridge()
 	doc := builtinDoc(t)
-	br.publish(doc, theme.SOBRIA(), nil, nil)
+	br.publish(doc, theme.SOBRIA(), nil, nil, behaviour{})
 	if err := sd.SubmitPrompt(ctx, "add a blank line between the input bar and the status bar"); err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func TestTheAgentRecoloursItsRepliesThroughTheRealCore(t *testing.T) {
 		t.Fatalf("choosing the model: %q", out.notice)
 	}
 	br := sd.InterfaceBridge()
-	br.publish(builtinDoc(t), theme.SOBRIA(), nil, nil)
+	br.publish(builtinDoc(t), theme.SOBRIA(), nil, nil, behaviour{})
 	if err := sd.SubmitPrompt(ctx, "en la tui, cambia los colores de las palabras en azul que me envias a morado"); err != nil {
 		t.Fatal(err)
 	}

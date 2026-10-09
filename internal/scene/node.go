@@ -245,6 +245,25 @@ type Node struct {
 	// wrong denominator. shine is universal like focus_glow (any node may wear
 	// it), and its honouring is pinned by its own test rather than by that axis.
 	Shine *Shine `json:"shine,omitempty"`
+
+	// StyleBy picks the node's style token from the value its `bind` shows right now:
+	// `{"max": "rainbow", "high": "warn"}` draws the bound value in `rainbow` while it
+	// reads max and in `warn` while it reads high, and in the node's own `style` for
+	// every other value. It is what lets a status word, a mode name or a count change
+	// its look with what it says, and with an animated token (a theme cycle) it is how
+	// "selecting effort max makes the word shimmer in colour" is written down.
+	//
+	// Universal like focus_glow and shine, honoured at the one chokepoint every node
+	// passes through (renderNode), so no node type can silently ignore it. A node that
+	// declares it without a `bind` has nothing to read and is refused with an address.
+	StyleBy map[string]string `json:"style_by,omitempty"`
+
+	// Layout is how a menu list lays its rows out: "vertical" (the default, one row
+	// per line) or "horizontal" (all rows on one line, the highlighted one scrolled
+	// into view, its description on the line below). It is honoured by the choice menus
+	// (`model.matches`); any other list is refused if it asks for a layout it cannot
+	// draw, not left to ignore the request.
+	Layout string `json:"layout,omitempty"`
 }
 
 // Shine is Scene 11's emphasis object, `{ "style": "<token>" }`. Its single

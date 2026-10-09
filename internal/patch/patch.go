@@ -619,6 +619,16 @@ func (c Command) mutate(node map[string]any) {
 		style["style"] = c.Value
 		node["style"] = style
 	case "set":
+		// style_by is the one property whose value is an object ({"max":"rainbow"}); every
+		// other value typed after `set` is a string. An object that does not parse is
+		// stored as the string it was, and the validator refuses it with its address.
+		if c.Key == "style_by" {
+			var obj map[string]any
+			if json.Unmarshal([]byte(c.Value), &obj) == nil && obj != nil {
+				node[c.Key] = obj
+				return
+			}
+		}
 		node[c.Key] = c.Value
 	}
 }

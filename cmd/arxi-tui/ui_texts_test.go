@@ -177,7 +177,7 @@ func TestTextsAreSavedBootedUndoneAndReset(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := saveInterface(doc, nil, words); err != nil {
+	if err := saveInterface(doc, nil, words, behaviour{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(userScenePath()); !os.IsNotExist(err) {
@@ -187,25 +187,25 @@ func TestTextsAreSavedBootedUndoneAndReset(t *testing.T) {
 	if err != nil || got["team.title"] != "Crews and agents" {
 		t.Fatalf("saved texts read back as %v, %v", got, err)
 	}
-	_, _, back, err := undoInterface()
+	_, _, back, _, err := undoInterface()
 	if err != nil || len(back) != 0 {
 		t.Fatalf("undo gave %v, %v; it must return the factory words", back, err)
 	}
 	if _, err := os.Stat(userTextsPath()); !os.IsNotExist(err) {
 		t.Error("undo left texts.json on disk; the next session would still be translated")
 	}
-	_, _, again, err := undoInterface()
+	_, _, again, _, err := undoInterface()
 	if err != nil || again["team.title"] != "Crews and agents" {
 		t.Fatalf("a second undo gave %v, %v; it must bring the words back", again, err)
 	}
-	if _, _, w, err := resetInterface(); err != nil || len(w) != 0 {
+	if _, _, w, _, err := resetInterface(); err != nil || len(w) != 0 {
 		t.Fatalf("reset gave %v, %v", w, err)
 	}
 	if _, err := os.Stat(userTextsPath()); !os.IsNotExist(err) {
 		t.Error("/ui reset left the saved texts on disk")
 	}
 	// A reset must also be undoable: it is never the end of the user's work.
-	if _, _, w, err := undoInterface(); err != nil || w["team.title"] != "Crews and agents" {
+	if _, _, w, _, err := undoInterface(); err != nil || w["team.title"] != "Crews and agents" {
 		t.Errorf("undo after reset gave %v, %v; the reset must keep what it removed", w, err)
 	}
 }
@@ -216,13 +216,13 @@ func TestOneUndoRestoresLayoutColoursAndWordsTogether(t *testing.T) {
 	doc := builtinDoc(t)
 	cols, _ := applyColors(nil, theme.SOBRIA(), map[string]string{"markdown.code": "fg=magenta"})
 	words, _ := applyTexts(nil, map[string]string{"team.title": "Crews"})
-	if err := saveInterface(doc, cols, words); err != nil {
+	if err := saveInterface(doc, cols, words, behaviour{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := saveInterface(doc, cols, nil); err != nil { // the words are taken off
+	if err := saveInterface(doc, cols, nil, behaviour{}); err != nil { // the words are taken off
 		t.Fatal(err)
 	}
-	_, c, w, err := undoInterface()
+	_, c, w, _, err := undoInterface()
 	if err != nil || c["markdown.code"].String() != "fg=magenta" || w["team.title"] != "Crews" {
 		t.Fatalf("undo gave colours %v, words %v, %v; it must bring back both of the earlier state", c, w, err)
 	}
