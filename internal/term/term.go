@@ -43,6 +43,9 @@ type TTY struct {
 	// back (see console_windows.go). Nil elsewhere.
 	console any
 
+	// carry holds a half-delivered UTF-16 pair between console reads (Windows only).
+	carry utf16Carry
+
 	events chan Event
 	done   chan struct{}
 	stop   sync.Once
@@ -193,7 +196,7 @@ func (t *TTY) read() {
 func (t *TTY) pump(out chan<- chunk) {
 	buf := make([]byte, 4096)
 	for {
-		n, err := t.in.Read(buf)
+		n, err := t.readInput(buf)
 		var b []byte
 		if n > 0 {
 			b = append(b, buf[:n]...)

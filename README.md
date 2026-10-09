@@ -653,6 +653,29 @@ caret blinks only while you are idle: every key keeps it solid for about a secon
 never disappears while you type or move with the arrows. With the `/` menu open its hint
 line sits right under the bottom rule, and the rules are drawn in a dim grey.
 
+### Undo in the input bar (Ctrl+Z / Ctrl+Y)
+
+Ctrl+Z takes back the last thing you did to the line you are typing, and Ctrl+Y puts it
+back. A step is a word typed, a run of Backspaces, a paste, or the line a Ctrl+C wiped;
+sending a line forgets the steps, so Ctrl+Z never brings a sent message back. It does not
+close the program: leaving is Ctrl+C twice, and nothing can take that key. On Windows the
+console used to report Ctrl+Z as end of input, which ended the session; arxi-tui now reads
+the console itself so the key arrives like any other. If you bind Ctrl+Z to something of
+your own (`/ui key ctrl+z <action>`), your shortcut wins.
+
+### Where arxi-tui keeps its settings
+
+All of it is in one folder in your user configuration directory, the same from every
+project: `%AppData%\arxi` on Windows, `~/.config/arxi` on Linux (`~/Library/Application
+Support/arxi` on macOS). `ARXI_CONFIG_DIR` moves it. The interface you shaped lives there as
+`scene.json` (layout), `theme.json` (colours), `texts.json` (words) and `behaviour.json`
+(keys, commands, animations); `/ui undo` and `/ui reset` work on those four together. Also
+there: `history`, `sessions/`, `search.json`, the providers and the keys. The consent
+decisions, the plugins and the run logs are in `~/.arxi` instead. Nothing is kept in the
+project folder, and the factory interface draws no frame round the input bar: ask the
+agent for one (for example, "put a rounded border round the input bar") and `/ui reset`
+takes it away.
+
 ### Input history
 
 Up and Down (or Ctrl+P and Ctrl+N) walk the lines you have sent, newest first. The line you

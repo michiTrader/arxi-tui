@@ -533,7 +533,7 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		s := &slots[i]
 		s.line = len(live) // Record starting line for this slot
 		if s.grow == 0 {
-			if s.node != nil && s.node.Type == "input" {
+			if s.node != nil && hostsCaret(s.node) && !s.frame.Cursor.Hidden {
 				caret = ui.Cursor{Line: len(live) + s.frame.Cursor.Line, Col: s.frame.Cursor.Col}
 			}
 			live = append(live, s.frame.Live...)
@@ -552,7 +552,7 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		if len(grown) > share {
 			grown = grown[len(grown)-share:]
 		}
-		if s.node != nil && s.node.Type == "input" {
+		if s.node != nil && hostsCaret(s.node) && !f.Cursor.Hidden {
 			caret = ui.Cursor{Line: len(live) + f.Cursor.Line, Col: f.Cursor.Col}
 		}
 		live = append(live, grown...)
@@ -634,6 +634,19 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 	}
 
 	return ui.Frame{Live: live, Width: r.Width, Height: len(live), Cursor: caret}
+}
+
+// hostsCaret says whether a child's frame can be trusted to say where the caret is. The
+// input says it; a box or a stack that holds one passes it on, which is what lets a
+// frame be drawn round the input bar without the terminal cursor being left on the last
+// row painted. Every other renderer leaves the zero value behind, and {0,0} is a legal
+// caret, so reading it as one would park the cursor inside a text node.
+func hostsCaret(n *scene.Node) bool {
+	switch n.Type {
+	case "input", "box", "stack":
+		return true
+	}
+	return false
 }
 
 // renderHorizontal lays children out horizontally. Weight-based columns divide

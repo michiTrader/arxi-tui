@@ -637,6 +637,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// move the cursor and edit the middle of the line; the renderer places the
 	// native terminal cursor at its column.
 	caret := 0
+	// undo is what ctrl+z takes back and ctrl+y puts again: the edits of the input bar
+	// (input_undo.go). View state like the buffer, so it lives beside it.
+	var undo inputUndo
 	// chatScroll is how many lines the chat pane is scrolled up from the tail,
 	// host-owned view state held across frames like the input buffer. Zero
 	// follows the tail (the default); the mouse wheel raises it to reveal older
@@ -1536,6 +1539,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					// non-empty buffer is a submit (or a command), and what was
 					// typed is what the history keeps.
 					lineBefore := input
+					stateBefore := inputState{input, caret}
+					undoneNow := false
 					if isCtrlC(ev.Key) && cancelRunningTurn(drv) {
 						// A turn was running, so Ctrl-C means "stop that": it is the key
 						// every terminal tool uses to interrupt work. It does not arm the
@@ -1787,6 +1792,24 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// keyboard and after the Ctrl-C branch, so it can never answer
 							// a question for the user or reach the escape hatch.
 							enqueue(acts, false)
+						} else if isUndoKey(ev.Key) || isRedoKey(ev.Key) {
+							// ctrl+z takes back the last edit of the input bar and ctrl+y
+							// puts it again. A shortcut of the user's on either key was
+							// answered above, so it wins; this is what the key means
+							// when nobody has said otherwise. It never reaches the
+							// program's exit (that is ctrl+c alone, invariant 6).
+							undoneNow = true
+							cur := inputState{input, caret}
+							var to inputState
+							var did bool
+							if isUndoKey(ev.Key) {
+								to, did = undo.undo(cur)
+							} else {
+								to, did = undo.redo(cur)
+							}
+							if did {
+								input, caret = to.text, clampCaret(to.text, to.caret)
+							}
 						} else if cmd, mine := userBeh.commandFor(input, slashSel, slashCat); mine && ev.Key.Type == term.KeyEnter {
 							// Enter on a command the user added to the / menu.
 							input, caret, slashSel = "", 0, 0
@@ -2246,6 +2269,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					if !synth && ev.Key.Type == term.KeyEnter && input == "" && strings.TrimSpace(lineBefore) != "" {
 						hist.Add(strings.TrimSpace(lineBefore))
 					}
+					// What the key did to the bar is one more step for ctrl+z; a line that
+					// was sent leaves nothing to take back, so it clears the notes.
+					switch {
+					case undoneNow:
+					case ev.Key.Type == term.KeyEnter && input == "" && strings.TrimSpace(lineBefore) != "":
+						undo.forget()
+					default:
+						undo.note(stateBefore, inputState{input, caret}, kindOf(ev.Key), string(ev.Key.Runes))
+					}
 				case term.EventPaste:
 					// A paste is text, never keys: nothing in it dispatches an
 					// action or the escape hatch, so it disarms the panic gesture
@@ -2277,7 +2309,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						flow.paste(ev.Text)
 						break
 					}
+					pasteBefore := inputState{input, caret}
 					input, caret = insertText(input, caret, cleanPaste(ev.Text))
+					undo.note(pasteBefore, inputState{input, caret}, editOther, "")
 				case term.EventResize:
 					// A resize only needs a fresh frame at the new size, delivered
 					// by the batch repaint below like every other event in the run.
