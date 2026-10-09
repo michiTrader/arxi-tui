@@ -181,6 +181,28 @@ for your next session.
   is told this, so it says so instead of promising it. A text may not contain control
   characters (a terminal would act on them instead of showing them), and a title or a hint
   must be one line.
+- **Behaviour, not only looks.** What the interface *does* is a fourth layer of data,
+  kept in `behaviour.json` in the settings folder and undone and reset together with the
+  layout, the colours and the words. It holds: `animations` (colours that move, usable
+  anywhere a style token goes), `menu_keys` (the keys that steer the `/` menu and the
+  `/effort`, `/mode`, `/style`, `/resume` and `/model` menus), `keys` (shortcuts: an F-key
+  or a ctrl/alt chord that runs actions), `commands` (your own entries in the `/` menu) and
+  `hooks` (a reaction when you change effort, mode or style). Ask the model, or type it:
+  - A rainbow when the effort is `max`:
+    `/ui animate rainbow red,yellow,green,cyan,blue,magenta spread=1 bold`, then
+    `/ui set status_effort style_by {"max":"rainbow"}`. `style_by` works on any node that
+    has a `bind`: it picks the token from the value shown.
+  - `/effort` as a horizontal menu: `/ui set models layout horizontal`, then
+    `/ui menukeys prev left` and `/ui menukeys next right`.
+  - A shortcut: `/ui key f5 cmd:/effort max`. Several actions: `/ui key ctrl+g cmd:/mode plan;cmd:/effort low`.
+  - The agent does the same with `ui_edit`'s `behaviour` argument and reads the format in `ui_guide`.
+  An action is the scene's own closed grammar: `cmd:/<line>`, `focus:<node id>`, or
+  `ext:<plugin>:<action>` to call a plugin you installed with `/ui plugin add` (that is the
+  way to add behaviour that needs real code: the plugin proposes, you consent, it never
+  writes the interface). Limits that keep it safe: Ctrl-C can never be taken by any key,
+  plain letters cannot steer a menu (it filters by typing), a hook never fires from another
+  hook or from its own action (so nothing loops), and changes to keys, commands and hooks
+  are always put to you, even in full access, because they decide what your keyboard does.
 - **The knowledge costs nothing until it is needed.** Only the two short tool descriptions
   travel with each question. The guide (about 1.5k tokens) is sent only on the turn where
   the model asks for it, so a plain question pays nothing for this feature.

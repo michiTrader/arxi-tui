@@ -3,6 +3,7 @@ package scene
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/michiTrader/arxi_tui/internal/theme"
@@ -459,6 +460,9 @@ func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bo
 	if err := d.validateReveal(n, path); err != nil {
 		return err
 	}
+	if err := d.validateStyleByAndLayout(n, path); err != nil {
+		return err
+	}
 
 	// An enter with row:true needs a stagger token and rows to stagger over
 	// (G4 / SCENES.md Scene 4). Same walk, same reason as scroll and reveal
@@ -700,6 +704,44 @@ func (d *Document) validateReveal(n *Node, path string) error {
 		return &Error{
 			Loc: d.locOf(path),
 			Msg: fmt.Sprintf("node type %q declares reveal, which rides the character-count axis only a text node draws (SCENES.md Scene 4); a reveal on a %q node is a scene defect — move it onto a text node or remove it", n.Type, n.Type),
+		}
+	}
+	return nil
+}
+
+// LayoutVertical and LayoutHorizontal are the two geometries of a menu list.
+const (
+	LayoutVertical   = "vertical"
+	LayoutHorizontal = "horizontal"
+)
+
+// validateStyleByAndLayout refuses the two properties that cannot be honoured where they
+// were written, each with an address, instead of letting them draw nothing.
+//
+//   - style_by reads the node's bound value, so a node with no bind has nothing to read.
+//   - layout is drawn by the choice-menu list (model.matches); a layout on any other node
+//     is a request the engine cannot honour, and a layout word outside the closed pair is
+//     a typo that would otherwise fall back to vertical without a word.
+func (d *Document) validateStyleByAndLayout(n *Node, path string) error {
+	if len(n.StyleBy) > 0 && n.Bind == "" {
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("node type %q declares style_by but no bind; style_by picks the style from the value the node's bind shows, so with nothing bound it can never match — add a bind or remove style_by", n.Type),
+		}
+	}
+	if n.Layout == "" {
+		return nil
+	}
+	if n.Layout != LayoutVertical && n.Layout != LayoutHorizontal {
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("layout %q is not one of %q, %q; a menu is drawn down the screen or across it", n.Layout, LayoutVertical, LayoutHorizontal),
+		}
+	}
+	if n.Type != "list" || n.Bind != "model.matches" {
+		return &Error{
+			Loc: d.locOf(path),
+			Msg: fmt.Sprintf("node type %q (bind %q) declares layout, which only the choice menu (a list bound to model.matches) draws; a layout anywhere else would be ignored — move it onto that list or remove it", n.Type, n.Bind),
 		}
 	}
 	return nil
@@ -992,6 +1034,25 @@ func (d *Document) collectTokenErrors(n *Node, path string, thm *theme.Theme, er
 			})
 		}
 		break
+	}
+
+	// Every token a style_by maps a value to is a style reference like `style`, and
+	// gets the same net: a misspelt token would otherwise draw nothing and say nothing.
+	if len(n.StyleBy) > 0 {
+		keys := make([]string, 0, len(n.StyleBy))
+		for k := range n.StyleBy {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			if tok := n.StyleBy[k]; tok != "" && !thm.Has(tok) {
+				*errs = append(*errs, TokenError{
+					Token:    tok,
+					NodeType: n.Type + " style_by " + strconv.Quote(k),
+					Loc:      d.locOf(path),
+				})
+			}
+		}
 	}
 
 	// Check border style token if present.

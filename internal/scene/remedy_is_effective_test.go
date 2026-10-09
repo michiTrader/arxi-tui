@@ -295,6 +295,8 @@ func remedyProbeDocuments(t *testing.T) []remedyProbe {
 		"style":       `{"root":{"type":"text","text":"x","style":{"style":"banner"}}}`,
 		"grow":        `{"root":{"type":"stack","grow":1,"children":[{"type":"text","text":"x"}]}}`,
 		"weight":      `{"root":{"type":"stack","weight":1,"children":[{"type":"text","text":"x"}]}}`,
+		"style_by":    `{"root":{"type":"text","bind":"host.effort","style_by":{"max":"banner"}}}`,
+		"layout":      `{"root":{"type":"list","bind":"model.matches","layout":"horizontal"}}`,
 		"fit":         `{"root":{"type":"stack","fit":true,"children":[{"type":"text","text":"x"}]}}`,
 		"prefix":      `{"root":{"type":"marquee","bind":"thinking.text","prefix":{"type":"text","text":"~"}}}`,
 		"suffix":      `{"root":{"type":"marquee","bind":"thinking.text","suffix":{"type":"text","text":"~"}}}`,

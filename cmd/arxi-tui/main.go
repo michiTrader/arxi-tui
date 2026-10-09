@@ -902,6 +902,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// The user's wording is loaded under the same condition and for the same reason as
 	// their colours: -raw and -scene boot exactly what was asked for.
 	var userWords userTexts
+	// The user's behaviour (behaviour.go) is loaded under the same condition and for the
+	// same reason: -raw and -scene boot exactly what was asked for, so no saved key
+	// binding or hook can reach the escape hatch.
+	var userBeh behaviour
 	if persistsScene(doc) {
 		if u, err := loadUserTokens(); err != nil {
 			sceneNotice = "your saved colours could not be used: " + err.Error() + " (/ui reset clears them)"
@@ -913,12 +917,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		} else {
 			userWords = tx
 		}
+		if bh, err := loadUserBehaviour(); err != nil {
+			sceneNotice = "your saved behaviour could not be used: " + err.Error() + " (/ui reset clears it)"
+		} else {
+			userBeh = bh
+		}
 	}
 	setActiveTexts(userWords)
+	setActiveBehaviour(userBeh)
 	belowUser := theme
 	recomposeTheme := func() {
 		belowUser = composeTheme(baseTheme, pluginLayers)
-		theme = withUserTokens(belowUser, userCols)
+		theme = withBehaviour(withUserTokens(belowUser, userCols), userBeh)
 		clock.resolveAnim = theme.Anim
 	}
 	recomposeTheme()
@@ -963,7 +973,31 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			blinkCh = nil
 		}
 	}
+	// cycleTicker drives the animated palettes (theme `cycle` tokens). Like the
+	// caret blink it only repaints; it is armed at the fastest rate any cycle on
+	// the frame asks for and stopped the moment the frame wears none, so an idle
+	// scene with no animated token costs nothing.
+	var cycleTicker *time.Ticker
+	var cycleCh <-chan time.Time
+	cycleFPS := 0
+	armCycle := func(fps int) {
+		if fps == cycleFPS {
+			return
+		}
+		if cycleTicker != nil {
+			cycleTicker.Stop()
+			cycleTicker, cycleCh = nil, nil
+		}
+		cycleFPS = fps
+		if fps > 0 {
+			cycleTicker = time.NewTicker(time.Second / time.Duration(fps))
+			cycleCh = cycleTicker.C
+		}
+	}
 	defer func() {
+		if cycleTicker != nil {
+			cycleTicker.Stop()
+		}
 		if animTicker != nil {
 			animTicker.Stop()
 		}
@@ -971,6 +1005,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			blinkTicker.Stop()
 		}
 	}()
+
+	// synth is true while the event being dispatched is one the user's behaviour made
+	// (an action run as an Enter), which is not a line the user typed and so is not put
+	// in their history; draft keeps what they were typing while those run.
+	var synth, draftSaved bool
+	var draft string
+	var draftCaret int
 
 	// lastKey is when the user last pressed a key; see caretLit.
 	var lastKey time.Time
@@ -998,16 +1039,143 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			sceneNotice = summary + " (this scene was started with -scene, so the change is not saved)"
 			return
 		}
-		if err := saveInterface(doc, userCols, userWords); err != nil {
+		if err := saveInterface(doc, userCols, userWords, userBeh); err != nil {
 			sceneNotice = summary + "; it could not be saved: " + err.Error()
 			return
 		}
 		sceneNotice = summary + " · saved (/ui undo takes it back)"
 	}
 
+	// ---- what the user's behaviour runs (behaviour.go) ----------------------------
+	//
+	// actionQ holds actions waiting to run. A key, a command of the user's or a hook
+	// puts its actions here and the event loop drains the queue between terminal events,
+	// so an action takes exactly the doors a typed line takes: the loop's own dispatch
+	// chain, not a second copy of it. The queue is bounded, and what a hook runs never
+	// fires another hook, so no definition can run away.
+	type queuedAction struct {
+		line string
+		hook bool
+	}
+	var actionQ []queuedAction
+	enqueue := func(list actionList, hook bool) {
+		for _, a := range list {
+			if len(actionQ) >= 64 {
+				sceneNotice = "too many actions waiting; the rest were dropped (a command or hook is running more than the interface allows)"
+				return
+			}
+			actionQ = append(actionQ, queuedAction{a, hook})
+		}
+	}
+	// settingChanged is the one place a hook can start: a setting the user watches took a
+	// new value. fromHook is true while a hook's own action is running.
+	settingChanged := func(event, value string, fromHook bool) {
+		if fromHook {
+			return
+		}
+		if value == "" {
+			value = "none"
+		}
+		enqueue(userBeh.hooksFor(event, value), true)
+	}
+	setEffort := func(level string, fromHook bool) {
+		if level == "none" {
+			level = ""
+		}
+		if level != "" && !effortAllowed(hubEfforts, hubEffortsKnown, level) {
+			sceneNotice = "the chat model does not take the effort level \"" + level + "\"; /effort lists the ones it does"
+			return
+		}
+		if level == effort {
+			return
+		}
+		effort = level
+		if s, ok := drv.(effortSetter); ok {
+			s.SetEffort(effort)
+		}
+		effortMn.loaded = false
+		settingChanged("effort", effort, fromHook)
+	}
+	setMode := func(name string, fromHook bool) {
+		known := false
+		for _, m := range agentModes {
+			known = known || m.name == name
+		}
+		if !known {
+			sceneNotice = "there is no mode \"" + name + "\"; /mode lists them"
+			return
+		}
+		if name == mode {
+			return
+		}
+		mode = name
+		if ms, ok := drv.(modeSetter); ok {
+			ms.SetMode(mode)
+		}
+		modeMn.loaded = false
+		settingChanged("mode", mode, fromHook)
+	}
+	setStyle := func(name string, fromHook bool) {
+		name = strings.ToLower(strings.TrimSpace(name))
+		if normalizePromptStyle(name) != name {
+			sceneNotice = "there is no message style \"" + name + "\"; /style lists them"
+			return
+		}
+		if name == promptStyle {
+			return
+		}
+		promptStyle = name
+		if err := savePromptStyle(stylePath(), promptStyle); err != nil {
+			sceneNotice = "style not saved: " + err.Error()
+		}
+		styleMn.loaded = false
+		settingChanged("style", promptStyle, fromHook)
+	}
+	// runQueued takes the next waiting action. The settings it can change directly it
+	// changes; every other line is put on the input as typed text and the caller gets the
+	// Enter that sends it, so it travels the loop's own dispatch chain.
+	runQueued := func() (term.Event, bool) {
+		for len(actionQ) > 0 {
+			q := actionQ[0]
+			actionQ = actionQ[1:]
+			act, err := scene.ParseAction(q.line)
+			if err != nil {
+				sceneNotice = err.Error()
+				continue
+			}
+			switch act.Kind {
+			case scene.ActionFocus:
+				if findNodeByID(doc, act.Arg) == nil {
+					sceneNotice = "focus: no node with id \"" + act.Arg + "\" in the current scene"
+				} else {
+					uiFocus = act.Arg
+				}
+			case scene.ActionExt:
+				if err := pluginActions.SendAction(act.PluginID, act.Arg, nil); err != nil {
+					sceneNotice = err.Error()
+				}
+			case scene.ActionCmd:
+				f := strings.Fields(act.Arg)
+				switch {
+				case len(f) == 2 && f[0] == "/effort":
+					setEffort(f[1], q.hook)
+				case len(f) == 2 && f[0] == "/mode":
+					setMode(f[1], q.hook)
+				case len(f) == 2 && f[0] == "/style":
+					setStyle(f[1], q.hook)
+				default:
+					input = strings.TrimSpace(act.Arg)
+					caret = len([]rune(input))
+					return term.Event{Kind: term.EventKey, Key: term.Key{Type: term.KeyEnter}}, true
+				}
+			}
+		}
+		return term.Event{}, false
+	}
+
 	repaint := func() {
 		if uiBr != nil {
-			uiBr.publish(doc, belowUser, userCols, userWords)
+			uiBr.publish(doc, belowUser, userCols, userWords, userBeh)
 		}
 		state := fold.Fold(collected)
 		state.UserInput = input // view state: the host owns the input buffer
@@ -1280,6 +1448,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// the frame hosts a caret, so an idle scene still blinks it — an animated
 		// scene's own ticker would do it, but an idle one repaints on input alone and
 		// would otherwise freeze the block on whichever half it last painted.
+		// Animated palettes: spans wearing a `cycle` token are swapped for the
+		// step the wall clock names, and the ticker follows the fastest cycle on
+		// screen. Only style changes -- never text or width -- so layout and
+		// goldens (which see the resting colour) are untouched.
+		frame, cycleRate := theme.Cycled(frame, time.Now())
+		armCycle(cycleRate)
 		emitFrame(tty, frame, theme, h, caretState, caretLit(time.Now(), lastKey))
 		armTicker()
 		// The Thinking line counts seconds, so the loop must wake while a turn is
@@ -1311,6 +1485,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// on the terminal channel, and a runaway animation cannot wedge the
 			// door. tickCh is nil while nothing animates, and a receive on a nil
 			// channel blocks forever, so this case simply never fires then.
+			repaint()
+
+		case <-cycleCh:
+			// A palette step elapsed: repaint so spans wearing a cycle move on.
+			// Only repaints -- no input read, no gesture dispatched, so the
+			// escape hatch (invariant 6) stays uncapturable.
 			repaint()
 
 		case <-blinkCh:
@@ -1601,7 +1781,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// nothing, with the menu showing an empty list. Asking
 						// the command surface first means a line it recognises is
 						// never the menu's to swallow.
-						if regURL, matched, perr := parsePluginBrowse(input); ev.Key.Type == term.KeyEnter && matched {
+						if acts, bound := userBeh.boundActions(ev.Key); bound {
+							// A shortcut the user bound (behaviour.go). It sits in the main
+							// chat's chain, after every screen and prompt that owns the
+							// keyboard and after the Ctrl-C branch, so it can never answer
+							// a question for the user or reach the escape hatch.
+							enqueue(acts, false)
+						} else if cmd, mine := userBeh.commandFor(input, slashSel, slashCat); mine && ev.Key.Type == term.KeyEnter {
+							// Enter on a command the user added to the / menu.
+							input, caret, slashSel = "", 0, 0
+							enqueue(cmd.Run, false)
+						} else if regURL, matched, perr := parsePluginBrowse(input); ev.Key.Type == term.KeyEnter && matched {
 							// `/ui plugin browse <url>` opens the community installer over a
 							// fetched registry index. Like install it is host-owned, not a
 							// patch: it fetches over the network, swaps a document onto the
@@ -1710,12 +1900,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// interface they bring back is not the one on screen.
 							var cols userTokens
 							var words userTexts
+							var bh behaviour
 							var changed bool
-							sceneNotice, cols, words, changed = applyUIHistory(what, &doc)
+							sceneNotice, cols, words, bh, changed = applyUIHistory(what, &doc)
 							if changed {
 								userCols = cols
 								userWords = words
+								userBeh = bh
 								setActiveTexts(userWords)
+								setActiveBehaviour(userBeh)
 								recomposeTheme()
 							}
 							input, caret = "", 0
@@ -1741,16 +1934,26 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								keepScene("/ui text: " + key + " now says " + strconvQuote(uiText(key)))
 							}
 							input, caret = "", 0
+						} else if bp, label, isBeh, berr := uiBehaviourCommand(input); ev.Key.Type == term.KeyEnter && isBeh {
+							// /ui animate | key | menukeys: the same behaviour change the agent
+							// proposes, typed by the user, so it is not asked about.
+							if berr != nil {
+								sceneNotice = berr.Error()
+							} else if next, err := applyBehaviourPatch(userBeh, bp); err != nil {
+								sceneNotice = "/ui: " + err.Error()
+							} else {
+								userBeh = next
+								setActiveBehaviour(userBeh)
+								recomposeTheme()
+								keepScene(label)
+							}
+							input, caret = "", 0
 						} else if handled, next := typedUICommand(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens, keepScene); handled {
 							input = next
 							caret = clampCaret(input, caret)
 						} else if ev.Key.Type == term.KeyTab && ev.Key.Mod&term.ModShift != 0 && !strings.HasPrefix(input, "/") {
 							// Shift+Tab walks the agent modes without opening a menu.
-							mode = nextMode(mode)
-							if ms, ok := drv.(modeSetter); ok {
-								ms.SetMode(mode)
-							}
-							modeMn.loaded = false
+							setMode(nextMode(mode), false)
 						} else if _, open := modelMenuOpen(input); open {
 							// The `/model ` menu owns the keys while it is open: the
 							// arrows move its highlight, typing filters it and Enter
@@ -1772,11 +1975,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							var pick string
 							input, caret, pick = choiceMenuKey(&effortMn, effortPrefix, input, caret, ev.Key)
 							if pick != "" {
-								effort = effortAfterPick(effort, pick)
-								if s, ok := drv.(effortSetter); ok {
-									s.SetEffort(effort)
+								after := effortAfterPick(effort, pick)
+								if after == "" {
+									after = "none"
 								}
-								effortMn.loaded = false
+								setEffort(after, false)
 								sceneNotice = ""
 							}
 						} else if _, open := styleMenuOpen(input); open {
@@ -1785,13 +1988,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							var pick string
 							input, caret, pick = choiceMenuKey(&styleMn, stylePrefix, input, caret, ev.Key)
 							if pick != "" {
-								promptStyle = normalizePromptStyle(pick)
-								if err := savePromptStyle(stylePath(), promptStyle); err != nil {
-									sceneNotice = "style not saved: " + err.Error()
-								} else {
-									sceneNotice = ""
-								}
-								styleMn.loaded = false
+								sceneNotice = ""
+								setStyle(normalizePromptStyle(pick), false)
 							}
 						} else if _, open := resumeMenuOpen(input); open {
 							// The `/resume ` menu: same keys; a pick brings that
@@ -1830,11 +2028,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							var pick string
 							input, caret, pick = choiceMenuKey(&modeMn, modePrefix, input, caret, ev.Key)
 							if pick != "" {
-								mode = pick
-								if ms, ok := drv.(modeSetter); ok {
-									ms.SetMode(mode)
-								}
-								modeMn.loaded = false
+								setMode(pick, false)
 								sceneNotice = ""
 							}
 						} else if ev.Key.Type == term.KeyEnter && teamCommand(input, slashSel, slashCat) {
@@ -2049,7 +2243,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							input, caret = typeKey(input, caret, ev.Key, ctx, drv)
 						}
 					}
-					if ev.Key.Type == term.KeyEnter && input == "" && strings.TrimSpace(lineBefore) != "" {
+					if !synth && ev.Key.Type == term.KeyEnter && input == "" && strings.TrimSpace(lineBefore) != "" {
 						hist.Add(strings.TrimSpace(lineBefore))
 					}
 				case term.EventPaste:
@@ -2090,6 +2284,24 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				case term.EventClosed:
 					return nil
 				}
+				// Actions the user's behaviour queued (a shortcut, a command of theirs,
+				// a hook) run now, each as the Enter of a line typed in their place,
+				// so they take the same doors a typed line does. The draft the user
+				// was typing is put back once the last one has run.
+				if len(actionQ) > 0 && !draftSaved {
+					draft, draftCaret, draftSaved = input, caret, true
+				}
+				if next, more := runQueued(); more {
+					ev, synth = next, true
+					continue
+				}
+				if draftSaved {
+					if input == "" {
+						input, caret = draft, clampCaret(draft, draftCaret)
+					}
+					draftSaved = false
+				}
+				synth = false
 				// Pull the next queued terminal event without blocking. When the
 				// channel is momentarily empty the batch ends and the frame is
 				// painted once below for the whole run of events just dispatched.
@@ -2313,7 +2525,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// the screen moved on meanwhile the change is refused rather than
 			// applied over it, which would silently undo what the user did.
 			if req.base != doc || (req.colors != nil && !sameTokens(req.baseColors, userCols)) ||
-				(req.texts != nil && !sameTexts(req.baseTexts, userWords)) {
+				(req.texts != nil && !sameTexts(req.baseTexts, userWords)) ||
+				(req.behChanged && !sameBehaviour(req.baseBeh, userBeh)) {
 				req.done <- errors.New("the interface changed while the question was open; read it again with ui_guide and redo the change")
 			} else {
 				doc = req.doc
@@ -2324,6 +2537,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				if req.texts != nil {
 					userWords = req.texts
 					setActiveTexts(userWords)
+				}
+				if req.behChanged {
+					userBeh = req.beh
+					setActiveBehaviour(userBeh)
+					recomposeTheme()
 				}
 				keepScene("the interface was changed")
 				req.done <- nil
@@ -2741,27 +2959,28 @@ func isPluginCommand(input string) bool {
 // applyUIHistory runs /ui undo or /ui reset: it returns the notice, the user's colours
 // after it, and whether the screen should take them. A scene booted with -scene is
 // left on screen: the saved interface changes and shows next time.
-func applyUIHistory(what string, doc **scene.Document) (string, userTokens, userTexts, bool) {
+func applyUIHistory(what string, doc **scene.Document) (string, userTokens, userTexts, behaviour, bool) {
 	var next *scene.Document
 	var cols userTokens
 	var words userTexts
+	var bh behaviour
 	var err error
 	if what == "undo" {
-		next, cols, words, err = undoInterface()
+		next, cols, words, bh, err = undoInterface()
 	} else {
-		next, cols, words, err = resetInterface()
+		next, cols, words, bh, err = resetInterface()
 	}
 	switch {
 	case err != nil:
-		return "/ui " + what + ": " + err.Error(), nil, nil, false
+		return "/ui " + what + ": " + err.Error(), nil, nil, behaviour{}, false
 	case !persistsScene(*doc):
-		return "/ui " + what + ": this scene was started with -scene; the saved interface was changed and shows next time", nil, nil, false
+		return "/ui " + what + ": this scene was started with -scene; the saved interface was changed and shows next time", nil, nil, behaviour{}, false
 	}
 	*doc = next
 	if what == "undo" {
-		return "/ui undo: the interface is back as it was before the last change", cols, words, true
+		return "/ui undo: the interface is back as it was before the last change", cols, words, bh, true
 	}
-	return "/ui reset: the built-in interface is back (/ui undo brings yours back)", cols, words, true
+	return "/ui reset: the built-in interface is back (/ui undo brings yours back)", cols, words, bh, true
 }
 
 // sameTokens reports whether two colour layers say the same thing.
@@ -2882,6 +3101,27 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, cat string, ctx 
 	typed := strings.TrimPrefix(input, "/")
 	cat = fold.NormalizeSlashCategory(typed, cat)
 	matches := fold.FilterSlashCategory(typed, cat)
+	// The user's menu keys steer this menu too (behaviour.go): a key means the same in
+	// every menu, so it is read once and turned into the factory key it stands for.
+	switch navAction(k) {
+	case "inert":
+		return input, caret, sel, cat
+	case "prev":
+		k = term.Key{Type: term.KeyUp}
+	case "next":
+		k = term.Key{Type: term.KeyDown}
+	case "pick":
+		k = term.Key{Type: term.KeyEnter}
+	case "close":
+		k = term.Key{Type: term.KeyEscape}
+	case "first":
+		return input, caret, 0, cat
+	case "last":
+		if len(matches) > 0 {
+			return input, caret, len(matches) - 1, cat
+		}
+		return input, caret, sel, cat
+	}
 	switch k.Type {
 	case term.KeyUp:
 		if len(matches) == 0 {

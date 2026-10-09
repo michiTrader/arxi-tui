@@ -80,6 +80,8 @@ type uiBridge struct {
 	// texts is the user's own wording layer (ui_texts.go), kept apart from the factory
 	// sentences for the same reason user is kept apart from below.
 	texts userTexts
+	// beh is the user's behaviour layer (behaviour.go).
+	beh behaviour
 	// policy is what the agent mode says about changing the interface: deny (plan),
 	// ask, or allow (full access only).
 	policy string
@@ -99,7 +101,12 @@ type uiApply struct {
 	// texts is the user's wording after the change, nil when the change touches no
 	// text; baseTexts is the layer it was drafted from.
 	texts, baseTexts userTexts
-	done             chan error
+	// beh is the behaviour after the change; behChanged says it was touched, since the
+	// zero behaviour is also the answer to "remove everything". baseBeh is what it was
+	// drafted from.
+	beh, baseBeh behaviour
+	behChanged   bool
+	done         chan error
 }
 
 func newUIBridge() *uiBridge {
@@ -108,9 +115,9 @@ func newUIBridge() *uiBridge {
 
 // publish records the document and theme on screen. The loop calls it on every
 // repaint, so a tool call always drafts against what the user is looking at.
-func (b *uiBridge) publish(doc *scene.Document, below *theme.Theme, user userTokens, texts userTexts) {
+func (b *uiBridge) publish(doc *scene.Document, below *theme.Theme, user userTokens, texts userTexts, beh behaviour) {
 	b.mu.Lock()
-	b.doc, b.below, b.user, b.texts = doc, below, user, texts
+	b.doc, b.below, b.user, b.texts, b.beh = doc, below, user, texts, beh
 	b.mu.Unlock()
 }
 
@@ -119,7 +126,14 @@ func (b *uiBridge) publish(doc *scene.Document, below *theme.Theme, user userTok
 func (b *uiBridge) snapshot() (*scene.Document, *theme.Theme, userTokens, *theme.Theme, userTexts) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.doc, b.below, b.user, withUserTokens(b.below, b.user), b.texts
+	return b.doc, b.below, b.user, withBehaviour(withUserTokens(b.below, b.user), b.beh), b.texts
+}
+
+// behaviourNow is the behaviour layer on screen.
+func (b *uiBridge) behaviourNow() behaviour {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.beh
 }
 
 // setMode follows the agent mode. Changing the interface is asked about in every mode
@@ -147,12 +161,13 @@ func (b *uiBridge) definitions() []driver.ClientToolDef {
 			Description: "Read how YOUR OWN interface is built: the terminal app you are running in and the user is looking at (banner, chat, input bar, status bar, and the colours of everything you write). It is NOT in the project folder; never search files for it. Call this first whenever the user asks to change anything about how you or this screen look: layout, spacing, colours, styles.",
 			Schema:      json.RawMessage(`{"type":"object","properties":{}}`)},
 		{Name: uiToolEdit,
-			Description: "Change your own interface (call ui_guide first). The user sees the diff and approves it; it is kept across sessions. Pass colors to recolour, texts to reword the menus and screens (descriptions of / commands, hints, the /team copy, translations into any language), commands (/ui lines) or scene to change the layout. A refusal says what to fix: fix it and retry.",
+			Description: "Change your own interface (call ui_guide first). The user sees the diff and approves it; it is kept across sessions. colors recolours; texts rewords menus and screens; commands (/ui lines) or scene change the layout; behaviour changes what it DOES: animated colours, menu keys (horizontal menus), shortcuts, own / commands, reactions to settings. A refusal says what to fix.",
 			Schema: json.RawMessage(`{"type":"object","properties":{` +
 				`"colors":{"type":"object","additionalProperties":{"type":"string"},"description":"token -> style, e.g. {\"markdown.code\":\"fg=magenta\"}"},` +
 				`"texts":{"type":"object","additionalProperties":{"type":"string"},"description":"key -> sentence, e.g. {\"team.title\":\"Crews\"}; empty restores the factory one"},` +
 				`"commands":{"type":"array","items":{"type":"string"},"description":"/ui add|move|set|style lines"},` +
-				`"scene":{"type":"string","description":"the complete new scene document, as JSON"},` +
+				`"scene":{"type":"string","description":"the whole new scene, as JSON"},` +
+				`"behaviour":{"type":"object","description":"animations, menu_keys, keys, commands, hooks; format in ui_guide"},` +
 				`"summary":{"type":"string","description":"one sentence saying what changes, shown to the user"}}}`)},
 	}
 }
@@ -165,7 +180,7 @@ func (b *uiBridge) call(ctx context.Context, c driver.ClientToolCall, ask func(d
 		if doc == nil {
 			return driver.ClientToolResult{Text: "the interface is not on screen yet; try again", Summary: "The interface is not ready"}
 		}
-		return driver.ClientToolResult{OK: true, Text: uiGuide(doc, thm), Arg: "interface", Summary: "Read how the interface is built"}
+		return driver.ClientToolResult{OK: true, Text: uiGuide(doc, thm) + "\n" + behaviourGuide(b.behaviourNow()), Arg: "interface", Summary: "Read how the interface is built"}
 	case uiToolEdit:
 		return b.edit(ctx, c.Arguments, ask)
 	}
@@ -183,11 +198,12 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 		return refuse("Not available in plan mode", "the interface may not be changed in plan mode; say what you would change instead")
 	}
 	var args struct {
-		Colors   map[string]string `json:"colors"`
-		Texts    map[string]string `json:"texts"`
-		Commands []string          `json:"commands"`
-		Scene    string            `json:"scene"`
-		Summary  string            `json:"summary"`
+		Colors    map[string]string `json:"colors"`
+		Texts     map[string]string `json:"texts"`
+		Commands  []string          `json:"commands"`
+		Scene     string            `json:"scene"`
+		Behaviour json.RawMessage   `json:"behaviour"`
+		Summary   string            `json:"summary"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return refuse("The change was refused", "ui_edit takes {colors: {...}}, {texts: {...}}, {commands: [...]} or {scene: \"...\"}: "+err.Error())
@@ -195,6 +211,20 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	base, below, user, thm, userWords := b.snapshot()
 	if base == nil {
 		return refuse("The interface is not ready", "the interface is not on screen yet; try again")
+	}
+	userBeh := b.behaviourNow()
+	nextBeh := userBeh
+	behChanged := false
+	var behPatch behaviourPatch
+	if len(args.Behaviour) > 0 && string(args.Behaviour) != "null" {
+		var err error
+		if behPatch, err = parseBehaviourPatch(args.Behaviour); err != nil {
+			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
+		}
+		if nextBeh, err = applyBehaviourPatch(userBeh, behPatch); err != nil {
+			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
+		}
+		behChanged = !sameBehaviour(userBeh, nextBeh)
 	}
 	var colors userTokens
 	var words userTexts
@@ -205,7 +235,7 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 		if colors, err = applyColors(user, thm, args.Colors); err != nil {
 			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
 		}
-		nextThm = withUserTokens(below, colors)
+		nextThm = withBehaviour(withUserTokens(below, colors), userBeh)
 		changed := make([]string, 0, len(args.Colors))
 		for k := range args.Colors {
 			changed = append(changed, k)
@@ -225,6 +255,15 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 		sort.Strings(changed)
 		diff += textDiff(userWords, words, changed)
 	}
+	if behChanged {
+		// Animations the same call adds are tokens the scene commands may use at once.
+		nextThm = withBehaviour(nextThm, nextBeh)
+		bd, err := behaviourDiff(userBeh, nextBeh)
+		if err != nil {
+			return refuse("The change was refused", err.Error())
+		}
+		diff += "      behaviour.json:\n" + bd
+	}
 	next := base
 	if len(args.Commands) > 0 || strings.TrimSpace(args.Scene) != "" {
 		var err error
@@ -236,8 +275,8 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 			return refuse("The change was refused", err.Error())
 		}
 		diff += d
-	} else if len(args.Colors) == 0 && len(args.Texts) == 0 {
-		return refuse("The change was refused", "ui_edit needs colors, texts, commands or scene")
+	} else if len(args.Colors) == 0 && len(args.Texts) == 0 && len(args.Behaviour) == 0 {
+		return refuse("The change was refused", "ui_edit needs colors, texts, behaviour, commands or scene")
 	}
 	if diff == "" {
 		return driver.ClientToolResult{OK: true, Arg: "interface", Summary: "Nothing to change", Text: "the new document is the same as the one on screen; nothing was changed"}
@@ -246,13 +285,14 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	if summary == "" {
 		summary = "Change the interface"
 	}
-	if policy != policyAllow && !ask(driver.Approval{Name: uiToolEdit, Arg: "interface", Summary: summary, Diff: diff}) {
+	// What runs on a keypress or a setting change is asked about even in full access.
+	if (policy != policyAllow || (behChanged && behPatch.touchesWhatRuns())) && !ask(driver.Approval{Name: uiToolEdit, Arg: "interface", Summary: summary, Diff: diff}) {
 		return refuse("You did not allow this change", "the user did not allow this change to the interface, so it was not made; do not retry it, ask what they want instead")
 	}
 	done := make(chan error, 1)
 	var err error
 	select {
-	case b.apply <- uiApply{base: base, doc: next, colors: colors, baseColors: user, texts: words, baseTexts: userWords, done: done}:
+	case b.apply <- uiApply{base: base, doc: next, colors: colors, baseColors: user, texts: words, baseTexts: userWords, beh: nextBeh, baseBeh: userBeh, behChanged: behChanged, done: done}:
 	case <-ctx.Done():
 		return refuse("Cancelled", "the turn ended before the change was applied")
 	}

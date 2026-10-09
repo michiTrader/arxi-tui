@@ -563,6 +563,18 @@ ceiling (a render that is none of our nodes, a pipeline hook behind door C) is
 visible on paper, has its phase, and has its consent contract. The bet
 survived the cheap test; the expensive test is now code.
 
+## Addendum — `style_by` and `layout`
+
+Two node properties added for user-editable behaviour; both are validated at load.
+
+- `style_by`: `{"<bound value>": "<token>"}`. Needs a `bind` (it reads the value the node
+  shows); every token must exist in the theme, or the scene is refused with `file:line`.
+  The matching token replaces `style` for that render. Example: the status-bar effort word
+  (`id: status_effort`) with `{"max":"rainbow"}` is animated only while the effort is max.
+- `layout` on a choice-menu list: `"vertical"` (default) or `"horizontal"` (rows side by
+  side, as many as fit, scrolling by the selection). Navigation keys are not part of the
+  scene: they are `menu_keys` in `behaviour.json`.
+
 ## Next
 
 1. Phase 0.5, in two beats (see `PLAN.md`): the **bootstrap binds** the raw

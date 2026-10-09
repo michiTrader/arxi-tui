@@ -39,7 +39,7 @@ func newBridgeRig(t *testing.T, mode string) *bridgeRig {
 	t.Helper()
 	r := &bridgeRig{b: newUIBridge(), doc: builtinDoc(t)}
 	r.b.setMode(mode)
-	r.b.publish(r.doc, theme.SOBRIA(), nil, nil)
+	r.b.publish(r.doc, theme.SOBRIA(), nil, nil, behaviour{})
 	return r
 }
 
@@ -146,7 +146,7 @@ func TestTheUsersInterfaceIsSavedBootedAndUndone(t *testing.T) {
 	if res := r.edit(t, extraGap, true); !res.OK {
 		t.Fatal(res)
 	}
-	if err := saveInterface(r.doc, nil, nil); err != nil {
+	if err := saveInterface(r.doc, nil, nil, behaviour{}); err != nil {
 		t.Fatal(err)
 	}
 	doc, notice, err := resolveBootScene(builtinScene)
@@ -156,15 +156,15 @@ func TestTheUsersInterfaceIsSavedBootedAndUndone(t *testing.T) {
 	if !persistsScene(doc) {
 		t.Error("the saved interface must stay saved when it changes again")
 	}
-	undone, _, _, err := undoInterface()
+	undone, _, _, _, err := undoInterface()
 	if err != nil || indexOf(childIDs(undone), "input_gap_extra") >= 0 {
 		t.Fatalf("undo gave %v, %v; the first undo returns the built-in interface", childIDs(undone), err)
 	}
-	redone, _, _, err := undoInterface()
+	redone, _, _, _, err := undoInterface()
 	if err != nil || indexOf(childIDs(redone), "input_gap_extra") < 0 {
 		t.Fatalf("a second undo gave %v, %v; it must bring the change back", childIDs(redone), err)
 	}
-	if _, _, _, err := resetInterface(); err != nil {
+	if _, _, _, _, err := resetInterface(); err != nil {
 		t.Fatal(err)
 	}
 	if doc, _, _ := resolveBootScene(builtinScene); doc.Name() != defaultscene.Name {
@@ -286,7 +286,7 @@ func TestColoursAreSavedUndoneAndResetWithTheLayout(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := saveInterface(doc, purple, nil); err != nil {
+	if err := saveInterface(doc, purple, nil, behaviour{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(userScenePath()); !os.IsNotExist(err) {
@@ -296,15 +296,15 @@ func TestColoursAreSavedUndoneAndResetWithTheLayout(t *testing.T) {
 	if err != nil || got["markdown.code"].String() != "fg=magenta" {
 		t.Fatalf("saved colours read back as %v, %v", got, err)
 	}
-	undone, back, _, err := undoInterface()
+	undone, back, _, _, err := undoInterface()
 	if err != nil || len(back) != 0 || undone == nil || undone.Root == nil {
 		t.Fatalf("undo gave colours %v, %v; it must return the built-in look with no user colours", back, err)
 	}
-	_, again, _, err := undoInterface()
+	_, again, _, _, err := undoInterface()
 	if err != nil || again["markdown.code"].String() != "fg=magenta" {
 		t.Fatalf("a second undo gave %v, %v; it must bring the purple back", again, err)
 	}
-	if _, cols, _, err := resetInterface(); err != nil || len(cols) != 0 {
+	if _, cols, _, _, err := resetInterface(); err != nil || len(cols) != 0 {
 		t.Fatalf("reset gave %v, %v", cols, err)
 	}
 	if _, err := os.Stat(userThemePath()); !os.IsNotExist(err) {

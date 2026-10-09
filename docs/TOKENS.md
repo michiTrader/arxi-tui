@@ -163,6 +163,27 @@ A theme file that fails to load logs the error and falls through to the next
 location. The factory theme is the backstop: if every user-supplied theme is
 broken, the interface still boots with sobria.
 
+## Animated tokens — `cycle`
+
+A token may be a palette that moves instead of a fixed style. In a theme file it is a
+`cycle` entry; a user normally defines it through `behaviour.json` (`animations`), which
+becomes the same thing at run time.
+
+```json
+{"cycle": {"rainbow": {"colors": ["red","yellow","green","cyan","blue","magenta"],
+                       "attrs": ["bold"], "fps": 10, "spread": 1}}}
+```
+
+- `colors` 2-64 colours (same spellings as any colour value); `fps` 1-30 (default 8);
+  `spread` 0-16: 0 paints a whole span one colour at a time, N makes the colour change
+  every N cells along the text (a rainbow).
+- A cycle name is used like any token: in a node's `style`, a `style_by` map, a colour map.
+- The resting colour is the first colour, so a frame is the same wherever no animation has
+  ticked yet: goldens do not move.
+- The live loop ticks at the fastest cycle that is on screen and repaints only that; nothing
+  runs when no animated token is visible.
+- An animated token cannot also be recoloured with `/ui color`: remove the animation first.
+
 ## Extension by plugins (Phase 3)
 
 Plugins may define tokens in their manifest (`"tokens": {"profit":

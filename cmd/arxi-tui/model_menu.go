@@ -125,22 +125,33 @@ func modelMenuKey(mm *modelMenu, input string, caret int, k term.Key) (next stri
 func choiceMenuKey(mm *modelMenu, prefix, input string, caret int, k term.Key) (next string, nextCaret int, pick string) {
 	filter, _ := menuOpen(prefix, input)
 	rows := filterModels(mm.models, filter)
-	switch k.Type {
-	case term.KeyUp:
+	// How the keys steer the menu is the user's to change (behaviour.go): which key means
+	// previous, next, first, last, pick and close. A key the user took from an action is
+	// inert here rather than half-working. Ctrl-C never reaches this function.
+	switch navAction(k) {
+	case "inert":
+		return input, caret, ""
+	case "prev":
 		if len(rows) > 0 {
 			mm.sel = (mm.sel - 1 + len(rows)) % len(rows)
 		}
 		return input, caret, ""
-	case term.KeyDown:
+	case "next":
 		if len(rows) > 0 {
 			mm.sel = (mm.sel + 1) % len(rows)
 		}
 		return input, caret, ""
-	case term.KeyTab:
+	case "first":
+		mm.sel = 0
 		return input, caret, ""
-	case term.KeyEscape:
+	case "last":
+		if len(rows) > 0 {
+			mm.sel = len(rows) - 1
+		}
+		return input, caret, ""
+	case "close":
 		return "", 0, ""
-	case term.KeyEnter:
+	case "pick":
 		if len(rows) == 0 {
 			return input, caret, ""
 		}
@@ -149,6 +160,9 @@ func choiceMenuKey(mm *modelMenu, prefix, input string, caret int, k term.Key) (
 			sel = len(rows) - 1
 		}
 		return "", 0, rows[sel].Ref
+	}
+	if k.Type == term.KeyTab {
+		return input, caret, ""
 	}
 	edited, c, ok := applyEdit(input, caret, k)
 	if !ok {

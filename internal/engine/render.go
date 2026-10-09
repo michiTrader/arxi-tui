@@ -333,6 +333,7 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 	n = r.focusGlowed(n, state)
 	n = r.withTransition(n)
 	n = r.withShine(n)
+	n = r.withStyleBy(n, state)
 	// enter (G4) is the last wrapper, and it wraps the type switch rather than a
 	// single node the way withTransition does, because its axis is the container's
 	// rows, not one node's style: row:true staggers the children (or the rows of a
@@ -2223,7 +2224,11 @@ func (r *Renderer) renderList(n *scene.Node, state fold.State, budget int) ui.Fr
 		lines = r.slashMenuLines(n, state, rowToken)
 
 	case "model.matches":
-		lines = r.modelMenuLines(n, state)
+		if n.Layout == "horizontal" {
+			lines = r.modelMenuLinesHorizontal(n, state)
+		} else {
+			lines = r.modelMenuLines(n, state)
+		}
 
 	default:
 		// Unknown bind: render placeholder.
@@ -2548,7 +2553,17 @@ func (r *Renderer) modelMenuLines(n *scene.Node, state fold.State) []ui.Line {
 				nt, dt = "text", "text"
 			}
 		}
-		row := ui.Line{{Text: slashMenuMargin, Style: nt}, {Text: m.Name, Style: nt}}
+		margin := slashMenuMargin
+		if tok := n.StyleBy[m.Name]; tok != "" {
+			// The user dressed this row (an animated token, say). The highlight must
+			// not vanish with the dressing: brightness no longer says which row Enter
+			// takes, so the highlighted dressed row says it with a marker instead.
+			nt = tok
+			if i == sel {
+				margin = "› "
+			}
+		}
+		row := ui.Line{{Text: margin, Style: nt}, {Text: m.Name, Style: nt}}
 		if gap := nameW - ansiStringWidth(m.Name); gap > 0 {
 			row = append(row, ui.Span{Text: strings.Repeat(" ", gap), Style: nt})
 		}
@@ -2563,6 +2578,133 @@ func (r *Renderer) modelMenuLines(n *scene.Node, state fold.State) []ui.Line {
 		lines = append(lines, ui.Line{ui.Span{Text: fmt.Sprintf("%s%d of %d", slashMenuMargin, sel+1, len(ms)), Style: restDesc}})
 	}
 	return lines
+}
+
+// modelMenuLinesHorizontal draws the same menu as modelMenuLines on one line: the names
+// side by side, the highlighted one in ‹brackets›, a ✓ after the one in use, and the
+// meaning of the highlighted one on the line below. When the names do not all fit, the
+// window follows the highlight and a › or ‹ at the edge says there are more that way.
+//
+// It is the same rows, the same highlight and the same keys as the vertical menu; only
+// the geometry differs, so choosing it can never change what Enter picks.
+func (r *Renderer) modelMenuLinesHorizontal(n *scene.Node, state fold.State) []ui.Line {
+	ms := state.ModelMatches
+	declared := styleName(n.Style)
+	restName, restDesc := tokMenuName, tokMenuDesc
+	if declared != "" {
+		restName, restDesc = declared, declared
+	}
+	if len(ms) == 0 {
+		return []ui.Line{{ui.Span{Text: slashMenuMargin + "no models", Style: restDesc}}}
+	}
+	sel := state.ModelSelected
+	if sel >= len(ms) {
+		sel = len(ms) - 1
+	}
+	if sel < 0 {
+		sel = 0
+	}
+	cell := func(i int) (string, int) {
+		t := ms[i].Name
+		if ms[i].Current {
+			t += " ✓"
+		}
+		if i == sel {
+			t = "‹" + t + "›"
+		}
+		return t, ansiStringWidth(t)
+	}
+	const gap = 2
+	room := r.Width - len(slashMenuMargin) - 2 // two columns kept for the edge arrows
+	if room < 1 {
+		room = 1
+	}
+	// Grow a window around the highlight, alternating right then left, until the
+	// next name would not fit.
+	lo, hi := sel, sel
+	_, used := cell(sel)
+	for {
+		grew := false
+		if hi+1 < len(ms) {
+			if _, w := cell(hi + 1); used+gap+w <= room {
+				hi++
+				used += gap + w
+				grew = true
+			}
+		}
+		if lo > 0 {
+			if _, w := cell(lo - 1); used+gap+w <= room {
+				lo--
+				used += gap + w
+				grew = true
+			}
+		}
+		if !grew {
+			break
+		}
+	}
+	left, right := " ", " "
+	if lo > 0 {
+		left = "‹"
+	}
+	if hi < len(ms)-1 {
+		right = "›"
+	}
+	row := ui.Line{{Text: slashMenuMargin[:len(slashMenuMargin)-1] + left, Style: restDesc}}
+	for i := lo; i <= hi; i++ {
+		t, _ := cell(i)
+		nt := restName
+		if i == sel {
+			nt = tokMenuNameSel
+			if declared != "" {
+				nt = "text"
+			}
+		}
+		if tok := n.StyleBy[ms[i].Name]; tok != "" {
+			nt = tok
+		}
+		if i > lo {
+			row = append(row, ui.Span{Text: strings.Repeat(" ", gap), Style: restName})
+		}
+		row = append(row, ui.Span{Text: t, Style: nt})
+	}
+	row = append(row, ui.Span{Text: right, Style: restDesc})
+	lines := []ui.Line{cutLine(row, 0, r.Width)}
+	if d := ms[sel].Provider; d != "" {
+		dt := tokMenuDescSel
+		if declared != "" {
+			dt = declared
+		}
+		lines = append(lines, cutLine(ui.Line{{Text: slashMenuMargin + d, Style: dt}}, 0, r.Width))
+	}
+	return lines
+}
+
+// withStyleBy returns the node the render path should draw for `style_by`: the node
+// itself, or a shallow copy wearing the token its bound value maps to. Like withShine and
+// withFocusGlow it sits in renderNode, the one function every node passes through, so no
+// node type can accept the property and ignore it.
+//
+// A list is skipped: its bound value is the whole array, not one word. A list reads
+// style_by itself, per row, by the row's name (modelMenuLines).
+func (r *Renderer) withStyleBy(n *scene.Node, state fold.State) *scene.Node {
+	if n == nil || len(n.StyleBy) == 0 || n.Bind == "" || n.Type == "list" {
+		return n
+	}
+	val := resolveBindRow(n.Bind, state, r.curRow, r.PluginValues, r.PreviewMocks)
+	tok := n.StyleBy[val]
+	if tok == "" {
+		return n
+	}
+	styled := *n
+	styled.Style = make(map[string]string, len(n.Style)+1)
+	for k, v := range n.Style {
+		styled.Style[k] = v
+	}
+	for _, key := range scene.StyleTokenKeys() {
+		styled.Style[key] = tok
+	}
+	return &styled
 }
 
 // slashRow is one menu row: the margin, the "/name" padded to the name column, two
