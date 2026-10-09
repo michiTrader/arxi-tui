@@ -856,7 +856,10 @@ const (
 const (
 	warnTurnMarker = "! "
 	warnTurnToken  = "chat.warn"
-	usageTurnToken = "chat.usage"
+	// A line the user sent while an answer was pending: dim, with a note that it waits.
+	queuedTurnToken = "chat.queued"
+	queuedTurnNote  = "  (queued)"
+	usageTurnToken  = "chat.usage"
 
 	// assistantIndent is the left margin of an answer: the width of the user's
 	// "┃ " marker, so the two voices line up as a pair of columns instead of the
@@ -1210,6 +1213,16 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 		}
 		if len(lines) > 0 {
 			lines = lines[:len(lines)-1]
+		}
+		// The lines waiting for the answer in flight, in the order they will go.
+		if len(state.Queued) > 0 {
+			if len(lines) > 0 {
+				lines = append(lines, ui.Line{})
+			}
+			for _, q := range state.Queued {
+				cont := ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(userTurnMarker)), Style: queuedTurnToken}}
+				lines = append(lines, ui.WrapText(userTurnMarker+q+queuedTurnNote, queuedTurnToken, r.Width, cont)...)
+			}
 		}
 	case "thinking.text":
 		lines = append(lines, ui.WrapText(state.ThinkingText, token, r.Width, nil)...)

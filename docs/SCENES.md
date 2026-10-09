@@ -170,6 +170,11 @@ invariant 6 and BINDS.md `host.escape.armed`).
 ]}}
 ```
 
+Only `box` and `overlay` draw a frame. The shape is `single` (default), `double`, `ascii`,
+`round` (`╭─╮│╰─╯`) or `heavy` (`┏━┓┃┗━┛`); any other word is refused with this list. A
+`border` on any other node (an `input`, a `text`) draws nothing, so the validator refuses it
+and names the remedy: wrap the node in a `box` with the border.
+
 Decided: Q5 overlays form a focus stack, `esc` closes the top one; Q6
 contraction order is fixed and documented (elastic panes first,
 input/banner/footer never); Q7 overlays may declare `min-width`.

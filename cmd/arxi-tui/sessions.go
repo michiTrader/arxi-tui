@@ -308,20 +308,42 @@ func loadSession(dir, id string) ([]fold.Event, error) {
 func historyFromEvents(evs []fold.Event) []driver.ChatTurn {
 	var out []driver.ChatTurn
 	pending, have := "", false
+	var trace []string
 	for _, e := range evs {
 		text, _ := e.Payload["text"].(string)
 		switch e.Type {
 		case "run.prompt":
-			pending, have = text, true
+			// A question that was cut short (no answer arrived before the next one)
+			// still happened, and so did what the model did for it.
+			if have {
+				out = append(out, driver.ChatTurn{Role: "user", Text: pending},
+					driver.ChatTurn{Role: "assistant", Text: withTrace(trace, "") + interruptedSuffix(trace)})
+			}
+			pending, have, trace = text, true, nil
+		case "chat.tool":
+			if have {
+				name, _ := e.Payload["name"].(string)
+				arg, _ := e.Payload["arg"].(string)
+				summary, _ := e.Payload["summary"].(string)
+				ok, _ := e.Payload["ok"].(bool)
+				trace = append(trace, traceLine(name, arg, summary, ok))
+			}
 		case "llm.response":
 			switch {
 			case have:
-				out = append(out, driver.ChatTurn{Role: "user", Text: pending}, driver.ChatTurn{Role: "assistant", Text: text})
-				have = false
+				out = append(out, driver.ChatTurn{Role: "user", Text: pending},
+					driver.ChatTurn{Role: "assistant", Text: withTrace(trace, text)})
+				have, trace = false, nil
 			case len(out) > 0 && out[len(out)-1].Role == "assistant":
 				out[len(out)-1].Text += text // a streamed answer arrives in pieces
 			}
 		}
+	}
+	// The last question never got its answer (cancelled, failed, or the program closed):
+	// it still happened, and so did what the model did for it.
+	if have {
+		out = append(out, driver.ChatTurn{Role: "user", Text: pending},
+			driver.ChatTurn{Role: "assistant", Text: withTrace(trace, "") + interruptedSuffix(trace)})
 	}
 	return out
 }
