@@ -24,8 +24,33 @@ const (
 // reads it as a fact and does not imitate the format in its own answers.
 const traceMarker = "[Record kept by the app of what you did with tools in this turn (it is not text you wrote; do not copy this format):"
 
-// interruptedNote ends a turn that did not finish.
-const interruptedNote = "[This turn was cut short before you finished it (the user cancelled or interrupted it, or it failed): what is listed above happened, and nothing after it did.]"
+// interruptedNote ends a turn that did not finish because the user stopped it.
+const interruptedNote = "[This turn was cut short before you finished it (the user cancelled or interrupted it): what is listed above happened, and nothing after it did.]"
+
+// failureNoteMax bounds the error text kept in the history: a provider that answers with a
+// whole web page (it happens) must not fill the context with markup.
+const failureNoteMax = 300
+
+// failureNote ends a turn that failed, with the error the user was shown. Without it the
+// model is told about a question that nobody answered and never learns why, and a user
+// who switches model because of the error finds the new one knowing nothing of it.
+func failureNote(msg string) string {
+	msg = oneLine(msg, failureNoteMax)
+	if msg == "" {
+		return interruptedNote
+	}
+	return "[This turn failed before you could answer it, and the user saw this error: " + strings.TrimRight(msg, ". ") + ". What is listed above happened, and nothing after it did.]"
+}
+
+// modelChangeNote tells the model that the chat model was switched. A conversation is
+// carried by the history the app sends, so a model that takes over mid-way has no other
+// way to know that the earlier answers, and the errors among them, are not its own.
+func modelChangeNote(from, to string) string {
+	if from == "" {
+		return "[The user switched the chat model to " + to + ". You are that model; the earlier messages were written by the one before it.]"
+	}
+	return "[The user switched the chat model from " + from + " to " + to + ". You are the new one; the earlier messages were written by the old one.]"
+}
 
 // traceLine is one tool call as the record says it.
 func traceLine(name, arg, summary string, ok bool) string {
@@ -85,10 +110,18 @@ func withTrace(lines []string, answer string) string {
 	return t + "\n\n" + answer
 }
 
-// interruptedSuffix is the closing note of a turn that never answered.
-func interruptedSuffix(trace []string) string {
-	if len(trace) == 0 {
-		return interruptedNote
+// endedNote is the closing note of a turn that never answered: why it ended, in the
+// words of the error when it failed (failure != "") and as an interruption otherwise.
+func endedNote(trace []string, failure string) string {
+	note := interruptedNote
+	if failure != "" {
+		note = failureNote(failure)
 	}
-	return "\n\n" + interruptedNote
+	if len(trace) == 0 {
+		return note
+	}
+	return "\n\n" + note
 }
+
+// interruptedSuffix is the closing note of a turn that the user stopped.
+func interruptedSuffix(trace []string) string { return endedNote(trace, "") }

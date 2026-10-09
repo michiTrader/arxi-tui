@@ -367,6 +367,13 @@ type otherWaySubmitter interface {
 	SubmitPromptOtherWay(ctx context.Context, text string) error
 }
 
+// modelNoter is the optional capability a Driver has when it keeps a conversation the chat
+// model takes part in (serveDriver): it is told when the model is switched, so the next
+// question carries it and the new model knows it took over.
+type modelNoter interface {
+	NoteModelChange(from, to string)
+}
+
 // unqueuedText is the lines a chat.unqueued event hands back, one per row.
 func unqueuedText(e fold.Event) string {
 	raw, _ := e.Payload["lines"].([]any)
@@ -814,6 +821,24 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// hubDefaultKnown turns true once the core has answered (or there is no core
 	// to ask), so the status bar can tell "still reading" from "no model chosen".
 	var hubDefaultKnown bool
+	// noteDefault tells the conversation when the default model is not the one the core
+	// last reported, so the model that answers next knows it took over (modelNoter). The
+	// first report only sets the baseline: it is not a change.
+	var defaultSeen bool
+	var defaultWas string
+	noteDefault := func(def string) {
+		if !defaultSeen {
+			defaultSeen, defaultWas = true, def
+			return
+		}
+		if def == defaultWas {
+			return
+		}
+		if n, ok := drv.(modelNoter); ok {
+			n.NoteModelChange(defaultWas, def)
+		}
+		defaultWas = def
+	}
 	// hubEfforts are the thinking levels the chat model takes, from the same read
 	// as hubDefault; hubEffortsKnown is false until the core has said.
 	var hubEfforts []string
@@ -2518,6 +2543,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			sceneNotice = out.notice
 			if out.hasData {
 				hubDefault = out.data.def
+				noteDefault(hubDefault)
 				hubDefaultKnown = true
 				hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
 				effortMn.loaded = false
@@ -2553,6 +2579,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				// failure leaves the bar saying "no model", never a notice.
 				if out.err == "" {
 					hubDefault = out.data.def
+					noteDefault(hubDefault)
 					hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
 					effortMn.loaded = false
 				}
@@ -2568,6 +2595,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				if out.hasData || out.picked == "" {
 					modelMn.setData(out.data)
 					hubDefault = out.data.def
+					noteDefault(hubDefault)
 					hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
 					effortMn.loaded = false
 				}

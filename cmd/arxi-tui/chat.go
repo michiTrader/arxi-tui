@@ -122,6 +122,11 @@ type chatSession struct {
 	curText  string
 	curTrace []string
 
+	// notes are what happened to the conversation outside any turn (the chat model was
+	// switched) and the model has not been told yet. They ride in the history from the
+	// next turn on (see noteModelChange).
+	notes []string
+
 	// queue holds the lines sent while a turn was in flight, oldest first; they go one
 	// at a time as each turn ends. parent is the context the program runs under, which
 	// a queued line's turn needs because the context of the turn that ended is spent.
@@ -297,6 +302,7 @@ func (c *chatSession) beginLocked(ctx context.Context, text string) turnStart {
 	if st.web == policyDeny {
 		st.web = ""
 	}
+	c.flushNotesLocked()
 	st.hist = trimHistory(c.history, chatMaxHistory, chatMaxHistoryBytes)
 	c.turn++
 	st.turn = c.turn
@@ -339,7 +345,7 @@ func (c *chatSession) submit(ctx context.Context, text, how string) error {
 		// cut short, so the new line is read as a correction of that work and not as a
 		// message out of nowhere.
 		cancel := c.cancel
-		c.recordCutShortLocked()
+		c.recordCutShortLocked("")
 		c.cancel = nil
 		st := c.beginLocked(ctx, text)
 		c.mu.Unlock()
@@ -363,15 +369,45 @@ func (c *chatSession) submit(ctx context.Context, text, how string) error {
 
 // recordCutShortLocked keeps in the history a turn that will not finish: the line that
 // started it, what the model did with tools before it was stopped, and the note saying so.
+// failure is the error the user was shown when the turn failed ("" when it was stopped).
 // The caller holds c.mu.
-func (c *chatSession) recordCutShortLocked() {
+func (c *chatSession) recordCutShortLocked(failure string) {
 	if c.curText == "" {
 		return
 	}
 	c.history = append(c.history,
 		driver.ChatTurn{Role: "user", Text: c.curText},
-		driver.ChatTurn{Role: "assistant", Text: withTrace(c.curTrace, "") + interruptedSuffix(c.curTrace)})
+		driver.ChatTurn{Role: "assistant", Text: withTrace(c.curTrace, "") + endedNote(c.curTrace, failure)})
 	c.curText, c.curTrace = "", nil
+}
+
+// noteModelChange tells the conversation that the chat model was switched from one model
+// ("" when it was not known) to another. The note reaches the model with the next question
+// and is saved with the conversation, so a resumed one knows it too.
+func (c *chatSession) noteModelChange(from, to string) {
+	if to == "" || from == to {
+		return
+	}
+	c.mu.Lock()
+	c.notes = append(c.notes, modelChangeNote(from, to))
+	gen := c.gen
+	c.mu.Unlock()
+	c.post(context.Background(), gen, eventModelChanged, map[string]any{"from": from, "to": to})
+}
+
+// flushNotesLocked writes the notes that wait into the history, on the last answer: the
+// model reads them as something that happened after it. Before any answer there is
+// nothing for a note to explain, so it is dropped. The caller holds c.mu.
+func (c *chatSession) flushNotesLocked() {
+	if len(c.notes) == 0 {
+		return
+	}
+	defer func() { c.notes = nil }()
+	if len(c.history) == 0 || c.history[len(c.history)-1].Role != "assistant" {
+		return
+	}
+	last := &c.history[len(c.history)-1]
+	last.Text = strings.TrimRight(last.Text, "\n") + "\n\n" + strings.Join(c.notes, "\n")
 }
 
 // giveBackLocked forgets the lines still waiting for a turn and returns the event that
@@ -413,7 +449,7 @@ func (c *chatSession) cancelTurn() bool {
 	c.cancel = nil
 	c.busy = false
 	// A stopped turn still happened: the next question is asked with it in the history.
-	c.recordCutShortLocked()
+	c.recordCutShortLocked("")
 	back := c.giveBackLocked()
 	c.mu.Unlock()
 	cancel()
@@ -433,7 +469,7 @@ func (c *chatSession) reset() {
 	c.gen++
 	c.history = nil
 	c.queue = nil
-	c.curText, c.curTrace = "", nil
+	c.curText, c.curTrace, c.notes = "", nil, nil
 	c.busy = false
 	cancel := c.cancel
 	c.cancel = nil
@@ -489,6 +525,12 @@ func (c *chatSession) fail(ctx context.Context, gen int64, msg string) {
 	c.post(ctx, gen, "chat.error", map[string]any{"text": msg})
 }
 
+// failTurn is fail for the error that ended a turn; the mark tells a saved conversation
+// that this error belongs to the question before it (see historyFromEvents).
+func (c *chatSession) failTurn(ctx context.Context, gen int64, msg string) {
+	c.post(ctx, gen, "chat.error", map[string]any{"text": msg, "turn_failed": true})
+}
+
 // post queues a conversation event without ever blocking its caller (see fail).
 func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload map[string]any) {
 	// A turn that was stopped (cancelled, or steered away from) says nothing more: what
@@ -538,9 +580,10 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		conn, closeConn, err := c.dial(ctx)
 		if err != nil {
 			if ctx.Err() == nil {
-				back := c.failedTurn(gen, turn)
+				msg := chatErrorText(err)
+				back := c.failedTurn(gen, turn, msg)
 				c.emit(ctx, gen, "agent.failed", map[string]any{"agent": "assistant"})
-				c.fail(ctx, gen, chatErrorText(err))
+				c.failTurn(ctx, gen, msg)
 				if back != nil {
 					c.post(ctx, gen, "chat.unqueued", back)
 				}
@@ -648,9 +691,10 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		return
 	}
 	if err != nil {
-		back := c.failedTurn(gen, turn)
+		msg := chatErrorText(err)
+		back := c.failedTurn(gen, turn, msg)
 		c.emit(ctx, gen, "agent.failed", map[string]any{"agent": "assistant"})
-		c.fail(ctx, gen, chatErrorText(err))
+		c.failTurn(ctx, gen, msg)
 		if back != nil {
 			c.post(ctx, gen, "chat.unqueued", back)
 		}
@@ -677,18 +721,23 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 	c.emit(ctx, gen, "agent.turn_done", map[string]any{"agent": "assistant"})
 }
 
-// failedTurn keeps a turn that failed in the history (the question and what was done for
-// it are not lost to a failure) and returns the event that gives back the lines that were
+// failedTurn keeps a turn that failed in the history (the question, what was done for it
+// and the error the user saw are not lost to a failure) and returns the event that gives back the lines that were
 // waiting for it, nil when none were.
-func (c *chatSession) failedTurn(gen, turn int64) map[string]any {
+func (c *chatSession) failedTurn(gen, turn int64, msg string) map[string]any {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.gen != gen || c.turn != turn {
 		return nil
 	}
-	c.recordCutShortLocked()
+	c.recordCutShortLocked(msg)
 	return c.giveBackLocked()
 }
+
+// eventModelChanged is the event that records a switch of the chat model in the
+// conversation. The fold ignores it (the user was told when they switched); a saved
+// conversation keeps it so a resumed one tells the model.
+const eventModelChanged = "chat.model"
 
 // chatErrorText is the sentence the user reads when a turn fails: the core's own
 // words when it refused, a plain description otherwise.

@@ -188,8 +188,8 @@ func TestAFailedTurnStaysInTheHistoryToo(t *testing.T) {
 	waitStarted(t, core, "boom")
 	waitStarted(t, core, "retry")
 	h := core.history(1)
-	if len(h) != 2 || !strings.Contains(h[1].Text, "grep(x): 3 matches") || !strings.Contains(h[1].Text, interruptedNote) {
-		t.Errorf("a failed turn must leave its question and its work behind: %+v", h)
+	if len(h) != 2 || !strings.Contains(h[1].Text, "grep(x): 3 matches") || !strings.Contains(h[1].Text, "provider down") {
+		t.Errorf("a failed turn must leave its question, its work and its error behind: %+v", h)
 	}
 }
 

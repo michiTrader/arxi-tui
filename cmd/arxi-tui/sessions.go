@@ -49,6 +49,7 @@ var sessionIDRe = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
 var sessionKinds = map[string]bool{
 	"run.prompt": true, "llm.response": true, "chat.tool": true,
 	"chat.error": true, "chat.warn": true, "chat.cancelled": true,
+	eventModelChanged: true,
 }
 
 // sessionsDir is where conversations are kept, "" when saving is off or impossible.
@@ -303,12 +304,28 @@ func loadSession(dir, id string) ([]fold.Event, error) {
 }
 
 // historyFromEvents rebuilds what the model has to be told about the conversation so far:
-// each question that got an answer, with that answer. A question that failed or was
-// cancelled never entered the history while it was live, so it does not here either.
+// each question with its answer, and also the ones that got none: the question that was
+// cut short or failed (with the error the user saw) and the switches of the chat model,
+// so a resumed conversation is told what the live one was.
 func historyFromEvents(evs []fold.Event) []driver.ChatTurn {
 	var out []driver.ChatTurn
 	pending, have := "", false
-	var trace []string
+	var trace, notes []string
+	// endTurn closes the question in flight, which got no answer.
+	endTurn := func(failure string) {
+		out = append(out, driver.ChatTurn{Role: "user", Text: pending},
+			driver.ChatTurn{Role: "assistant", Text: withTrace(trace, "") + endedNote(trace, failure)})
+		have, trace = false, nil
+	}
+	// flushNotes tells the model, on its last answer, what happened to the conversation
+	// since: the same place and the same moment the live session tells it.
+	flushNotes := func() {
+		if len(notes) > 0 && len(out) > 0 && out[len(out)-1].Role == "assistant" {
+			last := &out[len(out)-1]
+			last.Text = strings.TrimRight(last.Text, "\n") + "\n\n" + strings.Join(notes, "\n")
+		}
+		notes = nil
+	}
 	for _, e := range evs {
 		text, _ := e.Payload["text"].(string)
 		switch e.Type {
@@ -316,10 +333,22 @@ func historyFromEvents(evs []fold.Event) []driver.ChatTurn {
 			// A question that was cut short (no answer arrived before the next one)
 			// still happened, and so did what the model did for it.
 			if have {
-				out = append(out, driver.ChatTurn{Role: "user", Text: pending},
-					driver.ChatTurn{Role: "assistant", Text: withTrace(trace, "") + interruptedSuffix(trace)})
+				endTurn("")
 			}
+			flushNotes()
 			pending, have, trace = text, true, nil
+		case "chat.error":
+			// The error that ended the question in flight. Other errors (a refused
+			// second line, a failed command) are not part of any question.
+			if failed, _ := e.Payload["turn_failed"].(bool); failed && have {
+				endTurn(text)
+			}
+		case eventModelChanged:
+			from, _ := e.Payload["from"].(string)
+			to, _ := e.Payload["to"].(string)
+			if to != "" && from != to {
+				notes = append(notes, modelChangeNote(from, to))
+			}
 		case "chat.tool":
 			if have {
 				name, _ := e.Payload["name"].(string)
@@ -339,12 +368,12 @@ func historyFromEvents(evs []fold.Event) []driver.ChatTurn {
 			}
 		}
 	}
-	// The last question never got its answer (cancelled, failed, or the program closed):
-	// it still happened, and so did what the model did for it.
+	// The last question never got its answer (cancelled, or the program closed): it
+	// still happened, and so did what the model did for it.
 	if have {
-		out = append(out, driver.ChatTurn{Role: "user", Text: pending},
-			driver.ChatTurn{Role: "assistant", Text: withTrace(trace, "") + interruptedSuffix(trace)})
+		endTurn("")
 	}
+	flushNotes()
 	return out
 }
 

@@ -142,6 +142,13 @@ func (d *serveDriver) SubmitPrompt(ctx context.Context, text string) error {
 	return err
 }
 
+// NoteModelChange records in the conversation that the chat model was switched.
+func (d *serveDriver) NoteModelChange(from, to string) {
+	if d.chat != nil {
+		d.chat.noteModelChange(from, to)
+	}
+}
+
 // SubmitPromptOtherWay is SubmitPrompt with the opposite of the user's setting for a line
 // sent while a turn is in flight (Alt+Enter).
 func (d *serveDriver) SubmitPromptOtherWay(ctx context.Context, text string) error {
