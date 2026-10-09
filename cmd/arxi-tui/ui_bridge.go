@@ -57,7 +57,8 @@ import (
 // tokens) because it rides with every question; the how is in ui_guide.
 const uiSystemHint = "You are running inside arxi-tui, the terminal app the user is talking to you through. " +
 	"When they mention the TUI, the interface, the screen, or how you or your replies look (colours, layout, spacing), " +
-	"they mean this app, not their project: call ui_guide, never search their files for it."
+	"they mean this app, not their project: call ui_guide, never search their files for it. " +
+	"Say the interface changed only after a ui_edit succeeded; a refused one changes nothing."
 
 // Names of the two tools, as the model calls them.
 const (
@@ -189,7 +190,13 @@ func (b *uiBridge) call(ctx context.Context, c driver.ClientToolCall, ask func(d
 
 func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(driver.Approval) bool) driver.ClientToolResult {
 	refuse := func(summary, text string) driver.ClientToolResult {
-		return driver.ClientToolResult{Arg: "interface", Summary: summary, Text: text}
+		return driver.ClientToolResult{Arg: "interface", Summary: summary, Text: text + refusedTail}
+	}
+	// refuseWhy is a refusal whose line says why, in the words of the validator: the user
+	// and the record of the turn both read that line, and "The change was refused" alone
+	// told neither of them what to fix or whether to try again.
+	refuseWhy := func(reason, text string) driver.ClientToolResult {
+		return refuse(refusedSummary(reason), text)
 	}
 	b.mu.Lock()
 	policy := b.policy
@@ -206,7 +213,7 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 		Summary   string            `json:"summary"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
-		return refuse("The change was refused", "ui_edit takes {colors: {...}}, {texts: {...}}, {commands: [...]} or {scene: \"...\"}: "+err.Error())
+		return refuseWhy("the arguments are not valid: "+err.Error(), "ui_edit takes {colors: {...}}, {texts: {...}}, {commands: [...]} or {scene: \"...\"}: "+err.Error())
 	}
 	base, below, user, thm, userWords := b.snapshot()
 	if base == nil {
@@ -219,10 +226,10 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	if len(args.Behaviour) > 0 && string(args.Behaviour) != "null" {
 		var err error
 		if behPatch, err = parseBehaviourPatch(args.Behaviour); err != nil {
-			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
+			return refuseWhy(err.Error(), err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
 		}
 		if nextBeh, err = applyBehaviourPatch(userBeh, behPatch); err != nil {
-			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
+			return refuseWhy(err.Error(), err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
 		}
 		behChanged = !sameBehaviour(userBeh, nextBeh)
 	}
@@ -233,7 +240,7 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	if len(args.Colors) > 0 {
 		var err error
 		if colors, err = applyColors(user, thm, args.Colors); err != nil {
-			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
+			return refuseWhy(err.Error(), err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
 		}
 		nextThm = withBehaviour(withUserTokens(below, colors), userBeh)
 		changed := make([]string, 0, len(args.Colors))
@@ -246,7 +253,7 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	if len(args.Texts) > 0 {
 		var err error
 		if words, err = applyTexts(userWords, args.Texts); err != nil {
-			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
+			return refuseWhy(err.Error(), err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
 		}
 		changed := make([]string, 0, len(args.Texts))
 		for k := range args.Texts {
@@ -260,7 +267,7 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 		nextThm = withBehaviour(nextThm, nextBeh)
 		bd, err := behaviourDiff(userBeh, nextBeh)
 		if err != nil {
-			return refuse("The change was refused", err.Error())
+			return refuseWhy(err.Error(), err.Error())
 		}
 		diff += "      behaviour.json:\n" + bd
 	}
@@ -268,15 +275,15 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	if len(args.Commands) > 0 || strings.TrimSpace(args.Scene) != "" {
 		var err error
 		if next, err = draftScene(base, nextThm, args.Commands, args.Scene); err != nil {
-			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix what the message names and call ui_edit again.")
+			return refuseWhy(err.Error(), err.Error()+"\nNothing was changed. Fix what the message names and call ui_edit again.")
 		}
 		d, err := uiDiffText(base.Source(), next.Source())
 		if err != nil {
-			return refuse("The change was refused", err.Error())
+			return refuseWhy(err.Error(), err.Error())
 		}
 		diff += d
 	} else if len(args.Colors) == 0 && len(args.Texts) == 0 && len(args.Behaviour) == 0 {
-		return refuse("The change was refused", "ui_edit needs colors, texts, behaviour, commands or scene")
+		return refuseWhy("ui_edit needs colors, texts, behaviour, commands or scene", "ui_edit needs colors, texts, behaviour, commands or scene")
 	}
 	if diff == "" {
 		return driver.ClientToolResult{OK: true, Arg: "interface", Summary: "Nothing to change", Text: "the new document is the same as the one on screen; nothing was changed"}
@@ -307,6 +314,24 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	return driver.ClientToolResult{OK: true, Arg: "interface", Summary: summary, Diff: diff,
 		Text: "applied and saved: the interface on screen now shows the change. /ui undo takes it back."}
 }
+
+// refusedSummary is the line the user reads under a refused change: the reason, first
+// line only, and short. The whole message still goes to the model.
+func refusedSummary(reason string) string {
+	line := strings.TrimSpace(strings.SplitN(strings.TrimSpace(reason), "\n", 2)[0])
+	if line == "" {
+		return "The change was refused"
+	}
+	return "Refused: " + oneLine(line, refusedSummaryMax)
+}
+
+// refusedSummaryMax bounds the reason on the line the user reads.
+const refusedSummaryMax = 140
+
+// refusedTail ends every refusal the model reads. Models were measured saying "done"
+// after a string of refusals, because the refusal read like a step on the way; this says
+// outright that nothing changed and what may be told to the user.
+const refusedTail = "\nThe interface is unchanged. Do not tell the user it was changed unless a later ui_edit call succeeds; if you cannot make it work, say what was refused and why."
 
 // draftScene builds the proposed document from base and validates it as strictly as a
 // scene loaded at boot, and then some: the theme must define every style token (an

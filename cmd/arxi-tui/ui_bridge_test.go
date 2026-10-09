@@ -140,6 +140,52 @@ func TestARefusalNamesTheLineAndChangesNothing(t *testing.T) {
 	}
 }
 
+// The user's line under a refused change used to read "The change was refused" whatever
+// the cause, so neither the user nor the record of the turn knew what to fix, and the
+// model went on to say it had done the change.
+func TestARefusalSaysWhyOnTheLineTheUserReads(t *testing.T) {
+	r := newBridgeRig(t, "full access")
+	res := r.edit(t, `{"commands":["/ui style prompt nope.token"]}`, true)
+	if res.OK {
+		t.Fatalf("accepted: %+v", res)
+	}
+	if !strings.HasPrefix(res.Summary, "Refused: ") || !strings.Contains(res.Summary, "nope.token") {
+		t.Errorf("the line under the refused change reads %q; it must name the reason (nope.token).\nConsequence: the user sees the same line for every refusal and cannot tell a typo from a wall.\nRemedy: pass the validator's message through refusedSummary.", res.Summary)
+	}
+	if strings.Contains(res.Summary, "\n") || len(res.Summary) > refusedSummaryMax+len("Refused: ")+4 {
+		t.Errorf("the reason line must be one short line, got %q", res.Summary)
+	}
+}
+
+func TestEveryRefusalTellsTheModelNothingChanged(t *testing.T) {
+	for name, args := range map[string]string{
+		"invalid scene": `{"commands":["/ui style prompt nope.token"]}`,
+		"empty call":    `{}`,
+		"bad arguments": `[1]`,
+		"bad colour":    `{"colors":{"nope.token":"fg=red"}}`,
+	} {
+		r := newBridgeRig(t, "full access")
+		res := r.edit(t, args, true)
+		if res.OK {
+			t.Errorf("%s: accepted %+v", name, res)
+			continue
+		}
+		if !strings.Contains(res.Text, "The interface is unchanged") || !strings.Contains(res.Text, "Do not tell the user it was changed") {
+			t.Errorf("%s: the refusal the model reads is %q.\nConsequence: models were measured saying \"done\" after a string of refusals.\nRemedy: every refusal ends with refusedTail.", name, res.Text)
+		}
+	}
+}
+
+func TestRefusedSummaryKeepsTheFirstLineOnly(t *testing.T) {
+	got := refusedSummary("scene.json:12: unknown key \"colour\"\nsecond line\nthird")
+	if got != `Refused: scene.json:12: unknown key "colour"` {
+		t.Errorf("got %q", got)
+	}
+	if refusedSummary("  ") != "The change was refused" {
+		t.Error("a refusal with no reason must still read as a refusal")
+	}
+}
+
 func TestTheUsersInterfaceIsSavedBootedAndUndone(t *testing.T) {
 	t.Setenv(configDirEnv, t.TempDir())
 	r := newBridgeRig(t, "full access")
@@ -313,7 +359,7 @@ func TestColoursAreSavedUndoneAndResetWithTheLayout(t *testing.T) {
 }
 
 func TestTheModelIsToldItRunsInsideArxiTUI(t *testing.T) {
-	for _, want := range []string{"arxi-tui", "TUI", "colours", "ui_guide", "never search their files"} {
+	for _, want := range []string{"arxi-tui", "TUI", "colours", "ui_guide", "never search their files", "a refused one changes nothing"} {
 		if !strings.Contains(uiSystemHint, want) {
 			t.Errorf("the standing hint lacks %q.\nConsequence: a real model asked about \"the tui\" searched the project eleven times and offered to write a theme file there.\nRemedy: name the app and what the words mean in uiSystemHint.", want)
 		}
