@@ -92,16 +92,20 @@ type behaviour struct {
 	Commands   []userCommand             `json:"commands,omitempty"`
 	Keys       map[string]actionList     `json:"keys,omitempty"`
 	Hooks      []userHook                `json:"hooks,omitempty"`
+	// EnterWhileBusy is what Enter does with a line sent while the agent is working:
+	// "queue" (the factory behaviour, kept as "" so a document that never touched it
+	// stays empty) or "steer".
+	EnterWhileBusy string `json:"enter_while_busy,omitempty"`
 }
 
 func (b behaviour) empty() bool {
 	return len(b.Animations) == 0 && len(b.MenuKeys) == 0 && len(b.Commands) == 0 &&
-		len(b.Keys) == 0 && len(b.Hooks) == 0
+		len(b.Keys) == 0 && len(b.Hooks) == 0 && b.EnterWhileBusy == ""
 }
 
 // clone copies every part, so an edit never reaches the layer it was drafted from.
 func (b behaviour) clone() behaviour {
-	out := behaviour{}
+	out := behaviour{EnterWhileBusy: b.EnterWhileBusy}
 	if len(b.Animations) > 0 {
 		out.Animations = make(map[string]theme.CycleDef, len(b.Animations))
 		for k, v := range b.Animations {
@@ -194,6 +198,9 @@ func (b behaviour) validate() error {
 	}
 	if err := b.validateMenuKeys(); err != nil {
 		return err
+	}
+	if b.EnterWhileBusy != "" && b.EnterWhileBusy != busySteer {
+		return fmt.Errorf("enter_while_busy: %q is not a way to treat a line sent while the agent works; use \"queue\" (it waits for the answer, the factory way) or \"steer\" (it interrupts the turn and goes at once)", b.EnterWhileBusy)
 	}
 	if len(b.Keys) > maxUserKeys {
 		return fmt.Errorf("keys: %d shortcuts, the most is %d", len(b.Keys), maxUserKeys)
@@ -432,6 +439,8 @@ type behaviourPatch struct {
 	Keys       map[string]*actionList     `json:"keys"`
 	Commands   *[]userCommand             `json:"commands"`
 	Hooks      *[]userHook                `json:"hooks"`
+	// EnterWhileBusy is "queue" or "steer"; left out it is untouched.
+	EnterWhileBusy *string `json:"enter_while_busy"`
 }
 
 func parseBehaviourPatch(raw json.RawMessage) (behaviourPatch, error) {
@@ -439,7 +448,7 @@ func parseBehaviourPatch(raw json.RawMessage) (behaviourPatch, error) {
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&p); err != nil {
-		return p, fmt.Errorf("behaviour: %w (the parts are animations, menu_keys, keys, commands and hooks)", err)
+		return p, fmt.Errorf("behaviour: %w (the parts are animations, menu_keys, keys, commands, hooks and enter_while_busy)", err)
 	}
 	return p, nil
 }
@@ -488,6 +497,14 @@ func applyBehaviourPatch(base behaviour, p behaviourPatch) (behaviour, error) {
 	if p.Hooks != nil {
 		out.Hooks = append([]userHook(nil), (*p.Hooks)...)
 	}
+	if p.EnterWhileBusy != nil {
+		// "queue" is the factory way and is kept as nothing, so the file stays canonical.
+		if v := strings.TrimSpace(*p.EnterWhileBusy); v == busyQueue {
+			out.EnterWhileBusy = ""
+		} else {
+			out.EnterWhileBusy = v
+		}
+	}
 	out = out.normalised()
 	if err := out.validate(); err != nil {
 		return base, err
@@ -521,7 +538,9 @@ func (b behaviour) normalised() behaviour {
 // or a setting changes. Those are asked about even in full access: the user approved
 // "full access" for the agent's work, not for what their own keyboard will do later.
 func (p behaviourPatch) touchesWhatRuns() bool {
-	return len(p.Keys) > 0 || p.Commands != nil || p.Hooks != nil
+	// enter_while_busy is here too: "steer" makes Enter stop the model's work in flight,
+	// which is the user's decision about their own keyboard and not the agent's.
+	return len(p.Keys) > 0 || p.Commands != nil || p.Hooks != nil || p.EnterWhileBusy != nil
 }
 
 func sameBehaviour(a, b behaviour) bool {
@@ -756,7 +775,9 @@ func behaviourGuide(b behaviour) string {
       on is effort, mode or style; is is one of its values (effort also has "none" for cleared) or left out for any change. Hooks fire when the user changes the setting, never when an action did, so nothing loops.
   An action is one of: cmd:/<line typed as the user would type it>, focus:<node id>, ext:<plugin-id>:<action> (keys and commands only; plugins are installed with /ui plugin add <url> and ask the user's consent). answer: is not allowed here.
   A key, a command or a hook can be removed with null (keys) or by sending the list without it. Changes to keys, commands and hooks are always put to the user, even in full access, because they decide what their own keyboard does later.
-  The user types the common ones themselves: /ui animate <name> <colour,colour,...> [fps=N] [spread=N] [bold] | off, /ui key <key> <action...> | off, /ui menukeys <action> <key...> | off.
+  enter_while_busy  "queue" | "steer"
+      What Enter does with a line sent while the agent is working. queue (the factory way): the line waits, shown dimmed under the conversation, and is sent when the answer ends. steer: the work in flight is interrupted (what it already did is kept in the conversation) and the line is sent at once. Alt+Enter does the other one for a single line. Always put to the user.
+  The user types the common ones themselves: /ui busy <queue|steer>, /ui animate <name> <colour,colour,...> [fps=N] [spread=N] [bold] | off, /ui key <key> <action...> | off, /ui menukeys <action> <key...> | off.
 
 `)
 	s.WriteString("Current behaviour:\n")
@@ -779,6 +800,12 @@ func uiBehaviourCommand(input string) (p behaviourPatch, label string, ok bool, 
 		return p, "", false, nil
 	}
 	switch f[1] {
+	case "busy":
+		if len(f) != 3 || (f[2] != busyQueue && f[2] != busySteer) {
+			return p, "", true, fmt.Errorf("/ui busy <queue|steer>  (what Enter does with a line sent while the agent works: queue waits for the answer, steer interrupts the turn)")
+		}
+		v := f[2]
+		return behaviourPatch{EnterWhileBusy: &v}, "/ui busy: Enter now " + map[string]string{busyQueue: "queues a line sent while the agent works", busySteer: "steers the agent with a line sent while it works"}[v], true, nil
 	case "animate":
 		name := f[2]
 		if len(f) == 4 && f[3] == "off" {

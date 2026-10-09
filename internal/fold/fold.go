@@ -12,7 +12,11 @@ import (
 // a pure function of events already received.
 type State struct {
 	// Run-state binds (mapped from arxi core's event catalog, docs/BINDS.md §4.1)
-	History           []ChatLine   `json:"chat.history"`
+	History []ChatLine `json:"chat.history"`
+	// Queued are the lines the user sent while an answer was pending and that wait for
+	// it to end, oldest first. Not a bind: the transcript draws them under the last
+	// line, in the order they will go.
+	Queued            []string     `json:"-"`
 	ThinkingText      string       `json:"thinking.text"`
 	AgentWorking      bool         `json:"agent.working"`
 	AgentMode         string       `json:"agent.mode"`
@@ -655,6 +659,8 @@ var handled = map[string]bool{
 	"chat.approval":   true,
 	"chat.decided":    true,
 	"chat.cancelled":  true,
+	"chat.queued":     true,
+	"chat.unqueued":   true,
 	"run.started":     true,
 	"agent.blocked":   true,
 	"agent.unblocked": true,
@@ -735,6 +741,10 @@ func (s *State) apply(e Event) {
 		text := ""
 		if t, ok := e.Payload["text"]; ok {
 			text, _ = t.(string)
+		}
+		// A queued line that goes now stops waiting: it is the question itself from here.
+		if len(s.Queued) > 0 && s.Queued[0] == text {
+			s.Queued = s.Queued[1:]
 		}
 		s.History = append(s.History, ChatLine{Role: "user", Text: text})
 
@@ -940,6 +950,18 @@ func (s *State) apply(e Event) {
 		if text, _ := e.Payload["text"].(string); text != "" {
 			s.History = append(s.History, ChatLine{Role: "error", Text: text})
 		}
+
+	case "chat.queued":
+		// A line sent while an answer is pending. It waits, drawn under the transcript,
+		// and becomes the question (run.prompt) when the answer ends.
+		if text, _ := e.Payload["text"].(string); text != "" {
+			s.Queued = append(s.Queued, text)
+		}
+
+	case "chat.unqueued":
+		// The lines that were waiting went back to the user (the turn was stopped or
+		// failed): nothing is waiting any more. The host puts the words in the input.
+		s.Queued = nil
 
 	case "chat.warn":
 		// Something worth knowing that did not stop the turn: a line of the

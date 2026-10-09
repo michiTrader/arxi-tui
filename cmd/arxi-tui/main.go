@@ -361,6 +361,24 @@ type turnCanceller interface {
 	CancelTurn() bool
 }
 
+// otherWaySubmitter is the optional capability a Driver has when a line sent during a
+// turn can be queued or steer it (serveDriver): Alt+Enter asks for the way Enter does not.
+type otherWaySubmitter interface {
+	SubmitPromptOtherWay(ctx context.Context, text string) error
+}
+
+// unqueuedText is the lines a chat.unqueued event hands back, one per row.
+func unqueuedText(e fold.Event) string {
+	raw, _ := e.Payload["lines"].([]any)
+	var out []string
+	for _, l := range raw {
+		if s, ok := l.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
 // cancelRunningTurn stops the turn in flight, if the driver has one. The conversation
 // gets its "Cancelled" line from the driver's own event, not from here.
 func cancelRunningTurn(drv Driver) bool {
@@ -2372,6 +2390,19 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				if err := sessLog.Record(e); err != nil {
 					sceneNotice = err.Error()
 				}
+				if e.Type == "chat.unqueued" {
+					// The turn they were waiting for was stopped or failed, and the
+					// lines go back where they were typed: nothing the user wrote is
+					// sent to a conversation that is no longer the one it was for, and
+					// nothing is lost either.
+					if back := unqueuedText(e); back != "" {
+						if strings.TrimSpace(input) != "" {
+							back += "\n" + input
+						}
+						input = back
+						caret = len([]rune(input))
+					}
+				}
 				repaint()
 			}
 
@@ -2691,6 +2722,15 @@ func typeKey(input string, caret int, k term.Key, ctx context.Context, drv Drive
 			text = strings.TrimSpace(text[1:])
 			if text == "" {
 				return input, caret
+			}
+		}
+		if k.Mod&term.ModAlt != 0 {
+			// Alt+Enter is Enter's other way with a line sent during a turn: it
+			// queues where Enter steers and steers where Enter queues. With
+			// nothing in flight it is a plain Enter.
+			if o, ok := drv.(otherWaySubmitter); ok {
+				_ = o.SubmitPromptOtherWay(ctx, text)
+				return "", 0
 			}
 		}
 		_ = drv.SubmitPrompt(ctx, text)
