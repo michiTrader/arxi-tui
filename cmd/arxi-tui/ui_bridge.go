@@ -536,7 +536,7 @@ LAYOUT. The interface is a JSON scene document drawn top to bottom: {"root": nod
   where = above <id> | below <id> | into <id> [top] | above_input | below_input
 Example, one more blank line under the input bar:
   /ui add node below_input {"id":"input_gap_extra","type":"text","text":""}
-FRAMES. Only a box (or an overlay) draws a border; a border on any other node is refused. "border" is one of single, double, round (rounded corners), heavy, ascii, or {"shape":"round","style":"<token>"} to colour it. To put a rounded frame around the input bar: /ui add node above prompt {"id":"input_frame","type":"box","border":"round"} then /ui move prompt into input_frame. To make that frame move in colour, define an animation and name it as the frame's style (two ui_edit parts in one call): behaviour: {"animations": {"rainbow": {"colors": ["#ff3b30","#ffcc00","#34c759","#00c7be","#0a84ff","#bf5af2"], "fps": 12, "direction": "diagonal"}}} and commands: ["/ui add node above prompt {\"id\":\"input_frame\",\"type\":\"box\",\"border\":{\"shape\":\"round\",\"style\":\"rainbow\"}}", "/ui move prompt into input_frame"]. If the frame already exists, only /ui set input_frame border {"shape":"round","style":"rainbow"} is needed. A colour that moves is always an animation token like this one, never a colors entry. "direction":"diagonal" (or "radial", "horizontal", "vertical", "antidiagonal") makes one smooth gradient run across the whole frame, so the top and bottom lines differ; without it every line repeats the same colours. Animate the frame ONLY through the border's style: never put the animation on the input's or the box's own "style", or the typed letters change colour too, which is not what a frame asks for. Do not invent other words ("rounded", "{type:round}"): they are refused.
+FRAMES. Only a box (or an overlay) draws a border; a border on any other node is refused. "border" is one of single, double, round (rounded corners), heavy, ascii, or {"shape":"round","style":"<token>"} to colour it. To put a rounded frame around the input bar: /ui add node above prompt {"id":"input_frame","type":"box","border":"round"} then /ui move prompt into input_frame. To make that frame move in colour, define an animation and name it as the frame's style (two ui_edit parts in one call): behaviour: {"animations": {"rainbow": {"colors": ["#ff3b30","#ffcc00","#34c759","#00c7be","#0a84ff","#bf5af2"], "fps": 12, "direction": "diagonal"}}} and commands: ["/ui add node above prompt {\"id\":\"input_frame\",\"type\":\"box\",\"border\":{\"shape\":\"round\",\"style\":\"rainbow\"}}", "/ui move prompt into input_frame"]. If the frame already exists, only /ui set input_frame border {"shape":"round","style":"rainbow"} is needed. A colour that moves is always an animation token like this one, never a colors entry. "direction":"diagonal" (or "radial", "conic", "horizontal", "vertical", "antidiagonal", or an angle such as "60deg"; add "reverse":true or "static":true) makes one smooth gradient run across the whole frame, so the top and bottom lines differ; without it every line repeats the same colours. To give the top and bottom different colours or animations: {"shape":"round","top":"<token>","bottom":"<other token>","style":"<token for the sides>"}. A gradient on a border is possible in any direction and sides can differ: never tell the user it cannot be done. Animate the frame ONLY through the border's style: never put the animation on the input's or the box's own "style", or the typed letters change colour too, which is not what a frame asks for. Do not invent other words ("rounded", "{type:round}"): they are refused.
 Or pass scene: the complete new document, changing as little as the order requires. Every bind and when must come from the bind list; keep the node bound to user.input.
 
 `)
@@ -683,18 +683,54 @@ var errUIPromptEmpty = errors.New("/ui needs a request, for example: /ui give th
 // without the switch and whether it was there. It is mandatory on purpose: the same
 // words ("the TUI", "the colours") are about the user's project when they build one.
 func uiTrigger(text string) (string, bool) {
+	rest, word := uiTriggerWord(text)
+	return rest, word != ""
+}
+
+// uiTriggerWord is uiTrigger that also says which spelling switched it on: "/ui" or
+// "@ui" (empty when neither was there). The chat draws that word in its own colour, so
+// the line the user typed is on the record and not only what came after the switch.
+func uiTriggerWord(text string) (string, string) {
 	t := strings.TrimSpace(text)
 	if rest, ok := uiPromptAfterSlash(t); ok {
-		return rest, true
+		return rest, "/ui"
 	}
 	if !strings.Contains(strings.ToLower(t), "@ui") {
-		return t, false
+		return t, ""
 	}
 	stripped := removeToken(t, "@ui")
 	if stripped == t {
-		return t, false // "@uiux" or "me@ui.com" is not the switch
+		return t, "" // "@uiux" or "me@ui.com" is not the switch
 	}
-	return strings.TrimSpace(stripped), true
+	return strings.TrimSpace(stripped), "@ui"
+}
+
+// uiModeCommand reads the typed lines that switch the interface conversation on and off
+// without asking the model anything: "/ui" and "/ui on" turn it on, "/ui off" (or
+// "exit") turns it off. The model's context stays loaded between them: one /ui and the
+// following messages are still about the interface, until the user leaves.
+func uiModeCommand(input string) (on, ok bool) {
+	f := strings.Fields(input)
+	if len(f) == 0 || f[0] != "/ui" || len(f) > 2 {
+		return false, false
+	}
+	if len(f) == 1 {
+		return true, true
+	}
+	switch f[1] {
+	case "on":
+		return true, true
+	case "off", "exit":
+		return false, true
+	}
+	return false, false
+}
+
+// uiModer is the optional capability a Driver has when its chat keeps the interface
+// context across messages (serveDriver).
+type uiModer interface {
+	SetUIMode(on bool)
+	UIMode() bool
 }
 
 // removeToken deletes whole-word occurrences of tok, leaving the rest as typed.
@@ -726,7 +762,7 @@ func uiTypedLine(line string) bool {
 		return false
 	}
 	switch f[1] {
-	case "undo", "reset":
+	case "undo", "reset", "on", "off", "exit":
 		return len(f) == 2
 	case "color":
 		_, _, ok := uiColorCommand(line)

@@ -285,6 +285,16 @@ func (d *serveDriver) InterfaceBridge() *uiBridge {
 	return d.chat.ui
 }
 
+// SetUIMode turns the interface conversation on or off (see chatSession.uiMode).
+func (d *serveDriver) SetUIMode(on bool) {
+	if d.chat != nil {
+		d.chat.setUIMode(on)
+	}
+}
+
+// UIMode reports whether the interface conversation is on.
+func (d *serveDriver) UIMode() bool { return d.chat != nil && d.chat.inUIMode() }
+
 // PendingApproval reports whether a change waits for the user's answer.
 func (d *serveDriver) PendingApproval() bool { return d.chat != nil && d.chat.pendingNow() }
 

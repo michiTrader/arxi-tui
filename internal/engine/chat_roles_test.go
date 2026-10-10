@@ -108,3 +108,35 @@ func TestChatColoursUserTurnsNotAgentTurns(t *testing.T) {
 		t.Fatalf("agent turn %q wears the user's token; the colour no longer separates the voices", agentLine)
 	}
 }
+
+// A message that began with a command ("/ui make it red") keeps the command on the
+// record: it is drawn in its own style token, apart from the words, so the reader can
+// tell what addressed the app from what was said to the model.
+func TestAUserTurnShowsItsCommandInItsOwnStyle(t *testing.T) {
+	state := fold.State{History: []fold.ChatLine{
+		{Role: "user", Command: "/ui", Text: "make the border red"},
+		{Role: "user", Text: "an ordinary question"},
+	}}
+	node := &scene.Node{Bind: "chat.history"}
+	r := Renderer{Width: 80}
+
+	f := r.renderMarkdown(node, state, -1)
+	plain := strings.Split(f.Plain(), "\n")
+	if !strings.HasPrefix(plain[0], userTurnMarker+"/ui make the border red") {
+		t.Fatalf("the command is not on the first row of the turn: %q", plain[0])
+	}
+	var sawCommand bool
+	for _, l := range f.Live {
+		for _, sp := range l {
+			if sp.Text == "/ui" {
+				sawCommand = sp.Style == commandTurnToken
+			}
+			if strings.Contains(sp.Text, "an ordinary question") && sp.Style == commandTurnToken {
+				t.Errorf("an ordinary message wore the command style")
+			}
+		}
+	}
+	if !sawCommand {
+		t.Errorf("the /ui word is not drawn with %q", commandTurnToken)
+	}
+}

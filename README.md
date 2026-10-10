@@ -846,3 +846,11 @@ well — see `docs/EVAL.md` for why no threshold is set.
 
 - **Retries.** When a provider answers 429 or a gateway error (502/503/504/529/408), arxi waits and asks again by itself, up to 6 tries. The wait is what the provider asks for (`Retry-After` header, or "Retry in 27s" in its message) and otherwise doubles each time (2s, 4s, 8s... capped at 30s). The Thinking line counts the wait down ("Retrying in 27s · rate limited (2/6)") and Esc cancels it. A billing wall ("available only with a subscription", `insufficient_quota`) or a 401/403/400 is never retried.
 - **Gradient borders.** An animation may set `"direction"`: `along` (default), `horizontal`, `vertical`, `diagonal`, `antidiagonal` or `radial`. Typed form: `/ui animate fire #ff3b30,#ffcc00,#0a84ff diagonal fps=12`. Put the animation on the border's `style` only; the input text keeps its own colour.
+
+## `/ui` as a conversation, Termux, and richer gradients
+
+**`/ui` is typed once.** `/ui <request>` (or `/ui` / `/ui on`) switches the interface conversation on: the guide and the tools stay loaded for every following message, so you can talk about the interface fluently. `/ui off` (or `/ui exit`, or `/clear`) leaves it. The status bar shows `· /ui` while it is on. The command word is kept in the chat, drawn in its own colour and in italics (token `chat.command`).
+
+**Termux.** On Termux the mouse is not claimed (a tracked tap never brings Android's keyboard back) and alternate scroll is switched off; plain up/down scroll the chat (one row per swipe), the input history moves to ctrl+p / ctrl+n. While rows are painted the caret is hidden and only rows that changed are sent, which removes the glitching caret and flicker during animations. `-mouse` / `-mouse=false` override the choice on any terminal.
+
+**Gradients.** An animation's `direction` may be `horizontal`, `vertical`, `diagonal`, `antidiagonal`, `radial`, `conic` or any angle (`"60deg"`, CSS meaning); add `"reverse": true` or `"static": true`. A border may name a token per side, `{"shape":"round","style":"a","top":"b","bottom":"c"}`, so top and bottom can differ. Typed: `/ui animate <name> <colours> [fps=N] [spread=N] [diagonal|conic|<N>deg] [reverse] [static]`.

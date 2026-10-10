@@ -199,3 +199,102 @@ func TestPositionalCycleWithNoCellsIsHarmless(t *testing.T) {
 		t.Fatalf("fps=%d", fps)
 	}
 }
+
+// An angle is the CSS one: 90deg flows left to right, 180deg top to bottom, and 135deg is
+// the diagonal. Any angle works, so the model is never told "the system cannot do that".
+func TestAnAngleIsADirection(t *testing.T) {
+	red, blue := ui.MustHex("#ff0000"), ui.MustHex("#0000ff")
+	at := func(dir string) (*Theme, ui.Frame) {
+		th := loadDir(t, dir, `,"static":true`)
+		out, _ := th.Cycled(borderFrame("g"), time.UnixMilli(0))
+		return th, out
+	}
+	th, out := at("90deg")
+	if colourOf(t, th, out, 0, 0) != red || colourOf(t, th, out, 0, 9) != blue || colourOf(t, th, out, 0, 4) != colourOf(t, th, out, 2, 4) {
+		t.Error("90deg must run left to right and be the same on every row")
+	}
+	th, out = at("180deg")
+	if colourOf(t, th, out, 0, 3) != red || colourOf(t, th, out, 2, 3) != blue {
+		t.Error("180deg must run from the top row (first colour) to the bottom row (last)")
+	}
+	th, out = at("0deg")
+	if colourOf(t, th, out, 2, 3) != red || colourOf(t, th, out, 0, 3) != blue {
+		t.Error("0deg must run from the bottom row to the top row")
+	}
+	th, out = at("135deg")
+	if colourOf(t, th, out, 0, 0) != red || colourOf(t, th, out, 2, 9) != blue {
+		t.Error("135deg must run from the top-left corner to the bottom-right one")
+	}
+	th, out = at("30deg")
+	if colourOf(t, th, out, 0, 0) == colourOf(t, th, out, 2, 9) {
+		t.Error("30deg is a slope of its own: the corners must differ")
+	}
+	for _, bad := range []string{"deg", "abcdeg", "99999deg", "NaNdeg"} {
+		if _, err := LoadBytes("t.json", []byte(`{"cycle":{"g":{"colors":["red","blue"],"direction":"`+bad+`"}}}`)); err == nil {
+			t.Errorf("direction %q must be refused", bad)
+		}
+	}
+}
+
+// Conic sweeps round the centre: the top edge is not the bottom edge, and twelve o'clock
+// and just before it meet without a jump (the palette is closed into a loop).
+func TestConicSweepsRoundTheCentre(t *testing.T) {
+	th := loadDir(t, "conic", `,"static":true`)
+	out, _ := th.Cycled(borderFrame("g"), time.UnixMilli(0))
+	if colourOf(t, th, out, 0, 2) == colourOf(t, th, out, 2, 2) {
+		t.Error("a conic gradient must tell the top edge from the bottom one")
+	}
+	if colourOf(t, th, out, 0, 9) == colourOf(t, th, out, 2, 0) {
+		t.Error("opposite corners are half a turn apart and must differ")
+	}
+}
+
+// Static draws the gradient and asks for no repaint; reverse runs it the other way.
+func TestStaticAndReverse(t *testing.T) {
+	th := loadDir(t, "diagonal", `,"static":true`)
+	a, fps := th.Cycled(borderFrame("g"), time.UnixMilli(0))
+	b, _ := th.Cycled(borderFrame("g"), time.UnixMilli(777))
+	if fps != 0 {
+		t.Errorf("a static gradient asked for %d repaints a second", fps)
+	}
+	if colourOf(t, th, a, 0, 3) != colourOf(t, th, b, 0, 3) {
+		t.Error("a static gradient moved")
+	}
+	if colourOf(t, th, a, 0, 0) == colourOf(t, th, a, 2, 9) {
+		t.Error("a static gradient was not drawn across the shape")
+	}
+
+	// Three colours: with two, the loop is its own mirror image and forward and backward
+	// land on the same shade.
+	three := func(extra string) *Theme {
+		th, err := LoadBytes("t.json", []byte(`{"cycle":{"g":{"colors":["#ff0000","#00ff00","#0000ff"],"fps":10,"direction":"diagonal"`+extra+`}}}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return th
+	}
+	fw, rv := three(""), three(`,"reverse":true`)
+	t0, t1 := time.UnixMilli(0), time.UnixMilli(50)
+	f0, _ := fw.Cycled(borderFrame("g"), t0)
+	f1, _ := fw.Cycled(borderFrame("g"), t1)
+	r0, _ := rv.Cycled(borderFrame("g"), t0)
+	r1, _ := rv.Cycled(borderFrame("g"), t1)
+	if colourOf(t, fw, f0, 0, 0) == colourOf(t, fw, f1, 0, 0) {
+		t.Fatal("the forward gradient did not move")
+	}
+	if colourOf(t, fw, f1, 0, 0) == colourOf(t, rv, r1, 0, 0) || colourOf(t, fw, f0, 0, 0) != colourOf(t, rv, r0, 0, 0) {
+		t.Error("reverse must start where forward does and then travel the other way")
+	}
+}
+
+// The five-word directions and the angles round-trip through the JSON form.
+func TestAngleAndFlagsSurviveTheJSONRoundTrip(t *testing.T) {
+	c, err := ParseCycle("g", CycleDef{Colors: []string{"red", "blue"}, Direction: "45deg", Reverse: true, Static: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := c.Def()
+	if d.Direction != "45deg" || !d.Reverse || !d.Static {
+		t.Errorf("Def() = %+v", d)
+	}
+}

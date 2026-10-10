@@ -442,7 +442,11 @@ func TestTheBorderVocabularyIsExactlyWhatTheAccessorsRead(t *testing.T) {
 		if err != nil {
 			t.Fatalf("premise broken for %q: %v", tag, err)
 		}
-		if got := doc.Root.BorderShape() + doc.Root.BorderStyleName(); !strings.Contains(got, "probe_value") {
+		got := doc.Root.BorderShape() + doc.Root.BorderStyleName()
+		for _, side := range BorderSides {
+			got += doc.Root.BorderSideStyle(side) // a side's own token is read through its accessor too
+		}
+		if !strings.Contains(got, "probe_value") {
 			t.Errorf("borderObject declares %q and no accessor surfaces it (shape=%q style=%q).\n"+
 				"consequence: the vocabulary accepts a key nothing reads, so a document setting it\n"+
 				"is told everything is fine and the value is discarded — the silent drop, arriving\n"+

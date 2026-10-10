@@ -96,6 +96,12 @@ type chatSession struct {
 	// approval is the change the core is holding for the user, nil when none.
 	approval *pendingApproval
 
+	// uiMode is the interface conversation: once the user has said /ui, the guide and the
+	// tools ride with every message after it, so they can go on talking about the
+	// interface without repeating the switch. It belongs to the conversation, so
+	// reset() ends it; /ui off ends it too.
+	uiMode bool
+
 	// ui lends the model the interface tools (ui_bridge.go); nil lends none. Like
 	// workdir it is a setting, and it travels with the tools, so it needs a workdir.
 	ui *uiBridge
@@ -326,7 +332,14 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	}
 	hist := trimHistory(c.history, chatMaxHistory, chatMaxHistoryBytes)
 	// The interface tools and their guide ride only with a question that asks for them.
-	text, withUI := uiTrigger(text)
+	text, command := uiTriggerWord(text)
+	withUI := command != ""
+	if withUI {
+		c.uiMode = true
+	} else if c.uiMode {
+		// Already in the interface conversation: no switch needed, nothing to show.
+		withUI = true
+	}
 	if text == "" {
 		c.busy = false
 		c.mu.Unlock()
@@ -337,7 +350,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	turnCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.mu.Unlock()
-	go c.run(turnCtx, text, withUI, hist, gen, effort, workdir, edits, runs, web, turn)
+	go c.run(turnCtx, text, command, withUI, hist, gen, effort, workdir, edits, runs, web, turn)
 	return nil
 }
 
@@ -403,6 +416,7 @@ func (c *chatSession) reset() {
 	c.mu.Lock()
 	c.gen++
 	c.history = nil
+	c.uiMode = false
 	c.busy = false
 	cancel := c.cancel
 	c.cancel = nil
@@ -410,6 +424,20 @@ func (c *chatSession) reset() {
 	if cancel != nil {
 		cancel()
 	}
+}
+
+// setUIMode turns the interface conversation on or off from the next message.
+func (c *chatSession) setUIMode(on bool) {
+	c.mu.Lock()
+	c.uiMode = on
+	c.mu.Unlock()
+}
+
+// inUIMode reports whether the interface conversation is on.
+func (c *chatSession) inUIMode() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.uiMode
 }
 
 // setHistory replaces the conversation the next question is asked in.
@@ -476,7 +504,7 @@ func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload m
 	}
 }
 
-func (c *chatSession) run(ctx context.Context, text string, withUI bool, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs, web string, turn int64) {
+func (c *chatSession) run(ctx context.Context, text, command string, withUI bool, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs, web string, turn int64) {
 	defer func() {
 		c.mu.Lock()
 		// Only the turn that is still current frees the session: a cancelled turn
@@ -488,7 +516,7 @@ func (c *chatSession) run(ctx context.Context, text string, withUI bool, hist []
 		}
 		c.mu.Unlock()
 	}()
-	c.emit(ctx, gen, "run.prompt", map[string]any{"text": text})
+	c.emit(ctx, gen, "run.prompt", map[string]any{"text": text, "command": command})
 	c.emit(ctx, gen, "agent.activated", map[string]any{"agent": "assistant"})
 	started := time.Now()
 	core := c.core

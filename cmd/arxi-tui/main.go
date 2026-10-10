@@ -171,7 +171,18 @@ func main() {
 	// escape hatch works from every shell.
 	raw := flag.Bool("raw", false, `boot the factory raw scene (the start-time escape hatch)`)
 	showVersion := flag.Bool("version", false, `print the build version and exit`)
+	// -mouse answers the one question the terminal cannot: does this session track the
+	// mouse? Unset, the platform decides (see wantMouse): on, except on Termux, where a
+	// tracked tap never raises Android's keyboard again. -mouse=false takes it off on any
+	// terminal (drag-to-select stays the terminal's); -mouse puts it back on a phone.
+	mouse := flag.Bool("mouse", true, `track the mouse (wheel scrolling); unset: on, except on Termux`)
 	flag.Parse()
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "mouse" {
+			v := *mouse
+			mouseOverride = &v
+		}
+	})
 	if *showVersion {
 		fmt.Println(version)
 		return
@@ -241,8 +252,22 @@ func run(scenePath string) error {
 	// turns a wheel report into KeyWheelUp/KeyWheelDown. Torn down before the
 	// alternate buffer is left, in reverse order, so the user's shell is handed
 	// back with mouse reporting off exactly as it was found.
-	fmt.Fprint(tty, "\033[?1000h\033[?1006h")
-	defer fmt.Fprint(tty, "\033[?1006l\033[?1000l")
+	//
+	// Not on a phone. In Termux a tracked tap becomes a mouse report instead of raising
+	// Android's soft keyboard, and no escape sequence can ask the IME back afterwards, so a
+	// reader who closed the keyboard could never open it again. There the mouse is left to
+	// the terminal and alternate-scroll (?1007) is switched off, so a swipe is not rewritten
+	// into arrow keys behind our back; plain up/down scroll the chat instead (phoneArrows).
+	termux := term.IsTermux()
+	if wantMouse(termux, mouseOverride) {
+		fmt.Fprint(tty, "\033[?1000h\033[?1006h")
+		defer fmt.Fprint(tty, "\033[?1006l\033[?1000l")
+	} else {
+		fmt.Fprint(tty, "\033[?1007l")
+		defer fmt.Fprint(tty, "\033[?1007h")
+	}
+	scrollArrows = phoneArrows(termux, wantMouse(termux, mouseOverride))
+	flickerGuard = termux
 
 	// Bracketed paste: the terminal wraps a pasted block in \033[200~ … \033[201~
 	// so it arrives as one EventPaste with its newlines intact, instead of a burst
@@ -1364,6 +1389,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.HostUsage = ""
 		} else {
 			state.HostEffort, state.HostCwd, state.HostMode = effortLabel(effort), shortCwd(cwd), mode
+			if m, _ := drv.(uiModer); m != nil && m.UIMode() {
+				state.HostMode += " · /ui"
+			}
 			state.HostUsage = usageLabel(state.LastContext, state.UsageIn, state.UsageOut)
 		}
 
@@ -1777,7 +1805,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// changed their mind about quitting). The renderer clamps the
 						// offset to the frame, so scrolling up past the top or down
 						// past the tail simply stops.
-						const wheelStep = 3
+						wheelStep := phoneWheelStep()
 						if ev.Key.Type == term.KeyWheelUp {
 							chatScroll += wheelStep
 						} else {
@@ -1936,6 +1964,21 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							sceneNotice = "/ui plugin remove: stopped and unmounted plugin " + id
 							input = ""
 							caret = 0
+						} else if on, ok := uiModeCommand(strings.TrimSpace(input)); ev.Key.Type == term.KeyEnter && ok {
+							// "/ui", "/ui on" and "/ui off" switch the interface
+							// conversation. Typed once, the model keeps the guide and
+							// the tools for every message after it.
+							if m, _ := drv.(uiModer); m == nil {
+								sceneNotice = "/ui: the interface conversation needs the arxi core"
+							} else {
+								m.SetUIMode(on)
+								if on {
+									sceneNotice = "/ui: interface mode on. Talk about the interface freely; /ui off leaves it"
+								} else {
+									sceneNotice = "/ui: interface mode off. Messages are an ordinary chat again"
+								}
+							}
+							input, caret, slashSel = "", 0, 0
 						} else if what, ok := uiHistoryCommand(input); ev.Key.Type == term.KeyEnter && ok {
 							// /ui undo and /ui reset are about the saved interface, so
 							// the host answers them; a patch could not, because the
@@ -2222,6 +2265,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							}
 							input = ""
 							caret = 0
+						} else if d := phoneScroll(ev.Key); d != 0 && !strings.HasPrefix(input, "/") {
+							// The phone arrangement (phone.go): with the mouse left to
+							// Termux, a swipe arrives as plain up/down, and they scroll
+							// the chat. The history is ctrl+p/ctrl+n there. An open slash
+							// menu keeps the arrows for its highlight.
+							chatScroll += d * phoneWheelStep()
+							if chatScroll < 0 {
+								chatScroll = 0
+							}
 						} else if step := historyStep(ev.Key); step != 0 && (!strings.HasPrefix(input, "/") || hist.Browsing() || ev.Key.Type == term.KeyRunes) {
 							// Up/Down (or ctrl+p/ctrl+n) walk the sent lines. On a
 							// multi-line input they first move the caret between
@@ -2339,6 +2391,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				case term.EventResize:
 					// A resize only needs a fresh frame at the new size, delivered
 					// by the batch repaint below like every other event in the run.
+					// The terminal reflowed what we left on the screen, so the row
+					// diff of the phone arrangement starts over.
+					caretState.invalidate()
 				case term.EventClosed:
 					return nil
 				}
@@ -3412,6 +3467,23 @@ const frameBegin = "\033[?2026h"
 // scene's ~12 repaints a second.
 type emitState struct {
 	shown bool // whether the terminal caret is currently visible
+
+	// prev is what each row of the screen last held, as the bytes that painted it. It is
+	// only kept under the phone arrangement (flickerGuard): Termux does not honour
+	// synchronized output, so every row repainted is a row the eye can catch half-drawn,
+	// and an animated border repaints a dozen times a second. A row whose bytes did not
+	// change is not sent again. invalidate forgets it, for the moments the screen is no
+	// longer what we left: a resize, the first frame.
+	prev    []string
+	prevH   int
+	painted bool
+}
+
+// invalidate makes the next frame a full repaint.
+func (st *emitState) invalidate() {
+	if st != nil {
+		st.prev, st.painted = nil, false
+	}
 }
 
 // blinkHalfPeriod is one half of the caret's blink cycle: the caret is shown for
@@ -3487,19 +3559,40 @@ func emitFrame(w io.Writer, f ui.Frame, theme *theme.Theme, screenH int, st *emi
 	// — and the tail erase — on rows that no longer mean what they say.
 	b.WriteString("\033[?7l")
 
+	// The phone arrangement (phone.go). Termux ignores synchronized output, so the caret
+	// is taken off the screen while the rows are painted and put back at the end; left
+	// shown, it visibly walks down every row the repaint touches, which is the glitching
+	// caret seen in the chat during an animation. The diff below sends only the rows whose
+	// bytes changed, so a still chat is not repainted under an animated border.
+	if flickerGuard && st != nil && st.shown {
+		b.WriteString("\033[?25l")
+		st.shown = false
+	}
+
 	rows := f.Live
+	ansi := make([]string, len(rows))
+	for i := range rows {
+		ansi[i] = rows[i].ANSI(theme)
+	}
+	diff := flickerGuard && st != nil && st.painted && st.prevH == screenH
 	for i := 0; i < len(rows); i++ {
+		if diff && i < len(st.prev) && st.prev[i] == ansi[i] {
+			continue
+		}
 		b.WriteString(fmt.Sprintf("\033[%d;1H", i+1)) // CUP: row i+1, column 1
 		b.WriteString("\033[K")                       // EL: erase this row before painting it
-		b.WriteString(rows[i].ANSI(theme))
+		b.WriteString(ansi[i])
 	}
 	// Erase from just below the content to the end of the display, so a shorter
 	// frame does not leave the tail of a longer one behind. This is the only
 	// erase that reaches rows the frame does not own, and it costs no flicker
 	// because those rows are the ones going blank anyway.
-	if len(rows) < screenH {
+	if len(rows) < screenH && !(diff && len(st.prev) == len(rows)) {
 		b.WriteString(fmt.Sprintf("\033[%d;1H", len(rows)+1))
 		b.WriteString("\033[0J")
+	}
+	if flickerGuard && st != nil {
+		st.prev, st.prevH, st.painted = ansi, screenH, true
 	}
 	b.WriteString("\033[?7h") // restore auto-wrap
 

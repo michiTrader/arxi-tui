@@ -46,6 +46,10 @@ type ChatLine struct {
 	// did not stop the turn).
 	Role string
 	Text string
+	// Command is the word the user typed in front of a message to address the app
+	// itself ("/ui" or "@ui"), kept apart from Text so the chat can draw it in its own
+	// colour and in italics. Empty for an ordinary message.
+	Command string
 	// For a tool line only: which tool ran, on what, whether it worked, and the
 	// one-line account of it. ToolOutput is what the model was shown (capped
 	// by the core); nothing draws it yet.
