@@ -858,6 +858,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// styleMn is the `/style ` menu; promptStyle is how the user's messages are drawn,
 	// loaded once and saved when it changes.
 	var styleMn modelMenu
+	// copyMn is the `/copy ` menu: the answers of this conversation, with marks.
+	var copyMn copyMenu
 	promptStyle := loadPromptStyle(stylePath())
 	sessLog := newSessionLog(sessionsDir())
 	hubDoc, hubDocErr := loadHubScene()
@@ -963,12 +965,28 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			userBeh = bh
 		}
 	}
-	setActiveTexts(userWords)
-	setActiveBehaviour(userBeh)
+	// The project's own layer (<cwd>/.arxi, config_project.go) sits above the user's. It
+	// is loaded only for the everyday interface and only after `/project trust`, and it
+	// is never written back: userCols, userWords and userBeh stay the user's alone, so
+	// saving the interface cannot copy a project colour into ~/.arxi.
+	var proj projectLayer
+	if persistsScene(doc) {
+		if p, err := loadProjectLayer(cwd, userBeh); err != nil {
+			sceneNotice = "this folder's " + projectDirName + " settings could not be used: " + err.Error() + " (/project forget stops loading them)"
+		} else {
+			proj = p
+		}
+	}
+	effBeh := func() behaviour { return mergeBehaviour(userBeh, proj.beh) }
+	activate := func() {
+		setActiveTexts(mergeTexts(userWords, proj.words))
+		setActiveBehaviour(effBeh())
+	}
+	activate()
 	belowUser := theme
 	recomposeTheme := func() {
 		belowUser = composeTheme(baseTheme, pluginLayers)
-		theme = withBehaviour(withUserTokens(belowUser, userCols), userBeh)
+		theme = withBehaviour(withUserTokens(belowUser, mergeTokens(userCols, proj.cols)), effBeh())
 		clock.resolveAnim = theme.Anim
 	}
 	recomposeTheme()
@@ -1116,7 +1134,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		if value == "" {
 			value = "none"
 		}
-		enqueue(userBeh.hooksFor(event, value), true)
+		enqueue(effBeh().hooksFor(event, value), true)
 	}
 	setEffort := func(level string, fromHook bool) {
 		if level == "none" {
@@ -1291,6 +1309,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			state.ModelActive = true
 			state.ModelMatches, state.ModelSelected = styleMn.view(filter)
+		} else if filter, open := copyMenuOpen(input); open && hub == nil {
+			// `/copy ` borrows the same overlay; its rows are this conversation's
+			// answers, read when it opens.
+			if !copyMn.loaded {
+				copyMn.setHistory(state.History)
+			}
+			state.ModelActive = true
+			state.ModelMatches, state.ModelSelected = copyMn.view(filter)
 		} else if filter, open := resumeMenuOpen(input); open && hub == nil {
 			// `/resume ` borrows the same overlay; it is read from disk each time it opens.
 			if !resumeMn.loaded {
@@ -1303,6 +1329,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			modeMn.loaded = false
 			resumeMn.loaded = false
 			styleMn.loaded = false
+			copyMn.loaded = false
 			modelMn.loaded = false // the next opening reads the core again
 			state.SlashActive = true
 			state.SlashTyped = input[1:]
@@ -1327,6 +1354,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			modeMn.loaded = false
 			resumeMn.loaded = false
 			styleMn.loaded = false
+			copyMn.loaded = false
 			state.SlashActive = false
 			state.SlashTyped = ""
 			state.SlashMatches = nil
@@ -1833,7 +1861,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// nothing, with the menu showing an empty list. Asking
 						// the command surface first means a line it recognises is
 						// never the menu's to swallow.
-						if acts, bound := userBeh.boundActions(ev.Key); bound {
+						if acts, bound := effBeh().boundActions(ev.Key); bound {
 							// A shortcut the user bound (behaviour.go). It sits in the main
 							// chat's chain, after every screen and prompt that owns the
 							// keyboard and after the Ctrl-C branch, so it can never answer
@@ -1857,7 +1885,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if did {
 								input, caret = to.text, clampCaret(to.text, to.caret)
 							}
-						} else if cmd, mine := userBeh.commandFor(input, slashSel, slashCat); mine && ev.Key.Type == term.KeyEnter {
+						} else if cmd, mine := effBeh().commandFor(input, slashSel, slashCat); mine && ev.Key.Type == term.KeyEnter {
 							// Enter on a command the user added to the / menu.
 							input, caret, slashSel = "", 0, 0
 							enqueue(cmd.Run, false)
@@ -1992,8 +2020,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								userCols = cols
 								userWords = words
 								userBeh = bh
-								setActiveTexts(userWords)
-								setActiveBehaviour(userBeh)
+								activate()
 								recomposeTheme()
 							}
 							input, caret = "", 0
@@ -2015,7 +2042,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								sceneNotice = "/ui text: " + err.Error()
 							} else {
 								userWords = next
-								setActiveTexts(userWords)
+								activate()
 								keepScene("/ui text: " + key + " now says " + strconvQuote(uiText(key)))
 							}
 							input, caret = "", 0
@@ -2028,7 +2055,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								sceneNotice = "/ui: " + err.Error()
 							} else {
 								userBeh = next
-								setActiveBehaviour(userBeh)
+								activate()
 								recomposeTheme()
 								keepScene(label)
 							}
@@ -2080,6 +2107,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if pick != "" {
 								sceneNotice = ""
 								setStyle(normalizePromptStyle(pick), false)
+							}
+						} else if _, open := copyMenuOpen(input); open {
+							// The `/copy ` menu: same keys, plus Tab to mark rows; a
+							// pick puts those answers on the clipboard.
+							var pick string
+							input, caret, pick = copyMenuKey(&copyMn, input, caret, ev.Key)
+							if pick != "" {
+								sceneNotice = copyPicked(tty, fold.Fold(collected).History, pick)
 							}
 						} else if _, open := resumeMenuOpen(input); open {
 							// The `/resume ` menu: same keys; a pick brings that
@@ -2186,6 +2221,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							caret = len([]rune(input))
 							slashSel = 0
 							styleMn.loaded = false
+						} else if ev.Key.Type == term.KeyEnter && copyCommand(input, slashSel, slashCat) {
+							input = copyPrefix
+							caret = len([]rune(input))
+							slashSel = 0
+							copyMn.loaded = false
 						} else if ev.Key.Type == term.KeyEnter && resumeCommand(input, slashSel, slashCat) {
 							input = resumePrefix
 							caret = len([]rune(input))
@@ -2208,6 +2248,44 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							caret = len([]rune(input))
 							slashSel = 0
 							modelMn.loaded = false
+						} else if verb, isProj := projectLine(input, slashSel, slashCat); isProj && ev.Key.Type == term.KeyEnter {
+							// `/project` reports, `/project trust` lets this folder's
+							// .arxi settings load (now and on later starts), and
+							// `/project forget` withdraws that. Consent is bound to the
+							// files' content (config_project.go).
+							switch verb {
+							case "trust":
+								if dir, err := trustProject(cwd); err != nil {
+									sceneNotice = err.Error()
+								} else if p, err := loadProjectLayer(cwd, userBeh); err != nil {
+									sceneNotice = "/project: trusted, but " + err.Error()
+								} else if !persistsScene(doc) {
+									sceneNotice = "/project: trusted " + dir + ", it loads when the everyday interface is used (not with -raw or -scene)"
+								} else {
+									proj = p
+									activate()
+									recomposeTheme()
+									sceneNotice = "/project: loaded " + dir + " (" + projectParts(dir) + ")"
+								}
+							case "forget":
+								if was, err := forgetProject(cwd); err != nil {
+									sceneNotice = "/project: " + err.Error()
+								} else {
+									proj = projectLayer{}
+									activate()
+									recomposeTheme()
+									if was {
+										sceneNotice = "/project: this folder's settings are no longer loaded"
+									} else {
+										sceneNotice = "/project: this folder was not trusted"
+									}
+								}
+							case "usage":
+								sceneNotice = "/project: use /project, /project trust or /project forget"
+							default:
+								sceneNotice = projectSummary(cwd, proj)
+							}
+							input, caret, slashSel = "", 0, 0
 						} else if ev.Key.Type == term.KeyEnter && clearCommand(input, slashSel, slashCat) {
 							// `/clear` starts a new session: the transcript, the
 							// chat history the driver sends along, any run being
@@ -2652,11 +2730,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				}
 				if req.texts != nil {
 					userWords = req.texts
-					setActiveTexts(userWords)
+					activate()
 				}
 				if req.behChanged {
 					userBeh = req.beh
-					setActiveBehaviour(userBeh)
+					activate()
 					recomposeTheme()
 				}
 				keepScene("the interface was changed")

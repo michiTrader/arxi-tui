@@ -91,9 +91,8 @@ and brings back text nobody vouches for. What the tool does and does not do:
 Search needs a search service, and you choose which one. Until you do, the tool is simply
 not offered to the model. The easy way is the `/search` command: pick a service, paste its
 key (or, for SearxNG, its address) and it is saved on this computer and used from your next
-question, with no restart. The key is kept in `search.json` in the `arxi` settings folder
-(`%AppData%\arxi` on Windows, `~/.config/arxi` elsewhere; `ARXI_CONFIG_DIR` moves it),
-readable only by you, and choosing "Turn web search off" deletes it.
+question, with no restart. The key is kept in `search.json` in `~/.arxi`
+(`ARXI_CONFIG_DIR` moves it), readable only by you, and choosing "Turn web search off" deletes it.
 
 The same thing can be set with environment variables before starting `arxi-tui`, and they
 win over what `/search` saved (the screen says so when that is the case):
@@ -144,9 +143,7 @@ with that history). `/clear` starts a fresh conversation without deleting the ol
 What is saved is what you see: your questions, the answers, the files and pages the model
 looked at, and errors. Not saved: the model's streamed thinking, an approval that was still
 waiting for your answer, and your settings (model, effort, mode), which are yours and not
-the conversation's. Files are kept in the `sessions` folder of the `arxi` settings folder
-(`%AppData%\arxi\sessions` on Windows, `~/.config/arxi/sessions` elsewhere), readable only
-by you. The latest 100 are kept and older ones are deleted. A conversation can contain
+the conversation's. Files are kept in `~/.arxi/sessions`, readable only by you. The latest 100 are kept and older ones are deleted. A conversation can contain
 anything you typed, so set `ARXI_SESSIONS=off` to save nothing at all.
 
 ### Asking the agent to change the interface
@@ -615,7 +612,9 @@ From there you can:
 - **Add a provider**: pick one of 17 services (OpenAI, Anthropic, OpenRouter, Gemini,
   Groq, Ollama, ...) or "Other…" for any OpenAI-compatible service. Give the key once
   (and, for "Other…", the name and base URL). The model list is fetched for you; if the
-  service has no list endpoint, type the model ids by hand instead.
+  service has no list endpoint, type the model ids by hand instead. The form also has an
+  optional **Model ids** field: list several (comma or space separated) and only those are
+  added, with no list fetched. Leave it empty to fetch them all.
 - **Edit a provider**: change its base URL, key or key variable name.
 - **Manage models**: fetch the list again, add several models by hand (comma or space
   separated, with optional prices), enable, disable or remove them.
@@ -629,6 +628,23 @@ row per enabled model: `  name  provider`, with a `✓` on the model the chat us
 Keep typing to filter live (every word must match: `/model deeps flash`). Up / Down
 move (wrapping), Enter picks, Esc closes. Nothing else is printed; the status bar
 shows the new model. With no provider yet, the notice points you to `/provider`.
+
+### Copying answers (`/copy`)
+
+Selecting text with the mouse also takes the frame's border, so `/copy` puts what the model
+said on the clipboard without it. Type `/copy` (or pick it in the `/` menu) and a menu opens
+with one row per answer: `last` (the newest), `all` (the whole conversation, each message
+labelled `You:` / `Assistant:`) and then `2`, `3`, ... counting back from the newest, each
+with the first line as a preview. Enter copies the highlighted row. **Tab marks** several
+rows (a `✓` shows); Enter then copies every marked answer, oldest first, so the pasted text
+reads in the order it was said. `/copy 3` goes straight to answer 3.
+
+It writes to the terminal clipboard with OSC 52 (it works over ssh and inside tmux) and also
+runs a local clipboard program when one is installed: `termux-clipboard-set`, `wl-copy`,
+`xclip`, `xsel`, `pbcopy`, or `clip` on Windows. A terminal that ignores OSC 52 drops it
+silently, so the notice says what was *sent*, not that it arrived; if nothing pastes, enable
+OSC 52 in the terminal (or install one of the programs above). Over 100 kB only a clipboard
+program is used.
 
 ### The conversation
 
@@ -676,16 +692,44 @@ your own (`/ui key ctrl+z <action>`), your shortcut wins.
 
 ### Where arxi-tui keeps its settings
 
-All of it is in one folder in your user configuration directory, the same from every
-project: `%AppData%\arxi` on Windows, `~/.config/arxi` on Linux (`~/Library/Application
-Support/arxi` on macOS). `ARXI_CONFIG_DIR` moves it. The interface you shaped lives there as
-`scene.json` (layout), `theme.json` (colours), `texts.json` (words) and `behaviour.json`
-(keys, commands, animations); `/ui undo` and `/ui reset` work on those four together. Also
-there: `history`, `sessions/`, `search.json`, the providers and the keys. The consent
-decisions, the plugins and the run logs are in `~/.arxi` instead. Nothing is kept in the
-project folder, and the factory interface draws no frame round the input bar: ask the
-agent for one (for example, `/ui put a rounded border round the input bar`) and `/ui reset`
-takes it away.
+Everything is in **`~/.arxi`**, the same on every system and from every project (the
+`ARXI_*` overrides still win: `ARXI_CONFIG_DIR`, `ARXI_SECRETS_DIR`, `ARXI_PROVIDERS_DIR`,
+`ARXI_HISTORY_DIR`):
+
+| In `~/.arxi` | What |
+|---|---|
+| `scene.json`, `theme.json`, `texts.json`, `behaviour.json` | the interface you shaped (layout, colours, words, keys/commands/animations); `/ui undo` and `/ui reset` work on the four together |
+| `history`, `sessions/`, `search.json`, `style` | input history, saved conversations, the search service, the message style |
+| `providers/`, `secrets/` | the providers and the API keys (written by the core) |
+| `trusted-projects.json` | which project folders you let load their `.arxi/` (below) |
+
+**Coming from an older version.** Settings used to live in `%AppData%\arxi` (Windows),
+`~/.config/arxi` (Linux) or `~/Library/Application Support/arxi` (macOS). The first time
+`~/.arxi` is used, what the old folder holds is **copied** in, never moved: the old folder is
+not touched or deleted (delete it by hand when you are happy), nothing already in `~/.arxi`
+is overwritten, and a setting you delete later does not come back from the old folder (a
+`.legacy-imported` marker records that the copy happened). Setting an `ARXI_*` folder
+yourself means nothing is imported into it.
+
+### Per-project settings (`<project>/.arxi/`, `/project`)
+
+A repository can carry its own look and shortcuts. Put any of `theme.json`, `texts.json` and
+`behaviour.json` (same formats as in `~/.arxi`) in the project's `.arxi/` folder and they are
+laid over yours: colours and words entry by entry, behaviour maps entry by entry,
+commands by name, hooks added after yours.
+
+- **Nothing loads until you say so.** A cloned folder is somebody else's text, and
+  `behaviour.json` can bind a key or a hook to a command. Run **`/project trust`** to load
+  this folder's settings (now and on later starts), `/project` (or `/project status`) to see
+  where it stands and **`/project forget`** to stop.
+- **Consent is tied to the content.** `~/.arxi/trusted-projects.json` stores the folder and a
+  hash of the three files; if any of them changes afterwards it is not loaded and `/project`
+  says so, until you trust it again.
+- **Keys never go in a project.** API keys, providers and the search key are read only from
+  `~/.arxi`; any other file in `.arxi/` is ignored.
+- **It is never written back.** `/ui` changes are saved to `~/.arxi` only, so a project
+  colour cannot leak into your own settings. `-raw` and `-scene` ignore the project layer,
+  like your own saved interface.
 
 ### Input history
 
@@ -693,8 +737,7 @@ Up and Down (or Ctrl+P and Ctrl+N) walk the lines you have sent, newest first. T
 were typing is kept and comes back when you step past the newest one. In a multi-line input
 the arrows move between its rows first and only walk the history from the top or bottom
 row; with the `/` menu open they steer the menu. The last 500 lines are kept between
-sessions in `arxi/history` inside your configuration directory (`ARXI_HISTORY_DIR` moves
-it), readable only by you.
+sessions in `~/.arxi/history` (`ARXI_HISTORY_DIR` moves it), readable only by you.
 
 ### Project rules (`ARXI.md` / `AGENTS.md`)
 
@@ -720,13 +763,14 @@ The key is pasted into a masked field, shown as `••••`, and never printe
 or sent to the chat. If sending a message fails (no provider, no model, a refused key,
 no network) the reason appears in the banner instead of nothing happening.
 
-Where the providers go: in the user's config directory (`~/.config/arxi/providers` on
-Linux, `%AppData%\arxi\providers` on Windows), the same from every working directory
-(override with `ARXI_PROVIDERS_DIR`). A `./providers` folder left by an older version is
-copied there once, never moved or overwritten, and the originals stay where they were.
+Where the providers go: `~/.arxi/providers`, the same from every working directory
+(override with `ARXI_PROVIDERS_DIR`). The previous location (`~/.config/arxi/providers`,
+`%AppData%\arxi\providers`) and a `./providers` folder left by an older version are copied
+there once, never moved or overwritten, and the originals stay where they were.
 
-Where the key goes: the core writes it to `<name>.key` in its secrets directory
-(mode 0600, directory 0700; override with `ARXI_SECRETS_DIR`). **It is not encrypted**,
+Where the key goes: the core writes it to `<name>.key` in `~/.arxi/secrets`
+(mode 0600, directory 0700; override with `ARXI_SECRETS_DIR`). Keys from the old secrets
+folder are copied once and the old files are kept. **It is not encrypted**,
 only protected by file permissions. An environment variable named by the provider
 (for example `OPENROUTER_API_KEY`) wins over a stored key. The commands take no
 arguments on purpose, so a key is never typed on a command line.

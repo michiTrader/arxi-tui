@@ -63,6 +63,10 @@ func routeHubKey(h *providerHub, k term.Key) hubKeyResult {
 // the filter line takes spaces.
 func (h *providerHub) clean(s string) string {
 	if h.level == lvForm {
+		// Model ids are a list: the space (and the comma) separates them.
+		if h.form != nil && h.form.focus < len(h.form.fields) && h.form.fields[h.form.focus].kind == kindModels {
+			return cleanFilterText(s)
+		}
 		return cleanFieldText(s)
 	}
 	return cleanFilterText(s)

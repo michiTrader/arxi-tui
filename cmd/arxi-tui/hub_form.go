@@ -161,8 +161,11 @@ func newAddForm(e catalogEntry) *hubForm {
 		title:  "Add " + e.Display,
 		target: e,
 		help: "Paste your " + e.Display + " API key. It is stored by the arxi core (never shown, never in a log), " +
-			"and the models are fetched for you.",
-		fields: []hubField{{label: "API key", secret: true, required: true, kind: kindKey}},
+			"and the models are fetched for you. If you want only some, list their ids separated by commas.",
+		fields: []hubField{
+			{label: "API key", secret: true, required: true, kind: kindKey},
+			{label: "Model ids", kind: kindModels},
+		},
 	}
 }
 
@@ -282,7 +285,8 @@ func (f *hubForm) submit() (hubWork, string) {
 		return hubWork{Op: opSearch, Name: f.backend, Key: f.get("API key"), BaseURL: f.get("Address"), Close: true}, ""
 
 	case formAdd:
-		return hubWork{Op: opAdd, Name: f.target.ID, BaseURL: f.target.BaseURL, Key: f.get("API key")}, ""
+		return hubWork{Op: opAdd, Name: f.target.ID, BaseURL: f.target.BaseURL, Key: f.get("API key"),
+			Models: parseModelIDs(f.get("Model ids"))}, ""
 
 	case formAddOther:
 		w := hubWork{Op: opAdd, Name: f.get("Name"), BaseURL: f.get("Base URL"),

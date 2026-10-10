@@ -41,15 +41,15 @@ func useGlobalProviders() {
 	if err != nil {
 		return
 	}
-	dir, migrated, err := modelstore.Locate(os.Getenv, os.UserConfigDir, cwd)
+	dir, migrated, err := modelstore.Locate(os.Getenv, os.UserHomeDir, os.UserConfigDir, cwd)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "arxi: using ./%s because the global providers folder is not usable: %v\n", modelstore.DefaultDir, err)
 		return
 	}
 	providerDir = dir
 	if migrated > 0 {
-		fmt.Fprintf(os.Stderr, "arxi: copied %d provider file(s) from ./%s to %s; the originals were left in place\n",
-			migrated, modelstore.DefaultDir, dir)
+		fmt.Fprintf(os.Stderr, "arxi: copied %d provider file(s) from an older location to %s; the originals were left in place\n",
+			migrated, dir)
 	}
 }
 

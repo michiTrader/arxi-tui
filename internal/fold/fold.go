@@ -1676,6 +1676,7 @@ var Commands = []SlashMatch{
 	{"max", "General", "Maximize a pane by id"},
 	{"focus", "General", "Focus a node by id"},
 	{"surface", "General", "Switch active surface"},
+	{"project", "General", "Trust or forget this folder's .arxi settings"},
 	// The description names the verbs that exist, not the verbs the plan
 	// sketches. It read "add, move, style, plugin" while the surface
 	// implements set and style: the menu is the only place a user learns what
@@ -1691,6 +1692,7 @@ var Commands = []SlashMatch{
 	{"ui", "General", "Talk to the model about the interface, or mutate the scene (add, move, set, style, hide, show, plugin)"},
 	// /clear is a host command: it ends the conversation and starts a new one.
 	{"clear", "Session", "Start a new session"},
+	{"copy", "Session", "Copy an answer, or the whole conversation, to the clipboard"},
 	// The provider/model management commands (K2). They are host-intercepted
 	// round-trips over the serve protocol, not patch verbs, so they are NOT held
 	// to patch.Verbs() the way `ui` is -- their subcommands are backed by the
