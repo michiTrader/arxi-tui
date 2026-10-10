@@ -368,12 +368,18 @@ func cancelRunningTurn(drv Driver) bool {
 	return ok && c.CancelTurn()
 }
 
+// modelSwitchNoter is the optional capability of a Driver that keeps a chat: it records
+// a change of model in the conversation and tells the model about it.
+type modelSwitchNoter interface {
+	NoteModelSwitch(ctx context.Context, to string)
+}
+
 // openDriver decides whether to spawn the arxi core subprocess or fall back to
 // the Phase 0 mock. The mock is used when no core can be found (ARXI_BIN unset and
 // no arxi core next to this program): the core is optional, and the mock lets the
 // engine run daily without it.
 func openDriver(ctx context.Context, doc *scene.Document) (Driver, <-chan fold.Event, error) {
-	arxiBin := coreBinary(os.Getenv("ARXI_BIN"), os.Executable)
+	arxiBin := prepareCore(os.Getenv("ARXI_BIN"), os.Executable, func(l string) { fmt.Fprintln(os.Stderr, "arxi: "+l) })
 	if arxiBin == "" {
 		// Phase 0: no arxi binary, use the mock driver that replays a fixed
 		// log. The mock submits prompts by appending directly to the event
@@ -2550,6 +2556,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				}
 				if out.picked != "" {
 					sceneNotice = out.notice
+					if n, ok := drv.(modelSwitchNoter); ok && out.err == "" {
+						n.NoteModelSwitch(ctx, out.picked)
+					}
 				}
 			}
 			repaint()

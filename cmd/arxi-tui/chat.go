@@ -86,6 +86,11 @@ type chatSession struct {
 	// web is the same for reading web pages: "deny" (not offered), "ask" (each
 	// address waits for the user) or "allow". It follows the agent mode too.
 	web string
+	// modelNote is what the model is told, once, on its next turn: the user switched
+	// the model or provider, so earlier replies in the history were not its own.
+	modelNote string
+	// lastModel is the model the previous switch ended on (or the first one seen).
+	lastModel string
 	// rulesNotice is the last "using AGENTS.md" line shown, so it is not repeated.
 	rulesNotice string
 	// approval is the change the core is holding for the user, nil when none.
@@ -256,6 +261,40 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	return nil
 }
 
+// noteModelSwitch records that the user changed the chat model: a line in the
+// conversation (so the change is on the record, with the model's name), and a sentence
+// the next turn's system prompt carries so the model does not take earlier answers
+// in the history for its own, nor claim to be the one that gave them. Choosing the
+// model already in use records nothing. It returns the line shown, or "".
+func (c *chatSession) noteModelSwitch(ctx context.Context, to string) string {
+	c.mu.Lock()
+	from := c.lastModel
+	c.lastModel = to
+	if to == "" || from == to {
+		c.mu.Unlock()
+		return ""
+	}
+	gen := c.gen
+	line := "model changed to " + to
+	c.modelNote = "The user switched the model to " + to + "."
+	if from != "" {
+		line = "model changed from " + from + " to " + to
+		c.modelNote = "The user switched the model from " + from + " to " + to + ". Earlier replies in this conversation were written by " + from + ", not by you; do not claim to have done what they say unless the tool results show it."
+	}
+	c.mu.Unlock()
+	c.post(ctx, gen, "chat.warn", map[string]any{"text": line})
+	return line
+}
+
+// takeModelNote returns the pending model-switch sentence once.
+func (c *chatSession) takeModelNote() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := c.modelNote
+	c.modelNote = ""
+	return n
+}
+
 // cancelTurn stops the turn in flight, if any, and puts a "request failed:
 // Cancelled" line in the conversation. It reports whether there was a turn to stop, so a key that means
 // "cancel" can fall back to its other meaning when nothing is running. The turn is
@@ -385,6 +424,9 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		core = conn
 	}
 	system := chatSystem()
+	if n := c.takeModelNote(); n != "" {
+		system += " " + n
+	}
 	if workdir != "" {
 		// Read on every turn, so an edit to the file counts from the next question;
 		// the user is told once per version of it, not once per turn.

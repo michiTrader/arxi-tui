@@ -56,8 +56,8 @@ import (
 // colours" mean that app, not the user's project. It is one sentence (about 60
 // tokens) because it rides with every question; the how is in ui_guide.
 const uiSystemHint = "You are running inside arxi-tui, the terminal app the user is talking to you through. " +
-	"When they mention the TUI, the interface, the screen, or how you or your replies look (colours, layout, spacing), " +
-	"they mean this app, not their project: call ui_guide, never search their files for it."
+	"\"The TUI\", the interface or its colours mean this app, not their project: call ui_guide, never search their files for it. " +
+	"Change it only by calling ui_edit; say it is done only if ui_edit returned \"applied and saved\"; if refused, give the user the reason."
 
 // Names of the two tools, as the model calls them.
 const (
@@ -85,6 +85,9 @@ type uiBridge struct {
 	// policy is what the agent mode says about changing the interface: deny (plan),
 	// ask, or allow (full access only).
 	policy string
+	// lastRefusal and refusals count identical refusals in a row (noteRefusal).
+	lastRefusal string
+	refusals    int
 	// apply carries an approved change to the loop; the loop answers on done.
 	apply chan uiApply
 }
@@ -189,6 +192,17 @@ func (b *uiBridge) call(ctx context.Context, c driver.ClientToolCall, ask func(d
 
 func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(driver.Approval) bool) driver.ClientToolResult {
 	refuse := func(summary, text string) driver.ClientToolResult {
+		// The chat shows the Summary and only the model sees the Text, so a bare
+		// "The change was refused" told the user nothing while the model looped on a
+		// reason nobody could read. The first line of the reason goes on the screen.
+		if reason := firstLine(text, 200); reason != "" && summary == "The change was refused" {
+			summary += ": " + reason
+		}
+		// The same refusal again and again is the model guessing; after the third the
+		// tool says so, and tells it to report to the user instead of trying a fourth.
+		if n := b.noteRefusal(text); n >= 3 {
+			text += fmt.Sprintf("\nThis exact refusal has now happened %d times in a row. Stop calling ui_edit with the same input. Tell the user, in plain words, what you tried and this reason, and ask what they want instead. Never say the change was made.", n)
+		}
 		return driver.ClientToolResult{Arg: "interface", Summary: summary, Text: text}
 	}
 	b.mu.Lock()
@@ -304,6 +318,7 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	if err != nil {
 		return refuse("The change was not applied", err.Error())
 	}
+	b.resetRefusals()
 	return driver.ClientToolResult{OK: true, Arg: "interface", Summary: summary, Diff: diff,
 		Text: "applied and saved: the interface on screen now shows the change. /ui undo takes it back."}
 }
@@ -473,7 +488,7 @@ LAYOUT. The interface is a JSON scene document drawn top to bottom: {"root": nod
   where = above <id> | below <id> | into <id> [top] | above_input | below_input
 Example, one more blank line under the input bar:
   /ui add node below_input {"id":"input_gap_extra","type":"text","text":""}
-FRAMES. Only a box (or an overlay) draws a border; a border on any other node is refused. "border" is one of single, double, round (rounded corners), heavy, ascii, or {"shape":"round","style":"<token>"} to colour it. To put a rounded frame around the input bar: /ui add node above prompt {"id":"input_frame","type":"box","border":"round"} then /ui move prompt into input_frame. Do not invent other words ("rounded", "{type:round}"): they are refused.
+FRAMES. Only a box (or an overlay) draws a border; a border on any other node is refused. "border" is one of single, double, round (rounded corners), heavy, ascii, or {"shape":"round","style":"<token>"} to colour it. To put a rounded frame around the input bar: /ui add node above prompt {"id":"input_frame","type":"box","border":"round"} then /ui move prompt into input_frame. To make that frame move in colour, define an animation and name it as the frame's style (two ui_edit parts in one call): behaviour: {"animations": {"rainbow": {"colors": ["red","yellow","green","cyan","blue","magenta"], "fps": 12, "spread": 1}}} and commands: ["/ui add node above prompt {\"id\":\"input_frame\",\"type\":\"box\",\"border\":{\"shape\":\"round\",\"style\":\"rainbow\"}}", "/ui move prompt into input_frame"]. If the frame already exists, only /ui set input_frame border {"shape":"round","style":"rainbow"} is needed. A colour that moves is always an animation token like this one, never a colors entry. Do not invent other words ("rounded", "{type:round}"): they are refused.
 Or pass scene: the complete new document, changing as little as the order requires. Every bind and when must come from the bind list; keep the node bound to user.input.
 
 `)
@@ -576,4 +591,37 @@ func uiHistoryCommand(input string) (string, bool) {
 // interface (serveDriver).
 type interfaceBridger interface {
 	InterfaceBridge() *uiBridge
+}
+
+// noteRefusal counts how many times in a row ui_edit has been refused for the same
+// reason, and returns the count. A success resets it (see resetRefusals).
+func (b *uiBridge) noteRefusal(text string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	key := firstLine(text, 300)
+	if key == b.lastRefusal {
+		b.refusals++
+	} else {
+		b.lastRefusal, b.refusals = key, 1
+	}
+	return b.refusals
+}
+
+func (b *uiBridge) resetRefusals() {
+	b.mu.Lock()
+	b.lastRefusal, b.refusals = "", 0
+	b.mu.Unlock()
+}
+
+// firstLine is the first non-empty line of s, cut to max runes.
+func firstLine(s string, max int) string {
+	for _, l := range strings.Split(s, "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			if r := []rune(l); len(r) > max {
+				return string(r[:max]) + "..."
+			}
+			return l
+		}
+	}
+	return ""
 }

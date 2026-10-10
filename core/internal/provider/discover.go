@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -37,6 +38,7 @@ func (c *Client) ListModels(ctx context.Context, protocol string) ([]string, err
 	if err != nil {
 		return nil, fmt.Errorf("build the model listing request: %w", err)
 	}
+	hreq.Header.Set("User-Agent", UserAgent)
 	hreq.Header.Set("Accept", "application/json")
 	if protocol == model.ProtocolAnthropicMessages {
 		hreq.Header.Set("anthropic-version", anthropicVersion)
@@ -59,6 +61,9 @@ func (c *Client) ListModels(ctx context.Context, protocol string) ([]string, err
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("read the reply from %s: %w", url, err)
+	}
+	if msg := describeWebReply(url, resp.StatusCode, raw); msg != "" {
+		return nil, errors.New(msg)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		return nil, fmt.Errorf("%s answered HTTP %d: %s", url, resp.StatusCode,

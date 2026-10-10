@@ -294,6 +294,14 @@ func (d *serveDriver) ResumeSession(history []driver.ChatTurn) {
 	}
 }
 
+// NoteModelSwitch puts the model change on the conversation's record and tells the
+// model on its next turn.
+func (d *serveDriver) NoteModelSwitch(ctx context.Context, to string) {
+	if d.chat != nil {
+		d.chat.noteModelSwitch(ctx, to)
+	}
+}
+
 // ClearSession ends the conversation the driver is following and leaves it ready
 // for a fresh one: the chat history is forgotten, a run being followed is no
 // longer relayed, and anything already queued for the loop is dropped. Nothing

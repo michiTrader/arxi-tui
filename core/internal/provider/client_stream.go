@@ -58,6 +58,7 @@ func (c *Client) CompleteStream(ctx context.Context, req chatRequest, onThinking
 		return nil, fmt.Errorf("build the request for %s: %w", req.Model, err)
 	}
 	hreq.Header.Set("Content-Type", "application/json")
+	hreq.Header.Set("User-Agent", UserAgent)
 	hreq.Header.Set("Accept", "text/event-stream")
 	if key != "" {
 		hreq.Header.Set("Authorization", "Bearer "+key)
@@ -78,7 +79,7 @@ func (c *Client) CompleteStream(ctx context.Context, req chatRequest, onThinking
 		if err != nil {
 			return nil, fmt.Errorf("read the reply from %s for model %s: %w", url, req.Model, err)
 		}
-		return judgeWhole(resp.StatusCode, raw, req.Model)
+		return judgeWhole(url, resp.StatusCode, raw, req.Model)
 	}
 
 	var (
@@ -176,7 +177,10 @@ func (c *Client) CompleteStream(ctx context.Context, req chatRequest, onThinking
 }
 
 // judgeWhole judges a plain (non-stream) body exactly as Complete does.
-func judgeWhole(status int, raw []byte, model string) (*chatResponse, error) {
+func judgeWhole(endpoint string, status int, raw []byte, model string) (*chatResponse, error) {
+	if werr := webReplyError(endpoint, status, raw, model); werr != nil {
+		return nil, werr
+	}
 	parsed, decErr := decodeResponse(raw)
 	if status < 200 || status > 299 {
 		msg := strings.TrimSpace(truncate(string(raw), 512))
