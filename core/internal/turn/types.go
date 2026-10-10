@@ -103,6 +103,9 @@ type Refusal struct {
 	Code      string `json:"code,omitempty"`
 	Message   string `json:"message"`
 	Retryable bool   `json:"retryable,omitempty"`
+	// RetryAfterMs is how long the provider asked to wait before asking again (its
+	// Retry-After header, or the "Retry in 27s" in its message); 0 when it did not say.
+	RetryAfterMs int64 `json:"retry_after_ms,omitempty"`
 	// Web marks a refusal that was a web page (a firewall wall, or the provider's
 	// website) and not an answer: the request never reached the model.
 	Web bool `json:"web,omitempty"`

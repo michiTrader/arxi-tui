@@ -51,7 +51,7 @@ func (c *Client) CompleteAnthropic(ctx context.Context, req anthropicRequest) (*
 	}
 	parsed, decErr := decodeAnthropicResponse(raw)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		apiErr := &APIError{Status: resp.StatusCode, Message: anthropicErrorMessage(raw, parsed), Model: req.Model}
+		apiErr := &APIError{Status: resp.StatusCode, Message: anthropicErrorMessage(raw, parsed), Model: req.Model, RetryAfter: retryAfterHeader(resp.Header)}
 		if decErr == nil {
 			return parsed, apiErr
 		}

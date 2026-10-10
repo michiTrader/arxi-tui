@@ -340,6 +340,12 @@ type actorLabeler interface {
 	ActorLabel() string
 }
 
+// retryLabeler is the optional capability a Driver has when its chat can wait out a
+// rate limit: it names the countdown for the Thinking line ("" when not waiting).
+type retryLabeler interface {
+	RetryLabel(now time.Time) string
+}
+
 // sessionClearer is the optional capability a Driver has when it owns a
 // conversation that /clear can end (serveDriver). The mock keeps no state beyond
 // the loop's own event list, so it does not implement it.
@@ -1343,6 +1349,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				turnStart = time.Now()
 			}
 			state.HostThinking = thinkingLabel(time.Since(turnStart))
+			// While the core waits out a rate limit the line counts the wait down
+			// instead, so a pause never looks like a freeze.
+			if rl, ok := drv.(retryLabeler); ok {
+				if l := rl.RetryLabel(time.Now()); l != "" {
+					state.HostThinking = l
+				}
+			}
 		} else {
 			turnStart = time.Time{}
 		}

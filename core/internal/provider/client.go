@@ -96,6 +96,9 @@ type APIError struct {
 	// reply never reached the model, so nothing was sent or billed, and asking again
 	// on the provider's other wire is safe.
 	Web bool
+	// RetryAfter is how long the provider asked to wait (the Retry-After header),
+	// zero when it said nothing. See After for the value to use.
+	RetryAfter time.Duration
 }
 
 func (e *APIError) Error() string {
@@ -110,6 +113,16 @@ func (e *APIError) Error() string {
 // already known to be wrong -- and 401 in a loop is how an account gets locked.
 func (e *APIError) Retryable() bool {
 	return e.Status == http.StatusTooManyRequests || e.Status >= 500
+}
+
+// After is how long the provider asked the caller to wait before asking again: the
+// Retry-After header when there was one, otherwise the "Retry in 27s" its message
+// carries (many gateways say it only there). Zero means it did not say.
+func (e *APIError) After() time.Duration {
+	if e.RetryAfter > 0 {
+		return e.RetryAfter
+	}
+	return retryAfterText(e.Message)
 }
 
 // Complete performs one chat completion.
@@ -187,7 +200,7 @@ func (c *Client) Complete(ctx context.Context, req chatRequest) (*chatResponse, 
 		if decErr == nil && parsed.Error != nil {
 			msg = parsed.Error.String()
 		}
-		apiErr := &APIError{Status: resp.StatusCode, Message: msg, Model: req.Model}
+		apiErr := &APIError{Status: resp.StatusCode, Message: msg, Model: req.Model, RetryAfter: retryAfterHeader(resp.Header)}
 		if decErr == nil {
 			// Returned WITH the parsed response so the caller can still bill any
 			// usage the provider reported alongside its refusal.

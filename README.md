@@ -841,3 +841,8 @@ OPENAI_API_KEY=... ./arxi-eval -model <name> -v
 Runs the corpus in `testdata/eval/` and reports convergence and turns per case.
 The exit status says whether the harness ran, not whether the model scored
 well — see `docs/EVAL.md` for why no threshold is set.
+
+## Automatic retries and gradient borders
+
+- **Retries.** When a provider answers 429 or a gateway error (502/503/504/529/408), arxi waits and asks again by itself, up to 6 tries. The wait is what the provider asks for (`Retry-After` header, or "Retry in 27s" in its message) and otherwise doubles each time (2s, 4s, 8s... capped at 30s). The Thinking line counts the wait down ("Retrying in 27s · rate limited (2/6)") and Esc cancels it. A billing wall ("available only with a subscription", `insufficient_quota`) or a 401/403/400 is never retried.
+- **Gradient borders.** An animation may set `"direction"`: `along` (default), `horizontal`, `vertical`, `diagonal`, `antidiagonal` or `radial`. Typed form: `/ui animate fire #ff3b30,#ffcc00,#0a84ff diagonal fps=12`. Put the animation on the border's `style` only; the input text keeps its own colour.

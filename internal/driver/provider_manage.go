@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // This file holds the provider-management verbs added with the /provider hub:
@@ -215,6 +216,26 @@ type ChatSendParams struct {
 	// OnClientTool runs one call of a client tool. It may block (to ask the user) and
 	// must return when ctx ends. With no OnClientTool every call fails.
 	OnClientTool func(ctx context.Context, c ClientToolCall) ClientToolResult
+	// OnRetry, when set, is told each time the core is about to wait and ask the
+	// provider again (a rate limit, an overload): who refused, which try is next, and
+	// how long the wait is. The core retries by itself; this only lets the client show
+	// it. A core that does not know how to report it never calls it.
+	OnRetry func(Retry)
+}
+
+// Retry is one automatic retry the core announced: the next try of a chat call, after
+// the provider answered "not now".
+type Retry struct {
+	Provider string
+	Model    string
+	// Attempt is the try about to be made (2 is the first retry), Of how many there are.
+	Attempt int
+	Of      int
+	// Wait is how long the core waits before that try.
+	Wait time.Duration
+	// Status is the HTTP status behind the wait ("429"), Reason the provider's words.
+	Status string
+	Reason string
 }
 
 // ClientToolDef is one tool a client lends the model: what the model is told about it.
@@ -336,16 +357,16 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 		params["client_tools"] = string(b)
 	}
 	var r ChatSendResult
-	if p.OnThinking == nil && p.Workdir == "" {
+	if p.OnThinking == nil && p.Workdir == "" && p.OnRetry == nil {
 		if err := d.call(ctx, "chat-send", "chat.send", params, &r); err != nil {
 			return nil, err
 		}
 		return &r, nil
 	}
-	if p.OnThinking != nil {
+	if p.OnThinking != nil || p.OnRetry != nil {
 		params["stream_thinking"] = true
 	}
-	err := d.callWatching(ctx, "chat-send", "chat.send", params, &r, p.OnThinking, p.OnTool, p.OnApproval, p.OnClientTool)
+	err := d.callWatching(ctx, "chat-send", "chat.send", params, &r, p.OnThinking, p.OnTool, p.OnApproval, p.OnClientTool, p.OnRetry)
 	var ref *Refusal
 	if errors.As(err, &ref) && ref.Code == "bad_params" {
 		// Only the part that names what was refused: the rest of the message lists
@@ -370,7 +391,7 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 			// would have streamed is simply asked again the plain way.
 			delete(params, "stream_thinking")
 			if p.Workdir != "" {
-				err = d.callWatching(ctx, "chat-send", "chat.send", params, &r, nil, p.OnTool, p.OnApproval, p.OnClientTool)
+				err = d.callWatching(ctx, "chat-send", "chat.send", params, &r, nil, p.OnTool, p.OnApproval, p.OnClientTool, p.OnRetry)
 			} else {
 				err = d.call(ctx, "chat-send", "chat.send", params, &r)
 			}
@@ -398,10 +419,10 @@ func refusedPart(msg string) string {
 // skipped. Any callback may be nil; with no onApproval every change is declined.
 // The first line carrying an id is the response.
 //
-// chat.client_tool goes to onClient, and its answer goes back as a
+// chat.retry goes to onRetry. chat.client_tool goes to onClient, and its answer goes back as a
 // chat.client_result line the same way; with no onClient the call fails, so the
 // turn goes on and the model is told.
-func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params map[string]any, out any, onThinking func(string), onTool func(ToolCall), onApproval func(context.Context, Approval) bool, onClient func(context.Context, ClientToolCall) ClientToolResult) error {
+func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params map[string]any, out any, onThinking func(string), onTool func(ToolCall), onApproval func(context.Context, Approval) bool, onClient func(context.Context, ClientToolCall) ClientToolResult, onRetry func(Retry)) error {
 	req := protoRequest{ID: id, Type: verb, Params: params}
 
 	d.mu.Lock()
@@ -428,6 +449,14 @@ func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params
 			Diff    string `json:"diff"`
 			// Arguments is a client tool call's input, kept raw for the client.
 			Arguments json.RawMessage `json:"arguments"`
+			// A chat.retry notification: the next try, how many there are, the wait.
+			Provider string `json:"provider"`
+			Model    string `json:"model"`
+			Attempt  int    `json:"attempt"`
+			Of       int    `json:"of"`
+			WaitMs   int64  `json:"wait_ms"`
+			Status   string `json:"status"`
+			Reason   string `json:"reason"`
 		}
 		if err := json.Unmarshal([]byte(line), &head); err != nil {
 			return fmt.Errorf("ndjson: response is not JSON: %w", err)
@@ -436,6 +465,9 @@ func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params
 			switch {
 			case head.Type == "chat.thinking" && head.Text != "" && onThinking != nil:
 				onThinking(head.Text)
+			case head.Type == "chat.retry" && onRetry != nil:
+				onRetry(Retry{Provider: head.Provider, Model: head.Model, Attempt: head.Attempt, Of: head.Of,
+					Wait: time.Duration(head.WaitMs) * time.Millisecond, Status: head.Status, Reason: head.Reason})
 			case head.Type == "chat.tool" && onTool != nil:
 				onTool(ToolCall{ID: head.CallID, Name: head.Name, Arg: head.Arg, OK: head.OK, Summary: head.Summary, Output: head.Output, Diff: head.Diff})
 			case head.Type == "chat.approval":

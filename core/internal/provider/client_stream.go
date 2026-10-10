@@ -79,7 +79,12 @@ func (c *Client) CompleteStream(ctx context.Context, req chatRequest, onThinking
 		if err != nil {
 			return nil, fmt.Errorf("read the reply from %s for model %s: %w", url, req.Model, err)
 		}
-		return judgeWhole(url, resp.StatusCode, raw, req.Model)
+		out, jerr := judgeWhole(url, resp.StatusCode, raw, req.Model)
+		var apiErr *APIError
+		if errors.As(jerr, &apiErr) && apiErr.RetryAfter == 0 {
+			apiErr.RetryAfter = retryAfterHeader(resp.Header)
+		}
+		return out, jerr
 	}
 
 	var (
