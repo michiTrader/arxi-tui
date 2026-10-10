@@ -28,6 +28,7 @@ func (c *Client) CompleteAnthropic(ctx context.Context, req anthropicRequest) (*
 		return nil, fmt.Errorf("build the request for %s: %w", req.Model, err)
 	}
 	hreq.Header.Set("Content-Type", "application/json")
+	hreq.Header.Set("User-Agent", UserAgent)
 	hreq.Header.Set("anthropic-version", anthropicVersion)
 	if key != "" {
 		hreq.Header.Set("x-api-key", key)
@@ -44,6 +45,9 @@ func (c *Client) CompleteAnthropic(ctx context.Context, req anthropicRequest) (*
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("read the reply from %s for model %s: %w", url, req.Model, err)
+	}
+	if werr := webReplyError(url, resp.StatusCode, raw, req.Model); werr != nil {
+		return nil, werr
 	}
 	parsed, decErr := decodeAnthropicResponse(raw)
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {

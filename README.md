@@ -554,6 +554,13 @@ puts `arxi-tui` and the `arxi` core in the same folder. The TUI looks for the co
 itself, so no `ARXI_BIN` is needed; setting `ARXI_BIN` still overrides it. On Windows,
 download both `.exe` files from the release page into one folder.
 
+The core is found without `ARXI_BIN`: next to the program, in `core/` of the checkout it
+sits in, or built on the spot from `core/` when a Go toolchain is on `PATH` (and rebuilt
+when its source is newer, so a stale core never silently lacks a feature). The working
+folder is never searched or built from. Providers whose base URL answers a web page
+(a website instead of the API, or a bot-protection page) are reported with the cause and
+the fix, e.g. add `/v1` to the base URL.
+
 Direction: one program. The core now lives in this repository so the frontend and the
 backend change together; the goal is a single binary installed with one command. Until
 that lands, build both as above.

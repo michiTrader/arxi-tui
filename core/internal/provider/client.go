@@ -140,6 +140,7 @@ func (c *Client) Complete(ctx context.Context, req chatRequest) (*chatResponse, 
 	if err != nil {
 		return nil, fmt.Errorf("build the request for %s: %w", req.Model, err)
 	}
+	hreq.Header.Set("User-Agent", UserAgent)
 	hreq.Header.Set("Content-Type", "application/json")
 	if key != "" {
 		hreq.Header.Set("Authorization", "Bearer "+key)
@@ -166,6 +167,10 @@ func (c *Client) Complete(ctx context.Context, req chatRequest) (*chatResponse, 
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("read the reply from %s for model %s: %w", url, req.Model, err)
+	}
+
+	if werr := webReplyError(url, resp.StatusCode, raw, req.Model); werr != nil {
+		return nil, werr
 	}
 
 	// Decoded BEFORE the status is judged, because the body is where the reason
