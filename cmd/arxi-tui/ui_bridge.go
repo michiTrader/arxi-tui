@@ -58,7 +58,9 @@ import (
 const uiSystemHint = "You are running inside arxi-tui, the terminal app the user is talking to you through. " +
 	"When they mention the TUI, the interface, the screen, or how you or your replies look (colours, layout, spacing), " +
 	"they mean this app, not their project: call ui_guide, never search their files for it. " +
-	"Say the interface changed only after a ui_edit succeeded; a refused one changes nothing."
+	"The user approves each change in a dialog, so do not ask first in text: call ui_edit; a bare \"do it\" means make the change now. " +
+	"Say the interface changed only after a ui_edit succeeded; a refused one changes nothing. " +
+	"The app's record of your earlier tool calls is what you really did: with no successful ui_edit in it, nothing changed, whatever your replies said."
 
 // Names of the two tools, as the model calls them.
 const (
@@ -499,6 +501,10 @@ LAYOUT. The interface is a JSON scene document drawn top to bottom: {"root": nod
 Example, one more blank line under the input bar:
   /ui add node below_input {"id":"input_gap_extra","type":"text","text":""}
 FRAMES. Only a box (or an overlay) draws a border; a border on any other node is refused. "border" is one of single, double, round (rounded corners), heavy, ascii, or {"shape":"round","style":"<token>"} to colour it. To put a rounded frame around the input bar: /ui add node above prompt {"id":"input_frame","type":"box","border":"round"} then /ui move prompt into input_frame. Do not invent other words ("rounded", "{type:round}"): they are refused.
+ANIMATED FRAME. A frame whose colour moves is one ui_edit call: define the animation in behaviour, create the box and name the animation as the border's style (an animation name is a style token). Example, the input bar inside a rainbow frame:
+  behaviour: {"animations": {"rainbow": {"colors": ["red","yellow","green","cyan","blue","magenta"], "spread": 1}}}
+  commands: ["/ui add node above prompt {\"id\":\"input_frame\",\"type\":\"box\",\"border\":\"round\"}", "/ui move prompt into input_frame", "/ui set input_frame border {\"shape\":\"round\",\"style\":\"rainbow\"}"]
+/ui set takes the value as JSON when the property is not text (grow 1, fit true, border {...}); text stays text.
 Or pass scene: the complete new document, changing as little as the order requires. Every bind and when must come from the bind list; keep the node bound to user.input.
 
 `)

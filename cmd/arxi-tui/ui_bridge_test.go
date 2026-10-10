@@ -359,12 +359,12 @@ func TestColoursAreSavedUndoneAndResetWithTheLayout(t *testing.T) {
 }
 
 func TestTheModelIsToldItRunsInsideArxiTUI(t *testing.T) {
-	for _, want := range []string{"arxi-tui", "TUI", "colours", "ui_guide", "never search their files", "a refused one changes nothing"} {
+	for _, want := range []string{"arxi-tui", "TUI", "colours", "ui_guide", "never search their files", "a refused one changes nothing", "do not ask first in text", "record of your earlier tool calls"} {
 		if !strings.Contains(uiSystemHint, want) {
 			t.Errorf("the standing hint lacks %q.\nConsequence: a real model asked about \"the tui\" searched the project eleven times and offered to write a theme file there.\nRemedy: name the app and what the words mean in uiSystemHint.", want)
 		}
 	}
-	if len(uiSystemHint) > 400 {
+	if len(uiSystemHint) > 760 {
 		t.Errorf("the hint is %d bytes and rides with every question; keep the how in ui_guide", len(uiSystemHint))
 	}
 }
@@ -378,5 +378,31 @@ func TestColorCommandReadsTokenAndStyle(t *testing.T) {
 	}
 	if _, _, ok := uiColorCommand("/ui colorful"); ok {
 		t.Error("/ui colorful is not a colour command")
+	}
+}
+
+// The model was asked for a colourful frame around the input bar and answered "OK" or
+// described a plan; every attempt to do it was refused. The guide must carry the one call
+// that works, and that call must really be accepted: a guide example that is refused is the
+// worst kind, the model copies it faithfully.
+func TestTheGuidesAnimatedFrameExampleIsAcceptedAsWritten(t *testing.T) {
+	r := newBridgeRig(t, "full access")
+	guide := r.b.call(context.Background(), driver.ClientToolCall{Name: uiToolGuide}, nil).Text
+	if !strings.Contains(guide, "ANIMATED FRAME") {
+		t.Fatal("the guide does not teach the animated frame.\nConsequence: asked for a rainbow border, a model has no way to know it is one call and gives up after a string of refusals.")
+	}
+	args := `{"behaviour":{"animations":{"rainbow":{"colors":["red","yellow","green","cyan","blue","magenta"],"spread":1}}},` +
+		`"commands":["/ui add node above prompt {\"id\":\"input_frame\",\"type\":\"box\",\"border\":\"round\"}","/ui move prompt into input_frame","/ui set input_frame border {\"shape\":\"round\",\"style\":\"rainbow\"}"],"summary":"rainbow frame"}`
+	for _, line := range []string{`"border\":\"round\"}", "/ui move prompt into input_frame"`, `"style\":\"rainbow\"}"]`} {
+		if !strings.Contains(guide, line) {
+			t.Fatalf("the guide's example drifted from the one this test proves: %q is missing", line)
+		}
+	}
+	res := r.edit(t, args, true)
+	if !res.OK {
+		t.Fatalf("the guide's own example is refused: %s\n%s", res.Summary, res.Text)
+	}
+	if !strings.Contains(string(r.doc.Source()), `"style": "rainbow"`) {
+		t.Errorf("the accepted change does not carry the animated border style:\n%s", r.doc.Source())
 	}
 }
