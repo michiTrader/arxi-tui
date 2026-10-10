@@ -164,6 +164,16 @@ for your next session.
   every style token with its current colour and what it paints) and `ui_edit` (propose a
   change). It is also told, in one sentence, that it runs inside arxi-tui, so "the TUI" or
   "your colours" never send it searching your files.
+- **It acts instead of asking.** Every change is shown to you in an approval dialog, so the
+  model is told to call `ui_edit` and not to ask "shall I proceed?" in text first (a line
+  such as "do it" used to be answered with another question, then with "OK"). If a model
+  that was given tools answers a request with only "OK", the core asks it once more and, if
+  it is still only an acknowledgment, tells you it did nothing; that word is not kept in
+  the history, where the model would copy it on every later line.
+- **An animated frame is one call.** `/ui set` now writes numbers, booleans and objects as
+  such (`/ui set input_frame border {"shape":"round","style":"rainbow"}`); before, every value
+  was text and anything but a word was refused as invalid JSON. The guide teaches the
+  recipe for a rainbow border around the input bar.
 - **Colours and layout.** The layout is the scene document; the colours are style tokens.
   The coloured words in an answer are `markdown.code` (inline code) and `markdown.link`,
   cyan by default. You can do the same by hand: `/ui color markdown.code fg=magenta`
