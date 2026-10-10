@@ -114,6 +114,31 @@ you asked for it. The key is never shown, never logged and never put in an error
 Long command output and long diffs are cut to a few rows and say `… +N lines (ctrl+o to
 expand)`. Ctrl+O opens them all, and closes them again.
 
+How the conversation is drawn:
+
+```
+┃ one question                                    your messages show 3 rows at most; the
+┃ that goes on for                                rest is "… +N lines (ctrl+o to expand)"
+┃ … +4 lines (ctrl+o to expand)                   (the floating 2-row header is unchanged)
+
+● Read(arxi.json) - arxi.json does not exist      a tool with one row of result: beside the call
+● Run(go test ./...)                              one with output or a diff: the result under it
+  └ Exit 0 in 2s
+```
+
+Blank rows at the start or end of a message, and the empty answer of a turn that only
+called tools, are not drawn, so the gaps between turns are one row and no more.
+
+**All of it is yours to change**, with the same tools as the colours: the format of the
+chat is text keys (`/ui text <key> <value>`, or ask your agent: it reads them in its guide).
+`tool.inline` (`no` puts every result under its call), `tool.separator`, `tool.dot`,
+`tool.elbow`, `tool.title.<tool>` (rename `Read`, `Search`, …), `tool.output_rows`,
+`tool.diff_rows`, `tool.expand_hint`, `ask.*` (the "Allow this command?" questions),
+`chat.user.marker`, `chat.user.max_lines` (`0` = show everything), `chat.user.more`,
+`chat.turn_gap` / `chat.usage_gap` (blank rows; `0` packs it), `chat.answer.indent`,
+`chat.usage.format` (`{time} {tokens}`) and `chat.usage.tokens`. Colours are the `chat.*`
+tokens. `/ui undo` takes any of it back.
+
 The words are the core's own tool policies (`allow` / `ask` / `deny`). The chat has no
 tools yet, so for now the mode only changes what the bar says; the table is what the tool
 loop will enforce. The directory is where the TUI was started (home shown as `~`). While

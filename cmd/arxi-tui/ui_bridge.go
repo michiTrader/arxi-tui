@@ -528,6 +528,16 @@ WORDS. Every sentence the app writes in its own menus and screens (what each / c
   texts: {"team.title": "Crews", "team.new_agent.label": "+ Add an agent..."}
 Words that are not keys (the labels inside a form, error messages, the model's own replies) are not editable this way; say so rather than promising it.
 
+CHAT FORMAT. How the conversation itself is drawn is text keys too (listed below, the ones marked "chat:"), so it is yours to change, never say it is not in this project or that only colours can change. Examples:
+  - the result of a tool beside its call (the default) or under it:  texts: {"tool.inline": "no"}
+  - another separator or glyph:  texts: {"tool.separator": " → ", "tool.dot": "• ", "tool.elbow": "╰ "}
+  - rename a tool:  texts: {"tool.title.read": "Open"}
+  - how many rows of your questions show (the rest is "… +N lines", ctrl+o opens all): texts: {"chat.user.max_lines": "5"}  ("0" shows everything)
+  - tighter or looser spacing: texts: {"chat.turn_gap": "0", "chat.usage_gap": "0"}
+  - the time/tokens line under an answer: texts: {"chat.usage.format": "{tokens} · {time}"}, or spaces to hide it
+  - how many rows of command output / diffs show: texts: {"tool.output_rows": "10", "tool.diff_rows": "30"}
+Colours of those lines are the chat.* tokens. Numbers are written as text ("3").
+
 LAYOUT. The interface is a JSON scene document drawn top to bottom: {"root": node}; a node is {"type", "id", ...}; stack lays children out vertically, row horizontally; text draws "text" or the value of "bind"; an empty line is {"type":"text","text":""}; "when": <bind> shows a node only while the bind is truthy; "style": {"style": <token>} picks which token paints a node. Give every node you add a new unique id. Change the layout with commands (preferred), applied in order:
   /ui add node <where> <json-node>
   /ui move <id> <where>

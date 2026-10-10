@@ -70,6 +70,7 @@ func init() {
 	add := func(key, def, role string, paragraph bool) {
 		textRegistry = append(textRegistry, textDef{key: key, def: def, role: role, paragraph: paragraph})
 	}
+	chatLookKeys(add)
 	add("slash.hint", slashMenuHint, "key legend on the bottom row while the / menu is open", false)
 	for _, c := range fold.Commands {
 		add("command."+c.Name, c.Description, "description of /"+c.Name+" in the / menu", false)
@@ -190,7 +191,7 @@ func validText(def textDef, val string) error {
 			return fmt.Errorf("text %q contains the control character U+%04X; the terminal would act on it instead of showing it", def.key, r)
 		}
 	}
-	return nil
+	return validChatLook(def.key, val)
 }
 
 // applyTexts returns base with the requested sentences applied. An empty value takes the

@@ -191,7 +191,7 @@ var tokenRoles = map[string]string{
 	"chat.warn": "warnings", "chat.usage": "time/token line under each answer",
 	"chat.tool": "tool names in tool lines", "chat.tool.dot": "dot before a tool line waiting for approval",
 	"chat.tool.dot.ok": "dot before a finished tool line", "chat.tool.dot.fail": "dot before a failed tool line",
-	"chat.tool.result": "result line under a tool call", "chat.tool.fail": "failed tool result",
+	"chat.tool.result": "result of a tool call (beside it or under it; the format is the tool.* texts)", "chat.tool.fail": "failed tool result",
 	"chat.approval": "the approval question", "chat.diff.add": "added diff lines", "chat.diff.del": "removed diff lines",
 	"chat.diff.ctx": "diff context lines", "markdown.heading": "headings in answers", "markdown.strong": "bold in answers",
 	"markdown.emphasis": "italics in answers", "markdown.code": "inline `code` in answers",

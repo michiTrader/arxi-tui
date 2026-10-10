@@ -146,6 +146,11 @@ type Renderer struct {
 	// a host view setting like ChatScroll, so the fold never sees it.
 	PromptStyle string
 
+	// Look is how the chat is laid out (glyphs, words, limits, spacing). nil is the
+	// factory look. The host builds it from the user's own texts, so every part of it
+	// can be changed with /ui and ui_edit; see ChatLook.
+	Look *ChatLook
+
 	// PluginValues is the host-owned plugin bind snapshot, fed in per repaint the
 	// way AnimTicks and ChatScroll are: the loop reads a snapshot of the
 	// ext.PluginStore once per frame and hands it here (I3, ADR-0007 §I-D). It maps
@@ -900,14 +905,18 @@ const (
 // toolTitles are the names a person reads; an unknown tool shows its own name.
 var toolTitles = map[string]string{"list": "List", "read": "Read", "grep": "Search", "edit": "Edit", "write": "Write", "run": "Run", "web_fetch": "Fetch", "web_search": "Search web", "ui_guide": "Read", "ui_edit": "Change"}
 
-// toolLines draws one tool line: "● Read(main.go)" and, under it, "  └ Read 12
-// lines". A long argument wraps under itself, and so does a long result.
-func toolLines(h fold.ChatLine, width int, expand bool) []ui.Line {
-	title := toolTitles[h.Tool]
-	if title == "" {
-		title = h.Tool
-	}
-	dotW := ansi.StringWidth(toolDot)
+// toolLines draws one tool line: "● Read(main.go)" and what came of it. A result of a
+// single row goes on the call's own row, "● Read(main.go) - Read 12 lines"; one that
+// is longer than the row, or that comes with output or a diff, goes under an elbow:
+//
+//	● Run(go test ./...)
+//	  └ Exit 0 in 2s
+//
+// A long argument wraps under itself, and so does a long result. Every glyph, word and
+// limit here comes from the ChatLook, which is the user's to change.
+func toolLines(h fold.ChatLine, width int, expand bool, lk ChatLook) []ui.Line {
+	title := lk.Title(h.Tool)
+	dotW := ansi.StringWidth(lk.ToolDot)
 	// The argument is usually one long word (a path), which word wrapping would
 	// push to a row of its own. It is cut at the edge instead, so it starts on the
 	// same row as the name and continues under itself.
@@ -920,7 +929,7 @@ func toolLines(h fold.ChatLine, width int, expand bool) []ui.Line {
 	case !h.ToolOK:
 		dot = toolDotBadToken
 	}
-	first := ui.Line{{Text: toolDot, Style: dot}, {Text: title, Style: toolNameToken}, {Text: "(", Style: toolResultToken}}
+	first := ui.Line{{Text: lk.ToolDot, Style: dot}, {Text: title, Style: toolNameToken}, {Text: "(", Style: toolResultToken}}
 	hang := strings.Repeat(" ", dotW)
 	var head []ui.Line
 	cur, room := first, width-first.Width()
@@ -950,19 +959,26 @@ func toolLines(h fold.ChatLine, width int, expand bool) []ui.Line {
 	if !h.ToolOK {
 		style = toolFailToken
 	}
-	hangResult := strings.Repeat(" ", dotW+ansi.StringWidth(toolElbow))
-	out := append(head, ui.WrapText(hang+toolElbow+h.ToolSummary, style, width, ui.Line{{Text: hangResult}})...)
-	rows := maxDiffRows
+	rows := lk.DiffRows
 	if h.Role == "approval" {
 		// What the user is asked to allow is shown in full, or nearly: a change
 		// approved from a summary is not really approved.
-		rows = maxApprovalRows
+		rows = lk.ApprovalRows
 	}
 	if expand {
 		rows = 1 << 30
 	}
-	out = append(out, outputLines(h, hangResult, width, expand)...)
-	return append(out, diffLines(h.ToolDiff, hangResult, width, rows)...)
+	hangResult := strings.Repeat(" ", dotW+ansi.StringWidth(lk.ToolElbow))
+	more := outputLines(h, hangResult, width, expand, lk)
+	more = append(more, diffLines(h.ToolDiff, hangResult, width, rows, lk.ExpandHint)...)
+	// One row of result and nothing under it: say it beside the call. It only does so
+	// when the whole of it fits, so a long summary is never cut to make the point.
+	if lk.ToolInline && len(more) == 0 && len(head) == 1 && !strings.Contains(h.ToolSummary, "\n") &&
+		head[0].Width()+ansi.StringWidth(lk.ToolSep)+ansi.StringWidth(h.ToolSummary) <= width {
+		return []ui.Line{append(head[0], ui.Span{Text: lk.ToolSep + h.ToolSummary, Style: style})}
+	}
+	out := append(head, ui.WrapText(hang+lk.ToolElbow+h.ToolSummary, style, width, ui.Line{{Text: hangResult}})...)
+	return append(out, more...)
 }
 
 // maxApprovalRows is how much of a change is shown while it waits for an answer.
@@ -970,21 +986,10 @@ const maxApprovalRows = 40
 
 // approvalLines is a change waiting for the user: the tool line it will become, its
 // diff, and the question with the keys that answer it.
-func approvalLines(h fold.ChatLine, width int, expand bool) []ui.Line {
-	out := toolLines(h, width, expand)
-	hang := strings.Repeat(" ", ansi.StringWidth(toolDot))
-	question := "Allow this change?"
-	switch h.Tool {
-	case "run":
-		question = "Allow this command?"
-	case "web_fetch":
-		question = "Allow reading this page?"
-	case "web_search":
-		question = "Allow this search?"
-	case "ui_edit":
-		question = "Allow this change to the interface?"
-	}
-	return append(out, ui.Line{{Text: ansi.Truncate(hang+question+"  y yes · n no (Esc)", width, "…"), Style: askToken}})
+func approvalLines(h fold.ChatLine, width int, expand bool, lk ChatLook) []ui.Line {
+	out := toolLines(h, width, expand, lk)
+	hang := strings.Repeat(" ", ansi.StringWidth(lk.ToolDot))
+	return append(out, ui.Line{{Text: ansi.Truncate(hang+lk.ask(h.Tool)+"  "+lk.AskKeys, width, "…"), Style: askToken}})
 }
 
 // maxOutputRows is how many rows of a command's output the conversation shows before
@@ -998,7 +1003,7 @@ const expandHint = " (ctrl+o to expand)"
 // outputLines draws what a command printed, under its outcome. Only a command's
 // output is drawn: the text a read or a search returns is the file, which the model
 // needed and the user already has.
-func outputLines(h fold.ChatLine, indent string, width int, expand bool) []ui.Line {
+func outputLines(h fold.ChatLine, indent string, width int, expand bool, lk ChatLook) []ui.Line {
 	if h.Tool != "run" || h.ToolOutput == "" {
 		return nil
 	}
@@ -1017,16 +1022,16 @@ func outputLines(h fold.ChatLine, indent string, width int, expand bool) []ui.Li
 	}
 	rows := strings.Split(strings.ReplaceAll(body, "\t", "    "), "\n")
 	hidden := 0
-	if !expand && len(rows) > maxOutputRows {
-		hidden = len(rows) - maxOutputRows
-		rows = rows[:maxOutputRows]
+	if !expand && len(rows) > lk.OutputRows {
+		hidden = len(rows) - lk.OutputRows
+		rows = rows[:lk.OutputRows]
 	}
 	var out []ui.Line
 	for _, row := range rows {
 		out = append(out, ui.Line{{Text: ansi.Truncate(indent+row, width, "…"), Style: toolResultToken}})
 	}
 	if hidden > 0 {
-		out = append(out, ui.Line{{Text: ansi.Truncate(indent+fmt.Sprintf("… +%d lines%s", hidden, expandHint), width, "…"), Style: diffCtxToken}})
+		out = append(out, ui.Line{{Text: ansi.Truncate(indent+fmt.Sprintf("… +%d lines%s", hidden, lk.ExpandHint), width, "…"), Style: diffCtxToken}})
 	}
 	return out
 }
@@ -1045,7 +1050,7 @@ const diffGutter = 8
 // change says is hidden behind a "…" and a number never heads a fragment that is not
 // its line. The cap counts the rows as drawn, so one enormous line cannot push the
 // conversation off the screen either; what is past it is counted, and ctrl+o opens it.
-func diffLines(diff, indent string, width, maxRows int) []ui.Line {
+func diffLines(diff, indent string, width, maxRows int, hint string) []ui.Line {
 	if diff == "" {
 		return nil
 	}
@@ -1080,25 +1085,28 @@ func diffLines(diff, indent string, width, maxRows int) []ui.Line {
 		drawn = drawn[:maxRows]
 	}
 	if hidden > 0 {
-		drawn = append(drawn, ui.Line{{Text: ansi.Truncate(indent+fmt.Sprintf("… +%d more lines%s", hidden, expandHint), width, "…"), Style: diffCtxToken}})
+		drawn = append(drawn, ui.Line{{Text: ansi.Truncate(indent+fmt.Sprintf("… +%d more lines%s", hidden, hint), width, "…"), Style: diffCtxToken}})
 	}
 	return drawn
 }
 
 // usageLine is what an answer cost, e.g. "2s (↑2 ↓57)": how long it took, then the
-// tokens sent (↑) and received (↓). It is empty when the source reported nothing.
-func usageLine(h fold.ChatLine) string {
+// tokens sent (↑) and received (↓). It is empty when the source reported nothing. The
+// shape is the user's: {time} and {tokens} in UsageFormat, {in} and {out} in UsageTokens.
+func usageLine(h fold.ChatLine, lk ChatLook) string {
 	if h.DurationMS <= 0 && h.TokensIn <= 0 && h.TokensOut <= 0 {
 		return ""
 	}
-	var parts []string
+	var t, tok string
 	if h.DurationMS > 0 {
-		parts = append(parts, formatDuration(h.DurationMS))
+		t = formatDuration(h.DurationMS)
 	}
 	if h.TokensIn > 0 || h.TokensOut > 0 {
-		parts = append(parts, fmt.Sprintf("(↑%d ↓%d)", h.TokensIn, h.TokensOut))
+		tok = strings.NewReplacer("{in}", strconv.FormatInt(int64(h.TokensIn), 10), "{out}", strconv.FormatInt(int64(h.TokensOut), 10)).Replace(lk.UsageTokens)
 	}
-	return strings.Join(parts, " ")
+	out := strings.NewReplacer("{time}", t, "{tokens}", tok).Replace(lk.UsageFormat)
+	// An absent part leaves its separator behind; collapse the doubled spaces.
+	return strings.Join(strings.Fields(out), " ")
 }
 
 // formatDuration writes a duration the way a person reads it: "<1s", "2s", "1m 05s".
@@ -1129,6 +1137,39 @@ func indentLines(lines []ui.Line, n int) []ui.Line {
 	return out
 }
 
+// emptyAnswer is an assistant turn with no words and no usage to show.
+func emptyAnswer(h fold.ChatLine) bool {
+	return h.Role == "assistant" && strings.TrimSpace(h.Text) == "" && usageLine(h, ChatLook{UsageFormat: "{time}{tokens}", UsageTokens: "x"}) == ""
+}
+
+// cutUserTurn shortens one of the user's messages in the transcript to lk.UserMaxLines
+// rows of its words, followed by one dim row that says how many were left out. A long paste
+// is something the user knows they sent, and drawn whole it pushes the answer off the
+// screen. Ctrl+O (Renderer.ExpandTools) draws it whole, the same key that opens a cut
+// command output. The floating header that follows a message while the reader scrolls
+// has its own, shorter limit (pinnedRowsMax) and is not this.
+func (r *Renderer) cutUserTurn(rows []ui.Line, lk ChatLook) []ui.Line {
+	max := lk.UserMaxLines
+	if max <= 0 || r.ExpandTools || len(rows) <= max {
+		return rows
+	}
+	keep := max
+	hidden := len(rows) - keep
+	note := strings.NewReplacer("{n}", strconv.Itoa(hidden), "{hint}", lk.ExpandHint).Replace(lk.UserMore)
+	var lead ui.Line
+	if r.PromptStyle != PromptPlain {
+		lead = ui.Line{{Text: lk.UserMarker, Style: userTurnToken}}
+	}
+	last := append(append(ui.Line{}, lead...), ui.Span{Text: note, Style: usageTurnToken})
+	out := append([]ui.Line(nil), rows[:keep]...)
+	if r.Width > 0 && last.Width() > r.Width {
+		if hard := ui.HardWrapSpans(last, r.Width); len(hard) > 0 {
+			last = hard[0]
+		}
+	}
+	return append(out, last)
+}
+
 // renderMarkdown renders a bound markdown pane, wrapped to the frame width.
 // Wrapping goes through the ported Line/Span machinery, so a row can never end
 // in bare air or overflow the frame no matter what the fold hands it.
@@ -1149,9 +1190,18 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 		// starts[i] is the first row of history item i, so a scrolled view can tell
 		// which of the reader's own messages the top of the window is inside.
 		starts = make([]int, len(state.History))
+		lk := r.look()
+		gap := func() {
+			for k := 0; k < lk.TurnGap; k++ {
+				lines = append(lines, ui.Line{})
+			}
+		}
 		for i, h := range state.History {
 			starts[i] = len(lines)
-			text := h.Text
+			// Blank rows at the edges of what was said are not part of it: a reply that
+			// opens with a line break or ends with two would otherwise be drawn as that
+			// many empty rows between the turns.
+			text := trimBlankText(h.Text)
 			turnToken := token
 			var cont ui.Line
 			if h.Role == "user" {
@@ -1167,52 +1217,68 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 				// pane's own token.
 				turnToken = userTurnToken
 				if r.PromptStyle != PromptPlain {
-					text = userTurnMarker + text
-					cont = ui.Line{{Text: userTurnMarker, Style: userTurnToken}}
+					text = lk.UserMarker + text
+					cont = ui.Line{{Text: lk.UserMarker, Style: userTurnToken}}
 				}
 			} else if h.Role == "error" {
 				// A failed request is a line of the conversation, not a banner: it is
 				// drawn in the flow under its own token, with a marker that keeps it
 				// from being mistaken for an answer.
-				text = errorTurnMarker + text
+				text = lk.ErrorMarker + text
 				turnToken = errorTurnToken
-				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(errorTurnMarker)), Style: errorTurnToken}}
+				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(lk.ErrorMarker)), Style: errorTurnToken}}
 			}
 			if h.Role == "approval" {
-				lines = append(lines, approvalLines(h, r.Width, r.ExpandTools)...)
-				lines = append(lines, ui.Line{})
+				lines = append(lines, approvalLines(h, r.Width, r.ExpandTools, lk)...)
+				gap()
 				continue
 			}
 			if h.Role == "tool" {
-				lines = append(lines, toolLines(h, r.Width, r.ExpandTools)...)
+				lines = append(lines, toolLines(h, r.Width, r.ExpandTools, lk)...)
 				// Calls of one answer stack; the gap comes after the last one.
-				if i+1 >= len(state.History) || state.History[i+1].Role != "tool" {
-					lines = append(lines, ui.Line{})
+				// An answer with nothing in it (a turn that only called tools) draws as
+				// nothing, so it does not end the stack either.
+				next := i + 1
+				for next < len(state.History) && emptyAnswer(state.History[next]) {
+					next++
+				}
+				if next >= len(state.History) || state.History[next].Role != "tool" {
+					gap()
 				}
 				continue
 			}
 			if h.Role == "warn" {
-				text = warnTurnMarker + text
+				text = lk.WarnMarker + text
 				turnToken = warnTurnToken
-				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(warnTurnMarker)), Style: warnTurnToken}}
+				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(lk.WarnMarker)), Style: warnTurnToken}}
 			}
 			if h.Role == "assistant" {
 				// The agent's answer is Markdown: headings, lists, tables, fenced code and
 				// inline emphasis are laid out, not shown as raw punctuation. The user's own
 				// words and a failure stay literal, because what a person typed is not markup.
-				// It is drawn assistantIndent columns in, to sit opposite the user's marker.
-				w := r.Width - assistantIndent
+				// It is drawn AssistantIndent columns in, to sit opposite the user's marker.
+				w := r.Width - lk.AssistantIndent
 				if w < 1 {
 					w = r.Width
 				}
-				body := ui.RenderMarkdown(text, w, turnToken)
+				body := trimBlankRows(ui.RenderMarkdown(text, w, turnToken))
 				if w != r.Width {
-					body = indentLines(body, assistantIndent)
+					body = indentLines(body, lk.AssistantIndent)
+				}
+				u := usageLine(h, lk)
+				if len(body) == 0 && u == "" {
+					// Nothing to say (a turn that was only tool calls): no rows and no
+					// gap, or the transcript would show an empty answer.
+					continue
 				}
 				lines = append(lines, body...)
-				if u := usageLine(h); u != "" {
-					lines = append(lines, ui.Line{})
-					lines = append(lines, ui.WrapText(strings.Repeat(" ", assistantIndent)+u, usageTurnToken, r.Width, nil)...)
+				if u != "" {
+					if len(body) > 0 {
+						for k := 0; k < lk.UsageGap; k++ {
+							lines = append(lines, ui.Line{})
+						}
+					}
+					lines = append(lines, ui.WrapText(strings.Repeat(" ", lk.AssistantIndent)+u, usageTurnToken, r.Width, nil)...)
 				}
 			} else {
 				var wrapped []ui.Line
@@ -1221,24 +1287,27 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 					// words, in its own token, so it is plain what addressed the app.
 					spans := []ui.Span{}
 					if r.PromptStyle != PromptPlain {
-						spans = append(spans, ui.Span{Text: userTurnMarker, Style: userTurnToken})
+						spans = append(spans, ui.Span{Text: lk.UserMarker, Style: userTurnToken})
 					}
 					spans = append(spans, ui.Span{Text: h.Command, Style: commandTurnToken})
-					if h.Text != "" {
-						spans = append(spans, ui.Span{Text: " " + h.Text, Style: turnToken})
+					if t := trimBlankText(h.Text); t != "" {
+						spans = append(spans, ui.Span{Text: " " + t, Style: turnToken})
 					}
 					wrapped = ui.WrapSpans(spans, r.Width, cont)
 				} else {
 					wrapped = ui.WrapText(text, turnToken, r.Width, cont)
+				}
+				if h.Role == "user" {
+					wrapped = r.cutUserTurn(wrapped, lk)
 				}
 				if h.Role == "user" && r.PromptStyle == PromptBand {
 					wrapped = bandLines(wrapped, r.Width, promptBandToken)
 				}
 				lines = append(lines, wrapped...)
 			}
-			lines = append(lines, ui.Line{}) // one blank row between turns
+			gap()
 		}
-		if len(lines) > 0 {
+		for len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
 			lines = lines[:len(lines)-1]
 		}
 	case "thinking.text":
