@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/michiTrader/arxi/internal/chattools"
 	"github.com/michiTrader/arxi/internal/turn"
@@ -289,6 +290,7 @@ func (tb *chatToolbox) definitions() []turn.ToolDefinition {
 func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 	complete func(turn.Request) (turn.Response, error)) (turn.Response, error) {
 	req.Tools = append(req.Tools, tb.definitions()...)
+	usedTools, nudged := false, false
 	for round := 0; ; round++ {
 		if round >= maxToolRounds {
 			req.Tools = nil
@@ -308,8 +310,22 @@ func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 			}
 		}
 		if len(calls) == 0 || resp.FinishReason == turn.FinishRefusal || len(req.Tools) == 0 {
+			if len(calls) == 0 && resp.FinishReason != turn.FinishRefusal && len(req.Tools) > 0 && !usedTools &&
+				bareAck(responseText(resp)) && !askedFor(req.Messages, responseText(resp)) {
+				if !nudged {
+					// The model was given tools and answered a request with a bare
+					// "OK". Ask once more, saying what is wrong with that.
+					nudged = true
+					req.Messages = append(req.Messages,
+						turn.Message{Role: turn.RoleAssistant, Content: resp.Content},
+						turn.Message{Role: turn.RoleUser, Content: []turn.ContentBlock{{Type: turn.BlockText, Text: bareAckNudge}}})
+					continue
+				}
+				resp.Content = []turn.ContentBlock{{Type: turn.BlockText, Text: bareAckGaveUp}}
+			}
 			return resp, nil
 		}
+		usedTools = true
 		if err := ctx.Err(); err != nil {
 			return resp, err
 		}
@@ -559,4 +575,57 @@ func clip(s string, n int) string {
 		return s
 	}
 	return strings.ToValidUTF8(s[:n], "") + "\n[output cut]"
+}
+
+// bareAckNudge is what the model is told when it answered a request with an acknowledgment
+// and nothing else.
+const bareAckNudge = "That reply says nothing and does nothing. If the user asked for something, do it now with the tools; " +
+	"if you cannot, say in a sentence what you cannot do and why. Do not answer with only an acknowledgment."
+
+// bareAckGaveUp is what the user reads, and what the history keeps in place of the model's
+// words, when it answered with a bare acknowledgment twice. Keeping the "OK" would show the
+// next turn a model that answers every request with "OK", and it would imitate it: that is
+// how a conversation ended up as a column of "OK" under the user's growing exasperation.
+const bareAckGaveUp = "(the model answered only with an acknowledgment and did nothing, even when asked again; " +
+	"send the request again, or choose another model with /model)"
+
+// bareAckWords are the replies that claim to comply and carry nothing else. They are
+// compared whole, after the punctuation is gone, so "ok, I read the file" is not one.
+var bareAckWords = map[string]bool{
+	"ok": true, "okay": true, "okey": true, "vale": true, "listo": true, "hecho": true, "done": true,
+	"entendido": true, "claro": true, "perfecto": true, "sure": true, "understood": true, "got it": true,
+	"de acuerdo": true, "si": true, "sí": true, "yes": true, "bien": true, "ya": true, "ok done": true,
+}
+
+// bareAck reports whether a reply is only an acknowledgment. A model that was lent tools and
+// answers a request this way has done nothing and said nothing: a "done" with no tool call
+// behind it is a claim with nothing under it.
+func bareAck(text string) bool {
+	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsNumber(r)
+	})
+	if len(words) == 0 || len(words) > 2 {
+		return false
+	}
+	return bareAckWords[strings.Join(words, " ")]
+}
+
+// askedFor reports whether the last thing the user said contains the reply: "answer OK" is
+// a request the reply "OK" fulfils, and sending the model back to do more would be wrong.
+func askedFor(messages []turn.Message, reply string) bool {
+	for i := len(messages) - 1; i >= 0; i-- {
+		if messages[i].Role != turn.RoleUser {
+			continue
+		}
+		var said string
+		for _, b := range messages[i].Content {
+			said += " " + b.Text
+		}
+		if strings.TrimSpace(said) == bareAckNudge {
+			continue
+		}
+		word := strings.TrimFunc(reply, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsNumber(r) })
+		return strings.Contains(strings.ToLower(said), strings.ToLower(word))
+	}
+	return false
 }

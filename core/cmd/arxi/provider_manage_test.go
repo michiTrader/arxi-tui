@@ -99,6 +99,16 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 			}
 			f.tools = append(f.tools, offered)
 			if step := len(f.tools) - 1; step < len(f.script) {
+				if st := f.script[step]; st.name == "" {
+					// A step with no tool is a plain answer: what a model that does
+					// not use its tools sends.
+					json.NewEncoder(w).Encode(map[string]any{
+						"id":      "x",
+						"choices": []any{map[string]any{"index": 0, "finish_reason": "stop", "message": map[string]any{"role": "assistant", "content": st.text}}},
+						"usage":   map[string]int{"prompt_tokens": 4, "completion_tokens": 1},
+					})
+					return
+				}
 				f.answerScripted(w, f.script[step], body.Stream)
 				return
 			}

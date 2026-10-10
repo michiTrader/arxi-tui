@@ -321,3 +321,79 @@ func TestStandingPromptStaysWithinItsBudget(t *testing.T) {
 		t.Errorf("the tool definitions are %d bytes, budget %d", len(raw), maxDefBytes)
 	}
 }
+
+// A model lent tools answered "OK" to a request and did nothing, then answered "OK" to every
+// line after it because its own earlier replies were the pattern it followed. The loop asks
+// once more, and when it is still only an acknowledgment it says so instead of passing the
+// word on as if it were an answer.
+func TestABareOKFromAModelWithToolsIsAskedAgainAndThenSaidPlainly(t *testing.T) {
+	f := setUpFake(t)
+	f.script = []scripted{{text: "OK"}, {text: "Ok."}}
+	ctx, _ := collect(t, projectDir(t))
+	res, err := chatSendEffort(ctx, "add a border", "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Text != bareAckGaveUp {
+		t.Errorf("reply = %q; a bare acknowledgment given twice must be reported as doing nothing, not passed on as the answer", res.Text)
+	}
+	if len(f.messages) != 2 {
+		t.Fatalf("the model was asked %d times, want 2 (the request and one more)", len(f.messages))
+	}
+	again := f.messages[1]
+	if body, _ := again[len(again)-1]["content"].(string); body != bareAckNudge {
+		t.Errorf("the second ask ends with %q, want the reminder", body)
+	}
+}
+
+func TestAnAcknowledgmentThenARealAnswerIsKept(t *testing.T) {
+	f := setUpFake(t)
+	f.script = []scripted{{text: "OK"}, {text: "I added the border around the input bar."}}
+	ctx, _ := collect(t, projectDir(t))
+	res, err := chatSendEffort(ctx, "add a border", "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Text != "I added the border around the input bar." {
+		t.Errorf("reply = %q; the answer after the reminder is the model's answer", res.Text)
+	}
+}
+
+func TestAShortAnswerThatSaysSomethingIsNotAnAcknowledgment(t *testing.T) {
+	for _, s := range []string{"OK, I read main.go: it is empty.", "Hecho: añadí la línea.", "No.", "42", ""} {
+		if bareAck(s) {
+			t.Errorf("%q is taken for a bare acknowledgment; the reminder would be sent to a model that answered", s)
+		}
+	}
+	for _, s := range []string{"OK", "ok.", "  Okay! ", "Listo", "Entendido.", "Done", "de acuerdo"} {
+		if !bareAck(s) {
+			t.Errorf("%q is not taken for a bare acknowledgment", s)
+		}
+	}
+}
+
+func TestAnAcknowledgmentAfterToolsIsAFinalAnswerNotAFailure(t *testing.T) {
+	f := setUpFake(t)
+	f.script = []scripted{{name: "list", args: `{"path":"."}`}, {text: "Done"}}
+	ctx, _ := collect(t, projectDir(t))
+	res, err := chatSendEffort(ctx, "list the files", "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Text != "Done" || len(f.messages) != 2 {
+		t.Errorf("reply = %q after %d asks; a model that used its tools and then said Done answered", res.Text, len(f.messages))
+	}
+}
+
+func TestAnAcknowledgmentTheUserAskedForIsTheAnswer(t *testing.T) {
+	f := setUpFake(t)
+	f.script = []scripted{{text: "OK"}}
+	ctx, _ := collect(t, projectDir(t))
+	res, err := chatSendEffort(ctx, "reply with just OK", "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Text != "OK" || len(f.messages) != 1 {
+		t.Errorf("reply = %q after %d asks; a user who asked for OK was sent back to do more", res.Text, len(f.messages))
+	}
+}
