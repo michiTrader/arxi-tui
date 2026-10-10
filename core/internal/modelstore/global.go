@@ -12,10 +12,15 @@ import (
 // everything else.
 const EnvDir = "ARXI_PROVIDERS_DIR"
 
-// GlobalDirIn is the providers folder under a user configuration directory. It sits
-// next to the secrets folder (<config>/arxi/secrets), so one place holds everything
-// the user configured and it is the same from any working directory.
-func GlobalDirIn(configDir string) string {
+// GlobalDirIn is the providers folder under the user's home: ~/.arxi/providers. It sits
+// next to the secrets folder (~/.arxi/secrets), so one place holds everything the user
+// configured and it is the same from any working directory.
+func GlobalDirIn(home string) string {
+	return filepath.Join(home, ".arxi", "providers")
+}
+
+// LegacyDirIn is where providers lived before ~/.arxi: <user config dir>/arxi/providers.
+func LegacyDirIn(configDir string) string {
 	return filepath.Join(configDir, "arxi", "providers")
 }
 
@@ -31,6 +36,8 @@ const migratedFile = ".migrated"
 //   - Otherwise the global folder (see GlobalDirIn) is used, so the providers and the
 //     default model are the same whichever folder the program is started in. Before
 //     this, they were read from ./providers and a new folder had none.
+//   - The previous global folder (see LegacyDirIn) is copied in once, the same way, and
+//     left in place.
 //   - If ./providers (relative to cwd) holds providers and that folder has not been
 //     brought along before, they are copied to the global folder. Files already there
 //     are never overwritten, and the originals are left alone, so nothing is lost. The
@@ -38,27 +45,39 @@ const migratedFile = ".migrated"
 //   - With no configuration directory to use, it falls back to ./providers.
 //
 // migrated is how many files were copied, so the caller can say so.
-func Locate(env func(string) string, configDir func() (string, error), cwd string) (dir string, migrated int, err error) {
+//
+// home and configDir are parameters, not calls, so this package never reaches the user's
+// directories by itself (the stores are held to that by a test).
+func Locate(env func(string) string, home, configDir func() (string, error), cwd string) (dir string, migrated int, err error) {
 	if d := strings.TrimSpace(env(EnvDir)); d != "" {
 		return d, 0, nil
 	}
-	base, cerr := configDir()
-	if cerr != nil || strings.TrimSpace(base) == "" {
+	base, herr := home()
+	if herr != nil || strings.TrimSpace(base) == "" {
 		return DefaultDir, 0, nil
 	}
 	global := GlobalDirIn(base)
-	local := filepath.Join(cwd, DefaultDir)
-	if filepath.Clean(local) == filepath.Clean(global) {
-		return global, 0, nil
+	sources := []string{filepath.Join(cwd, DefaultDir)}
+	if cfg, cerr := configDir(); cerr == nil && strings.TrimSpace(cfg) != "" {
+		sources = append([]string{LegacyDirIn(cfg)}, sources...)
 	}
-	if done, err := alreadyMigrated(global, local); err != nil || done {
-		return global, 0, err
+	total := 0
+	for _, src := range sources {
+		if filepath.Clean(src) == filepath.Clean(global) {
+			continue
+		}
+		if done, err := alreadyMigrated(global, src); err != nil {
+			return global, total, err
+		} else if done {
+			continue
+		}
+		n, err := copyProviders(src, global)
+		if err != nil {
+			return "", total, err
+		}
+		total += n
 	}
-	n, err := copyProviders(local, global)
-	if err != nil {
-		return "", 0, err
-	}
-	return global, n, nil
+	return global, total, nil
 }
 
 // alreadyMigrated reports whether local was brought along before.

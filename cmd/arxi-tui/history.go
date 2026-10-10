@@ -28,17 +28,16 @@ const historyMax = 500
 // keep their configuration somewhere else.
 const historyEnv = "ARXI_HISTORY_DIR"
 
-// historyPath is where the history is kept: next to the keys and the providers, in the
-// user's configuration directory. Empty when there is none to be found, which leaves the
+// historyPath is where the history is kept: next to the keys and the providers, in
+// ~/.arxi. Empty when there is none to be found, which leaves the
 // history in memory.
 func historyPath() string {
 	dir := os.Getenv(historyEnv)
 	if dir == "" {
-		base, err := os.UserConfigDir()
-		if err != nil || base == "" {
-			return ""
-		}
-		dir = filepath.Join(base, "arxi")
+		dir = configDir()
+	}
+	if dir == "" {
+		return ""
 	}
 	return filepath.Join(dir, "history")
 }

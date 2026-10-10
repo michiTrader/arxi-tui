@@ -36,16 +36,19 @@ type searchConfig struct {
 
 var errNoConfigDir = errors.New("this system has no settings folder to keep it in; set " + configDirEnv + " to a folder")
 
-// configDir is the folder for host settings, "" when the system has none.
+// configDir is the folder for host settings, "" when the system has none: ARXI_CONFIG_DIR
+// when set, otherwise ~/.arxi. The first use of ~/.arxi brings the old folder's settings
+// along (config_home.go).
 func configDir() string {
 	if d := os.Getenv(configDirEnv); d != "" {
 		return d
 	}
-	base, err := os.UserConfigDir()
-	if err != nil || base == "" {
+	d := homeConfigDir()
+	if d == "" {
 		return ""
 	}
-	return filepath.Join(base, "arxi")
+	importLegacyConfig(d, legacyConfigDir())
+	return d
 }
 
 // searchConfigPath is the settings file, "" when there is nowhere to keep it.

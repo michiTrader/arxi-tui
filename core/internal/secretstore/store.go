@@ -46,17 +46,93 @@ const maxKeyBytes = 4096
 // Store is a directory of keys, one file per provider.
 type Store struct{ dir string }
 
-// DefaultDir is the directory keys live in unless EnvDir says otherwise.
+// legacyMarker, inside the new folder, records that the old one was already read. After
+// it exists the old folder is never read again, so a key the user deletes does not come
+// back from the folder this program no longer writes to.
+const legacyMarker = ".legacy-imported"
+
+// DefaultDir is the directory keys live in unless EnvDir says otherwise: ~/.arxi/secrets.
 func DefaultDir() (string, error) {
 	if d := strings.TrimSpace(os.Getenv(EnvDir)); d != "" {
 		return d, nil
 	}
-	base, err := os.UserConfigDir()
-	if err != nil {
-		return "", fmt.Errorf("secretstore: cannot find your configuration directory (%v).\n"+
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return "", fmt.Errorf("secretstore: cannot find your home directory (%v).\n"+
 			"  set %s to a private folder and try again", err, EnvDir)
 	}
-	return filepath.Join(base, "arxi", "secrets"), nil
+	return filepath.Join(home, ".arxi", "secrets"), nil
+}
+
+// legacyDir is where keys lived before ~/.arxi: <user config dir>/arxi/secrets.
+func legacyDir() string {
+	base, err := os.UserConfigDir()
+	if err != nil || strings.TrimSpace(base) == "" {
+		return ""
+	}
+	return filepath.Join(base, "arxi", "secrets")
+}
+
+// importLegacy copies the keys of the old folder into dir, once. It never overwrites a
+// key already in dir and never touches the old folder: the user may still run an older
+// build, and deleting a credential is not this program's call. A missing old folder
+// copies nothing and creates nothing.
+func importLegacy(dir, old string) error {
+	if old == "" || filepath.Clean(old) == filepath.Clean(dir) {
+		return nil
+	}
+	if _, err := os.Stat(filepath.Join(dir, legacyMarker)); err == nil {
+		return nil
+	}
+	entries, err := os.ReadDir(old)
+	if err != nil {
+		return nil // nothing to bring along
+	}
+	var names []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ext) {
+			names = append(names, e.Name())
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("secretstore: create %s: %w", dir, err)
+	}
+	st := &Store{dir: dir}
+	for _, n := range names {
+		name := strings.TrimSuffix(n, ext)
+		if validName(name) != nil {
+			continue
+		}
+		if _, err := os.Stat(st.Path(name)); err == nil {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(old, n))
+		if err != nil {
+			return fmt.Errorf("secretstore: read %s: %w", n, err)
+		}
+		if err := st.Set(name, string(b)); err != nil {
+			continue // a file that is not a key is left where it is
+		}
+	}
+	return os.WriteFile(filepath.Join(dir, legacyMarker), []byte("old folder: "+old+"\n"), 0o600)
+}
+
+// prepareDefault resolves the default directory and, unless EnvDir chose it, brings the
+// old folder's keys along once.
+func prepareDefault() (string, error) {
+	dir, err := DefaultDir()
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(os.Getenv(EnvDir)) == "" {
+		if err := importLegacy(dir, legacyDir()); err != nil {
+			return "", err
+		}
+	}
+	return dir, nil
 }
 
 // Open prepares dir, creating it private if necessary.
@@ -72,7 +148,7 @@ func Open(dir string) (*Store, error) {
 
 // OpenDefault opens the store at DefaultDir.
 func OpenDefault() (*Store, error) {
-	dir, err := DefaultDir()
+	dir, err := prepareDefault()
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +159,7 @@ func OpenDefault() (*Store, error) {
 // anything. A run that has no stored key must not leave an empty private
 // directory behind in the user's configuration folder just for having looked.
 func Lookup(name string) (key string, ok bool, err error) {
-	dir, err := DefaultDir()
+	dir, err := prepareDefault()
 	if err != nil {
 		return "", false, err
 	}

@@ -9,6 +9,8 @@ import (
 
 func noEnv(string) string { return "" }
 
+func noLegacy() (string, error) { return "", errors.New("no config dir") }
+
 func cfg(dir string) func() (string, error) { return func() (string, error) { return dir, nil } }
 
 func write(t *testing.T, dir, name, body string) {
@@ -23,18 +25,18 @@ func write(t *testing.T, dir, name, body string) {
 
 func TestProvidersLiveInTheGlobalFolderWhateverTheWorkingDirectory(t *testing.T) {
 	config, cwd := t.TempDir(), t.TempDir()
-	dir, n, err := Locate(noEnv, cfg(config), cwd)
+	dir, n, err := Locate(noEnv, cfg(config), noLegacy, cwd)
 	if err != nil || n != 0 {
 		t.Fatalf("dir=%q migrated=%d err=%v", dir, n, err)
 	}
-	if want := filepath.Join(config, "arxi", "providers"); dir != want {
+	if want := filepath.Join(config, ".arxi", "providers"); dir != want {
 		t.Errorf("dir = %q, want %q", dir, want)
 	}
 	if _, err := os.Stat(filepath.Join(cwd, "providers")); err == nil {
 		t.Error("nothing may be created in the working directory")
 	}
 	// Another working directory reaches the same folder.
-	other, _, _ := Locate(noEnv, cfg(config), t.TempDir())
+	other, _, _ := Locate(noEnv, cfg(config), noLegacy, t.TempDir())
 	if other != dir {
 		t.Errorf("a second folder got %q, want %q", other, dir)
 	}
@@ -47,7 +49,7 @@ func TestTheEnvironmentOverridesTheLocation(t *testing.T) {
 		}
 		return ""
 	}
-	dir, n, err := Locate(env, cfg(t.TempDir()), t.TempDir())
+	dir, n, err := Locate(env, cfg(t.TempDir()), noLegacy, t.TempDir())
 	if err != nil || n != 0 || dir != "/somewhere/else" {
 		t.Errorf("dir=%q n=%d err=%v", dir, n, err)
 	}
@@ -61,7 +63,7 @@ func TestExistingLocalProvidersAreCopiedOnceAndNeverMoved(t *testing.T) {
 	write(t, local, "default-model", "openai/gpt-4o\n")
 	write(t, local, "notes.txt", "not a provider")
 
-	dir, n, err := Locate(noEnv, cfg(config), cwd)
+	dir, n, err := Locate(noEnv, cfg(config), noLegacy, cwd)
 	if err != nil || n != 3 {
 		t.Fatalf("migrated=%d err=%v (want the 2 providers and the default model)", n, err)
 	}
@@ -85,7 +87,7 @@ func TestExistingLocalProvidersAreCopiedOnceAndNeverMoved(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "vyceai.json")); err != nil {
 		t.Fatal(err)
 	}
-	_, n, err = Locate(noEnv, cfg(config), cwd)
+	_, n, err = Locate(noEnv, cfg(config), noLegacy, cwd)
 	if err != nil || n != 0 {
 		t.Errorf("second start: migrated=%d err=%v", n, err)
 	}
@@ -101,7 +103,7 @@ func TestAnEmptyOrMissingLocalFolderMigratesNothingAndCreatesNothing(t *testing.
 	} {
 		config, cwd := t.TempDir(), t.TempDir()
 		setup(cwd)
-		dir, n, err := Locate(noEnv, cfg(config), cwd)
+		dir, n, err := Locate(noEnv, cfg(config), noLegacy, cwd)
 		if err != nil || n != 0 {
 			t.Fatalf("migrated=%d err=%v", n, err)
 		}
@@ -112,7 +114,7 @@ func TestAnEmptyOrMissingLocalFolderMigratesNothingAndCreatesNothing(t *testing.
 }
 
 func TestWithoutAConfigDirectoryItFallsBackToTheLocalFolder(t *testing.T) {
-	dir, n, err := Locate(noEnv, func() (string, error) { return "", errors.New("no home") }, t.TempDir())
+	dir, n, err := Locate(noEnv, func() (string, error) { return "", errors.New("no home") }, noLegacy, t.TempDir())
 	if err != nil || n != 0 || dir != DefaultDir {
 		t.Errorf("dir=%q n=%d err=%v", dir, n, err)
 	}
@@ -125,14 +127,14 @@ func TestWithoutAConfigDirectoryItFallsBackToTheLocalFolder(t *testing.T) {
 func TestAnOlderFolderIsStillBroughtAlongAfterTheGlobalFolderExists(t *testing.T) {
 	config := t.TempDir()
 	fresh, older := t.TempDir(), t.TempDir()
-	dir, _, _ := Locate(noEnv, cfg(config), fresh)
+	dir, _, _ := Locate(noEnv, cfg(config), noLegacy, fresh)
 	write(t, dir, "mine.json", `{"name":"mine"}`)
 	write(t, dir, "default-model", "mine/m\n")
 
 	write(t, filepath.Join(older, "providers"), "old.json", `{"name":"old"}`)
 	write(t, filepath.Join(older, "providers"), "mine.json", `{"name":"STALE"}`)
 	write(t, filepath.Join(older, "providers"), "default-model", "old/o\n")
-	_, n, err := Locate(noEnv, cfg(config), older)
+	_, n, err := Locate(noEnv, cfg(config), noLegacy, older)
 	if err != nil || n != 1 {
 		t.Fatalf("migrated=%d err=%v (only old.json is new)", n, err)
 	}
@@ -148,10 +150,39 @@ func TestAnOlderFolderIsStillBroughtAlongAfterTheGlobalFolderExists(t *testing.T
 	if err := os.Remove(filepath.Join(dir, "old.json")); err != nil {
 		t.Fatal(err)
 	}
-	if _, n, _ = Locate(noEnv, cfg(config), older); n != 0 {
+	if _, n, _ = Locate(noEnv, cfg(config), noLegacy, older); n != 0 {
 		t.Errorf("the same folder was copied twice (%d)", n)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "old.json")); err == nil {
 		t.Error("a removed provider came back")
+	}
+}
+
+// The folder the previous version used (<config dir>/arxi/providers) is brought along
+// once and left where it is.
+func TestTheOldGlobalFolderIsImportedOnceAndKept(t *testing.T) {
+	home, oldCfg := t.TempDir(), t.TempDir()
+	old := LegacyDirIn(oldCfg)
+	write(t, old, "openai.json", `{"name":"openai"}`)
+	write(t, old, "default-model", "openai/gpt-4o\n")
+
+	dir, n, err := Locate(noEnv, cfg(home), cfg(oldCfg), t.TempDir())
+	if err != nil || n != 2 {
+		t.Fatalf("migrated=%d err=%v", n, err)
+	}
+	if dir != filepath.Join(home, ".arxi", "providers") {
+		t.Errorf("dir = %q", dir)
+	}
+	if _, err := os.Stat(filepath.Join(old, "openai.json")); err != nil {
+		t.Error("the old folder must be kept")
+	}
+	if err := os.Remove(filepath.Join(dir, "openai.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, n, _ = Locate(noEnv, cfg(home), cfg(oldCfg), t.TempDir()); n != 0 {
+		t.Errorf("imported twice (%d)", n)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "openai.json")); err == nil {
+		t.Error("a removed provider came back from the old folder")
 	}
 }

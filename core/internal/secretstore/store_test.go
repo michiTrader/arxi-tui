@@ -143,3 +143,69 @@ func TestLookupDoesNotCreateTheDirectory(t *testing.T) {
 		t.Error("Lookup created the secrets directory just for having looked")
 	}
 }
+
+func TestDefaultDirIsDotArxiInTheHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(EnvDir, "")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	got, err := DefaultDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(home, ".arxi", "secrets"); got != want {
+		t.Errorf("DefaultDir = %q, want %q", got, want)
+	}
+}
+
+func seed(t *testing.T, dir, name, key string) {
+	t.Helper()
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Set(name, key); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLegacyKeysAreCopiedOnceAndTheOldFolderIsKept(t *testing.T) {
+	root := t.TempDir()
+	old, dir := filepath.Join(root, "old"), filepath.Join(root, "new", "secrets")
+	seed(t, old, "openai", "sk-old")
+	seed(t, old, "vyceai", "vy-old")
+	seed(t, dir, "vyceai", "vy-new") // already configured here: must win
+
+	if err := importLegacy(dir, old); err != nil {
+		t.Fatal(err)
+	}
+	st := &Store{dir: dir}
+	if k, _, _ := st.Get("openai"); k != "sk-old" {
+		t.Errorf("openai = %q, want the imported key", k)
+	}
+	if k, _, _ := st.Get("vyceai"); k != "vy-new" {
+		t.Errorf("vyceai = %q, an existing key was overwritten", k)
+	}
+	if _, err := os.Stat(filepath.Join(old, "openai.key")); err != nil {
+		t.Error("the old folder must be left untouched")
+	}
+
+	// Deleted here, it must not come back from the old folder.
+	_ = st.Delete("openai")
+	if err := importLegacy(dir, old); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := st.Has("openai"); ok {
+		t.Error("a deleted key came back from the old folder")
+	}
+}
+
+func TestNoLegacyFolderCreatesNothing(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "new", "secrets")
+	if err := importLegacy(dir, filepath.Join(t.TempDir(), "missing")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); err == nil {
+		t.Error("the new folder was created with nothing to import")
+	}
+}
