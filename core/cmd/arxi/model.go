@@ -141,7 +141,7 @@ func cmdProviderAdd(args []string) {
 
 	// The timestamp is stamped inside registerProvider and passed to internal/model,
 	// which arch rule 17 forbids from importing time.
-	added, err := registerProvider(vals["name"], vals["base-url"], vals["api-key-env"], "")
+	added, err := registerProviderWire(vals["name"], vals["base-url"], vals["protocol"], vals["api-key-env"], "")
 	if err != nil {
 		// Exit 2 for a bad invocation: a key passed where a variable name
 		// belongs lands here, and it is the most important refusal in the

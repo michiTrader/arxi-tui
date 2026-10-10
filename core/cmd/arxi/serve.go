@@ -831,8 +831,8 @@ func handleProviderAdd(params map[string]any) (any, error) {
 	//
 	// api_key is the key itself. It goes straight to registerProvider, which stores
 	// it in the private secrets folder; the result carries only key_stored.
-	res, err := registerProvider(
-		stringParam(params, "name"), stringParam(params, "base_url"),
+	res, err := registerProviderWire(
+		stringParam(params, "name"), stringParam(params, "base_url"), stringParam(params, "protocol"),
 		stringParam(params, "api_key_env"), stringParam(params, "api_key"))
 	if err != nil {
 		return nil, err

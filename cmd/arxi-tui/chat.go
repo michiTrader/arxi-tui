@@ -252,12 +252,19 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 		web = ""
 	}
 	hist := trimHistory(c.history, chatMaxHistory, chatMaxHistoryBytes)
+	// The interface tools and their guide ride only with a question that asks for them.
+	text, withUI := uiTrigger(text)
+	if text == "" {
+		c.busy = false
+		c.mu.Unlock()
+		return errUIPromptEmpty
+	}
 	c.turn++
 	turn := c.turn
 	turnCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.mu.Unlock()
-	go c.run(turnCtx, text, hist, gen, effort, workdir, edits, runs, web, turn)
+	go c.run(turnCtx, text, withUI, hist, gen, effort, workdir, edits, runs, web, turn)
 	return nil
 }
 
@@ -396,7 +403,7 @@ func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload m
 	}
 }
 
-func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs, web string, turn int64) {
+func (c *chatSession) run(ctx context.Context, text string, withUI bool, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs, web string, turn int64) {
 	defer func() {
 		c.mu.Lock()
 		// Only the turn that is still current frees the session: a cancelled turn
@@ -453,17 +460,22 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 			})
 		},
 	}
-	if c.ui != nil && workdir != "" {
+	uiSystem := ""
+	if withUI && c.ui != nil && workdir != "" {
 		ui := c.ui
-		// The tool descriptions alone did not do it. Measured on a real model: asked
-		// to recolour "the tui", it searched the project eleven times, because the
-		// core's standing hint says the tools are for "the user's project" and
-		// nothing said the app it runs in is something else. One sentence names it.
-		params.System += " " + uiSystemHint
+		// Only on a question that asked for it (/ui <request> or @ui). Always-on, the
+		// hint made a user vibe-coding a TUI project unsure whether "the TUI" meant
+		// this app or theirs; now the words mean this app only when the user said so.
+		// The guide is read here, not left for the model to fetch: it is the whole
+		// point of the trigger, and it saves the round trip.
+		uiSystem = " " + uiSystemHint + "\n\n" + ui.guideText()
+		params.System += uiSystem
 		params.ClientTools = ui.definitions()
 		params.OnClientTool = func(ctx context.Context, call driver.ClientToolCall) driver.ClientToolResult {
 			return ui.call(ctx, call, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
 		}
+	} else if withUI {
+		c.post(ctx, gen, "chat.warn", map[string]any{"text": "/ui: the model can change the interface only inside a project folder with a core that supports it"})
 	}
 	res, err := core.SubmitChatSend(ctx, params)
 	// An older core refuses what it does not know, one parameter at a time. Take away
@@ -478,7 +490,7 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 			params.ClientTools, params.OnClientTool = nil, nil
 			// The hint names ui_guide; without the tool it would send the model
 			// looking for one it does not have.
-			params.System = strings.TrimSuffix(params.System, " "+uiSystemHint)
+			params.System = strings.TrimSuffix(params.System, uiSystem)
 		case errors.Is(err, driver.ErrEditsUnsupported):
 			// A core that can look but not change files: say so, and go on looking.
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model change files, " +
@@ -509,7 +521,7 @@ func (c *chatSession) run(ctx context.Context, text string, hist []driver.ChatTu
 		c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot give the model access to your files, " +
 			"so it answers without looking; " + rebuildRemedy})
 		params.Workdir, params.OnTool, params.ClientTools, params.OnClientTool = "", nil, nil, nil
-		params.System = strings.TrimSuffix(params.System, " "+uiSystemHint)
+		params.System = strings.TrimSuffix(params.System, uiSystem)
 		res, err = core.SubmitChatSend(ctx, params)
 	}
 	if ctx.Err() != nil {

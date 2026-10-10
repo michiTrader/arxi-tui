@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -32,6 +33,12 @@ func cleanName(name string) string { return strings.ToLower(strings.TrimSpace(na
 //
 // keyEnv "none" clears the variable name (a local server needs none).
 func updateProvider(name, baseURL, keyEnv, apiKey string) (model.Provider, bool, error) {
+	return updateProviderWire(name, baseURL, "", keyEnv, apiKey)
+}
+
+// updateProviderWire is updateProvider with an optional explicit wire. A new endpoint,
+// or "auto", detects the wire again; "openai" / "anthropic" force it.
+func updateProviderWire(name, baseURL, protocol, keyEnv, apiKey string) (model.Provider, bool, error) {
 	store, err := providerStore()
 	if err != nil {
 		return model.Provider{}, false, err
@@ -45,14 +52,37 @@ func updateProvider(name, baseURL, keyEnv, apiKey string) (model.Provider, bool,
 			return model.Provider{}, false, badInvocation{fmt.Errorf("provider %q was not changed: %w", p.Name, err)}
 		}
 	}
-	if u := strings.TrimRight(strings.TrimSpace(baseURL), "/"); u != "" {
+	want, ok := model.ParseProtocol(protocol)
+	if !ok {
+		return model.Provider{}, false, errBadProtocol(protocol)
+	}
+	u := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if u != "" {
 		p.BaseURL = u
-		// An explicit endpoint other than the vendor's own is documented as
-		// OpenAI-compatible, exactly as model.New decides at registration.
-		if tableURL, _, ok := model.Known(p.Name); !ok || u != tableURL {
-			p.Protocol = model.ProtocolOpenAIChatCompletions
-		} else if kp, ok := model.KnownProtocol(p.Name); ok {
+	}
+	tableURL, _, inTable := model.Known(p.Name)
+	switch {
+	case want != "":
+		p.Protocol = want
+	case inTable && p.BaseURL == tableURL:
+		// The vendor's own endpoint speaks the vendor's own wire.
+		if kp, ok := model.KnownProtocol(p.Name); ok && u != "" {
 			p.Protocol = kp
+		}
+	case u != "" || strings.TrimSpace(protocol) != "":
+		// Something about the endpoint changed (or "auto" was asked): decide again.
+		key := apiKey
+		if key == "" {
+			if k, ok, _ := secretsLookup(p.Name); ok {
+				key = k
+			} else if p.APIKeyEnv != "" {
+				key = os.Getenv(p.APIKeyEnv)
+			}
+		}
+		if base, found := detectEndpoint(p.BaseURL, key); found != "" {
+			p.BaseURL, p.Protocol = base, found
+		} else {
+			p.Protocol = model.ProtocolOpenAIChatCompletions
 		}
 	}
 	switch k := strings.TrimSpace(keyEnv); k {
@@ -259,6 +289,10 @@ func refusalText(r *turn.Refusal) string {
 		return msg
 	}
 	switch r.Code {
+	case "http_403":
+		if strings.TrimSpace(r.Message) == "" {
+			return "the provider's gateway refused the request with an empty 403 and kept doing so on every retry (nothing was sent to a model or billed). It is not your key: gateways in front of an API do this to an unpredictable share of requests. Try again in a moment"
+		}
 	case "http_504", "http_502", "http_503":
 		return fmt.Sprintf("the provider timed out or is overloaded (%s, tried %d times). A long answer from a slow model is the usual cause: ask for something shorter, lower /effort, or pick another model with /model. Provider said: %s", strings.TrimPrefix(r.Code, "http_"), chatAttempts, msg)
 	case "http_429":
@@ -385,7 +419,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 
 	ctx, cancel := context.WithTimeout(ctx, chatTimeout)
 	defer cancel()
-	exec := &provider.Executor{}
+	exec := &provider.Executor{OnWire: rememberWire}
 	req := turn.Request{
 		Schema: turn.Schema, Provider: res.Provider, Protocol: res.Protocol,
 		BaseURL: res.BaseURL, APIKeyEnv: res.APIKeyEnv, Model: res.Model,
@@ -470,7 +504,7 @@ func onlyUsableModel(ps []model.Provider) (string, error) {
 // handleProviderUpdate answers `provider.update`. Like provider.add it reports
 // that a key was stored and never what it was.
 func handleProviderUpdate(params map[string]any) (any, error) {
-	p, keyStored, err := updateProvider(stringParam(params, "name"), stringParam(params, "base_url"),
+	p, keyStored, err := updateProviderWire(stringParam(params, "name"), stringParam(params, "base_url"), stringParam(params, "protocol"),
 		stringParam(params, "api_key_env"), stringParam(params, "api_key"))
 	if err != nil {
 		return nil, err
@@ -575,4 +609,25 @@ func handleChatSend(params map[string]any) (any, error) {
 	}
 	return chatSendEffort(context.Background(), stringParam(params, "prompt"), stringParam(params, "history"),
 		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))
+}
+
+// rememberWire records, on the model, the wire that worked after the provider's own
+// wire answered a web page, so the next call goes straight to it. A failure to save
+// costs one extra request next time and never fails the call that already succeeded.
+func rememberWire(providerName, modelID, protocol string) {
+	store, err := providerStore()
+	if err != nil {
+		return
+	}
+	p, err := store.Load(cleanName(providerName))
+	if err != nil {
+		return
+	}
+	for i := range p.Models {
+		if p.Models[i].ID == modelID {
+			p.Models[i].Protocol = protocol
+			_ = store.Save(p)
+			return
+		}
+	}
 }

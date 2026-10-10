@@ -151,18 +151,22 @@ anything you typed, so set `ARXI_SESSIONS=off` to save nothing at all.
 
 ### Asking the agent to change the interface
 
-Ask in your own words: "add a blank line between the input bar and the status bar", "make
-the blue words in your answers purple", "move the status bar above the chat". The model reads how this
+Start the request with `/ui` (or put `@ui` anywhere in it) and ask in your own words:
+`/ui add a blank line between the input bar and the status bar`, `/ui make the blue words
+in your answers purple`, `@ui move the status bar above the chat`. Without `/ui` or `@ui` the
+model is not given the interface at all, so when you are building a TUI of your own, "the TUI"
+means yours. (A `/ui` line that is one of the typed commands below, such as `/ui undo` or
+`/ui add node ...`, is that command, not a request.) The model reads how this
 interface is built, proposes the change, and you see the diff before anything moves:
 `Allow this change to the interface?  y yes · n no`. Allowed, it is drawn at once and kept
 for your next session.
 
 - **It does not look in your project for it.** The interface lives inside the program (a
-  release has no source tree), so the model is given two tools of the program's own:
+  release has no source tree), so, on a `/ui` request, the model is given two tools of the program's own:
   `ui_guide` (how the interface is built: the live document, every node type and bind, and
   every style token with its current colour and what it paints) and `ui_edit` (propose a
-  change). It is also told, in one sentence, that it runs inside arxi-tui, so "the TUI" or
-  "your colours" never send it searching your files.
+  change). It is also told that it runs inside arxi-tui and is handed the guide in the same turn, so
+  "the TUI" or "your colours" never send it searching your files.
 - **Colours and layout.** The layout is the scene document; the colours are style tokens.
   The coloured words in an answer are `markdown.code` (inline code) and `markdown.link`,
   cyan by default. You can do the same by hand: `/ui color markdown.code fg=magenta`
@@ -680,7 +684,7 @@ Support/arxi` on macOS). `ARXI_CONFIG_DIR` moves it. The interface you shaped li
 there: `history`, `sessions/`, `search.json`, the providers and the keys. The consent
 decisions, the plugins and the run logs are in `~/.arxi` instead. Nothing is kept in the
 project folder, and the factory interface draws no frame round the input bar: ask the
-agent for one (for example, "put a rounded border round the input bar") and `/ui reset`
+agent for one (for example, `/ui put a rounded border round the input bar`) and `/ui reset`
 takes it away.
 
 ### Input history

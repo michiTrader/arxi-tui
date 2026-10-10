@@ -92,6 +92,10 @@ type APIError struct {
 	Status  int
 	Message string
 	Model   string
+	// Web is true when the reply was a web page instead of an API answer. Such a
+	// reply never reached the model, so nothing was sent or billed, and asking again
+	// on the provider's other wire is safe.
+	Web bool
 }
 
 func (e *APIError) Error() string {

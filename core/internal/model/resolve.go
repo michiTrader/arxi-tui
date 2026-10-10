@@ -106,6 +106,9 @@ func Resolve(ps []Provider, ref string) (Resolution, error) {
 
 	h := hits[0]
 	protocol := h.p.EffectiveProtocol()
+	if h.m.Protocol != "" {
+		protocol = h.m.Protocol
+	}
 	if protocol != ProtocolOpenAIChatCompletions && protocol != ProtocolAnthropicMessages {
 		return Resolution{}, fmt.Errorf("provider %s uses unsupported protocol %s; no request was sent",
 			h.p.Name, protocol)
