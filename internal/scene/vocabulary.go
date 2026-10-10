@@ -1,6 +1,7 @@
 package scene
 
 import (
+	"encoding/json"
 	"fmt"
 	"reflect"
 	"sort"
@@ -173,6 +174,52 @@ func nodeVocabulary() map[string]bool {
 		}
 	}
 	return vocab
+}
+
+// KeyShape is what a node key holds, so a typed value can be written as the right JSON.
+type KeyShape int
+
+const (
+	// ShapeText is a string field (text, bind, placeholder...): the value is the text typed.
+	ShapeText KeyShape = iota
+	// ShapeScalar is a number or a boolean (grow, weight, fit...).
+	ShapeScalar
+	// ShapeObject is an object or a list (style, style_by, scroll...).
+	ShapeObject
+	// ShapeTextOrObject is a field that takes a word or an object (border: "round" or
+	// {"shape":...}; prefix: a string or a node): text unless it is written as an object.
+	ShapeTextOrObject
+)
+
+// NodeKeyShape reports what a node key holds. A key Node does not declare is text: the
+// validator, not the caller, is what warns about an unknown key.
+//
+// It is derived from the struct for the reason nodeVocabulary is: a table kept beside Node
+// would fall behind it, and a /ui set that guesses the type of a property wrong refuses
+// every use of it.
+func NodeKeyShape(key string) KeyShape {
+	t := reflect.TypeOf(Node{})
+	for i := 0; i < t.NumField(); i++ {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		if name != key {
+			continue
+		}
+		ft := t.Field(i).Type
+		if ft == reflect.TypeOf(json.RawMessage(nil)) {
+			return ShapeTextOrObject
+		}
+		if ft.Kind() == reflect.Ptr {
+			ft = ft.Elem()
+		}
+		switch ft.Kind() {
+		case reflect.String:
+			return ShapeText
+		case reflect.Bool, reflect.Int, reflect.Int64, reflect.Float64:
+			return ShapeScalar
+		}
+		return ShapeObject
+	}
+	return ShapeText
 }
 
 // Vocabulary returns the json keys a node may declare, sorted.

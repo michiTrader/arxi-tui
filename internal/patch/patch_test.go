@@ -334,3 +334,33 @@ func TestEveryVerbRoundTripsThroughTheValidator(t *testing.T) {
 		}
 	}
 }
+
+// `/ui set` takes its value as text typed after the key, but most node properties are not
+// text. Every value used to be written as a JSON string, so grow, fit and an object border
+// were refused as "invalid JSON" however they were spelled: a model asked for an animated
+// border tried sixteen variants and none could be accepted.
+func TestSetWritesTheTypeThePropertyHolds(t *testing.T) {
+	cases := []struct{ line, want, key string }{
+		{`/ui set a grow 2`, `2`, "grow"},
+		{`/ui set a fit true`, `true`, "fit"},
+		{`/ui set a border {"shape":"round","style":"warn"}`, `{"shape":"round","style":"warn"}`, "border"},
+		{`/ui set a border round`, `"round"`, "border"},
+		{`/ui set a style_by {"max":"rainbow"}`, `{"max":"rainbow"}`, "style_by"},
+		{`/ui set a text 123`, `"123"`, "text"},
+		{`/ui set a text {"not":"json"}`, `"{\"not\":\"json\"}"`, "text"},
+		{`/ui set a grow lots`, `"lots"`, "grow"},
+		{`/ui set a prefix ┃`, `"┃"`, "prefix"},
+	}
+	for _, tc := range cases {
+		c, err := Parse(tc.line)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.line, err)
+		}
+		node := map[string]any{}
+		c.mutate(node)
+		got, _ := json.Marshal(node[tc.key])
+		if string(got) != tc.want {
+			t.Errorf("%s wrote %s, want %s.\nConsequence: a property that is not text is refused as invalid JSON, so the model cannot express the change however it spells it.\nRemedy: write the value as the type scene.Node declares for the key.", tc.line, got, tc.want)
+		}
+	}
+}

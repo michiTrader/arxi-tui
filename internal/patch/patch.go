@@ -619,18 +619,35 @@ func (c Command) mutate(node map[string]any) {
 		style["style"] = c.Value
 		node["style"] = style
 	case "set":
-		// style_by is the one property whose value is an object ({"max":"rainbow"}); every
-		// other value typed after `set` is a string. An object that does not parse is
-		// stored as the string it was, and the validator refuses it with its address.
-		if c.Key == "style_by" {
-			var obj map[string]any
-			if json.Unmarshal([]byte(c.Value), &obj) == nil && obj != nil {
-				node[c.Key] = obj
-				return
-			}
-		}
-		node[c.Key] = c.Value
+		node[c.Key] = c.settable()
 	}
+}
+
+// settable is the value `/ui set` writes. Everything typed after the key arrives as text,
+// but most properties are not text: grow is a number, fit a boolean, border and style_by
+// objects. Writing every value as a string made all of them refuse as "invalid JSON", so a
+// model asked for an animated border tried sixteen spellings and none could be accepted.
+// The value is read as the JSON the property holds; a value that does not read as it (the
+// bare word round for a border, the glyph in a prefix) stays the text it was, and the
+// validator refuses it with its address when it is wrong.
+func (c Command) settable() any {
+	shape := scene.NodeKeyShape(c.Key)
+	if shape == scene.ShapeText {
+		return c.Value
+	}
+	v := strings.TrimSpace(c.Value)
+	structured := strings.HasPrefix(v, "{") || strings.HasPrefix(v, "[")
+	switch {
+	case shape == scene.ShapeTextOrObject && !structured:
+		return c.Value
+	case shape == scene.ShapeScalar && structured:
+		return c.Value
+	}
+	var out any
+	if err := json.Unmarshal([]byte(v), &out); err != nil || out == nil {
+		return c.Value
+	}
+	return out
 }
 
 // summary is the sentence the change-diff view shows before the patch is
