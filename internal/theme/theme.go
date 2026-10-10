@@ -392,6 +392,9 @@ func SOBRIA() *Theme {
 		// borrows the product's amber so it reads as "look here" without the alarm of
 		// red; the usage is a quiet grey because it is a record, not news.
 		"chat.warn": {FG: ui.MustHex("#ffb454")},
+		// A command the user typed in front of a message (/ui ...): its own colour and
+		// italics, so what addressed the app reads apart from what was said to the model.
+		"chat.command": {FG: ui.MustHex("#5eead4"), Attrs: ui.AttrItalic},
 		// A tool call the agent made: a blue dot and a bold name, with what came of
 		// it in grey underneath (red when the tool refused or failed).
 		"chat.tool":          {Attrs: ui.AttrBold},

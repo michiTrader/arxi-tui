@@ -1093,6 +1093,17 @@ func (d *Document) collectTokenErrors(n *Node, path string, thm *theme.Theme, er
 		}
 	}
 
+	// Each side's own token is checked like the border's.
+	for _, side := range BorderSides {
+		if tok := n.BorderSideStyle(side); tok != "" && !thm.Has(tok) {
+			*errs = append(*errs, TokenError{
+				Token:    tok,
+				NodeType: n.Type + " border " + side,
+				Loc:      d.locOf(path),
+			})
+		}
+	}
+
 	// Check border style token if present.
 	if borderStyle := n.BorderStyleName(); borderStyle != "" {
 		if !thm.Has(borderStyle) {

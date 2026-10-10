@@ -742,7 +742,8 @@ func behaviourGuide(b behaviour) string {
 
   animations  {"<name>": {"colors":["red","yellow","green","cyan","blue","magenta"], "fps":10, "spread":1, "direction":"diagonal", "attrs":["bold"]}}
       A colour that moves. The name is a style token: use it anywhere a token goes (a node's "style", a colour map...). spread 0 paints a whole span one colour at a time, 1 runs a rainbow along the text. fps 1-30 (default 8), 2-64 colours.
-      direction says where the colours flow. "along" (the default) runs them along each line of text separately, so a frame's top and bottom lines look identical. "diagonal" (top-left to bottom-right), "antidiagonal", "horizontal", "vertical" and "radial" (outward from the centre) look at where each cell sits in the whole shape, so a frame gets one smooth gradient: top, bottom and sides all differ and the corners line up. With a direction, spread is how many times the palette is laid across the shape (1 = once). Colours given as #rrggbb are blended smoothly; names and indexes step. Use "diagonal" or "radial" for a frame that should look graded.
+      direction says where the colours flow. "along" (the default) runs them along each line of text separately, so a frame's top and bottom lines look identical. "diagonal" (top-left to bottom-right), "antidiagonal", "horizontal", "vertical", "radial" (outward from the centre), "conic" (a sweep round the centre, like a clock hand) and any angle written "<N>deg" (CSS meaning: "90deg" left to right, "180deg" top to bottom, "135deg" the diagonal, "30deg" a shallow slope) look at where each cell sits in the whole shape, so a frame gets one smooth gradient: top, bottom and sides all differ and the corners line up. With a direction, spread is how many times the palette is laid across the shape (1 = once). Colours given as #rrggbb are blended smoothly; names and indexes step. "reverse": true runs it the other way; "static": true draws the gradient and leaves it still (no animation, no repaints). A gradient on a frame IS possible, in any direction: never tell the user it cannot be done, pick a direction.
+      Different top and bottom (or left and right): a border may name a token per side, {"shape":"round","style":"ember","top":"sunrise","bottom":"sunset","left":"ember","right":"ember"}; a side that names none wears "style". Each token may be its own animation (own colours, direction, speed, reverse), so the top can run one way and the bottom another. Use this when the user wants the sides to differ.
       An animated token paints only what wears it. To animate a frame, put the animation on the border's style ({"shape":"round","style":"<name>"}) and leave the box's own "style" and the input untouched: the letters stay as they are.
       To make a word change with a setting use the node property style_by: {"<value>": "<token>"} on a node with a bind. Example, the effort word in the status bar turns rainbow when the level is max:
         behaviour: {"animations": {"rainbow": {"colors": ["red","yellow","green","cyan","blue","magenta"], "spread": 1, "attrs": ["bold"]}}}
@@ -777,11 +778,12 @@ func behaviourDiff(before, after behaviour) (string, error) {
 // isDirectionWord reports whether w names a gradient direction other than the default.
 func isDirectionWord(w string) bool {
 	for _, d := range theme.Directions {
-		if w == d && d != theme.DirAlong {
+		if w == d && d != theme.DirAlong && d != "<N>deg" {
 			return true
 		}
 	}
-	return false
+	// "135deg": any angle is a direction.
+	return strings.HasSuffix(w, "deg") && theme.Cycle{Direction: w}.Positional()
 }
 
 // patch they mean. ok is false for any other line; err is a refusal to show the user.
@@ -797,7 +799,7 @@ func uiBehaviourCommand(input string) (p behaviourPatch, label string, ok bool, 
 			return behaviourPatch{Animations: map[string]*theme.CycleDef{name: nil}}, "/ui animate: " + name + " is off", true, nil
 		}
 		if len(f) < 4 {
-			return p, "", true, fmt.Errorf("/ui animate <name> <colour,colour,...> [fps=N] [spread=N] [diagonal|radial|horizontal|vertical|antidiagonal] [bold ...]  (or: /ui animate <name> off)")
+			return p, "", true, fmt.Errorf("/ui animate <name> <colour,colour,...> [fps=N] [spread=N] [diagonal|antidiagonal|horizontal|vertical|radial|conic|<N>deg] [reverse] [static] [bold ...]  (or: /ui animate <name> off)")
 		}
 		def := theme.CycleDef{}
 		for _, c := range strings.Split(f[3], ",") {
@@ -813,6 +815,10 @@ func uiBehaviourCommand(input string) (p behaviourPatch, label string, ok bool, 
 				fmt.Sscanf(strings.TrimPrefix(w, "spread="), "%d", &def.Spread)
 			case strings.HasPrefix(w, "direction="):
 				def.Direction = strings.TrimPrefix(w, "direction=")
+			case w == "reverse":
+				def.Reverse = true
+			case w == "static":
+				def.Static = true
 			case isDirectionWord(w):
 				// "diagonal" alone is what a person types.
 				def.Direction = w

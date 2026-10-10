@@ -511,6 +511,35 @@ func (n *Node) HasBorder() bool {
 type borderObject struct {
 	Shape string `json:"shape"`
 	Style string `json:"style"`
+	// Top, Bottom, Left and Right give one side its own style token, over Style. A
+	// frame whose top and bottom are not the same colour names them here.
+	Top    string `json:"top,omitempty"`
+	Bottom string `json:"bottom,omitempty"`
+	Left   string `json:"left,omitempty"`
+	Right  string `json:"right,omitempty"`
+}
+
+// BorderSides are the sides of a border that may carry a style token of their own.
+var BorderSides = []string{"top", "bottom", "left", "right"}
+
+// BorderSideStyle is the style token of one side ("top", "bottom", "left", "right") of
+// the border, "" when that side has none of its own (it then wears the border's style).
+func (n *Node) BorderSideStyle(side string) string {
+	obj, ok := n.border()
+	if !ok {
+		return ""
+	}
+	switch side {
+	case "top":
+		return obj.Top
+	case "bottom":
+		return obj.Bottom
+	case "left":
+		return obj.Left
+	case "right":
+		return obj.Right
+	}
+	return ""
 }
 
 // FocusGlow is the object form of Scene 4's focus_glow: `{ "style": <token> }`.

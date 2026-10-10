@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/michiTrader/arxi_tui/internal/driver"
 	"github.com/michiTrader/arxi_tui/internal/fold"
@@ -96,9 +97,71 @@ func TestTheInterfaceToolsRideOnlyWithAQuestionThatAskedForThem(t *testing.T) {
 		t.Fatalf("the model saw %q; the switch is not part of the request", prompt)
 	}
 
+	// One /ui is enough: the interface conversation stays on, so the next message is
+	// still about the interface and carries the guide and the tools.
+	turn(t, c, out, "and make it a bit slower")
+	tools, system, prompt = core.at(2)
+	if len(tools) != 2 || !strings.Contains(system, "ui_edit") || !strings.Contains(system, uiSystemHint) {
+		t.Fatalf("the interface did not stay on for the follow-up: %d tools", len(tools))
+	}
+	if prompt != "and make it a bit slower" {
+		t.Fatalf("the follow-up reached the model as %q", prompt)
+	}
+
+	// /ui off leaves it: an ordinary chat again.
+	c.setUIMode(false)
 	turn(t, c, out, "thanks, now explain the project")
-	if tools, system, _ := core.at(2); len(tools) != 0 || strings.Contains(system, "ui_edit") {
-		t.Fatal("the interface stayed on for the next question")
+	if tools, system, _ := core.at(3); len(tools) != 0 || strings.Contains(system, "ui_edit") {
+		t.Fatal("the interface stayed on after /ui off")
+	}
+}
+
+func TestTheUICommandWordIsOnTheRecord(t *testing.T) {
+	out := make(chan fold.Event, 128)
+	c := newChatSession(&toolsSeen{}, out)
+	c.setWorkdir(t.TempDir())
+	c.ui = newUIBridge()
+	c.ui.publish(builtinDoc(t), nil, nil, nil, behaviour{})
+	var got []fold.Event
+	for _, line := range []string{"/ui make the border red", "now blue"} {
+		if err := c.send(context.Background(), line); err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, drain(out, "agent.turn_done", 2*time.Second)...)
+	}
+	var cmds, texts []string
+	for _, ev := range got {
+		if ev.Type == "run.prompt" {
+			cmd, _ := ev.Payload["command"].(string)
+			txt, _ := ev.Payload["text"].(string)
+			cmds, texts = append(cmds, cmd), append(texts, txt)
+		}
+	}
+	if len(cmds) != 2 || cmds[0] != "/ui" || cmds[1] != "" || texts[0] != "make the border red" || texts[1] != "now blue" {
+		t.Fatalf("run.prompt carried command %q text %q; the first line must keep /ui apart from its words and the follow-up must not repeat it", cmds, texts)
+	}
+}
+
+func TestResetEndsTheInterfaceConversation(t *testing.T) {
+	c := newChatSession(&toolsSeen{}, make(chan fold.Event, 8))
+	c.setUIMode(true)
+	c.reset()
+	if c.inUIMode() {
+		t.Fatal("/clear left the interface conversation on")
+	}
+}
+
+func TestUIModeCommands(t *testing.T) {
+	for line, want := range map[string][2]bool{
+		"/ui": {true, true}, "/ui on": {true, true}, "/ui off": {false, true}, "/ui exit": {false, true},
+		"/ui undo": {false, false}, "/ui make it red": {false, false}, "hello": {false, false},
+	} {
+		if on, ok := uiModeCommand(line); on != want[0] || ok != want[1] {
+			t.Errorf("uiModeCommand(%q) = %v,%v want %v,%v", line, on, ok, want[0], want[1])
+		}
+	}
+	if _, ok := uiPromptAfterSlash("/ui off"); ok {
+		t.Error("\"/ui off\" must not be read as a request for the model")
 	}
 }
 

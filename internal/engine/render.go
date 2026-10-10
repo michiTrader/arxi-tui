@@ -869,7 +869,9 @@ const (
 const (
 	warnTurnMarker = "! "
 	warnTurnToken  = "chat.warn"
-	usageTurnToken = "chat.usage"
+	// commandTurnToken draws the command word of a message ("/ui") in the user's turn.
+	commandTurnToken = "chat.command"
+	usageTurnToken   = "chat.usage"
 
 	// assistantIndent is the left margin of an answer: the width of the user's
 	// "┃ " marker, so the two voices line up as a pair of columns instead of the
@@ -1213,7 +1215,22 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 					lines = append(lines, ui.WrapText(strings.Repeat(" ", assistantIndent)+u, usageTurnToken, r.Width, nil)...)
 				}
 			} else {
-				wrapped := ui.WrapText(text, turnToken, r.Width, cont)
+				var wrapped []ui.Line
+				if h.Role == "user" && h.Command != "" {
+					// "/ui make the border red": the command is drawn apart from the
+					// words, in its own token, so it is plain what addressed the app.
+					spans := []ui.Span{}
+					if r.PromptStyle != PromptPlain {
+						spans = append(spans, ui.Span{Text: userTurnMarker, Style: userTurnToken})
+					}
+					spans = append(spans, ui.Span{Text: h.Command, Style: commandTurnToken})
+					if h.Text != "" {
+						spans = append(spans, ui.Span{Text: " " + h.Text, Style: turnToken})
+					}
+					wrapped = ui.WrapSpans(spans, r.Width, cont)
+				} else {
+					wrapped = ui.WrapText(text, turnToken, r.Width, cont)
+				}
 				if h.Role == "user" && r.PromptStyle == PromptBand {
 					wrapped = bandLines(wrapped, r.Width, promptBandToken)
 				}
@@ -1686,6 +1703,22 @@ func borderStyleName(n *scene.Node) string {
 	return "border"
 }
 
+// borderSides is the style token of each side of n's frame: the border's own style for a
+// side that names none. The box and the overlay both draw through it, so a frame cannot be
+// graded in one and flat in the other.
+type borderSides struct{ top, bottom, left, right string }
+
+func borderSidesOf(n *scene.Node) borderSides {
+	base := borderStyleName(n)
+	pick := func(side string) string {
+		if s := n.BorderSideStyle(side); s != "" {
+			return s
+		}
+		return base
+	}
+	return borderSides{pick("top"), pick("bottom"), pick("left"), pick("right")}
+}
+
 // borderGlyphs is the one table of frame characters, so the box and the overlay cannot
 // disagree about what a shape looks like. The names are scene.BorderShapes, which the
 // validator checks a document against; an empty or unknown name draws "single".
@@ -1715,7 +1748,7 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 
 	tl, tr, bl, br, horiz, vert := borderGlyphs(n.BorderShape())
 
-	frameStyle := borderStyleName(n)
+	sides := borderSidesOf(n)
 
 	width := r.Width
 	if width <= 0 {
@@ -1748,7 +1781,7 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 		}
 	}
 	lines = append(lines, ui.Line{
-		ui.Span{Text: topText, Style: frameStyle},
+		ui.Span{Text: topText, Style: sides.top},
 	})
 
 	// Inner content: render children as a stack clipped to innerHeight.
@@ -1788,14 +1821,14 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 	// this change draws.
 	boxStyle := styleName(n.Style)
 	for _, l := range content.Live {
-		row := ui.Line{ui.Span{Text: string(vert), Style: frameStyle}}
+		row := ui.Line{ui.Span{Text: string(vert), Style: sides.left}}
 		for _, s := range padLine(l, innerWidth) {
 			if s.Style == "" {
 				s.Style = boxStyle
 			}
 			row = append(row, s)
 		}
-		row = append(row, ui.Span{Text: string(vert), Style: frameStyle})
+		row = append(row, ui.Span{Text: string(vert), Style: sides.right})
 		lines = append(lines, row)
 	}
 	// Clip content to innerHeight if it overflowed.
@@ -1806,7 +1839,7 @@ func (r *Renderer) renderBox(n *scene.Node, state fold.State, budget int) ui.Fra
 	// Bottom border.
 	bottomText := string(bl) + strings.Repeat(string(horiz), innerWidth) + string(br)
 	lines = append(lines, ui.Line{
-		ui.Span{Text: bottomText, Style: frameStyle},
+		ui.Span{Text: bottomText, Style: sides.bottom},
 	})
 
 	// The inner stack answered in its own coordinates; a row of the box is one
@@ -2145,7 +2178,7 @@ func (r *Renderer) renderOverlay(n *scene.Node, state fold.State) ui.Frame {
 // wrapWithBorder wraps overlay content lines in a border, returning the full
 // bordered lines.
 func (r *Renderer) wrapWithBorder(lines []ui.Line, n *scene.Node, contentWidth int) []ui.Line {
-	frameStyle := borderStyleName(n)
+	sides := borderSidesOf(n)
 
 	tl, tr, bl, br, horiz, vert := borderGlyphs(n.BorderShape())
 
@@ -2165,21 +2198,21 @@ func (r *Renderer) wrapWithBorder(lines []ui.Line, n *scene.Node, contentWidth i
 				strings.Repeat(string(horiz), innerWidth-len(titleText)-2) + string(tr)
 		}
 	}
-	bordered = append(bordered, ui.Line{ui.Span{Text: topText, Style: frameStyle}})
+	bordered = append(bordered, ui.Line{ui.Span{Text: topText, Style: sides.top}})
 
 	// Content lines wrapped with vertical bars, span by span: a bordered
 	// overlay keeps each span's own token instead of welding the row into the
 	// box's style (the same weld padLine removed from the borderless path).
 	for _, l := range lines {
-		row := append(ui.Line{}, ui.Span{Text: string(vert), Style: frameStyle})
+		row := append(ui.Line{}, ui.Span{Text: string(vert), Style: sides.left})
 		row = append(row, padLine(l, innerWidth)...)
-		row = append(row, ui.Span{Text: string(vert), Style: frameStyle})
+		row = append(row, ui.Span{Text: string(vert), Style: sides.right})
 		bordered = append(bordered, row)
 	}
 
 	// Bottom border.
 	bottomText := string(bl) + strings.Repeat(string(horiz), innerWidth) + string(br)
-	bordered = append(bordered, ui.Line{ui.Span{Text: bottomText, Style: frameStyle}})
+	bordered = append(bordered, ui.Line{ui.Span{Text: bottomText, Style: sides.bottom}})
 
 	return bordered
 }

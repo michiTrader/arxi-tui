@@ -54,6 +54,12 @@ type Cycle struct {
 	// frame drawn with the token gets one gradient across its whole shape: top and
 	// bottom edges differ, and the corners line up. See Direction* below.
 	Direction string
+	// Reverse runs the motion the other way round (the colours keep their order across
+	// the shape; they travel backwards through it).
+	Reverse bool
+	// Static lays the gradient across the shape and leaves it there: it never moves, so
+	// it asks the host for no repaint at all.
+	Static bool
 }
 
 // Directions a cycle can flow in. All but DirAlong measure each cell against the box
@@ -72,23 +78,46 @@ const (
 	DirAntiDiagonal = "antidiagonal"
 	// DirRadial flows outward from the centre of the shape.
 	DirRadial = "radial"
+	// DirConic sweeps round the centre like the hand of a clock, starting at twelve
+	// o'clock; the palette closes into a loop so the seam shows no jump.
+	DirConic = "conic"
 )
 
-// Directions lists every accepted direction, for messages.
-var Directions = []string{DirAlong, DirHorizontal, DirVertical, DirDiagonal, DirAntiDiagonal, DirRadial}
+// Directions lists every accepted direction, for messages. Besides these words a
+// direction may be an angle, "<N>deg", with the CSS meaning: 0deg flows bottom to top,
+// 90deg left to right, 180deg top to bottom, 270deg right to left, and anything between
+// along that slope (135deg is top-left to bottom-right, the same as diagonal).
+var Directions = []string{DirAlong, DirHorizontal, DirVertical, DirDiagonal, DirAntiDiagonal, DirRadial, DirConic, "<N>deg"}
+
+// angleOf reads a direction written as an angle ("135deg", "-30deg", "12.5deg").
+func angleOf(d string) (float64, bool) {
+	num, ok := strings.CutSuffix(d, "deg")
+	if !ok || num == "" {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(num, 64)
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < -3600 || v > 3600 {
+		return 0, false
+	}
+	return v, true
+}
 
 // rampSteps is how many shades are blended between two neighbouring palette colours when
 // a cycle flows across a shape and all its colours are #rrggbb. Indexed colours cannot be
 // blended (their look is the terminal's), so they keep one step.
 const rampSteps = 16
 
+// Positional reports whether the cycle looks at where a cell is on screen.
+func (c Cycle) Positional() bool { return c.positional() }
+
 // positional reports whether the cycle looks at where a cell is on screen.
 func (c Cycle) positional() bool {
 	switch c.Direction {
-	case DirHorizontal, DirVertical, DirDiagonal, DirAntiDiagonal, DirRadial:
+	case DirHorizontal, DirVertical, DirDiagonal, DirAntiDiagonal, DirRadial, DirConic:
 		return true
 	}
-	return false
+	_, ok := angleOf(c.Direction)
+	return ok
 }
 
 // steps is how many ramp entries lie between two neighbouring palette colours.
@@ -143,6 +172,9 @@ type CycleDef struct {
 	// Direction is where the colours flow: along (the default), horizontal, vertical,
 	// diagonal, antidiagonal or radial. See the Dir* constants.
 	Direction string `json:"direction,omitempty"`
+	// Reverse runs the motion backwards; Static stops it (a fixed gradient).
+	Reverse bool `json:"reverse,omitempty"`
+	Static  bool `json:"static,omitempty"`
 }
 
 // rate is the cycle's step rate with the default filled in.
@@ -191,12 +223,14 @@ func validDirection(d string) bool {
 			return true
 		}
 	}
-	return false
+	_, ok := angleOf(d)
+	return ok
 }
 
 // ParseCycle reads one cycle from its JSON form and validates it.
 func ParseCycle(name string, def CycleDef) (Cycle, error) {
-	c := Cycle{FPS: def.FPS, Spread: def.Spread, Direction: strings.ToLower(strings.TrimSpace(def.Direction))}
+	c := Cycle{FPS: def.FPS, Spread: def.Spread, Direction: strings.ToLower(strings.TrimSpace(def.Direction)),
+		Reverse: def.Reverse, Static: def.Static}
 	for i, s := range def.Colors {
 		col, err := ui.ParseColor(s)
 		if err != nil {
@@ -217,7 +251,7 @@ func ParseCycle(name string, def CycleDef) (Cycle, error) {
 // Def is the JSON form of c, so a cycle can be written back to a file and shown to the
 // user in the words they would type.
 func (c Cycle) Def() CycleDef {
-	d := CycleDef{FPS: c.FPS, Spread: c.Spread, Direction: c.Direction}
+	d := CycleDef{FPS: c.FPS, Spread: c.Spread, Direction: c.Direction, Reverse: c.Reverse, Static: c.Static}
 	for _, col := range c.Colors {
 		d.Colors = append(d.Colors, col.String())
 	}
@@ -307,7 +341,7 @@ func (t *Theme) Cycled(f ui.Frame, now time.Time) (out ui.Frame, fps int) {
 	if fps == 0 {
 		return f, 0
 	}
-	return out, fps
+	return out, max(fps, 0)
 }
 
 // shape is the box enclosing every cell that wears one positional cycle in a frame, in
@@ -331,31 +365,73 @@ func (b *shape) add(c0, c1, r int) {
 // tall as it is wide, so a step down looks twice as far as a step across.
 const rowCells = 2
 
+// flow is a direction made ready to measure with: the words are fixed, an angle is turned
+// into the unit step it points along once, not once per cell.
+type flow struct {
+	dir    string
+	sx, sy float64 // linear: the step along the slope, in columns (x) and half-rows (y)
+	linear bool
+}
+
+func flowOf(dir string) flow {
+	f := flow{dir: dir}
+	if deg, ok := angleOf(dir); ok {
+		rad := deg * math.Pi / 180
+		// CSS: 0deg points up, 90deg right. y grows downward on a screen.
+		f.sx, f.sy, f.linear = math.Sin(rad), -math.Cos(rad), true
+	}
+	return f
+}
+
+// span is the lowest and highest value of the dot product over the box's four corners:
+// a linear flow starts at the corner it points away from.
+func (f flow) span(b shape) (lo, hi float64) {
+	w, h := float64(b.c1-b.c0), float64((b.r1-b.r0)*rowCells)
+	for i, v := range []float64{0, w * f.sx, h * f.sy, w*f.sx + h*f.sy} {
+		if i == 0 || v < lo {
+			lo = v
+		}
+		if i == 0 || v > hi {
+			hi = v
+		}
+	}
+	return lo, hi
+}
+
 // extent is the largest position the cycle's direction measures inside the shape; the
 // ramp runs once (or Spread times) over it.
-func (b shape) extent(dir string) float64 {
+func (f flow) extent(b shape) float64 {
 	w, h := float64(b.c1-b.c0), float64((b.r1-b.r0)*rowCells)
 	var e float64
-	switch dir {
-	case DirHorizontal:
+	switch {
+	case f.linear:
+		lo, hi := f.span(b)
+		e = hi - lo
+	case f.dir == DirHorizontal:
 		e = w
-	case DirVertical:
+	case f.dir == DirVertical:
 		e = h
-	case DirDiagonal, DirAntiDiagonal:
+	case f.dir == DirDiagonal, f.dir == DirAntiDiagonal:
 		e = w + h
-	case DirRadial:
+	case f.dir == DirRadial:
 		e = math.Hypot(w/2, h/2)
+	case f.dir == DirConic:
+		e = 2 * math.Pi
 	}
-	if e < 1 {
+	if e < 1e-9 || (e < 1 && !(f.dir == DirConic)) {
 		return 1
 	}
 	return e
 }
 
 // pos is where the cell at column c, row r sits along the direction, from 0 to extent.
-func (b shape) pos(dir string, c, r int) float64 {
+func (f flow) pos(b shape, c, r int) float64 {
 	dc, dr := float64(c-b.c0), float64((r-b.r0)*rowCells)
-	switch dir {
+	if f.linear {
+		lo, _ := f.span(b)
+		return dc*f.sx + dr*f.sy - lo
+	}
+	switch f.dir {
 	case DirHorizontal:
 		return dc
 	case DirVertical:
@@ -367,6 +443,13 @@ func (b shape) pos(dir string, c, r int) float64 {
 	case DirRadial:
 		w, h := float64(b.c1-b.c0)/2, float64((b.r1-b.r0)*rowCells)/2
 		return math.Hypot(dc-w, dr-h)
+	case DirConic:
+		w, h := float64(b.c1-b.c0)/2, float64((b.r1-b.r0)*rowCells)/2
+		a := math.Atan2(dc-w, -(dr - h)) // from twelve o'clock, clockwise
+		if a < 0 {
+			a += 2 * math.Pi
+		}
+		return a
 	}
 	return 0
 }
@@ -441,7 +524,14 @@ func (t *Theme) cycleLine(l ui.Line, row int, now time.Time, fps *int, geo map[s
 			changed = true
 			out = append(out, l[:i]...)
 		}
-		if r := c.rate(); r > *fps {
+		// A static gradient is drawn but asks for no repaint: fps stays at -1 (used, not
+		// moving) unless something that does move is on screen too.
+		switch r := c.rate(); {
+		case c.Static:
+			if *fps == 0 {
+				*fps = -1
+			}
+		case r > *fps:
 			*fps = r
 		}
 		// Text already carrying escape sequences is left whole: cutting inside one would
@@ -454,11 +544,21 @@ func (t *Theme) cycleLine(l ui.Line, row int, now time.Time, fps *int, geo map[s
 			// asked), so its two ends differ; time slides it round the closed loop, which
 			// is what keeps the motion free of any jump.
 			window := float64(max(c.Spread, 1) * (len(c.Colors) - 1) * steps)
+			if c.Direction == DirConic {
+				window = float64(max(c.Spread, 1) * len(c.Colors) * steps) // a closed loop
+			}
 			tick := int(now.UnixMilli() * int64(c.rate()) * int64(steps) / 1000)
-			ext, at := b.extent(c.Direction), col
+			switch {
+			case c.Static:
+				tick = 0
+			case c.Reverse:
+				tick = -tick
+			}
+			fl := flowOf(c.Direction)
+			ext, at := fl.extent(*b), col
 			for _, r := range s.Text {
 				cell := string(r)
-				space := int(math.Round(b.pos(c.Direction, at, row) / ext * window))
+				space := int(math.Round(fl.pos(*b, at, row) / ext * window))
 				out = append(out, ui.Span{Text: cell, Style: s.Style + cycleSep + strconv.Itoa(((tick-space)%total+total)%total), Fill: s.Fill})
 				at += ansi.StringWidth(cell)
 			}
@@ -467,6 +567,13 @@ func (t *Theme) cycleLine(l ui.Line, row int, now time.Time, fps *int, geo map[s
 		}
 		col += width
 		step := int(now.UnixMilli() * int64(c.rate()) / 1000)
+		switch {
+		case c.Static:
+			step = 0
+		case c.Reverse:
+			step = -step
+		}
+		step = ((step % len(c.Colors)) + len(c.Colors)) % len(c.Colors)
 		if c.positional() || c.Spread == 0 || whole {
 			s.Style += cycleSep + strconv.Itoa(step%len(c.Colors)*c.steps())
 			out = append(out, s)
