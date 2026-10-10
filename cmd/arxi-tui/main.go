@@ -1459,6 +1459,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		r.ChatScroll = chatScroll
 		r.ExpandTools = expandTools
 		r.PromptStyle = promptStyle
+		r.Look = chatLook()
 		// While a consent screen is up it replaces the scene on display: the modal
 		// owns the whole frame so the identity the user is judging is the only thing
 		// they see, and a keypress cannot be split between the prompt and the scene

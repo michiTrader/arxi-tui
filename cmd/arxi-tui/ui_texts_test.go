@@ -364,7 +364,7 @@ func TestEveryTextKeyUsedByTheHostIsDeclared(t *testing.T) {
 	}
 	// Every declared key must be read by something, or it is a promise the interface
 	// does not keep: the model would change it and nothing on screen would move.
-	prefixes := []string{"command.", "effort.", "mode.", "style."}
+	prefixes := []string{"command.", "effort.", "mode.", "style.", "tool.title."}
 	for _, d := range textRegistry {
 		if used[d.key] {
 			continue

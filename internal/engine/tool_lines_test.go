@@ -15,7 +15,7 @@ func toolEv(seq int64, name, arg string, ok bool, summary string) fold.Event {
 		"name": name, "arg": arg, "ok": ok, "summary": summary}}
 }
 
-// Tool calls draw a dot and the call, then the result under an elbow; calls of one
+// Tool calls draw a dot and the call with its one-row result beside it; calls of one
 // answer stack with no blank row, and the answer follows after a gap.
 func TestToolCallsDrawWithDotAndElbow(t *testing.T) {
 	rows := plainRows(t, []fold.Event{
@@ -27,10 +27,8 @@ func TestToolCallsDrawWithDotAndElbow(t *testing.T) {
 	want := []string{
 		"┃ what is here",
 		"",
-		"● List(.)",
-		"  └ Listed 2 entries",
-		"● Read(main.go)",
-		"  └ Read 12 lines",
+		"● List(.) - Listed 2 entries",
+		"● Read(main.go) - Read 12 lines",
 		"",
 		"  A Go program.",
 	}
@@ -71,7 +69,7 @@ func TestLongToolArgumentWrapsUnderItself(t *testing.T) {
 	if !strings.HasPrefix(rows[1], "  ") || strings.HasPrefix(rows[1], "●") {
 		t.Errorf("continuation must hang under the call: %q", rows[1])
 	}
-	if !strings.Contains(strings.Join(rows, "\n"), "  └ Read 3 lines") {
+	if !strings.Contains(strings.Join(rows, "\n"), "  └ Read 3 lines") && !strings.Contains(strings.Join(rows, "\n"), "- Read 3 lines") {
 		t.Errorf("result row missing:\n%s", strings.Join(rows, "\n"))
 	}
 }
@@ -268,7 +266,7 @@ func TestACommandThatFailedIsDrawnAsAFailure(t *testing.T) {
 		"name": "run", "arg": "go test ./...", "ok": false, "summary": "Exit 1 in 2.3s",
 	}}
 	text := strings.Join(tallRows(t, []fold.Event{ev}), "\n")
-	if !strings.Contains(text, "Run(go test ./...)") || !strings.Contains(text, "└ Exit 1 in 2.3s") {
+	if !strings.Contains(text, "Run(go test ./...)") || !strings.Contains(text, "- Exit 1 in 2.3s") {
 		t.Errorf("rows:\n%s", text)
 	}
 }
