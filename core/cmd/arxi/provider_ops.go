@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/michiTrader/arxi/internal/model"
 	"github.com/michiTrader/arxi/internal/modelstore"
+	"github.com/michiTrader/arxi/internal/provider"
 	"github.com/michiTrader/arxi/internal/secretstore"
 )
 
@@ -56,9 +58,45 @@ type providerAdded struct {
 // common failure: a name that is already taken would have its EXISTING key
 // overwritten by the new one before the store refused the duplicate record.
 func registerProvider(name, baseURL, keyEnv, apiKey string) (providerAdded, error) {
+	return registerProviderWire(name, baseURL, "", keyEnv, apiKey)
+}
+
+// detectEndpoint finds the API root and wire of an endpoint. A variable so tests do
+// not touch the network.
+var detectEndpoint = func(baseURL, key string) (string, string) {
+	return provider.DetectEndpoint(context.Background(), baseURL, key, nil)
+}
+
+// errBadProtocol is the refusal for a --protocol word nobody knows.
+func errBadProtocol(s string) error {
+	return badInvocation{fmt.Errorf("protocol %q is not one of: openai, anthropic, auto", s)}
+}
+
+// registerProviderWire is registerProvider with an optional explicit wire. For an
+// endpoint of the user's own (not a table vendor's), with no wire named, it asks the
+// endpoint which wire it answers and where its API root is: a host can leave one wire
+// open while its firewall refuses the other, and the address is often typed without
+// /v1. What the endpoint answers beats what was typed; when nothing answers, the
+// defaults stand and nothing is claimed.
+func registerProviderWire(name, baseURL, protocol, keyEnv, apiKey string) (providerAdded, error) {
 	p, err := model.New(name, baseURL, keyEnv, nowFunc().Format(time.RFC3339))
 	if err != nil {
 		return providerAdded{}, badInvocation{err}
+	}
+	want, ok := model.ParseProtocol(protocol)
+	if !ok {
+		return providerAdded{}, errBadProtocol(protocol)
+	}
+	if want != "" {
+		p.Protocol = want
+	} else if tableURL, _, inTable := model.Known(p.Name); !inTable || p.BaseURL != tableURL {
+		key := apiKey
+		if key == "" && p.APIKeyEnv != "" {
+			key = os.Getenv(p.APIKeyEnv)
+		}
+		if base, found := detectEndpoint(p.BaseURL, key); found != "" {
+			p.BaseURL, p.Protocol = base, found
+		}
 	}
 	if apiKey != "" {
 		if err := secretstore.CheckKey(apiKey); err != nil {

@@ -39,6 +39,13 @@ func (m *scriptedInterfaceModel) serve(t *testing.T) *httptest.Server {
 			return
 		}
 		body, _ := io.ReadAll(r.Body)
+		if strings.TrimSpace(string(body)) == "{}" {
+			// adding a provider probes the wire with an empty body; a real API
+			// complains about the missing fields and that is all the probe wants
+			w.WriteHeader(400)
+			fmt.Fprint(w, `{"error":{"message":"missing fields"}}`)
+			return
+		}
 		var req struct {
 			Messages []map[string]any `json:"messages"`
 			Tools    []struct {
@@ -123,7 +130,7 @@ func TestTheAgentChangesTheInterfaceThroughTheRealCore(t *testing.T) {
 	br := sd.InterfaceBridge()
 	doc := builtinDoc(t)
 	br.publish(doc, theme.SOBRIA(), nil, nil, behaviour{})
-	if err := sd.SubmitPrompt(ctx, "add a blank line between the input bar and the status bar"); err != nil {
+	if err := sd.SubmitPrompt(ctx, "/ui add a blank line between the input bar and the status bar"); err != nil {
 		t.Fatal(err)
 	}
 	var asked, answered string
@@ -160,10 +167,10 @@ func TestTheAgentChangesTheInterfaceThroughTheRealCore(t *testing.T) {
 	model.mu.Lock()
 	defer model.mu.Unlock()
 	if got := strings.Join(model.offered[0], ","); !strings.Contains(got, "ui_guide,ui_edit") {
-		t.Errorf("offered %q; the model must be lent the interface tools on every turn", got)
+		t.Errorf("offered %q; the model must be lent the interface tools on the turn that asked for them", got)
 	}
-	if strings.Contains(model.systems[0], "below_input") {
-		t.Error("the interface guide is in the standing prompt; it must be paid for only by the turn that reads it")
+	if !strings.Contains(model.systems[0], "below_input") {
+		t.Error("the request asked for the interface and the guide did not travel with it")
 	}
 	if len(model.results) < 2 || !strings.Contains(model.results[0], `"id": "input_gap_bottom"`) || !strings.Contains(model.results[1], "applied and saved") {
 		t.Errorf("tool results = %q; the guide must carry the live document and the edit must report it was applied", model.results)
@@ -203,7 +210,7 @@ func TestTheAgentRecoloursItsRepliesThroughTheRealCore(t *testing.T) {
 	}
 	br := sd.InterfaceBridge()
 	br.publish(builtinDoc(t), theme.SOBRIA(), nil, nil, behaviour{})
-	if err := sd.SubmitPrompt(ctx, "en la tui, cambia los colores de las palabras en azul que me envias a morado"); err != nil {
+	if err := sd.SubmitPrompt(ctx, "@ui en la tui, cambia los colores de las palabras en azul que me envias a morado"); err != nil {
 		t.Fatal(err)
 	}
 	var asked, answered string

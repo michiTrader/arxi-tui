@@ -85,6 +85,11 @@ type Model struct {
 	// price change still reaches it; a declared price wins, because the
 	// operator who typed it knows their own contract.
 	Price *Price `json:"price,omitempty"`
+
+	// Protocol, when set, is the wire this model is called on, overriding its
+	// provider's. A gateway can leave one wire open for one model and wall the other;
+	// the wire that worked is remembered here.
+	Protocol string `json:"protocol,omitempty"`
 }
 
 const (
@@ -132,6 +137,21 @@ func Known(name string) (baseURL string, models []string, ok bool) {
 		}
 	}
 	return "", nil, false
+}
+
+// ParseProtocol turns what a user types for --protocol into a wire name: "openai"
+// or "anthropic" (or the full name). "" and "auto" mean "decide for me" and give
+// ("", true). Anything else is refused.
+func ParseProtocol(s string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "auto":
+		return "", true
+	case "openai", ProtocolOpenAIChatCompletions:
+		return ProtocolOpenAIChatCompletions, true
+	case "anthropic", ProtocolAnthropicMessages:
+		return ProtocolAnthropicMessages, true
+	}
+	return "", false
 }
 
 // KnownProtocol reports the wire spoken by a shipped provider.
@@ -291,6 +311,9 @@ func (p Provider) Validate() error {
 				"status would never appear to change", p.Name, m.ID)
 		}
 		seen[m.ID] = true
+		if m.Protocol != "" && m.Protocol != ProtocolOpenAIChatCompletions && m.Protocol != ProtocolAnthropicMessages {
+			return fmt.Errorf("provider %q: model %q declares unsupported protocol %q", p.Name, m.ID, m.Protocol)
+		}
 		if err := validatePrice(m.ID, m.Price); err != nil {
 			return fmt.Errorf("provider %q: %w", p.Name, err)
 		}

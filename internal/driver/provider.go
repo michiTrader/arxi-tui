@@ -44,6 +44,9 @@ type ProviderAddParams struct {
 	Name      string
 	BaseURL   string
 	APIKeyEnv string
+	// Protocol is "openai", "anthropic" or "" (the core detects which one the endpoint
+	// answers; some hosts leave only one open).
+	Protocol string
 	// APIKey is the key itself, typed into the /login form. It is the one field
 	// here that IS a secret, so it has three rules: it travels only in the request
 	// body (the serve socket is a pipe to a child process, not a shell command
@@ -82,6 +85,9 @@ func (d *NDJSONDriver) SubmitProviderAdd(ctx context.Context, p ProviderAddParam
 	}
 	if p.APIKeyEnv != "" {
 		params["api_key_env"] = p.APIKeyEnv
+	}
+	if p.Protocol != "" {
+		params["protocol"] = p.Protocol
 	}
 	if p.APIKey != "" {
 		params["api_key"] = p.APIKey

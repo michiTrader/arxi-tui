@@ -134,3 +134,23 @@ func TestTheGuidesAnimatedFrameChangesColourOnScreen(t *testing.T) {
 		t.Errorf("the frame was drawn in %d colour(s) over the run; an animated frame shows several: %v", len(colours), colours)
 	}
 }
+
+// The edit the model actually made: the animation on the box's "style" and a plain
+// "round" border. Valid, applied, and the frame stays white. The tool must say so
+// instead of reporting a clean success the model repeats to the user.
+func TestAnAnimationOnTheBoxStyleButNotTheBorderIsReportedNotCelebrated(t *testing.T) {
+	r := newBridgeRig(t, "allow")
+	res := r.edit(t, `{"behaviour":{"animations":{"rainbow":{"colors":["red","yellow","green"],"spread":1}}},`+
+		`"commands":["/ui add node above_input {\"id\":\"input_frame\",\"type\":\"box\",\"border\":\"round\",\"style\":{\"style\":\"rainbow\"},\"children\":[]}","/ui move prompt into input_frame"],"summary":"x"}`, true)
+	if !res.OK {
+		t.Fatalf("refused: %s", res.Text)
+	}
+	if !strings.Contains(res.Text, "is NOT animated") || !strings.Contains(res.Text, `/ui set input_frame border {"shape":"round","style":"rainbow"}`) {
+		t.Fatalf("the model was told nothing about the frame staying plain: %s", res.Text)
+	}
+	// counterfactual: the right form carries no warning
+	r2 := newBridgeRig(t, "allow")
+	if res := r2.edit(t, rainbowBorderEdit, true); !res.OK || strings.Contains(res.Text, "NOT animated") {
+		t.Fatalf("a correct frame was reported as broken: %+v", res)
+	}
+}

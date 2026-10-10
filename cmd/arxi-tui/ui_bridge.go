@@ -51,10 +51,11 @@ import (
 // the eval corpus measured. Plugins propose, they never write; the agent is held to
 // the same rule.
 
-// uiSystemHint tells the model, on every turn the interface tools are lent, that the
+// uiSystemHint tells the model, on a turn where the user asked for it (uiTrigger), that the
 // app it is talking through is arxi-tui and that "the tui", "the interface", "the
-// colours" mean that app, not the user's project. It is one sentence (about 60
-// tokens) because it rides with every question; the how is in ui_guide.
+// colours" mean that app, not the user's project. The guide itself follows it in the
+// same turn. Without the trigger none of this is sent, and "the TUI" means the user's
+// own project.
 const uiSystemHint = "You are running inside arxi-tui, the terminal app the user is talking to you through. " +
 	"\"The TUI\", the interface or its colours mean this app, not their project: call ui_guide, never search their files for it. " +
 	"Change it only by calling ui_edit; say it is done only if ui_edit returned \"applied and saved\"; if refused, give the user the reason."
@@ -175,15 +176,24 @@ func (b *uiBridge) definitions() []driver.ClientToolDef {
 	}
 }
 
+// guideText is the whole guide, "" while no interface is on screen.
+func (b *uiBridge) guideText() string {
+	doc, _, _, thm, _ := b.snapshot()
+	if doc == nil {
+		return ""
+	}
+	return uiGuide(doc, thm) + "\n" + behaviourGuide(b.behaviourNow())
+}
+
 // call runs one tool call. ask puts a change to the user and blocks until they decide.
 func (b *uiBridge) call(ctx context.Context, c driver.ClientToolCall, ask func(driver.Approval) bool) driver.ClientToolResult {
 	switch c.Name {
 	case uiToolGuide:
-		doc, _, _, thm, _ := b.snapshot()
-		if doc == nil {
+		text := b.guideText()
+		if text == "" {
 			return driver.ClientToolResult{Text: "the interface is not on screen yet; try again", Summary: "The interface is not ready"}
 		}
-		return driver.ClientToolResult{OK: true, Text: uiGuide(doc, thm) + "\n" + behaviourGuide(b.behaviourNow()), Arg: "interface", Summary: "Read how the interface is built"}
+		return driver.ClientToolResult{OK: true, Text: text, Arg: "interface", Summary: "Read how the interface is built"}
 	case uiToolEdit:
 		return b.edit(ctx, c.Arguments, ask)
 	}
@@ -319,8 +329,47 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 		return refuse("The change was not applied", err.Error())
 	}
 	b.resetRefusals()
-	return driver.ClientToolResult{OK: true, Arg: "interface", Summary: summary, Diff: diff,
-		Text: "applied and saved: the interface on screen now shows the change. /ui undo takes it back."}
+	text := "applied and saved: the interface on screen now shows the change. /ui undo takes it back."
+	for _, n := range unpaintedFrames(next, nextThm) {
+		text += fmt.Sprintf("\nBUT: the frame of %q is NOT animated. Its \"style\" paints what is inside the box; the frame is painted by the border's own style. Do not tell the user the frame moves. To make it so: /ui set %s border {\"shape\":%q,\"style\":%q}", n.id, n.id, n.shape, n.token)
+	}
+	return driver.ClientToolResult{OK: true, Arg: "interface", Summary: summary, Diff: diff, Text: text}
+}
+
+// unpaintedFrame is a bordered node whose animated style token reaches its contents
+// but not its frame. Found with a model that wrote "border":"round" plus
+// "style":{"style":"rainbow"} and told the user the border was a rainbow: both were
+// valid, neither coloured the frame, and the tool said "applied".
+type unpaintedFrame struct{ id, shape, token string }
+
+func unpaintedFrames(doc *scene.Document, thm *theme.Theme) []unpaintedFrame {
+	var out []unpaintedFrame
+	var walk func(n *scene.Node)
+	walk = func(n *scene.Node) {
+		if n == nil {
+			return
+		}
+		if n.BorderShape() != "" && n.BorderStyleName() == "" && n.ID != "" {
+			for _, key := range scene.StyleTokenKeys() {
+				if tok := n.Style[key]; tok != "" {
+					if _, animated := thm.Cycle(tok); animated {
+						out = append(out, unpaintedFrame{n.ID, n.BorderShape(), tok})
+					}
+					break
+				}
+			}
+		}
+		walk(n.PrefixNode())
+		walk(n.Suffix)
+		for _, c := range n.Children {
+			walk(c)
+		}
+		walk(n.RowTemplate)
+	}
+	if doc != nil {
+		walk(doc.Root)
+	}
+	return out
 }
 
 // draftScene builds the proposed document from base and validates it as strictly as a
@@ -624,4 +673,91 @@ func firstLine(s string, max int) string {
 		}
 	}
 	return ""
+}
+
+// errUIPromptEmpty is the answer to a bare "@ui": there is nothing to do yet.
+var errUIPromptEmpty = errors.New("/ui needs a request, for example: /ui give the input bar a rainbow border")
+
+// uiTrigger reads the switch that puts the model in charge of arxi-tui's own interface:
+// a line starting with "/ui " followed by a request (not one of the typed /ui commands,
+// which the host answers itself), or "@ui" anywhere in the line. It returns the line
+// without the switch and whether it was there. It is mandatory on purpose: the same
+// words ("the TUI", "the colours") are about the user's project when they build one.
+func uiTrigger(text string) (string, bool) {
+	t := strings.TrimSpace(text)
+	if rest, ok := uiPromptAfterSlash(t); ok {
+		return rest, true
+	}
+	if !strings.Contains(strings.ToLower(t), "@ui") {
+		return t, false
+	}
+	stripped := removeToken(t, "@ui")
+	if stripped == t {
+		return t, false // "@uiux" or "me@ui.com" is not the switch
+	}
+	return strings.TrimSpace(stripped), true
+}
+
+// removeToken deletes whole-word occurrences of tok, leaving the rest as typed.
+func removeToken(s, tok string) string {
+	var out strings.Builder
+	for i := 0; i < len(s); {
+		if strings.EqualFold(s[i:min(len(s), i+len(tok))], tok) &&
+			(i == 0 || s[i-1] == ' ' || s[i-1] == '\n' || s[i-1] == '\t') &&
+			(i+len(tok) == len(s) || s[i+len(tok)] == ' ' || s[i+len(tok)] == '\n' || s[i+len(tok)] == '\t') {
+			i += len(tok)
+			if i < len(s) && s[i] == ' ' && (out.Len() == 0 || strings.HasSuffix(out.String(), " ")) {
+				i++ // no double space where the switch was
+			}
+			continue
+		}
+		out.WriteByte(s[i])
+		i++
+	}
+	return out.String()
+}
+
+// uiTypedLine reports whether a /ui line is one of the commands the host answers itself.
+// A line starting with a patch verb counts only when the patch parser accepts it, so
+// "/ui add a blank line under the input" is a request and "/ui add node below_input {...}"
+// is a command.
+func uiTypedLine(line string) bool {
+	f := strings.Fields(line)
+	if len(f) < 2 {
+		return false
+	}
+	switch f[1] {
+	case "undo", "reset":
+		return len(f) == 2
+	case "color":
+		_, _, ok := uiColorCommand(line)
+		return ok
+	case "text", "animate", "key", "menukeys":
+		return len(f) >= 3
+	}
+	for _, v := range patch.Verbs() {
+		if v == f[1] {
+			_, err := patch.Parse(line)
+			return err == nil
+		}
+	}
+	return false
+}
+
+// uiPromptAfterSlash reports a "/ui <request>" line: more than a bare "/ui", and whose
+// first word is not a typed command. A request that starts with a command word
+// ("/ui add ...") is read as that command; "@ui" says it unambiguously.
+func uiPromptAfterSlash(t string) (string, bool) {
+	rest, ok := strings.CutPrefix(t, "/ui")
+	if !ok || rest == "" || (rest[0] != ' ' && rest[0] != '\n') {
+		return "", false
+	}
+	rest = strings.TrimSpace(rest)
+	if rest == "" {
+		return "", false
+	}
+	if uiTypedLine(t) {
+		return "", false
+	}
+	return rest, true
 }

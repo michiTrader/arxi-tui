@@ -38,7 +38,7 @@ func newServeTextProvider() (*serveTextProvider, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open provider store %s: %w", providerDir, err)
 	}
-	return &serveTextProvider{store: store, executor: &provider.Executor{}}, nil
+	return &serveTextProvider{store: store, executor: &provider.Executor{OnWire: rememberWire}}, nil
 }
 
 // serveMessages maps one public text request onto canonical messages.

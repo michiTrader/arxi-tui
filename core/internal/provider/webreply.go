@@ -110,7 +110,7 @@ func webReplyError(endpoint string, status int, raw []byte, model string) error 
 	if msg == "" {
 		return nil
 	}
-	return &APIError{Status: status, Message: msg, Model: model}
+	return &APIError{Status: status, Message: msg, Model: model, Web: true}
 }
 
 // UserAgent names this program on every provider call. Go's default,

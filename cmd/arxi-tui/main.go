@@ -1977,6 +1977,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								keepScene(label)
 							}
 							input, caret = "", 0
+						} else if _, isReq := uiPromptAfterSlash(strings.TrimSpace(input)); ev.Key.Type == term.KeyEnter && isReq {
+							// "/ui <request>": a question for the model about this app's own
+							// interface, sent as typed so the chat session sees the switch.
+							_ = drv.SubmitPrompt(ctx, strings.TrimSpace(input))
+							input, caret, slashSel = "", 0, 0
 						} else if handled, next := typedUICommand(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens, keepScene); handled {
 							input = next
 							caret = clampCaret(input, caret)

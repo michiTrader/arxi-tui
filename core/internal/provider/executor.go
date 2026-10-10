@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/michiTrader/arxi/internal/exec"
 	"github.com/michiTrader/arxi/internal/kernel"
@@ -111,6 +113,11 @@ type Executor struct {
 
 	// Temperature, when set, is sent on every call.
 	Temperature *float64
+
+	// OnWire is told when a call had to use the provider's other wire because the
+	// first one answered a web page. Optional: nil forgets it, and the next call tries
+	// the first wire again.
+	OnWire func(provider, modelID, protocol string)
 
 	// mu guards ids. The runner executes independent effects in PARALLEL, so
 	// two turns can mint an id at the same moment.
@@ -347,7 +354,83 @@ func (x *Executor) ClassifyToolDispatch(_ kernel.SpawnTurn, _ turn.ToolCall) (st
 }
 
 // CompleteTurn translates one committed canonical request to the provider wire.
+//
+// When the provider's answer was a web page (a firewall wall, or its website) the
+// request never reached the model: nothing was sent or billed, so asking once more on
+// the provider's OTHER wire is safe. Gateways routinely serve both wires and wall off
+// only one of them (found with a gateway whose /v1/chat/completions answered
+// Cloudflare's "Attention Required" for every client while /v1/messages worked). The
+// retry is taken only for a web reply, never for an API error, so it cannot repeat a
+// request the model already saw; if it fails too, the first error is the one reported.
+// OnWire, when set, is told which wire worked so the choice can be remembered.
 func (x *Executor) CompleteTurn(ctx context.Context, req turn.Request) (turn.Response, error) {
+	resp, err := x.completeTurnRetrying(ctx, req)
+	if err != nil || resp.FinishReason != turn.FinishRefusal || resp.Refusal == nil || !resp.Refusal.Web {
+		return resp, err
+	}
+	other := otherWire(req.Protocol)
+	if other == "" {
+		return resp, nil
+	}
+	alt := req
+	alt.Protocol = other
+	if other == model.ProtocolAnthropicMessages && alt.MaxTokens <= 0 {
+		alt.MaxTokens = 4096 // the Messages wire needs a token ceiling
+	}
+	got, altErr := x.completeTurnRetrying(ctx, alt)
+	if altErr != nil || got.FinishReason == turn.FinishRefusal {
+		return resp, nil
+	}
+	if x.OnWire != nil {
+		x.OnWire(req.Provider, req.Model, other)
+	}
+	return got, nil
+}
+
+// gatewayRetries is how many more times a call is made when a gateway answered with an
+// empty 403. A gateway in front of the API (found with a Cloudflare-fronted one)
+// refuses an unpredictable share of requests that way, one in four in the measurement
+// and only when the request carries no browser-like or SDK User-Agent, and the same
+// request goes through the next time. It has no body, no page and no error object,
+// which separates it from a real authorization failure (those explain themselves), and
+// it never reached a model: nothing was sent or billed, so asking again repeats no work.
+const gatewayRetries = 3
+
+// gatewayRetryWait is the pause before the n-th repeat (n starts at 1).
+var gatewayRetryWait = func(n int) time.Duration { return time.Duration(n) * 400 * time.Millisecond }
+
+// emptyGatewayRefusal reports whether resp is that unexplained 403.
+func emptyGatewayRefusal(resp turn.Response, err error) bool {
+	return err == nil && resp.FinishReason == turn.FinishRefusal && resp.Refusal != nil &&
+		resp.Refusal.Code == "http_403" && strings.TrimSpace(resp.Refusal.Message) == "" && !resp.Refusal.Web
+}
+
+// completeTurnRetrying is completeTurnOn that repeats an empty gateway 403.
+func (x *Executor) completeTurnRetrying(ctx context.Context, req turn.Request) (turn.Response, error) {
+	resp, err := x.completeTurnOn(ctx, req)
+	for n := 1; n <= gatewayRetries && emptyGatewayRefusal(resp, err); n++ {
+		select {
+		case <-time.After(gatewayRetryWait(n)):
+		case <-ctx.Done():
+			return resp, err
+		}
+		resp, err = x.completeTurnOn(ctx, req)
+	}
+	return resp, err
+}
+
+// otherWire names the protocol a call falls back to, "" when there is none.
+func otherWire(protocol string) string {
+	switch protocol {
+	case model.ProtocolOpenAIChatCompletions:
+		return model.ProtocolAnthropicMessages
+	case model.ProtocolAnthropicMessages:
+		return model.ProtocolOpenAIChatCompletions
+	}
+	return ""
+}
+
+func (x *Executor) completeTurnOn(ctx context.Context, req turn.Request) (turn.Response, error) {
 	if req.Schema != turn.Schema {
 		return turn.Response{}, exec.NotDispatched(fmt.Errorf("turn schema %q, want %q", req.Schema, turn.Schema))
 	}
@@ -368,7 +451,7 @@ func (x *Executor) CompleteTurn(ctx context.Context, req turn.Request) (turn.Res
 		}
 		if apiErr != nil {
 			out := turn.Response{Schema: turn.Schema, Model: req.Model, FinishReason: turn.FinishRefusal,
-				Refusal: &turn.Refusal{Code: fmt.Sprintf("http_%d", apiErr.Status), Message: apiErr.Message, Retryable: apiErr.Retryable()}}
+				Refusal: &turn.Refusal{Code: fmt.Sprintf("http_%d", apiErr.Status), Message: apiErr.Message, Retryable: apiErr.Retryable(), Web: apiErr.Web}}
 			if resp != nil {
 				out.ID = resp.ID
 				out.Usage = turn.Usage{InputTokens: resp.Usage.InputTokens, OutputTokens: resp.Usage.OutputTokens,
@@ -396,7 +479,7 @@ func (x *Executor) CompleteTurn(ctx context.Context, req turn.Request) (turn.Res
 		}
 		if apiErr != nil {
 			out := turn.Response{Schema: turn.Schema, Model: req.Model, FinishReason: turn.FinishRefusal,
-				Refusal: &turn.Refusal{Code: fmt.Sprintf("http_%d", apiErr.Status), Message: apiErr.Message, Retryable: apiErr.Retryable()}}
+				Refusal: &turn.Refusal{Code: fmt.Sprintf("http_%d", apiErr.Status), Message: apiErr.Message, Retryable: apiErr.Retryable(), Web: apiErr.Web}}
 			if resp != nil {
 				out.ID = resp.ID
 				out.Usage = turn.Usage{InputTokens: resp.Usage.PromptTokens, OutputTokens: resp.Usage.CompletionTokens}

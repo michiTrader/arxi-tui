@@ -42,7 +42,7 @@ func cmdProviderUpdate(args []string) {
 		os.Exit(2)
 	}
 	refuseKeyFlag("provider update", vals)
-	p, _, err := updateProvider(vals["name"], vals["base-url"], vals["api-key-env"], "")
+	p, _, err := updateProviderWire(vals["name"], vals["base-url"], vals["protocol"], vals["api-key-env"], "")
 	if err != nil {
 		cliFail("provider update", err)
 	}

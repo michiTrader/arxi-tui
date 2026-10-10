@@ -81,6 +81,7 @@ func TestMain(m *testing.M) {
 		panic("creating a directory for the test binary: " + err.Error())
 	}
 	binDir = dir
+	detectEndpoint = func(string, string) (string, string) { return "", "" } // no test reaches the network
 	code := m.Run()
 	os.RemoveAll(dir)
 	os.Exit(code)

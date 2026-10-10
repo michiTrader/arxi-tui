@@ -128,6 +128,10 @@ func canonicalAnthropicResponse(resp *anthropicResponse) (turn.Response, error) 
 				return out, fmt.Errorf("provider tool use %d (%q): %w", i, wire.ID, err)
 			}
 			out.Content = append(out.Content, turn.ContentBlock{Type: turn.BlockToolCall, ToolCall: &call})
+		case "thinking", "redacted_thinking":
+			// The model's reasoning is not part of the answer, and a gateway may send it
+			// even when it was not asked for. Dropping it is right; failing the whole
+			// turn over it threw away a good answer.
 		default:
 			return out, fmt.Errorf("provider content block %d has unsupported type %q", i, wire.Type)
 		}

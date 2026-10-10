@@ -48,6 +48,9 @@ type ProviderUpdateParams struct {
 	BaseURL   string
 	APIKeyEnv string
 	APIKey    string
+	// Protocol is "openai", "anthropic", "auto" or "" (keep). With a new BaseURL and
+	// nothing here, the core detects which wire the endpoint answers.
+	Protocol string
 }
 
 // SubmitProviderUpdate changes the URL, key or key variable of a registered provider.
@@ -61,6 +64,9 @@ func (d *NDJSONDriver) SubmitProviderUpdate(ctx context.Context, p ProviderUpdat
 	}
 	if p.APIKeyEnv != "" {
 		params["api_key_env"] = p.APIKeyEnv
+	}
+	if p.Protocol != "" {
+		params["protocol"] = p.Protocol
 	}
 	if p.APIKey != "" {
 		params["api_key"] = p.APIKey

@@ -315,11 +315,11 @@ func TestColoursAreSavedUndoneAndResetWithTheLayout(t *testing.T) {
 func TestTheModelIsToldItRunsInsideArxiTUI(t *testing.T) {
 	for _, want := range []string{"arxi-tui", "TUI", "colours", "ui_guide", "never search their files"} {
 		if !strings.Contains(uiSystemHint, want) {
-			t.Errorf("the standing hint lacks %q.\nConsequence: a real model asked about \"the tui\" searched the project eleven times and offered to write a theme file there.\nRemedy: name the app and what the words mean in uiSystemHint.", want)
+			t.Errorf("the hint lacks %q.\nConsequence: a real model asked about \"the tui\" searched the project eleven times and offered to write a theme file there.\nRemedy: name the app and what the words mean in uiSystemHint.", want)
 		}
 	}
 	if len(uiSystemHint) > 400 {
-		t.Errorf("the hint is %d bytes and rides with every question; keep the how in ui_guide", len(uiSystemHint))
+		t.Errorf("the hint is %d bytes; the guide follows it, so the hint stays one sentence", len(uiSystemHint))
 	}
 }
 

@@ -103,6 +103,9 @@ type Refusal struct {
 	Code      string `json:"code,omitempty"`
 	Message   string `json:"message"`
 	Retryable bool   `json:"retryable,omitempty"`
+	// Web marks a refusal that was a web page (a firewall wall, or the provider's
+	// website) and not an answer: the request never reached the model.
+	Web bool `json:"web,omitempty"`
 }
 
 type Response struct {

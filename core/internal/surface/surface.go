@@ -157,6 +157,7 @@ var Registry = []Cmd{
 		Kind: CLIOnly | Protocol, Mutates: true, Since: 1,
 		Params: []Param{pos(p("name", "string", "provider name")),
 			p("base-url", "string", "OpenAI-compatible endpoint"),
+			p("protocol", "string", "openai or anthropic; omit to detect which one the endpoint answers"),
 			p("api-key-env", "string", "environment variable holding the key"),
 			// Declared so the TUI can register a provider and its key in one
 			// request. The CLI REFUSES this flag (a key on a command line lands in
@@ -179,6 +180,7 @@ var Registry = []Cmd{
 		Kind: CLIOnly | Protocol, Mutates: true, Since: 1,
 		Params: []Param{pos(p("name", "string", "provider name")),
 			p("base-url", "string", "new OpenAI-compatible endpoint"),
+			p("protocol", "string", "openai, anthropic or auto (detect again)"),
 			p("api-key-env", "string", "environment variable holding the key (none clears it)"),
 			p("api-key", "string", "a new key (wire only); kept in a private file, never echoed")}},
 	{Path: []string{"provider", "remove"}, Desc: "forget a provider, its models and its stored key",
