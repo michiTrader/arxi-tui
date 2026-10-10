@@ -2,11 +2,13 @@ package theme
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/michiTrader/arxi_tui/internal/ui"
 )
 
@@ -43,8 +45,81 @@ type Cycle struct {
 	// FPS is how many palette steps pass in a second. 0 means DefaultCycleFPS.
 	FPS int
 	// Spread is how many palette steps separate neighbouring characters. 0 paints the
-	// whole span one colour at a time; 1 is a rainbow running along the text.
+	// whole span one colour at a time; 1 is a rainbow running along the text. With a
+	// Direction other than DirAlong it is instead how many times the palette is laid
+	// across the whole shape, first colour to last (0 and 1 both mean once).
 	Spread int
+	// Direction is where the colours flow. DirAlong (the default) runs them along each
+	// span's text, one row at a time. The others look at where a cell is on screen, so a
+	// frame drawn with the token gets one gradient across its whole shape: top and
+	// bottom edges differ, and the corners line up. See Direction* below.
+	Direction string
+}
+
+// Directions a cycle can flow in. All but DirAlong measure each cell against the box
+// that encloses every cell wearing the token in the frame, and count a row as two
+// columns because a terminal cell is about twice as tall as it is wide.
+const (
+	// DirAlong runs the palette along the text of each span (the original behaviour).
+	DirAlong = "along"
+	// DirHorizontal changes colour from left to right and is the same on every row.
+	DirHorizontal = "horizontal"
+	// DirVertical changes colour from top to bottom.
+	DirVertical = "vertical"
+	// DirDiagonal flows from the top-left corner to the bottom-right one.
+	DirDiagonal = "diagonal"
+	// DirAntiDiagonal flows from the bottom-left corner to the top-right one.
+	DirAntiDiagonal = "antidiagonal"
+	// DirRadial flows outward from the centre of the shape.
+	DirRadial = "radial"
+)
+
+// Directions lists every accepted direction, for messages.
+var Directions = []string{DirAlong, DirHorizontal, DirVertical, DirDiagonal, DirAntiDiagonal, DirRadial}
+
+// rampSteps is how many shades are blended between two neighbouring palette colours when
+// a cycle flows across a shape and all its colours are #rrggbb. Indexed colours cannot be
+// blended (their look is the terminal's), so they keep one step.
+const rampSteps = 16
+
+// positional reports whether the cycle looks at where a cell is on screen.
+func (c Cycle) positional() bool {
+	switch c.Direction {
+	case DirHorizontal, DirVertical, DirDiagonal, DirAntiDiagonal, DirRadial:
+		return true
+	}
+	return false
+}
+
+// steps is how many ramp entries lie between two neighbouring palette colours.
+func (c Cycle) steps() int {
+	if !c.positional() {
+		return 1
+	}
+	for _, col := range c.Colors {
+		if col.Kind != ui.ColorRGB {
+			return 1
+		}
+	}
+	return rampSteps
+}
+
+// rampLen is the number of entries in the whole (closed) ramp.
+func (c Cycle) rampLen() int { return len(c.Colors) * c.steps() }
+
+// colorAt is ramp entry n: a palette colour, or a blend of two neighbouring ones.
+func (c Cycle) colorAt(n int) ui.Color {
+	k, st := len(c.Colors), c.steps()
+	n = ((n % (k * st)) + k*st) % (k * st)
+	a, f := n/st, n%st
+	if f == 0 {
+		return c.Colors[a]
+	}
+	b := c.Colors[(a+1)%k]
+	from := c.Colors[a]
+	t := float64(f) / float64(st)
+	mix := func(x, y uint8) uint8 { return uint8(math.Round(float64(x) + (float64(y)-float64(x))*t)) }
+	return ui.Color{Kind: ui.ColorRGB, R: mix(from.R, b.R), G: mix(from.G, b.G), B: mix(from.B, b.B)}
 }
 
 const (
@@ -65,6 +140,9 @@ type CycleDef struct {
 	Attrs  []string `json:"attrs,omitempty"`
 	FPS    int      `json:"fps,omitempty"`
 	Spread int      `json:"spread,omitempty"`
+	// Direction is where the colours flow: along (the default), horizontal, vertical,
+	// diagonal, antidiagonal or radial. See the Dir* constants.
+	Direction string `json:"direction,omitempty"`
 }
 
 // rate is the cycle's step rate with the default filled in.
@@ -98,13 +176,27 @@ func (c Cycle) Validate(name string) error {
 		return fmt.Errorf("cycle %q asks for fps %d; use 1-%d (omit it for %d)", name, c.FPS, MaxCycleFPS, DefaultCycleFPS)
 	case c.Spread < 0 || c.Spread > MaxCycleSpread:
 		return fmt.Errorf("cycle %q asks for spread %d; use 0-%d (0 paints the whole span one colour, 1 runs a rainbow along it)", name, c.Spread, MaxCycleSpread)
+	case !validDirection(c.Direction):
+		return fmt.Errorf("cycle %q asks for direction %q; use one of %s", name, c.Direction, strings.Join(Directions, ", "))
 	}
 	return nil
 }
 
+func validDirection(d string) bool {
+	if d == "" {
+		return true
+	}
+	for _, k := range Directions {
+		if d == k {
+			return true
+		}
+	}
+	return false
+}
+
 // ParseCycle reads one cycle from its JSON form and validates it.
 func ParseCycle(name string, def CycleDef) (Cycle, error) {
-	c := Cycle{FPS: def.FPS, Spread: def.Spread}
+	c := Cycle{FPS: def.FPS, Spread: def.Spread, Direction: strings.ToLower(strings.TrimSpace(def.Direction))}
 	for i, s := range def.Colors {
 		col, err := ui.ParseColor(s)
 		if err != nil {
@@ -125,7 +217,7 @@ func ParseCycle(name string, def CycleDef) (Cycle, error) {
 // Def is the JSON form of c, so a cycle can be written back to a file and shown to the
 // user in the words they would type.
 func (c Cycle) Def() CycleDef {
-	d := CycleDef{FPS: c.FPS, Spread: c.Spread}
+	d := CycleDef{FPS: c.FPS, Spread: c.Spread, Direction: c.Direction}
 	for _, col := range c.Colors {
 		d.Colors = append(d.Colors, col.String())
 	}
@@ -192,7 +284,7 @@ func (t *Theme) derived(name string) (ui.Style, bool) {
 		return ui.Style{}, false
 	}
 	s := c.base()
-	s.FG = c.Colors[n%len(c.Colors)]
+	s.FG = c.colorAt(n)
 	return s, true
 }
 
@@ -208,19 +300,115 @@ func (t *Theme) Cycled(f ui.Frame, now time.Time) (out ui.Frame, fps int) {
 	if t == nil || len(t.cycles) == 0 {
 		return f, 0
 	}
+	geo := t.cycleShapes(f)
 	out = f
-	out.Committed = t.cycleLines(f.Committed, now, &fps)
-	out.Live = t.cycleLines(f.Live, now, &fps)
+	out.Committed = t.cycleLines(f.Committed, 0, now, &fps, geo)
+	out.Live = t.cycleLines(f.Live, len(f.Committed), now, &fps, geo)
 	if fps == 0 {
 		return f, 0
 	}
 	return out, fps
 }
 
-func (t *Theme) cycleLines(lines []ui.Line, now time.Time, fps *int) []ui.Line {
+// shape is the box enclosing every cell that wears one positional cycle in a frame, in
+// cells (columns) and rows. It is what a direction measures against, so the same border
+// flows the same way wherever it sits on screen.
+type shape struct {
+	c0, c1, r0, r1 int
+	set            bool
+}
+
+func (b *shape) add(c0, c1, r int) {
+	if !b.set {
+		*b = shape{c0, c1, r, r, true}
+		return
+	}
+	b.c0, b.c1 = min(b.c0, c0), max(b.c1, c1)
+	b.r0, b.r1 = min(b.r0, r), max(b.r1, r)
+}
+
+// rowCells is how many columns one row counts for: a terminal cell is about twice as
+// tall as it is wide, so a step down looks twice as far as a step across.
+const rowCells = 2
+
+// extent is the largest position the cycle's direction measures inside the shape; the
+// ramp runs once (or Spread times) over it.
+func (b shape) extent(dir string) float64 {
+	w, h := float64(b.c1-b.c0), float64((b.r1-b.r0)*rowCells)
+	var e float64
+	switch dir {
+	case DirHorizontal:
+		e = w
+	case DirVertical:
+		e = h
+	case DirDiagonal, DirAntiDiagonal:
+		e = w + h
+	case DirRadial:
+		e = math.Hypot(w/2, h/2)
+	}
+	if e < 1 {
+		return 1
+	}
+	return e
+}
+
+// pos is where the cell at column c, row r sits along the direction, from 0 to extent.
+func (b shape) pos(dir string, c, r int) float64 {
+	dc, dr := float64(c-b.c0), float64((r-b.r0)*rowCells)
+	switch dir {
+	case DirHorizontal:
+		return dc
+	case DirVertical:
+		return dr
+	case DirDiagonal:
+		return dc + dr
+	case DirAntiDiagonal:
+		return dc + (float64((b.r1-b.r0)*rowCells) - dr)
+	case DirRadial:
+		w, h := float64(b.c1-b.c0)/2, float64((b.r1-b.r0)*rowCells)/2
+		return math.Hypot(dc-w, dr-h)
+	}
+	return 0
+}
+
+// cycleShapes measures, for each positional cycle the frame uses, the box around its
+// cells. It is empty (and costs one pass over the spans) when no cycle is positional.
+func (t *Theme) cycleShapes(f ui.Frame) map[string]*shape {
+	var geo map[string]*shape
+	scan := func(lines []ui.Line, rowBase int) {
+		for i, l := range lines {
+			col := 0
+			for _, s := range l {
+				w := ansi.StringWidth(s.Text)
+				if c, ok := t.cycles[s.Style]; ok && c.positional() && w > 0 {
+					if geo == nil {
+						geo = map[string]*shape{}
+					}
+					b := geo[s.Style]
+					if b == nil {
+						b = &shape{}
+						geo[s.Style] = b
+					}
+					b.add(col, col+w-1, rowBase+i)
+				}
+				col += w
+			}
+		}
+	}
+	for _, c := range t.cycles {
+		if c.positional() {
+			scan(f.Committed, 0)
+			scan(f.Live, len(f.Committed))
+			break
+		}
+	}
+	return geo
+}
+
+func (t *Theme) cycleLines(lines []ui.Line, rowBase int, now time.Time, fps *int, geo map[string]*shape) []ui.Line {
 	var out []ui.Line
 	for i, l := range lines {
-		nl, changed := t.cycleLine(l, now, fps)
+		nl, changed := t.cycleLine(l, rowBase+i, now, fps, geo)
 		if changed && out == nil {
 			out = make([]ui.Line, len(lines))
 			copy(out, lines[:i])
@@ -235,12 +423,15 @@ func (t *Theme) cycleLines(lines []ui.Line, now time.Time, fps *int) []ui.Line {
 	return out
 }
 
-func (t *Theme) cycleLine(l ui.Line, now time.Time, fps *int) (ui.Line, bool) {
+func (t *Theme) cycleLine(l ui.Line, row int, now time.Time, fps *int, geo map[string]*shape) (ui.Line, bool) {
 	var out ui.Line
 	changed := false
+	col := 0
 	for i, s := range l {
+		width := ansi.StringWidth(s.Text)
 		c, ok := t.cycles[s.Style]
 		if !ok || s.Text == "" {
+			col += width
 			if changed {
 				out = append(out, s)
 			}
@@ -253,11 +444,31 @@ func (t *Theme) cycleLine(l ui.Line, now time.Time, fps *int) (ui.Line, bool) {
 		if r := c.rate(); r > *fps {
 			*fps = r
 		}
-		step := int(now.UnixMilli() * int64(c.rate()) / 1000)
 		// Text already carrying escape sequences is left whole: cutting inside one would
 		// print its tail as text.
-		if c.Spread == 0 || strings.ContainsRune(s.Text, '\x1b') {
-			s.Style += cycleSep + strconv.Itoa(step%len(c.Colors))
+		whole := strings.ContainsRune(s.Text, '\x1b')
+		if b := geo[s.Style]; c.positional() && b != nil && !whole {
+			// One shade per cell, from where the cell is in the shape.
+			steps, total := c.steps(), c.rampLen()
+			// The shape shows the palette once, first colour to last (Spread times when
+			// asked), so its two ends differ; time slides it round the closed loop, which
+			// is what keeps the motion free of any jump.
+			window := float64(max(c.Spread, 1) * (len(c.Colors) - 1) * steps)
+			tick := int(now.UnixMilli() * int64(c.rate()) * int64(steps) / 1000)
+			ext, at := b.extent(c.Direction), col
+			for _, r := range s.Text {
+				cell := string(r)
+				space := int(math.Round(b.pos(c.Direction, at, row) / ext * window))
+				out = append(out, ui.Span{Text: cell, Style: s.Style + cycleSep + strconv.Itoa(((tick-space)%total+total)%total), Fill: s.Fill})
+				at += ansi.StringWidth(cell)
+			}
+			col += width
+			continue
+		}
+		col += width
+		step := int(now.UnixMilli() * int64(c.rate()) / 1000)
+		if c.positional() || c.Spread == 0 || whole {
+			s.Style += cycleSep + strconv.Itoa(step%len(c.Colors)*c.steps())
 			out = append(out, s)
 			continue
 		}

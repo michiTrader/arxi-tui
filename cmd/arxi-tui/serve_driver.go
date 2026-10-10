@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/michiTrader/arxi_tui/internal/driver"
 	"github.com/michiTrader/arxi_tui/internal/fold"
@@ -244,6 +245,15 @@ func (d *serveDriver) ActorLabel() string {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return d.actorLabel
+}
+
+// RetryLabel is the countdown the Thinking line shows while the core waits to ask the
+// provider again ("" when it is not waiting).
+func (d *serveDriver) RetryLabel(now time.Time) string {
+	if d.chat == nil {
+		return ""
+	}
+	return d.chat.RetryLabel(now)
 }
 
 // SetEffort chooses the thinking level the next chat turns ask for ("" sends

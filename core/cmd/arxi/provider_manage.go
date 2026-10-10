@@ -255,32 +255,79 @@ const maxChatHistory = 40
 const chatTimeout = 3 * time.Minute
 
 // chatAttempts is how many times one chat message is tried when the provider answers
-// with a transient refusal (a gateway timeout, an overload). chatBackoff is the wait
-// before the second try; the third waits twice as long. Both are variables so tests
-// need not sleep.
+// with a transient refusal (a rate limit, a gateway timeout, an overload). The wait
+// before try n+1 grows with each failure (see retryWait), so six tries ride out a
+// provider that says "Retry in 27s" without hammering one that is struggling. All of
+// these are variables so tests need not sleep.
 var (
-	chatAttempts = 3
-	chatBackoff  = 1500 * time.Millisecond
+	chatAttempts = 6
+	chatBackoff  = 2 * time.Second
+	// chatMaxBackoff caps the growing wait; chatMaxWait is the longest a provider
+	// may ask for (Retry-After) before the call gives up instead of waiting.
+	chatMaxBackoff = 30 * time.Second
+	chatMaxWait    = 90 * time.Second
+	// chatRetryTotal is the most time one chat call spends waiting between tries; it is
+	// added to chatTimeout so a patient retry is not cut short by the call's own deadline.
+	chatRetryTotal = 5 * time.Minute
+	// chatRetryMargin is added to a wait the provider asked for, so the retry lands just
+	// after its window opens and not on its edge.
+	chatRetryMargin = time.Second
 )
 
 // transientRefusal reports whether a refusal is the provider saying "not now" rather
-// than "not this": 429 and the gateway errors 502, 503 and 504. A 500 is left alone on
-// purpose, because it more often means the request itself broke the provider.
+// than "not this": 408, 429 and the gateway errors 502, 503, 504 and 529 (overloaded).
+// A 500 is left alone on purpose, because it more often means the request itself broke
+// the provider. A 429 that is really a billing wall ("insufficient_quota", "buy a
+// subscription") is permanent: waiting never fixes it.
 func transientRefusal(r *turn.Refusal) bool {
 	if r == nil {
 		return false
 	}
 	switch r.Code {
-	case "http_429", "http_502", "http_503", "http_504":
-		return true
+	case "http_408", "http_429", "http_502", "http_503", "http_504", "http_529":
+		return !billingWall(r.Message)
 	}
 	return false
+}
+
+// billingWall reports whether a refusal message says the account (not the moment) is
+// the problem: out of quota, no subscription, no credit.
+func billingWall(msg string) bool {
+	m := strings.ToLower(msg)
+	for _, w := range []string{"insufficient_quota", "billing", "subscription", "exceeded your current quota", "insufficient balance", "insufficient credit", "payment required"} {
+		if strings.Contains(m, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// retryWait is how long to wait before the next try: the provider's own ask when it
+// made one (Retry-After, or "Retry in 27s" in the message) plus a second of margin,
+// otherwise chatBackoff doubled for every failure so far, capped at chatMaxBackoff.
+// The boolean is false when the provider asked for longer than chatMaxWait: the call
+// then gives up and says so, instead of freezing the chat.
+func retryWait(failures int, asked time.Duration) (time.Duration, bool) {
+	if asked > 0 {
+		if asked > chatMaxWait {
+			return asked, false
+		}
+		return asked + chatRetryMargin, true
+	}
+	d := chatBackoff
+	for i := 1; i < failures && d < chatMaxBackoff; i++ {
+		d *= 2
+	}
+	if d > chatMaxBackoff {
+		d = chatMaxBackoff
+	}
+	return d, true
 }
 
 // refusalText is the sentence the user reads when the provider refused. A bare
 // gateway body such as "error code: 504" says nothing, so the usual causes get a
 // plain explanation that keeps the original words.
-func refusalText(r *turn.Refusal) string {
+func refusalText(r *turn.Refusal, tries int) string {
 	msg := "the model refused"
 	if r != nil && strings.TrimSpace(r.Message) != "" {
 		msg = r.Message
@@ -288,15 +335,18 @@ func refusalText(r *turn.Refusal) string {
 	if r == nil {
 		return msg
 	}
+	if billingWall(r.Message) {
+		return fmt.Sprintf("the provider will not serve this model for this account (%s): that is billing, not the moment, so retrying does not help. Pick another model with /model, or fix the plan with the provider. Provider said: %s", strings.TrimPrefix(r.Code, "http_"), shortReason(msg))
+	}
 	switch r.Code {
 	case "http_403":
 		if strings.TrimSpace(r.Message) == "" {
 			return "the provider's gateway refused the request with an empty 403 and kept doing so on every retry (nothing was sent to a model or billed). It is not your key: gateways in front of an API do this to an unpredictable share of requests. Try again in a moment"
 		}
 	case "http_504", "http_502", "http_503":
-		return fmt.Sprintf("the provider timed out or is overloaded (%s, tried %d times). A long answer from a slow model is the usual cause: ask for something shorter, lower /effort, or pick another model with /model. Provider said: %s", strings.TrimPrefix(r.Code, "http_"), chatAttempts, msg)
+		return fmt.Sprintf("the provider timed out or is overloaded (%s, tried %d times). A long answer from a slow model is the usual cause: ask for something shorter, lower /effort, or pick another model with /model. Provider said: %s", strings.TrimPrefix(r.Code, "http_"), tries, msg)
 	case "http_429":
-		return fmt.Sprintf("the provider is rate limiting this key (429, tried %d times); wait a moment and try again. Provider said: %s", chatAttempts, msg)
+		return fmt.Sprintf("the provider is rate limiting this key (429, tried %d times%s). Send the message again in a moment, or pick another model with /model. Provider said: %s", tries, giveUpNote(r), msg)
 	}
 	return msg
 }
@@ -417,7 +467,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	}
 	messages = append(messages, text(turn.RoleUser, prompt))
 
-	ctx, cancel := context.WithTimeout(ctx, chatTimeout)
+	ctx, cancel := context.WithTimeout(ctx, chatTimeout+chatRetryTotal)
 	defer cancel()
 	exec := &provider.Executor{OnWire: rememberWire}
 	req := turn.Request{
@@ -429,9 +479,12 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	// added up over every ask of the turn, so a tool loop reports its true cost.
 	var used turn.Usage
 	var last turn.Usage
+	var waited time.Duration
+	tries := 0
 	complete := func(req turn.Request) (turn.Response, error) {
 		for attempt := 1; ; attempt++ {
 			resp, err := exec.CompleteTurn(ctx, req)
+			tries = attempt
 			if err != nil {
 				return resp, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, err)
 			}
@@ -441,11 +494,23 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 			if resp.FinishReason != turn.FinishRefusal || !transientRefusal(resp.Refusal) || attempt >= chatAttempts {
 				return resp, nil
 			}
-			// A gateway timeout or an overloaded provider often clears on the next try, and
-			// the refusal carries no answer, so asking again repeats nothing the user paid
-			// for. The wait grows so a struggling provider is not hammered.
+			// A rate limit, a gateway timeout or an overloaded provider often clears on
+			// its own, and the refusal carries no answer, so asking again repeats nothing
+			// the user paid for. The wait is what the provider asked for when it said, and
+			// otherwise grows with every failure, so a struggling provider is not hammered
+			// and a patient one is not given up on after three quick tries.
+			wait, ok := retryWait(attempt, time.Duration(resp.Refusal.RetryAfterMs)*time.Millisecond)
+			if !ok || waited+wait > chatRetryTotal {
+				return resp, nil
+			}
+			waited += wait
+			notifyRetry(ctx, chatRetryNotification{
+				Type: "chat.retry", Provider: res.Provider, Model: res.Model,
+				Attempt: attempt + 1, Of: chatAttempts, WaitMs: wait.Milliseconds(),
+				Status: strings.TrimPrefix(resp.Refusal.Code, "http_"), Reason: shortReason(resp.Refusal.Message),
+			})
 			select {
-			case <-time.After(chatBackoff * time.Duration(attempt)):
+			case <-time.After(wait):
 			case <-ctx.Done():
 				return resp, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, ctx.Err())
 			}
@@ -461,7 +526,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 		return chatResult{}, err
 	}
 	if resp.FinishReason == turn.FinishRefusal {
-		return chatResult{}, fmt.Errorf("%s/%s: %s", res.Provider, res.Model, refusalText(resp.Refusal))
+		return chatResult{}, fmt.Errorf("%s/%s: %s", res.Provider, res.Model, refusalText(resp.Refusal, tries))
 	}
 	reply := responseText(resp)
 	if strings.TrimSpace(reply) == "" {
@@ -568,7 +633,7 @@ type thinkingNotification struct {
 // fragment is written to the connection as it arrives.
 func handleChatSendThinking(streams *connStreams, params map[string]any) (any, error) {
 	w := streams.w
-	ctx := context.Background()
+	ctx := withRetryNotice(context.Background(), func(n chatRetryNotification) { _ = w.write(n) })
 	if boolParam(params, "stream_thinking") {
 		ctx = provider.WithThinking(ctx, func(fragment string) {
 			_ = w.write(thinkingNotification{Type: "chat.thinking", Text: fragment})
@@ -630,4 +695,53 @@ func rememberWire(providerName, modelID, protocol string) {
 			return
 		}
 	}
+}
+
+// chatRetryNotification is written to the connection each time a chat call is about to
+// wait and ask again, so the client can show "retrying in 27s (2/6)" instead of a spinner
+// that looks frozen. It has a type and no id, like every notification on this wire.
+type chatRetryNotification struct {
+	Type     string `json:"type"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	// Attempt is the try about to be made, Of how many there are.
+	Attempt int `json:"attempt"`
+	Of      int `json:"of"`
+	// WaitMs is how long the call waits before that try.
+	WaitMs int64 `json:"wait_ms"`
+	// Status is the HTTP status that caused the wait ("429"), Reason the provider's
+	// words, shortened.
+	Status string `json:"status"`
+	Reason string `json:"reason,omitempty"`
+}
+
+type retryNoticeKey struct{}
+
+// withRetryNotice returns a context whose chat call reports each wait to fn.
+func withRetryNotice(ctx context.Context, fn func(chatRetryNotification)) context.Context {
+	return context.WithValue(ctx, retryNoticeKey{}, fn)
+}
+
+func notifyRetry(ctx context.Context, n chatRetryNotification) {
+	if fn, _ := ctx.Value(retryNoticeKey{}).(func(chatRetryNotification)); fn != nil {
+		fn(n)
+	}
+}
+
+// shortReason trims a provider's message to one readable line.
+func shortReason(msg string) string {
+	msg = strings.Join(strings.Fields(msg), " ")
+	if r := []rune(msg); len(r) > 140 {
+		return string(r[:140]) + "…"
+	}
+	return msg
+}
+
+// giveUpNote adds why the call stopped waiting when the provider asked for more than the
+// chat is willing to wait.
+func giveUpNote(r *turn.Refusal) string {
+	if d := time.Duration(r.RetryAfterMs) * time.Millisecond; d > chatMaxWait {
+		return fmt.Sprintf("; the provider asked for %s, longer than the %s this chat waits", d.Round(time.Second), chatMaxWait)
+	}
+	return ""
 }

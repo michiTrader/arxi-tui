@@ -106,10 +106,83 @@ type chatSession struct {
 	// turn numbers the turns; cancel is the live turn's way to stop (nil when idle).
 	turn   int64
 	cancel context.CancelFunc
+	// retry is the wait the core announced before asking the provider again, so the
+	// Thinking line can count it down. Zero value = not waiting.
+	retry retryWait
+}
+
+// retryWait is one announced wait: until when, and the words that explain it.
+type retryWait struct {
+	until time.Time
+	why   string
+	n, of int
 }
 
 func newChatSession(core chatSender, out chan<- fold.Event) *chatSession {
 	return &chatSession{core: core, out: out}
+}
+
+// noteRetry records that the core is waiting to ask the provider again, puts a line in
+// the conversation (so the wait is on the record, not only on a spinner), and starts
+// the countdown the Thinking line shows.
+func (c *chatSession) noteRetry(ctx context.Context, gen int64, r driver.Retry) {
+	c.mu.Lock()
+	if c.gen != gen {
+		c.mu.Unlock()
+		return
+	}
+	c.retry = retryWait{until: chatNow().Add(r.Wait), why: retryWhy(r), n: r.Attempt, of: r.Of}
+	c.mu.Unlock()
+	c.post(ctx, gen, "chat.warn", map[string]any{"text": retryLine(r)})
+}
+
+// RetryLabel is the Thinking line's lead while the core waits to ask again, or "" when
+// it is not waiting: "• Retrying in 27s · rate limited (2/6) ".
+func (c *chatSession) RetryLabel(now time.Time) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.busy || c.retry.until.IsZero() {
+		return ""
+	}
+	left := c.retry.until.Sub(now)
+	if left <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("• Retrying in %s · %s (%d/%d) ", waitText(left), c.retry.why, c.retry.n, c.retry.of)
+}
+
+// waitText rounds a wait up to whole seconds ("27s", "1m 5s"), so the count never reads
+// "0s" while there is still time left.
+func waitText(d time.Duration) string {
+	secs := int((d + time.Second - 1) / time.Second)
+	if secs < 60 {
+		return fmt.Sprintf("%ds", secs)
+	}
+	return fmt.Sprintf("%dm %ds", secs/60, secs%60)
+}
+
+// retryWhy names the cause in a few words for the countdown.
+func retryWhy(r driver.Retry) string {
+	switch r.Status {
+	case "429":
+		return "rate limited"
+	case "408", "502", "503", "504", "529":
+		return "provider busy (" + r.Status + ")"
+	}
+	return "provider said " + r.Status
+}
+
+// retryLine is the line left in the conversation for one retry.
+func retryLine(r driver.Retry) string {
+	who := r.Model
+	if r.Provider != "" {
+		who = r.Provider + "/" + r.Model
+	}
+	line := fmt.Sprintf("%s: %s. Retrying in %s (try %d of %d)", who, retryWhy(r), waitText(r.Wait), r.Attempt, r.Of)
+	if r.Reason != "" {
+		line += " · " + r.Reason
+	}
+	return line
 }
 
 // chatRequires says why this core cannot chat, or nil when it can.
@@ -411,6 +484,7 @@ func (c *chatSession) run(ctx context.Context, text string, withUI bool, hist []
 		if c.gen == gen && c.turn == turn {
 			c.busy = false
 			c.cancel = nil
+			c.retry = retryWait{}
 		}
 		c.mu.Unlock()
 	}()
@@ -451,6 +525,8 @@ func (c *chatSession) run(ctx context.Context, text string, withUI bool, hist []
 		OnThinking: func(fragment string) {
 			c.post(ctx, gen, "chat.thinking", map[string]any{"text": fragment})
 		},
+		// A rate limit or an overload is waited out by the core itself; this only shows it.
+		OnRetry: func(r driver.Retry) { c.noteRetry(ctx, gen, r) },
 		// What it looks at while answering is shown as it happens.
 		Workdir: workdir, Edits: edits, Runs: runs, Web: web,
 		OnApproval: func(ctx context.Context, a driver.Approval) bool { return c.askUser(ctx, gen, a) },

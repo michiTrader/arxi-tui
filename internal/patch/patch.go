@@ -619,17 +619,50 @@ func (c Command) mutate(node map[string]any) {
 		style["style"] = c.Value
 		node["style"] = style
 	case "set":
-		// style_by is the one property whose value is an object ({"max":"rainbow"}); every
-		// other value typed after `set` is a string. An object that does not parse is
-		// stored as the string it was, and the validator refuses it with its address.
-		if c.Key == "style_by" {
-			var obj map[string]any
-			if json.Unmarshal([]byte(c.Value), &obj) == nil && obj != nil {
-				node[c.Key] = obj
-				return
-			}
+		node[c.Key] = c.setValue()
+	}
+}
+
+// stringKeys are the node properties whose value is always text, so a value that happens
+// to look like a number or a word of JSON ("1", "true") stays the text it was typed as.
+var stringKeys = map[string]bool{
+	"id": true, "type": true, "bind": true, "when": true, "placeholder": true, "text": true,
+	"anchor": true, "filter_by": true, "title": true, "on_press": true, "layout": true,
+}
+
+// setValue turns what was typed after `/ui set <id> <key>` into the JSON value the node
+// property holds. Everything used to be stored as a string except style_by, so
+// `border {"shape":"round","style":"rainbow"}` wrote the text of the object, `grow 1` wrote
+// "1", and `style rainbow` wrote a string where an object is needed: all refused, and each
+// refusal told the author to write what it had just written. A model asked for an animated
+// frame made some twenty attempts against it. The value is now read as JSON when it is
+// JSON (an object, an array, a number, true or false, or a quoted string), `style <token>`
+// means what `/ui style` means, and anything else is the text it was typed as.
+func (c Command) setValue() any {
+	v := strings.TrimSpace(c.Value)
+	if c.Key == "style" {
+		var obj map[string]any
+		if json.Unmarshal([]byte(v), &obj) == nil && obj != nil {
+			return obj
 		}
-		node[c.Key] = c.Value
+		return map[string]any{"style": strings.Trim(v, `"`)}
+	}
+	var got any
+	if err := json.Unmarshal([]byte(v), &got); err != nil {
+		return c.Value
+	}
+	switch t := got.(type) {
+	case map[string]any, []any:
+		return t
+	case string:
+		return t // "round" typed with its quotes
+	case nil:
+		return c.Value
+	default: // number or bool
+		if stringKeys[c.Key] {
+			return c.Value
+		}
+		return t
 	}
 }
 

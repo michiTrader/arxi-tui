@@ -740,8 +740,10 @@ func behaviourGuide(b behaviour) string {
 	var s strings.Builder
 	s.WriteString(`BEHAVIOUR. Beyond looks, the interface has a behaviour layer, also data: animations, the keys that steer the choice menus, shortcuts, commands of your own in the / menu, and hooks (reactions to a setting changing). Pass behaviour: {...} to ui_edit. The maps animations, menu_keys and keys merge entry by entry (null removes an entry); commands and hooks, when present, replace the whole list. Read the current document below first, and keep what you are not changing.
 
-  animations  {"<name>": {"colors":["red","yellow","green","cyan","blue","magenta"], "fps":10, "spread":1, "attrs":["bold"]}}
+  animations  {"<name>": {"colors":["red","yellow","green","cyan","blue","magenta"], "fps":10, "spread":1, "direction":"diagonal", "attrs":["bold"]}}
       A colour that moves. The name is a style token: use it anywhere a token goes (a node's "style", a colour map...). spread 0 paints a whole span one colour at a time, 1 runs a rainbow along the text. fps 1-30 (default 8), 2-64 colours.
+      direction says where the colours flow. "along" (the default) runs them along each line of text separately, so a frame's top and bottom lines look identical. "diagonal" (top-left to bottom-right), "antidiagonal", "horizontal", "vertical" and "radial" (outward from the centre) look at where each cell sits in the whole shape, so a frame gets one smooth gradient: top, bottom and sides all differ and the corners line up. With a direction, spread is how many times the palette is laid across the shape (1 = once). Colours given as #rrggbb are blended smoothly; names and indexes step. Use "diagonal" or "radial" for a frame that should look graded.
+      An animated token paints only what wears it. To animate a frame, put the animation on the border's style ({"shape":"round","style":"<name>"}) and leave the box's own "style" and the input untouched: the letters stay as they are.
       To make a word change with a setting use the node property style_by: {"<value>": "<token>"} on a node with a bind. Example, the effort word in the status bar turns rainbow when the level is max:
         behaviour: {"animations": {"rainbow": {"colors": ["red","yellow","green","cyan","blue","magenta"], "spread": 1, "attrs": ["bold"]}}}
         commands: ["/ui set status_effort style_by {\"max\":\"rainbow\"}"]   (give the node an id first if it has none)
@@ -756,7 +758,7 @@ func behaviourGuide(b behaviour) string {
       on is effort, mode or style; is is one of its values (effort also has "none" for cleared) or left out for any change. Hooks fire when the user changes the setting, never when an action did, so nothing loops.
   An action is one of: cmd:/<line typed as the user would type it>, focus:<node id>, ext:<plugin-id>:<action> (keys and commands only; plugins are installed with /ui plugin add <url> and ask the user's consent). answer: is not allowed here.
   A key, a command or a hook can be removed with null (keys) or by sending the list without it. Changes to keys, commands and hooks are always put to the user, even in full access, because they decide what their own keyboard does later.
-  The user types the common ones themselves: /ui animate <name> <colour,colour,...> [fps=N] [spread=N] [bold] | off, /ui key <key> <action...> | off, /ui menukeys <action> <key...> | off.
+  The user types the common ones themselves: /ui animate <name> <colour,colour,...> [fps=N] [spread=N] [diagonal|radial|...] [bold] | off, /ui key <key> <action...> | off, /ui menukeys <action> <key...> | off.
 
 `)
 	s.WriteString("Current behaviour:\n")
@@ -772,6 +774,16 @@ func behaviourDiff(before, after behaviour) (string, error) {
 // ---- typed /ui commands ----------------------------------------------------------
 
 // uiBehaviourCommand reads the three typed /ui lines that edit behaviour and returns the
+// isDirectionWord reports whether w names a gradient direction other than the default.
+func isDirectionWord(w string) bool {
+	for _, d := range theme.Directions {
+		if w == d && d != theme.DirAlong {
+			return true
+		}
+	}
+	return false
+}
+
 // patch they mean. ok is false for any other line; err is a refusal to show the user.
 func uiBehaviourCommand(input string) (p behaviourPatch, label string, ok bool, err error) {
 	f := strings.Fields(input)
@@ -785,7 +797,7 @@ func uiBehaviourCommand(input string) (p behaviourPatch, label string, ok bool, 
 			return behaviourPatch{Animations: map[string]*theme.CycleDef{name: nil}}, "/ui animate: " + name + " is off", true, nil
 		}
 		if len(f) < 4 {
-			return p, "", true, fmt.Errorf("/ui animate <name> <colour,colour,...> [fps=N] [spread=N] [bold ...]  (or: /ui animate <name> off)")
+			return p, "", true, fmt.Errorf("/ui animate <name> <colour,colour,...> [fps=N] [spread=N] [diagonal|radial|horizontal|vertical|antidiagonal] [bold ...]  (or: /ui animate <name> off)")
 		}
 		def := theme.CycleDef{}
 		for _, c := range strings.Split(f[3], ",") {
@@ -799,6 +811,11 @@ func uiBehaviourCommand(input string) (p behaviourPatch, label string, ok bool, 
 				fmt.Sscanf(strings.TrimPrefix(w, "fps="), "%d", &def.FPS)
 			case strings.HasPrefix(w, "spread="):
 				fmt.Sscanf(strings.TrimPrefix(w, "spread="), "%d", &def.Spread)
+			case strings.HasPrefix(w, "direction="):
+				def.Direction = strings.TrimPrefix(w, "direction=")
+			case isDirectionWord(w):
+				// "diagonal" alone is what a person types.
+				def.Direction = w
 			default:
 				def.Attrs = append(def.Attrs, w)
 			}

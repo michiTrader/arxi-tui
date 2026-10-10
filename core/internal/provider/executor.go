@@ -451,7 +451,7 @@ func (x *Executor) completeTurnOn(ctx context.Context, req turn.Request) (turn.R
 		}
 		if apiErr != nil {
 			out := turn.Response{Schema: turn.Schema, Model: req.Model, FinishReason: turn.FinishRefusal,
-				Refusal: &turn.Refusal{Code: fmt.Sprintf("http_%d", apiErr.Status), Message: apiErr.Message, Retryable: apiErr.Retryable(), Web: apiErr.Web}}
+				Refusal: &turn.Refusal{Code: fmt.Sprintf("http_%d", apiErr.Status), Message: apiErr.Message, Retryable: apiErr.Retryable(), Web: apiErr.Web, RetryAfterMs: apiErr.After().Milliseconds()}}
 			if resp != nil {
 				out.ID = resp.ID
 				out.Usage = turn.Usage{InputTokens: resp.Usage.InputTokens, OutputTokens: resp.Usage.OutputTokens,
@@ -479,7 +479,7 @@ func (x *Executor) completeTurnOn(ctx context.Context, req turn.Request) (turn.R
 		}
 		if apiErr != nil {
 			out := turn.Response{Schema: turn.Schema, Model: req.Model, FinishReason: turn.FinishRefusal,
-				Refusal: &turn.Refusal{Code: fmt.Sprintf("http_%d", apiErr.Status), Message: apiErr.Message, Retryable: apiErr.Retryable(), Web: apiErr.Web}}
+				Refusal: &turn.Refusal{Code: fmt.Sprintf("http_%d", apiErr.Status), Message: apiErr.Message, Retryable: apiErr.Retryable(), Web: apiErr.Web, RetryAfterMs: apiErr.After().Milliseconds()}}
 			if resp != nil {
 				out.ID = resp.ID
 				out.Usage = turn.Usage{InputTokens: resp.Usage.PromptTokens, OutputTokens: resp.Usage.CompletionTokens}

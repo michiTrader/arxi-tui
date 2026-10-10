@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -27,15 +28,18 @@ type fakeLLM struct {
 	messages [][]map[string]any
 	failNext int // answer this many chat requests with failCode before succeeding
 	failCode int
-	calls    int      // chat requests seen
-	efforts  []string // reasoning_effort of each chat request ("" when absent)
-	thinking []string // thinking.type of each chat request ("" when absent)
-	models   []string
-	status   int
-	streams  int      // chat requests that asked for server-sent events
-	think    []string // reasoning fragments a streamed answer sends first
-	script   []scripted
-	tools    [][]string // names of the tools offered with each chat request
+	// failBody replaces the bare "error code: N" body; failHeader sets Retry-After.
+	failBody   string
+	failHeader string
+	calls      int      // chat requests seen
+	efforts    []string // reasoning_effort of each chat request ("" when absent)
+	thinking   []string // thinking.type of each chat request ("" when absent)
+	models     []string
+	status     int
+	streams    int      // chat requests that asked for server-sent events
+	think      []string // reasoning fragments a streamed answer sends first
+	script     []scripted
+	tools      [][]string // names of the tools offered with each chat request
 }
 
 // scripted is one step of a tool conversation: while steps remain, the model
@@ -66,8 +70,15 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 			f.calls++
 			if f.failNext > 0 {
 				f.failNext--
+				if f.failHeader != "" {
+					w.Header().Set("Retry-After", f.failHeader)
+				}
 				w.WriteHeader(f.failCode)
-				io.WriteString(w, "error code: "+strconv.Itoa(f.failCode))
+				body := f.failBody
+				if body == "" {
+					body = "error code: " + strconv.Itoa(f.failCode)
+				}
+				io.WriteString(w, body)
 				return
 			}
 			var body struct {
@@ -494,9 +505,11 @@ func TestChatRefusesAnUnknownThinkingLevelBeforeBilling(t *testing.T) {
 
 func fastRetries(t *testing.T) {
 	t.Helper()
-	saved := chatBackoff
-	chatBackoff = time.Millisecond
-	t.Cleanup(func() { chatBackoff = saved })
+	saved, savedMax, savedWait, savedMargin := chatBackoff, chatMaxBackoff, chatMaxWait, chatRetryMargin
+	chatBackoff, chatMaxBackoff, chatRetryMargin = time.Millisecond, 8*time.Millisecond, time.Millisecond
+	t.Cleanup(func() {
+		chatBackoff, chatMaxBackoff, chatMaxWait, chatRetryMargin = saved, savedMax, savedWait, savedMargin
+	})
 }
 
 func chatProvider(t *testing.T) *fakeLLM {
@@ -527,19 +540,111 @@ func TestChatRetriesAGatewayTimeoutAndThenAnswers(t *testing.T) {
 	}
 }
 
-func TestChatGivesUpWithAPlainSentenceAfterThreeGatewayTimeouts(t *testing.T) {
+func TestChatGivesUpWithAPlainSentenceAfterTheLastTry(t *testing.T) {
 	f := chatProvider(t)
 	f.failNext, f.failCode = 99, 504
 	_, err := chatSend(context.Background(), "hi", "", "", "")
 	if err == nil {
 		t.Fatal("a provider that always times out must end in an error")
 	}
-	if f.calls != 3 {
-		t.Errorf("tried %d times, want 3", f.calls)
+	if f.calls != chatAttempts {
+		t.Errorf("tried %d times, want %d", f.calls, chatAttempts)
 	}
-	for _, want := range []string{"timed out or is overloaded", "504", "tried 3 times", "/effort", "/model"} {
+	for _, want := range []string{"timed out or is overloaded", "504", fmt.Sprintf("tried %d times", chatAttempts), "/effort", "/model"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("the error should mention %q: %v", want, err)
+		}
+	}
+}
+
+// A 429 whose message says "Retry in 27s" is waited out, not given up on: the user must
+// never have to type "retry" by hand.
+func TestChatRetriesARateLimitUntilItClears(t *testing.T) {
+	f := chatProvider(t)
+	f.failNext, f.failCode = 4, 429
+	// The wait the provider names in its message is honoured; 1ms keeps the test fast.
+	f.failBody = `{"error":{"type":"rate_limit_error","message":"Rate limit exceeded. Retry in 1ms."}}`
+	var notes []chatRetryNotification
+	ctx := withRetryNotice(context.Background(), func(n chatRetryNotification) { notes = append(notes, n) })
+	res, err := chatSendEffort(ctx, "hi", "", "", "", "")
+	if err != nil {
+		t.Fatalf("429 four times then ok: %v", err)
+	}
+	if res.Text != "echo: hi" || f.calls != 5 {
+		t.Errorf("text %q after %d calls, want the answer on the 5th", res.Text, f.calls)
+	}
+	if len(notes) != 4 {
+		t.Fatalf("%d retry notices, want 4", len(notes))
+	}
+	for i, n := range notes {
+		if n.Type != "chat.retry" || n.Status != "429" || n.Attempt != i+2 || n.Of != chatAttempts || n.WaitMs <= 0 {
+			t.Errorf("notice %d = %+v", i, n)
+		}
+	}
+}
+
+func TestChatRetryHonoursRetryAfterHeader(t *testing.T) {
+	f := chatProvider(t)
+	f.failNext, f.failCode, f.failHeader = 1, 429, "2"
+	var notes []chatRetryNotification
+	ctx := withRetryNotice(context.Background(), func(n chatRetryNotification) { notes = append(notes, n) })
+	chatBackoff, chatMaxBackoff = time.Hour, time.Hour // would hang if the header were ignored
+	chatMaxWait, chatRetryMargin = 5*time.Second, time.Second
+	start := time.Now()
+	if _, err := chatSendEffort(ctx, "hi", "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 1 || notes[0].WaitMs != 3000 {
+		t.Fatalf("notices = %+v, want one wait of 3000ms (2s asked + 1s margin)", notes)
+	}
+	if time.Since(start) < 2*time.Second {
+		t.Error("the call did not wait for what the provider asked")
+	}
+}
+
+func TestChatDoesNotWaitForeverOnALongRetryAfter(t *testing.T) {
+	f := chatProvider(t)
+	f.failNext, f.failCode, f.failHeader = 99, 429, "3600"
+	_, err := chatSendEffort(context.Background(), "hi", "", "", "", "")
+	if err == nil || f.calls != 1 {
+		t.Fatalf("err=%v calls=%d; an hour-long ask must end the call at once", err, f.calls)
+	}
+	if !strings.Contains(err.Error(), "longer than") {
+		t.Errorf("the error should say the provider asked for too long: %v", err)
+	}
+}
+
+func TestChatDoesNotRetryABillingWall(t *testing.T) {
+	for _, code := range []int{402, 429} {
+		f := chatProvider(t)
+		f.failNext, f.failCode = 99, code
+		f.failBody = `{"error":{"type":"billing_error","message":"This model is currently available only with a subscription."}}`
+		_, err := chatSendEffort(context.Background(), "hi", "", "", "", "")
+		if err == nil || f.calls != 1 {
+			t.Fatalf("HTTP %d billing: err=%v calls=%d, want one call", code, err, f.calls)
+		}
+		if code == 429 && !strings.Contains(err.Error(), "billing, not the moment") {
+			t.Errorf("a billing wall should be explained as such: %v", err)
+		}
+	}
+}
+
+func TestRetryWaitGrowsAndCaps(t *testing.T) {
+	saved, savedMax := chatBackoff, chatMaxBackoff
+	chatBackoff, chatMaxBackoff = 2*time.Second, 30*time.Second
+	t.Cleanup(func() { chatBackoff, chatMaxBackoff = saved, savedMax })
+	var got []time.Duration
+	for n := 1; n <= 7; n++ {
+		d, ok := retryWait(n, 0)
+		if !ok {
+			t.Fatal("a backoff without an ask is always allowed")
+		}
+		got = append(got, d)
+	}
+	want := []time.Duration{2, 4, 8, 16, 30, 30, 30}
+	for i := range want {
+		if got[i] != want[i]*time.Second {
+			t.Errorf("wait before retry %d = %v, want %v", i+1, got[i], want[i]*time.Second)
 		}
 	}
 }
@@ -559,7 +664,7 @@ func TestChatDoesNotRetryWhatRetryingCannotFix(t *testing.T) {
 
 func TestChatStopsRetryingWhenCancelled(t *testing.T) {
 	f := chatProvider(t)
-	chatBackoff = time.Hour
+	chatBackoff, chatMaxBackoff = time.Hour, time.Hour
 	f.failNext, f.failCode = 99, 504
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()

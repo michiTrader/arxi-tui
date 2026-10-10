@@ -56,9 +56,8 @@ import (
 // colours" mean that app, not the user's project. The guide itself follows it in the
 // same turn. Without the trigger none of this is sent, and "the TUI" means the user's
 // own project.
-const uiSystemHint = "You are running inside arxi-tui, the terminal app the user is talking to you through. " +
-	"\"The TUI\", the interface or its colours mean this app, not their project: call ui_guide, never search their files for it. " +
-	"Change it only by calling ui_edit; say it is done only if ui_edit returned \"applied and saved\"; if refused, give the user the reason."
+const uiSystemHint = "You are running inside arxi-tui, the app the user talks to you through. \"The TUI\", the interface, its colours mean this app, not their project: never search their files or read scene.json. " +
+	"The guide is already below: call ui_guide at most once. Change it only with ui_edit; say done only if it returned \"applied and saved\"."
 
 // Names of the two tools, as the model calls them.
 const (
@@ -537,7 +536,7 @@ LAYOUT. The interface is a JSON scene document drawn top to bottom: {"root": nod
   where = above <id> | below <id> | into <id> [top] | above_input | below_input
 Example, one more blank line under the input bar:
   /ui add node below_input {"id":"input_gap_extra","type":"text","text":""}
-FRAMES. Only a box (or an overlay) draws a border; a border on any other node is refused. "border" is one of single, double, round (rounded corners), heavy, ascii, or {"shape":"round","style":"<token>"} to colour it. To put a rounded frame around the input bar: /ui add node above prompt {"id":"input_frame","type":"box","border":"round"} then /ui move prompt into input_frame. To make that frame move in colour, define an animation and name it as the frame's style (two ui_edit parts in one call): behaviour: {"animations": {"rainbow": {"colors": ["red","yellow","green","cyan","blue","magenta"], "fps": 12, "spread": 1}}} and commands: ["/ui add node above prompt {\"id\":\"input_frame\",\"type\":\"box\",\"border\":{\"shape\":\"round\",\"style\":\"rainbow\"}}", "/ui move prompt into input_frame"]. If the frame already exists, only /ui set input_frame border {"shape":"round","style":"rainbow"} is needed. A colour that moves is always an animation token like this one, never a colors entry. Do not invent other words ("rounded", "{type:round}"): they are refused.
+FRAMES. Only a box (or an overlay) draws a border; a border on any other node is refused. "border" is one of single, double, round (rounded corners), heavy, ascii, or {"shape":"round","style":"<token>"} to colour it. To put a rounded frame around the input bar: /ui add node above prompt {"id":"input_frame","type":"box","border":"round"} then /ui move prompt into input_frame. To make that frame move in colour, define an animation and name it as the frame's style (two ui_edit parts in one call): behaviour: {"animations": {"rainbow": {"colors": ["#ff3b30","#ffcc00","#34c759","#00c7be","#0a84ff","#bf5af2"], "fps": 12, "direction": "diagonal"}}} and commands: ["/ui add node above prompt {\"id\":\"input_frame\",\"type\":\"box\",\"border\":{\"shape\":\"round\",\"style\":\"rainbow\"}}", "/ui move prompt into input_frame"]. If the frame already exists, only /ui set input_frame border {"shape":"round","style":"rainbow"} is needed. A colour that moves is always an animation token like this one, never a colors entry. "direction":"diagonal" (or "radial", "horizontal", "vertical", "antidiagonal") makes one smooth gradient run across the whole frame, so the top and bottom lines differ; without it every line repeats the same colours. Animate the frame ONLY through the border's style: never put the animation on the input's or the box's own "style", or the typed letters change colour too, which is not what a frame asks for. Do not invent other words ("rounded", "{type:round}"): they are refused.
 Or pass scene: the complete new document, changing as little as the order requires. Every bind and when must come from the bind list; keep the node bound to user.input.
 
 `)
