@@ -129,7 +129,17 @@ func validChatLook(key, val string) error {
 			return fmt.Errorf("text %q is a whole number from 0 to %d (for example 3); %q is not", key, max, val)
 		}
 	}
-	if key == "tool.inline" {
+	if key == "effort.default" {
+		v := strings.ToLower(strings.TrimSpace(val))
+		ok := v == effortNone
+		for _, l := range effortLevelOrder {
+			ok = ok || (l == v && l != "off")
+		}
+		if !ok {
+			return fmt.Errorf("text %q is a thinking level (on, minimal, low, medium, high, xhigh, max) or none; %q is not", key, val)
+		}
+	}
+	if key == "tool.inline" || key == "chat.light" {
 		switch strings.ToLower(strings.TrimSpace(val)) {
 		case "yes", "no", "true", "false", "on", "off":
 		default:

@@ -241,6 +241,10 @@ type Renderer struct {
 	// single-sourced in the renderer, which is the only place that knows the line
 	// count and the budget. Zero when the chat fits and there is nothing to scroll.
 	ChatScrollMax int
+
+	// chatHead is what the enclosing stack drew for its in_chat children, handed to the
+	// chat pane that is drawn right after it in the same stack.
+	chatHead []ui.Line
 }
 
 // AnimActivity is one visible animating node, reported back to the loop so it
@@ -483,6 +487,15 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 	// row it does not belong to (the Q6 contraction order: elastic panes
 	// contract first; the input, banner and footer never).
 	bottomOverlayHeight := 0
+	// A child marked in_chat rides at the top of the chat pane and scrolls away with it,
+	// when this stack holds one; otherwise it is an ordinary child (see scene.Node.InChat).
+	holdsChat := false
+	for _, c := range children {
+		if c.Type == "markdown" && c.Bind == "chat.history" {
+			holdsChat = true
+		}
+	}
+	var chatHead []ui.Line
 	for i, c := range children {
 		// A child the host has hidden reserves nothing. renderNode already
 		// returns an empty frame for it, so a fixed child costs no rows
@@ -490,6 +503,10 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		// the remaining space and paint that share as blank rows — hiding the
 		// content while keeping the hole it sat in.
 		if hiddenByWhenRow(c, state, r.curRow, r.PluginValues, r.PreviewMocks) {
+			continue
+		}
+		if holdsChat && c.InChat && c.Type != "overlay" {
+			chatHead = append(chatHead, r.renderNode(c, state, budget).Live...)
 			continue
 		}
 		if c.Type == "overlay" {
@@ -533,6 +550,8 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 	// reading it as a caret would park the terminal inside a text node.
 	caret := ui.Cursor{Hidden: true}
 
+	r.chatHead = chatHead
+	defer func() { r.chatHead = nil }()
 	live := make([]ui.Line, 0, budget)
 	for i := range slots {
 		s := &slots[i]
@@ -1191,6 +1210,8 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 		// which of the reader's own messages the top of the window is inside.
 		starts = make([]int, len(state.History))
 		lk := r.look()
+		// Whatever the scene put in the chat pane (in_chat) comes first, so it scrolls.
+		lines = append(lines, r.chatHead...)
 		gap := func() {
 			for k := 0; k < lk.TurnGap; k++ {
 				lines = append(lines, ui.Line{})
@@ -1661,6 +1682,17 @@ func (r *Renderer) renderText(n *scene.Node, state fold.State) ui.Frame {
 				text = ansi.Cut(text, w-r.Width, w)
 			}
 		}
+	}
+	// A text with line breaks is that many rows: this is what lets a banner be several
+	// lines of art. Before, the whole text was one row and a drawing collapsed into its
+	// first line. A text that reveals stays one row, since its prefix is measured whole.
+	if n.Reveal == nil && strings.Contains(text, "\n") {
+		rows := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
+		live := make([]ui.Line, 0, len(rows))
+		for _, row := range rows {
+			live = append(live, ui.Line{ui.Span{Text: row, Style: style}})
+		}
+		return ui.Frame{Live: live, Width: r.Width, Height: len(live)}
 	}
 	return ui.Frame{
 		Live:   []ui.Line{{ui.Span{Text: text, Style: style}}},

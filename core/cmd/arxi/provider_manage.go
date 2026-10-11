@@ -445,7 +445,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	}
 
 	if box := toolsFrom(ctx); box != nil {
-		system = strings.TrimSpace(system + " " + toolsHint(box.box.Root(), box.edits) + " " + runsHint(box.runs) + " " + webHint(box.web))
+		system = strings.TrimSpace(system + " " + toolsHint(box.box.Root(), box.edits) + " " + envHint(box.box.Root(), box.runs) + " " + runsHint(box.runs) + " " + webHint(box.web))
 	}
 	var messages []turn.Message
 	text := func(role turn.Role, s string) turn.Message {

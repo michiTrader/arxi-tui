@@ -59,7 +59,7 @@ func TestProjectRulesReachTheModelInTheSystemPrompt(t *testing.T) {
 	c := newChatSession(core, out)
 	c.setWorkdir(dir)
 
-	turn(t, c, out, "hello")
+	turn(t, c, out, "what is in this folder")
 	if got := core.last(); !strings.Contains(got, "Always answer in haiku.") || !strings.HasPrefix(got, chatSystem()) {
 		t.Fatalf("the rules did not reach the model:\n%s", got)
 	}
@@ -67,7 +67,7 @@ func TestProjectRulesReachTheModelInTheSystemPrompt(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("Reply only in French."), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	turn(t, c, out, "again")
+	turn(t, c, out, "and in the parent folder")
 	if got := core.last(); !strings.Contains(got, "Reply only in French.") || strings.Contains(got, "haiku") {
 		t.Fatalf("an edit to the rules did not count from the next turn:\n%s", got)
 	}
@@ -78,7 +78,7 @@ func TestNoRulesMeansTheBareSystemPrompt(t *testing.T) {
 	core := &systemChat{}
 	c := newChatSession(core, out)
 	c.setWorkdir(t.TempDir())
-	turn(t, c, out, "hello")
+	turn(t, c, out, "what is in this folder")
 	if got := core.last(); got != chatSystem() {
 		t.Fatalf("with no rules file the system prompt must be untouched:\n%s", got)
 	}
@@ -94,7 +94,7 @@ func TestSwitchingTheRulesOffKeepsThemFromTheModel(t *testing.T) {
 	core := &systemChat{}
 	c := newChatSession(core, out)
 	c.setWorkdir(dir)
-	turn(t, c, out, "hello")
+	turn(t, c, out, "what is in this folder")
 	if got := core.last(); strings.Contains(got, "secret rule") {
 		t.Fatalf("rules were sent although they are switched off:\n%s", got)
 	}

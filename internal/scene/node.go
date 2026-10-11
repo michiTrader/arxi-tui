@@ -29,6 +29,14 @@ type Node struct {
 	// grower keeps its whole share and pins what comes after it to the bottom.
 	Fit bool `json:"fit,omitempty"`
 
+	// InChat makes a child of a stack that holds the conversation part of the
+	// conversation: it is drawn at the top of the chat pane and scrolls away with it,
+	// instead of staying fixed above it. A banner without it is a "floating" one (it
+	// never moves); with it the banner leaves as the conversation grows. A scene may
+	// hold both. It is read by the stack that owns a chat.history pane and by nothing
+	// else, which validate.go says out loud.
+	InChat bool `json:"in_chat,omitempty"`
+
 	// Prefix is either a string (for the input node's prompt glyph) or a
 	// child node (for the marquee's styled prefix). Uses json.RawMessage so
 	// the same field accepts both shapes without a custom unmarshaller.

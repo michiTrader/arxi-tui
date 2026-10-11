@@ -78,6 +78,9 @@ func init() {
 	for _, level := range effortLevelOrder {
 		add("effort."+level, effortHints[level], "meaning of the \""+level+"\" level in the /effort menu", false)
 	}
+	add("chat.light", "yes", "\"yes\" answers a greeting, a ping or \"what model are you\" with no tools, history, rules or guide (saves tokens); \"no\" treats every message the same", false)
+	add("chat.light.phrases", lightPhrasesDefault, "the whole messages chat.light answers cheaply, separated by commas; case, accents and punctuation do not matter", false)
+	add("effort.default", "medium", "the thinking level a model starts with until you choose one for it (a level word, or none); a model that lacks it gets the nearest", false)
 	for _, m := range agentModes {
 		add("mode."+m.name, m.hint, "meaning of the \""+m.name+"\" mode in the /mode menu", false)
 	}

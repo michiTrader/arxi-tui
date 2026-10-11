@@ -80,7 +80,7 @@ func TestChatSessionWithoutAFolderSendsNone(t *testing.T) {
 	out := make(chan fold.Event, 32)
 	core := &toolChat{}
 	c := newChatSession(core, out)
-	if err := c.send(context.Background(), "hi"); err != nil {
+	if err := c.send(context.Background(), "hi, what is here"); err != nil {
 		t.Fatal(err)
 	}
 	drain(out, "agent.turn_done", 2*time.Second)
@@ -96,7 +96,7 @@ func TestChatSessionWarnsAndAnswersAgainstACoreWithoutTools(t *testing.T) {
 	core := &toolChat{old: true}
 	c := newChatSession(core, out)
 	c.setWorkdir("/proj")
-	if err := c.send(context.Background(), "hi"); err != nil {
+	if err := c.send(context.Background(), "hi, what is here"); err != nil {
 		t.Fatal(err)
 	}
 	events := drain(out, "agent.turn_done", 2*time.Second)

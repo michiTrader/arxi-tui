@@ -101,8 +101,13 @@ func TestTheInterfaceToolsRideOnlyWithAQuestionThatAskedForThem(t *testing.T) {
 	// still about the interface and carries the guide and the tools.
 	turn(t, c, out, "and make it a bit slower")
 	tools, system, prompt = core.at(2)
-	if len(tools) != 2 || !strings.Contains(system, "ui_edit") || !strings.Contains(system, uiSystemHint) {
+	if len(tools) != 2 || !strings.Contains(system, "ui_edit") || !strings.Contains(system, uiSystemHintLater) {
 		t.Fatalf("the interface did not stay on for the follow-up: %d tools", len(tools))
+	}
+	// The 20 KB guide was given once, with the message that asked for it; repeating it on
+	// every later message is what made a "ping" cost thousands of tokens.
+	if strings.Contains(system, "Current document") || len(system) > 1500 {
+		t.Fatalf("the follow-up carried the whole guide again (system is %d bytes)", len(system))
 	}
 	if prompt != "and make it a bit slower" {
 		t.Fatalf("the follow-up reached the model as %q", prompt)

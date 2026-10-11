@@ -549,13 +549,62 @@ feature, as `PLAN.md` requires:
   surface implemented fewer verbs — the accepted-but-not-drawn class one layer
   out, and worse there than in a document, since the menu is read at the moment
   of use and so invites the user into a refusal. It now names exactly the
-  implemented set (`add, move, set, style, hide, show`), held in both directions
+  implemented set (`add, move, remove, set, style, hide, show`), held in both directions
   by a test in `patch_test` — every `patch.Verbs()` entry appears in the menu
   and every word the menu lists is a real verb — which is where it can import
   both packages without `fold` importing the mutation layer (ADR-0002).
 - ⬜ Agent-driven patches, with the full change-diff view. The summary line is
   in place (`/ui: styled "status" as "dim"`); the side-by-side view belongs
   with the agent half, where a proposal arrives *before* it is applied.
+
+## Context, tokens and the interface (what changed in this release)
+
+### Light turns: trivial messages cost almost nothing
+
+A message that is, as a whole, one of a list of short phrases (`ping`, `hola`, `hello`,
+`gracias`, `qué modelo eres`, ...) is sent as a **light turn**: only the standing system
+prompt, with no history, no project tools, no web tools, no thinking level and no interface
+guide. Nothing like it existed before: every message used to carry the tool schemas, the
+hints and the whole history, and after `/ui` the 22 KB interface guide as well.
+A longer message, or one that merely *contains* a phrase, is a normal turn.
+
+Edit it with `/ui text chat.light no` (turn it off) and `/ui text chat.light.phrases ...`
+(phrases separated by commas; case, accents and punctuation do not matter).
+
+### The interface guide is paid for once
+
+The full `/ui` guide travels only with the message that triggers it (`/ui ...` or the first
+message of a conversation in that mode). Later messages carry the two edit tools and a one
+line reminder; the guide is one `ui_guide` tool call away if the model needs it again.
+
+### The model keeps the thread
+
+- A request that failed or was cancelled stays in the history, with a note saying it got no
+  reply, so after switching model and typing "reintenta" the new model knows what to retry.
+- Answered turns that used tools carry a one-line digest (`[Tools used for this reply: ...]`).
+- Resumed conversations (`/resume`) rebuild the same history, unanswered requests included.
+- The model is told where it runs: OS and architecture, the project folder, the home folder
+  and the shell `run` uses (`cmd`, PowerShell, `sh`), plus a Windows reminder to use `dir`,
+  `ren`, `copy`. `run` may name any path (you approve it); the other tools stay in the project.
+
+### Banner and decoration: yours to change
+
+The factory banner is ordinary scene content, so everything below also works through the
+`ui_edit` tool, in plain words ("remove the banner", "put this ASCII art on top"):
+
+| I want | Command |
+|---|---|
+| other words, same logo | `/ui set banner_words text my words` |
+| no banner at all | `/ui remove banner` and `/ui remove banner_gap` |
+| multi-line ASCII art | a `text` node whose text holds `\n`: each line is a row (no limit) |
+| art that floats (always visible) | `/ui add node above chat {"id":"art","type":"text","text":"..."}` |
+| art that scrolls away with the conversation | the same node with `"in_chat":true` |
+| both at once | one floating node and one `in_chat` node |
+
+`/ui remove <id>` is new: it deletes a node by id (never the root, an input bar, or the only
+node of a slot) and the result is validated like any other edit, so a bad removal changes
+nothing. The interface guide has a BANNER chapter with these recipes, so the agent no
+longer searches files for them.
 
 ## Repository layout
 
@@ -726,6 +775,7 @@ Everything is in **`~/.arxi`**, the same on every system and from every project 
 | `scene.json`, `theme.json`, `texts.json`, `behaviour.json` | the interface you shaped (layout, colours, words, keys/commands/animations); `/ui undo` and `/ui reset` work on the four together |
 | `history`, `sessions/`, `search.json`, `style` | input history, saved conversations, the search service, the message style |
 | `providers/`, `secrets/` | the providers and the API keys (written by the core) |
+| `effort.json` | the thinking level you chose, per model |
 | `trusted-projects.json` | which project folders you let load their `.arxi/` (below) |
 
 **Coming from an older version.** Settings used to live in `%AppData%\arxi` (Windows),
@@ -783,6 +833,12 @@ models (DeepSeek, gateways) take `low`, `medium` and `high`; Claude models take 
 the menu says so. Choosing the level already in use clears it. Until you choose, nothing
 is sent and the bar shows nothing. A chosen level is sent with every chat message as
 `reasoning_effort`; switching to a model that does not take it clears it. `/clear` keeps it.
+
+**Remembered per model.** The level you pick is saved for that model in `~/.arxi/effort.json`
+and comes back the next time you choose the model. A model you have never set gets a
+default, `medium` (or the nearest level it takes: `high`, `low`, ...), never "off"; a model
+that takes no level gets none. Change the default with `/ui text effort.default high`
+(or `none` to start with nothing). A stored level the model no longer offers is ignored.
 
 The key is pasted into a masked field, shown as `••••`, and never printed back, logged
 or sent to the chat. If sending a message fails (no provider, no model, a refused key,

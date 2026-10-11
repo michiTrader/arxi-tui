@@ -149,7 +149,7 @@ func TestADeniedRunsPolicyIsNotSentAtAll(t *testing.T) {
 	c := newChatSession(core, out)
 	c.setWorkdir("/proj")
 	c.setRuns("deny")
-	if err := c.send(context.Background(), "hi"); err != nil {
+	if err := c.send(context.Background(), "list the files here"); err != nil {
 		t.Fatal(err)
 	}
 	wait(t, func() bool { return !c.busyNow() })
@@ -165,7 +165,7 @@ func TestACoreThatCannotRunKeepsEditingAndSaysSo(t *testing.T) {
 	c.setWorkdir("/proj")
 	c.setEdits("ask")
 	c.setRuns("ask")
-	if err := c.send(context.Background(), "hi"); err != nil {
+	if err := c.send(context.Background(), "list the files here"); err != nil {
 		t.Fatal(err)
 	}
 	wait(t, c.pendingNow)
@@ -195,7 +195,7 @@ func TestACoreThatCannotEditStillLooksAndSaysSo(t *testing.T) {
 	c := newChatSession(core, out)
 	c.setWorkdir("/proj")
 	c.setEdits("ask")
-	if err := c.send(context.Background(), "hi"); err != nil {
+	if err := c.send(context.Background(), "list the files here"); err != nil {
 		t.Fatal(err)
 	}
 	wait(t, func() bool { return !c.busyNow() })

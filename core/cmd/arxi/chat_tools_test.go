@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -302,7 +303,7 @@ func TestTheHintMentionsEditingOnlyWhenItIsOffered(t *testing.T) {
 // tool schemas. It is a cost on every turn of every session, so it has a budget; a
 // change that grows it past that has to say so here, on purpose.
 func TestStandingPromptStaysWithinItsBudget(t *testing.T) {
-	hints := toolsHint("/p/project", editsAsk) + " " + runsHint(editsAsk) + " " + webHint(editsAsk)
+	hints := toolsHint("/p/project", editsAsk) + " " + envHint("/p/project", editsAsk) + " " + runsHint(editsAsk) + " " + webHint(editsAsk)
 	defs := append(append(chattools.Definitions(), chattools.EditDefinitions()...), chattools.RunDefinitions()...)
 	raw, err := json.Marshal(defs)
 	if err != nil {
@@ -312,12 +313,30 @@ func TestStandingPromptStaysWithinItsBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const maxHintBytes, maxDefBytes = 600, 1650 + 520
+	const maxHintBytes, maxDefBytes = 950, 1650 + 520
 	raw = append(raw, web...)
 	if len(hints) > maxHintBytes {
 		t.Errorf("the hints are %d bytes, budget %d:\n%s", len(hints), maxHintBytes, hints)
 	}
 	if len(raw) > maxDefBytes {
 		t.Errorf("the tool definitions are %d bytes, budget %d", len(raw), maxDefBytes)
+	}
+}
+
+// The model is told where it is running. Counterfactual: without it a Windows user's
+// "rename the file on my Desktop" was answered with ls, $HOME and "that is outside my
+// scope", over a dozen calls.
+func TestTheModelIsToldTheSystemTheProjectAndTheShell(t *testing.T) {
+	h := envHint(t.TempDir(), editsAsk)
+	for _, want := range []string{runtime.GOOS, "Project:", chattools.ShellName(), "any path"} {
+		if !strings.Contains(h, want) {
+			t.Errorf("the environment hint lacks %q: %s", want, h)
+		}
+	}
+	if strings.Contains(envHint(t.TempDir(), editsDeny), "run uses") {
+		t.Error("no run tool, no word about its shell")
+	}
+	if runtime.GOOS == "windows" && !strings.Contains(h, "dir") {
+		t.Error("on Windows the model must be told the commands are cmd.exe's")
 	}
 }
