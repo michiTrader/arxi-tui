@@ -2352,6 +2352,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							input = ""
 							caret = 0
 							slashSel = 0
+						} else if sc := classifySlash(input, userCommandNames(effBeh())); ev.Key.Type == term.KeyEnter && sc.refusesEnter(input) {
+							// A "/" line that is not a command the host runs is
+							// never the model's: it gets a local warning and stays
+							// in the buffer, with the focus on the input, so the
+							// user can fix it or send it on purpose with /send.
+							collected = appendLocalWarning(collected, sc.warning())
 						} else if sendText, isSend := parseSend(input); ev.Key.Type == term.KeyEnter && isSend {
 							// `/send <text>` hands the model exactly <text>, even when
 							// it starts with "/". It sits before the slash menu for the

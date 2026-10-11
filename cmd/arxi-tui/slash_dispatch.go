@@ -104,6 +104,22 @@ func (c slashClass) warning() string {
 	return ""
 }
 
+// refusesEnter reports whether Enter on this line must be answered with a local
+// warning instead of reaching the menu or the model. A planned command always
+// is (the user typed its whole name). An unknown one is only when the menu has
+// no row for what was typed: with rows, Enter is a menu pick (typing "/mod" and
+// Enter chooses the highlighted command), and that pick is the menu's business.
+func (c slashClass) refusesEnter(line string) bool {
+	switch c.Kind {
+	case slashPlanned:
+		return true
+	case slashUnknown:
+		typed := strings.TrimPrefix(strings.TrimSpace(line), "/")
+		return len(fold.FilterSlashMatches(typed)) == 0
+	}
+	return false
+}
+
 // userCommandNames lists the names of the commands a behaviour layer adds.
 func userCommandNames(b behaviour) []string {
 	out := make([]string, 0, len(b.Commands))
