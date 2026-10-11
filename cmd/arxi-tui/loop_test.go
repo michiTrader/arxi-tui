@@ -365,18 +365,11 @@ func frameHasTranscriptLine(frame, text string) bool {
 }
 
 // TestLoopSlashMenuNavigateAndRun drives the menu end to end: "/" opens it,
-// down moves the highlight to the second command, enter runs it, and the
-// command name lands in the transcript as the submitted prompt — while the
-// menu itself closes, because the buffer it was derived from is gone.
+// down moves the highlight to the third command, and enter picks it. A row is
+// a command, not a question, so the pick must not put the word in the
+// transcript as a prompt or hand it to the model; the line it resolves to is
+// the command line itself, which the loop runs the way a typed one runs.
 func TestLoopSlashMenuNavigateAndRun(t *testing.T) {
-	doc, err := scene.ParseDocument([]byte(factorySobria))
-	if err != nil {
-		t.Fatalf("ParseDocument: %v", err)
-	}
-	if err := doc.Validate(); err != nil {
-		t.Fatalf("scene validation: %v", err)
-	}
-
 	script := []scheduledEvent{
 		{0, keyEvent('/')},
 		{10 * time.Millisecond, arrowEvent(term.KeyDown)},
@@ -385,38 +378,21 @@ func TestLoopSlashMenuNavigateAndRun(t *testing.T) {
 		{100 * time.Millisecond, ctrlCharEvent('c')},
 		{50 * time.Millisecond, ctrlCharEvent('c')},
 	}
-
-	tty := newFakeTTY(80, 24, script)
-	drv := &testDriver{evCh: make(chan fold.Event, 64)}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
-		t.Fatalf("loop returned error: %v", err)
-	}
-
-	// One frame per repaint, each introduced by the synchronized-output opener.
-	frames := strings.Split(tty.output(), frameBegin)
+	out, submitted := runLoopDoc(t, factorySobria, script)
 
 	// The menu must have been open with every command.
-	if !strings.Contains(tty.output(), fmt.Sprintf("Commands %d", len(fold.Commands))) {
-		t.Errorf("menu header never rendered; output:\n%s", tty.output())
+	if !strings.Contains(out, fmt.Sprintf("Commands %d", len(fold.Commands))) {
+		t.Errorf("menu header never rendered; output:\n%s", out)
 	}
-
-	// Enter runs the highlighted row: "focus" appears as a transcript line of
-	// its own in a frame where the menu is already closed. A whole-row match
-	// is what tells the transcript line from the menu row "focus  Focus a
-	// node by id", which contains the same word.
-	ranCommand := false
-	for _, f := range frames {
+	// Third row is "focus". Nothing may reach the model, and the transcript
+	// must not show the word as something the user said.
+	if len(submitted) != 0 {
+		t.Errorf("picking a menu row sent %q to the model", submitted)
+	}
+	for _, f := range strings.Split(out, frameBegin) {
 		if frameHasTranscriptLine(f, "┃ focus") && !strings.Contains(f, fmt.Sprintf("Commands %d", len(fold.Commands))) {
-			ranCommand = true
-			break
+			t.Errorf("the pick became a transcript line:\n%s", f)
 		}
-	}
-	if !ranCommand {
-		t.Errorf("enter did not run the highlighted command 'focus' (or the menu stayed open); frames:\n%s", tty.output())
 	}
 }
 

@@ -2424,7 +2424,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// and never reaches the buffer. Ctrl-C never gets
 							// here, so the escape hatch stays uncapturable
 							// (invariant 6) no matter what the menu does.
-							input, caret, slashSel, slashCat = slashMenuKey(input, caret, ev.Key, slashSel, slashCat, ctx, drv)
+							var picked string
+							input, caret, slashSel, slashCat, picked = slashMenuKey(input, caret, ev.Key, slashSel, slashCat)
+							if picked != "" {
+								enqueue(actionList{"cmd:" + picked}, false)
+							}
 						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, ctx, drv); handled {
 							// H8 press routing: Tab/Shift-Tab move the ui.focus
 							// cursor over the pressable nodes (ordinary buttons and
@@ -2887,15 +2891,12 @@ func typeKey(input string, caret int, k term.Key, ctx context.Context, drv Drive
 		if text == "" {
 			return input, caret
 		}
-		// Slash command: the buffer starts with "/". /ui routes to the
-		// mutation surface; every other slash line is still submitted as a
-		// prompt, which is Phase 0's contract and stays until each command
-		// has a host implementation.
-		if strings.HasPrefix(text, "/") {
-			text = strings.TrimSpace(text[1:])
-			if text == "" {
-				return input, caret
-			}
+		// A slash line is a command, never a prompt: the loop answers it before
+		// it gets here (a handler, or a local warning). This is the last door,
+		// and it stays shut so a line that slipped past cannot reach the model
+		// as its own text minus the "/".
+		if classifySlash(text, nil).Kind != slashNone {
+			return input, caret
 		}
 		_ = drv.SubmitPrompt(ctx, text)
 		return "", 0
@@ -3335,7 +3336,7 @@ func isCtrlC(k term.Key) bool {
 // what the menu's footer promises. The selection comes back because it lives
 // across frames in the loop, the way the input buffer does; any key that
 // changes the filter puts it back on the first row.
-func slashMenuKey(input string, caret int, k term.Key, sel int, cat string, ctx context.Context, drv Driver) (string, int, int, string) {
+func slashMenuKey(input string, caret int, k term.Key, sel int, cat string) (string, int, int, string, string) {
 	typed := strings.TrimPrefix(input, "/")
 	cat = fold.NormalizeSlashCategory(typed, cat)
 	matches := fold.FilterSlashCategory(typed, cat)
@@ -3343,7 +3344,7 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, cat string, ctx 
 	// every menu, so it is read once and turned into the factory key it stands for.
 	switch navAction(k) {
 	case "inert":
-		return input, caret, sel, cat
+		return input, caret, sel, cat, ""
 	case "prev":
 		k = term.Key{Type: term.KeyUp}
 	case "next":
@@ -3353,29 +3354,29 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, cat string, ctx 
 	case "close":
 		k = term.Key{Type: term.KeyEscape}
 	case "first":
-		return input, caret, 0, cat
+		return input, caret, 0, cat, ""
 	case "last":
 		if len(matches) > 0 {
-			return input, caret, len(matches) - 1, cat
+			return input, caret, len(matches) - 1, cat, ""
 		}
-		return input, caret, sel, cat
+		return input, caret, sel, cat, ""
 	}
 	switch k.Type {
 	case term.KeyUp:
 		if len(matches) == 0 {
-			return input, caret, sel, cat
+			return input, caret, sel, cat, ""
 		}
 		// Wrap at both ends: the highlight is the only thing the keyboard moves,
 		// so the user must always feel a row under it no matter how far up they
 		// spin the wheel (rotary, as requested).
 		sel = (sel - 1 + len(matches)) % len(matches)
-		return input, caret, sel, cat
+		return input, caret, sel, cat, ""
 	case term.KeyDown:
 		if len(matches) == 0 {
-			return input, caret, sel, cat
+			return input, caret, sel, cat, ""
 		}
 		sel = (sel + 1) % len(matches)
-		return input, caret, sel, cat
+		return input, caret, sel, cat, ""
 	case term.KeyTab:
 		// Tab steps to the next category tab (All, General, Session, ...) and
 		// Shift-Tab to the previous one, wrapping at both ends. The highlight goes
@@ -3384,25 +3385,32 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, cat string, ctx 
 		if k.Mod&term.ModShift != 0 {
 			dir = -1
 		}
-		return input, caret, 0, fold.NextSlashCategory(typed, cat, dir)
+		return input, caret, 0, fold.NextSlashCategory(typed, cat, dir), ""
 	case term.KeyEscape:
-		return "", 0, 0, fold.SlashAll
+		return "", 0, 0, fold.SlashAll, ""
 	case term.KeyEnter:
 		if len(matches) == 0 {
-			return input, caret, sel, cat
+			return input, caret, sel, cat, ""
 		}
 		if sel >= len(matches) {
 			sel = len(matches) - 1
 		}
+		name := matches[sel].Name
 		// /send needs the text it will send, so picking it fills the line
-		// instead of submitting the word "send" as a prompt.
-		if matches[sel].Name == "send" {
-			return "/send ", len("/send "), 0, fold.SlashAll
+		// instead of running with nothing to send.
+		if name == "send" {
+			return "/send ", len("/send "), 0, fold.SlashAll, ""
 		}
-		// Phase 0: a command submits as a prompt (typeKey's contract); Phase 2
-		// routes /ui to the mutation surface.
-		_ = drv.SubmitPrompt(ctx, matches[sel].Name)
-		return "", 0, 0, fold.SlashAll
+		// A row is a command, never a question: it does not go to the model.
+		// The pick becomes the exact command line and the loop runs it through
+		// the same queue a typed command uses, so a row and a typed line cannot
+		// diverge. When the buffer already IS that line (the loop ran it and no
+		// handler took it), there is nothing more to do, which is what stops
+		// the pick from re-running itself forever.
+		if strings.TrimSpace(input) == "/"+name {
+			return input, caret, sel, cat, ""
+		}
+		return "", 0, 0, fold.SlashAll, "/" + name
 	default:
 		// The same caret-aware editor the ordinary path uses, so editing the
 		// slash line (Left/Right/Home/End/Delete/Backspace/insert) behaves
@@ -3410,12 +3418,12 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, cat string, ctx 
 		// because the previously highlighted row may no longer exist.
 		next, nextCaret, ok := applyEdit(input, caret, k)
 		if !ok {
-			return input, caret, sel, cat
+			return input, caret, sel, cat, ""
 		}
 		if next != input {
-			return next, nextCaret, 0, cat
+			return next, nextCaret, 0, cat, ""
 		}
-		return next, nextCaret, sel, cat
+		return next, nextCaret, sel, cat, ""
 	}
 }
 
