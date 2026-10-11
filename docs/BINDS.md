@@ -148,8 +148,29 @@ The remedy is not a separate bind: the engine reads `blocked_on` +
 
 These binds have no corresponding event in the arxi core — they exist only
 because this project has a UI. They are owned by the host, read with `when` and
-written only through registered commands (`cmd:/slash`, `cmd:/max`,
-`cmd:/focus`, `cmd:/plugin`). The event that sets each is named.
+written only through registered commands (`cmd:/max`, `cmd:/focus`,
+`cmd:/ui …` incl. `plugin`). The event that sets each is named.
+
+#### 4.3.1 What a `/` line is
+
+A line that starts with `/` is a command, never a prompt. The host classifies it
+(`classifySlash`) before anything acts on it, with one answer per line, whether
+it was typed, picked from the menu or pressed from a button:
+
+| the line is | what happens |
+|---|---|
+| not a `/` line | an ordinary prompt, sent to the model |
+| `/send <text>` | `<text>` is sent to the model exactly as written, even if it starts with `/` (`/send /help` sends the literal `/help`). A bare `/send` warns and sends nothing |
+| a command the host runs (menu command, alias such as `/login`, or a command the user added) | the command runs locally |
+| `/help` | opens the command menu locally, with no call to the model |
+| `/focus <id>` | the `focus:` action typed by hand: one operation, one notice (`applyFocus`) |
+| a registered command with no behaviour yet (`/surface`) | a local warning, "is not available yet. Nothing was sent." The text stays in the input |
+| anything else | a local warning, "Unknown command /x. Nothing was sent.", pointing at `/help` and `/send`. The text stays in the input and keeps the focus, and is never cleared automatically |
+
+A local warning is a `chat.warn` line appended to the host's own log, so it is
+not in the model's history, not saved with the session, not copied by `/copy`,
+and goes away with `/clear`. A partial name that still has menu rows (`/mod`) is
+a menu pick, not a warning. Picking a menu row never sends the word on it.
 
 | bind | type | view mechanism | update timing | empty-state |
 |---|---|---|---|---|
@@ -165,7 +186,7 @@ written only through registered commands (`cmd:/slash`, `cmd:/max`,
 | `ui.max` | text \| null | the `id` of the maximized pane; set by `cmd:/max <pane>` (Scene 10) | on `cmd:/max` action | null — no pane is maximized |
 | `ui.max.none` | bool-ish text | `"true"` exactly when no pane is maximized (`ui.max` is empty), `"false"` otherwise; a host-derived inversion of `ui.max`, resolved from it with no fold field of its own. Scene 10 gates the 2×2 grid container on it (`when: ui.max.none`) so the grid shows only while nothing is maximized — the `status.active` idiom, because `when` has no operator to negate `ui.max` | recomputed from `ui.max` on every frame (no independent event) | `"true"` — nothing maximized at boot, so the grid is the default view |
 | `ui.max.is.<id>` | bool-ish text | `"true"` exactly when `ui.max` equals `<id>`, `"false"` otherwise; a host-derived **family** (the `ui.plugin.<id>` shape), resolved by comparing the suffix to `ui.max` with no fold field of its own. Scene 10 gates each pane's maximized view on it (`when: ui.max.is.chat`) so exactly one maximized pane draws, chosen by equality against `ui.max` — the comparison `when` cannot express as an operator, signed as a resolved boolean. The suffix is open: any pane id works, so a downloaded dashboard names its own panes without a host change | recomputed from `ui.max` on every frame (no independent event) | `"false"` — no pane matches an empty `ui.max`, so no maximized pane draws at boot |
-| `ui.surface` | text | the active surface/page identifier (e.g. `"chat"`, `"config"`, `"plugins"`) | on `cmd:/surface <name>` | `"chat"` — the default surface |
+| `ui.surface` | text | **reserved, not written yet.** The active surface/page identifier (e.g. `"chat"`, `"config"`, `"plugins"`). Nothing sets it today: the fold reads it from an event payload only, and no host command writes it. `/surface` is listed in the command menu but is not available, and typing or pressing it shows a local warning (§4.3.1). The name stays signed so a scene may already gate on it | not written by any host command today | `"chat"` — the default surface |
 | `ui.hidden` | set of node ids | the ids the user has hidden via `cmd:/ui hide <id>`; `cmd:/ui show <id>` removes one, `cmd:/ui show *` clears the set | on `cmd:/ui hide`/`show` | empty set — every node's visibility is decided by its `when` alone |
 | `ui.plugin.<id>` | text | the process lifecycle status of a mounted behavioral plugin, written by the host supervisor: `"starting"` (spawned, pre-handshake), `"live"` (handshake acked, streaming), `"error"` (repeated malformed frames or restart backoff), `"dead"` (process exited, frozen at last values) | on spawn, handshake ack, restart, and death (Block I supervisor) | empty string — no behavioral plugin with that id is mounted, so the bind is falsy for `when` |
 | `host.run.actor` | text | the resolved actor blueprint name of the run the TUI is currently following, captured by the host from the `run.start` config it resolved (`resolveRunStartParams`, M1c), not from any arxi-core event; the driver holds it and the loop publishes it into the fold each frame | set on the first `SubmitPrompt` that begins a run (M2), and blanked while the slash menu is open so the status row stays a clean either/or with the menu hint | empty string — no run has been started (boot) or the menu is open, so the `when`-gated actor label does not render |
@@ -470,7 +491,7 @@ The closed prefix set, and what each one does when pressed:
 
 | prefix | argument | effect |
 |---|---|---|
-| `cmd:` | a command line, e.g. `cmd:/agent 5`, `cmd:/max chat` | run the command exactly as if the user had typed it into the input and pressed Enter. The `cmd:/slash`, `cmd:/max`, `cmd:/focus`, `cmd:/ui …` (incl. `plugin`) forms §4.3 names are the registered commands; a `cmd:` naming an unknown command is handled by the same command surface a typed one is (it is not this field's job to enumerate the command registry — that would be a second copy of it). |
+| `cmd:` | a command line, e.g. `cmd:/send hi`, `cmd:/max chat` | run the command exactly as if the user had typed it into the input and pressed Enter: the host queues the line and runs it through the same door a typed one takes (§4.3.1), so a button and the keyboard cannot diverge. A `cmd:` never reaches the model by itself; use `cmd:/send <text>` for that. The `cmd:/max`, `cmd:/focus`, `cmd:/ui …` (incl. `plugin`) forms §4.3 names are the registered commands; a `cmd:` naming an unknown command gets the same local warning a typed one does (it is not this field's job to enumerate the command registry — that would be a second copy of it). |
 | `focus:` | a node `id`, e.g. `focus:reject` | set `ui.focus` (§4.3) to that id. It is the declarative twin of `cmd:/focus <node>`: a button can hand focus to a sibling without the user knowing the command. The id is resolved at press time against the live scene; a `focus:` naming no node in the scene leaves focus unchanged and reports it, never crashes. |
 | `answer:` | a kind, e.g. `answer:approve`, `answer:reject` | answer the agent's pending prompt/inbox item with that kind (Scene 8's approve/reject buttons). The **kind vocabulary is itself closed** — `approve`, `reject`, `reply` — mirroring the arxi core's `inbox.approve`/`inbox.reject`/`inbox.reply` verbs, so a scene author and the core agree on what a button means. |
 

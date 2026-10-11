@@ -182,9 +182,11 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 //     the same uiCommandKey the typed surface uses (so id prefixing, invariant-3
 //     re-validation and the token layers are reused, not reimplemented), `/max
 //     <pane>` writes the host ui.max cursor through the same parseMax the typed
-//     surface uses, and any other slash line is submitted as a prompt — the
-//     Phase-0 contract typeKey already honours, so a button and a keystroke
-//     cannot diverge on what a command means.
+//     surface uses, and any other line is handed to enqueue, which the loop runs
+//     as the Enter of a typed line. A button therefore never sends text to the
+//     model on its own: what a line does (a command, a local warning, or /send
+//     <text>) is decided in one place, so a button and a keystroke cannot
+//     diverge on what a command means.
 //   - ext: routes the press to a behavioral plugin subprocess (I4). The plugin id
 //     and action name were split by ParseAction; the router resolves the live
 //     plugin, applies its granted capability gate, and writes the `action` frame.

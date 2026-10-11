@@ -562,7 +562,8 @@ func TestLoopSobriaSlashMenu(t *testing.T) {
 	if !strings.Contains(stripANSI(out), "Δr×i v0.1.0") {
 		t.Errorf("sobria header not rendered; output:\n%s", out)
 	}
-	// The slash menu must activate (the "no matches" or command list should appear).
+	// The slash menu must activate while "/help" is being typed (it filters, so it
+	// lists help or says nothing matches until the letters are complete).
 	if !strings.Contains(out, "no matches") && !strings.Contains(out, "Show available commands") {
 		t.Errorf("slash menu did not activate on '/' keypress; output:\n%s", out)
 	}

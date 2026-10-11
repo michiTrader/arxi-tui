@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -140,5 +142,40 @@ func TestLoopWarningStaysVisibleWhileTheMenuIsOpen(t *testing.T) {
 	}
 	if !both {
 		t.Errorf("the open menu hides the warning; last frame:\n%s", lastFrame(out))
+	}
+}
+
+// A local warning must not be saved with the conversation, although chat.warn
+// events from the core are (sessionKinds). It stays out because it is appended
+// to the loop's own log and never goes through sessLog.Record; this test holds
+// that route, since nothing else would notice if a warning started being
+// recorded and then came back, as a stale line, on /resume.
+func TestLoopLocalWarningIsNotSavedWithTheSession(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv(configDirEnv, dir)
+	t.Setenv(sessionsEnv, "")
+	// The prompt goes first: Record ignores anything before the first prompt, so
+	// a warning raised earlier would be dropped for that reason and prove nothing.
+	script := append(enterLine("hello there"), enterLine("/nonsense")...)
+	script = append(script, exitKeys()...)
+	_, _ = runLoopDoc(t, factoryRAW, script)
+
+	files, _ := filepath.Glob(filepath.Join(dir, "sessions", "*.jsonl"))
+	if len(files) == 0 {
+		t.Fatalf("no session file was written under %s; the premise (a real prompt is saved) is broken", dir)
+	}
+	var saved strings.Builder
+	for _, f := range files {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		saved.Write(b)
+	}
+	if !strings.Contains(saved.String(), "hello there") {
+		t.Fatalf("the real prompt is not in the saved session; premise broken:\n%s", saved.String())
+	}
+	if strings.Contains(saved.String(), "Unknown command") || strings.Contains(saved.String(), "nonsense") {
+		t.Errorf("a local warning was saved with the conversation:\n%s", saved.String())
 	}
 }

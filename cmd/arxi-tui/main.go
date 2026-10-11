@@ -2393,7 +2393,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// write half, intercepted here before the slash menu for the
 							// same reason the plugin verbs are: a recognized command line
 							// is never the menu's to swallow (the menu lists "max", and its
-							// Enter would otherwise submit the bare word as a prompt). The
+							// Enter would otherwise be answered by the menu, not the command). The
 							// same parseMax backs the pressed cmd:/max button, so typing and
 							// pressing cannot diverge. `/max` alone restores (clears ui.max).
 							if perr != nil {
@@ -2891,10 +2891,12 @@ func isNewlineGesture(k term.Key) bool {
 
 // typeKey applies one keypress to the input buffer at the caret, or submits the
 // line. It returns the new buffer and the new caret (a rune index into it).
-// Enter submits as run.prompt: in Phase 0 the event lands in the local fold
-// directly (the mock driver feeds it); Phase 0.5 the same event goes to the
-// core over the NDJSON wire and comes back through the log, so the fold never
-// learns a second path.
+// Enter on an ordinary line submits it as run.prompt: with the mock driver the
+// event lands in the local fold directly; with the core it goes over the NDJSON
+// wire and comes back through the log, so the fold never learns a second path.
+// A line that starts with "/" is never submitted from here: the loop answers it
+// first (a command, or a local warning), and /send is how text that starts with
+// "/" reaches the model.
 func typeKey(input string, caret int, k term.Key, ctx context.Context, drv Driver) (string, int) {
 	// A newline gesture inserts a literal '\n' at the caret instead of
 	// submitting, so a prompt can span several lines. Plain Enter still submits;
