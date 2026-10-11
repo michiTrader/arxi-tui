@@ -2448,7 +2448,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if picked != "" {
 								enqueue(actionList{"cmd:" + picked}, false)
 							}
-						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, ctx, drv); handled {
+						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) { enqueue(actionList{"cmd:" + line}, false) }, ctx, drv); handled {
 							// H8 press routing: Tab/Shift-Tab move the ui.focus
 							// cursor over the pressable nodes (ordinary buttons and
 							// each instantiated template row), and Enter on a

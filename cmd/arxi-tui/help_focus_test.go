@@ -96,7 +96,7 @@ func TestApplyFocus(t *testing.T) {
 func TestFocusActionAndCommandAreTheSameOperation(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"text","text":"x","id":"here"}}`)
 	notice := ""
-	viaPress := dispatchPress("focus:nowhere", "here", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, nil, nil, &testDriver{})
+	viaPress := dispatchPress("focus:nowhere", "here", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, nil, nil, nil, &testDriver{})
 	_, viaHelper := applyFocus(doc, "nowhere", "here")
 	if viaPress != "here" || notice != viaHelper {
 		t.Errorf("press gave focus %q notice %q; applyFocus gave notice %q", viaPress, notice, viaHelper)

@@ -112,7 +112,7 @@ type pluginActionRouter interface {
 // with "/", Tab and Enter belong to the menu, so focusKey is never reached then.
 // Ctrl-C never reaches here either, so the escape hatch stays uncapturable
 // (invariant 6) whatever a button's action names.
-func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fold.State, notice *string, hidden map[string]bool, uiMax *string, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) (bool, string, string) {
+func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fold.State, notice *string, hidden map[string]bool, uiMax *string, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, enqueue func(line string), ctx context.Context, drv Driver) (bool, string, string) {
 	switch {
 	case k.Type == term.KeyTab:
 		ids, err := focusRing(*doc, state, hidden)
@@ -154,7 +154,7 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 			// onPress already has its {row.<field>} braces resolved (RowPresses'
 			// contract), so it dispatches exactly like a static node's action and
 			// the interpolation is never re-run.
-			newFocus := dispatchPress(onPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, ctx, drv)
+			newFocus := dispatchPress(onPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, enqueue, ctx, drv)
 			return true, "", newFocus
 		}
 		node := findPressable(*doc, uiFocus)
@@ -163,7 +163,7 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 			// is not a button, say). Enter is not ours; let it submit as usual.
 			return false, input, uiFocus
 		}
-		newFocus := dispatchPress(node.OnPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, ctx, drv)
+		newFocus := dispatchPress(node.OnPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, enqueue, ctx, drv)
 		// Clear the input the way the command paths do: a press is a submitted
 		// action, not text left in the buffer.
 		return true, "", newFocus
@@ -199,7 +199,7 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 //     optional reason, ignored by approve. A press with no pending item, or on a
 //     driver that follows no run (the mock), is reported, never a silent no-op —
 //     the same propose-and-report discipline focus: and ext: keep.
-func dispatchPress(onPress, currentFocus, answerText string, state fold.State, doc **scene.Document, notice *string, hidden map[string]bool, uiMax *string, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) string {
+func dispatchPress(onPress, currentFocus, answerText string, state fold.State, doc **scene.Document, notice *string, hidden map[string]bool, uiMax *string, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, enqueue func(line string), ctx context.Context, drv Driver) string {
 	action, err := scene.ParseAction(onPress)
 	if err != nil {
 		// The document validated at load, so a malformed action should be
@@ -237,9 +237,16 @@ func dispatchPress(onPress, currentFocus, answerText string, state fold.State, d
 			}
 			return currentFocus
 		}
-		line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(action.Arg), "/"))
-		if line != "" {
-			_ = drv.SubmitPrompt(ctx, line)
+		// Any other command line takes the loop's own door: it is queued and
+		// run as the Enter of a typed line, so a pressed button and the same
+		// line typed cannot differ. It is never submitted to the model from
+		// here; a line that is not a command gets the local warning there.
+		if enqueue == nil {
+			*notice = fmt.Sprintf("cmd:%s cannot run: this surface has no command queue", strings.TrimSpace(action.Arg))
+			return currentFocus
+		}
+		if line := strings.TrimSpace(action.Arg); line != "" {
+			enqueue(line)
 		}
 		return currentFocus
 	case scene.ActionExt:
