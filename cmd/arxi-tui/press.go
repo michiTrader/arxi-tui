@@ -209,11 +209,11 @@ func dispatchPress(onPress, currentFocus, answerText string, state fold.State, d
 	}
 	switch action.Kind {
 	case scene.ActionFocus:
-		if findNodeByID(*doc, action.Arg) == nil {
-			*notice = fmt.Sprintf("focus: no node with id %q in the current scene", action.Arg)
-			return currentFocus
+		next, why := applyFocus(*doc, action.Arg, currentFocus)
+		if why != "" {
+			*notice = why
 		}
-		return action.Arg
+		return next
 	case scene.ActionCmd:
 		enter := term.Key{Type: term.KeyEnter}
 		if handled, _ := uiCommandKey(action.Arg, enter, doc, notice, hidden, fetch, applyTokens); handled {
@@ -284,6 +284,19 @@ func dispatchPress(onPress, currentFocus, answerText string, state fold.State, d
 		return currentFocus
 	}
 	return currentFocus
+}
+
+// applyFocus is the one operation behind every way of moving the focus cursor:
+// the focus: action of a pressed node, the same action run from a command's or
+// hook's action list, and the typed /focus command. It returns the cursor to
+// keep (the target when it names a node of the scene, otherwise the current one
+// unchanged) and, when the target is refused, the notice that says why. Keeping
+// it in one place is what makes a button and a keystroke unable to disagree.
+func applyFocus(doc *scene.Document, id, current string) (focus, notice string) {
+	if findNodeByID(doc, id) == nil {
+		return current, fmt.Sprintf("focus: no node with id %q in the current scene", id)
+	}
+	return id, ""
 }
 
 // findNodeByID searches the whole scene tree for a node with the given id,

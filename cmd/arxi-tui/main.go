@@ -1226,10 +1226,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			switch act.Kind {
 			case scene.ActionFocus:
-				if findNodeByID(doc, act.Arg) == nil {
-					sceneNotice = "focus: no node with id \"" + act.Arg + "\" in the current scene"
-				} else {
-					uiFocus = act.Arg
+				var why string
+				uiFocus, why = applyFocus(doc, act.Arg, uiFocus)
+				if why != "" {
+					sceneNotice = why
 				}
 			case scene.ActionExt:
 				if err := pluginActions.SendAction(act.PluginID, act.Arg, nil); err != nil {
@@ -2358,6 +2358,25 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// in the buffer, with the focus on the input, so the
 							// user can fix it or send it on purpose with /send.
 							collected = appendLocalWarning(collected, sc.warning())
+						} else if rest, isHelp := stripLeadingVerb(input, "help"); ev.Key.Type == term.KeyEnter && isHelp && rest == "" {
+							// `/help` opens the command menu: the same list a bare "/"
+							// shows, with no call to the model. Typing it and picking it
+							// from the menu both land here (a pick is enqueued as this
+							// line), so the two cannot differ.
+							input, caret, slashSel, slashCat = "/", 1, 0, fold.SlashAll
+						} else if rest, isFocus := stripLeadingVerb(input, "focus"); ev.Key.Type == term.KeyEnter && isFocus {
+							// `/focus <id>` is the focus: action typed by hand, through
+							// the same applyFocus a pressed node uses.
+							if f := strings.Fields(rest); len(f) != 1 {
+								collected = appendLocalWarning(collected, focusUsage)
+							} else {
+								var why string
+								uiFocus, why = applyFocus(doc, f[0], uiFocus)
+								if why != "" {
+									sceneNotice = why
+								}
+								input, caret, slashSel = "", 0, 0
+							}
 						} else if sendText, isSend := parseSend(input); ev.Key.Type == term.KeyEnter && isSend {
 							// `/send <text>` hands the model exactly <text>, even when
 							// it starts with "/". It sits before the slash menu for the

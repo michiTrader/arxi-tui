@@ -32,3 +32,6 @@ func parseSend(line string) (text string, matched bool) {
 	}
 	return strings.TrimSpace(rest), true
 }
+
+// focusUsage is the local warning a /focus with no id, or with several, gets.
+const focusUsage = "/focus needs one node id: nothing changed. Type /focus followed by the id of a node in the scene."
