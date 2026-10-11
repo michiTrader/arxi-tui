@@ -2352,6 +2352,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							input = ""
 							caret = 0
 							slashSel = 0
+						} else if sendText, isSend := parseSend(input); ev.Key.Type == term.KeyEnter && isSend {
+							// `/send <text>` hands the model exactly <text>, even when
+							// it starts with "/". It sits before the slash menu for the
+							// reason /max does: the menu filters on the whole typed
+							// string, so a line with an argument matches nothing there.
+							if sendText == "" {
+								collected = appendLocalWarning(collected, sendUsage)
+							} else {
+								_ = drv.SubmitPrompt(ctx, sendText)
+								input, caret, slashSel = "", 0, 0
+							}
 						} else if pane, matched, perr := parseMax(input); ev.Key.Type == term.KeyEnter && matched {
 							// `/max <pane>` writes the host ui.max cursor, Scene 10's
 							// write half, intercepted here before the slash menu for the
@@ -3376,6 +3387,11 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, cat string, ctx 
 		}
 		if sel >= len(matches) {
 			sel = len(matches) - 1
+		}
+		// /send needs the text it will send, so picking it fills the line
+		// instead of submitting the word "send" as a prompt.
+		if matches[sel].Name == "send" {
+			return "/send ", len("/send "), 0, fold.SlashAll
 		}
 		// Phase 0: a command submits as a prompt (typeKey's contract); Phase 2
 		// routes /ui to the mutation surface.

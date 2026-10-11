@@ -132,6 +132,13 @@ func TestHistoryStepKeys(t *testing.T) {
 // runLoopKeys drives the real loop with a script and returns what it submitted.
 func runLoopKeys(t *testing.T, script []scheduledEvent) []string {
 	t.Helper()
+	_, submitted := runLoopKeysOutput(t, script)
+	return submitted
+}
+
+// runLoopKeysOutput is runLoopKeys that also returns everything the loop drew.
+func runLoopKeysOutput(t *testing.T, script []scheduledEvent) (string, []string) {
+	t.Helper()
 	doc, err := scene.ParseDocument([]byte(factoryRAW))
 	if err != nil {
 		t.Fatalf("ParseDocument: %v", err)
@@ -143,7 +150,7 @@ func runLoopKeys(t *testing.T, script []scheduledEvent) []string {
 	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
 		t.Fatalf("loop: %v", err)
 	}
-	return drv.submitted
+	return tty.output(), drv.submitted
 }
 
 func typed(s string) []scheduledEvent {

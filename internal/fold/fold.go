@@ -1690,6 +1690,9 @@ var Commands = []SlashMatch{
 	// import would be a cycle, and a fold that imported the patch surface
 	// would stop being the pure host-owned fold ADR-0002 requires.
 	{"ui", "General", "Talk to the model about the interface, or mutate the scene (add, move, remove, set, style, hide, show, plugin)"},
+	// /send is the one way to hand the model a line that starts with "/": the
+	// text after the verb goes out as typed, and is never read as a command.
+	{"send", "General", "Send the text after it to the model, even if it starts with /"},
 	// /clear is a host command: it ends the conversation and starts a new one.
 	{"clear", "Session", "Start a new session"},
 	{"copy", "Session", "Copy an answer, or the whole conversation, to the clipboard"},
