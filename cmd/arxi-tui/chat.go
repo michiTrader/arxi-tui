@@ -96,11 +96,20 @@ type chatSession struct {
 	// approval is the change the core is holding for the user, nil when none.
 	approval *pendingApproval
 
+	// turnText and turnTools describe the turn in flight, so that a turn that ends
+	// without an answer (cancelled, failed) can still be put in the history.
+	turnText  string
+	turnTools []string
 	// uiMode is the interface conversation: once the user has said /ui, the guide and the
 	// tools ride with every message after it, so they can go on talking about the
 	// interface without repeating the switch. It belongs to the conversation, so
 	// reset() ends it; /ui off ends it too.
 	uiMode bool
+	// guideSent is whether the interface guide was put in front of the model in this
+	// conversation. The guide is 20 KB; after the message that asked for it, the later
+	// messages of the interface conversation carry the tools and a short hint, and the
+	// model reads the guide again (ui_guide) only if it needs it.
+	guideSent bool
 
 	// ui lends the model the interface tools (ui_bridge.go); nil lends none. Like
 	// workdir it is a setting, and it travels with the tools, so it needs a workdir.
@@ -336,6 +345,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	withUI := command != ""
 	if withUI {
 		c.uiMode = true
+		c.guideSent = true
 	} else if c.uiMode {
 		// Already in the interface conversation: no switch needed, nothing to show.
 		withUI = true
@@ -345,6 +355,13 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 		c.mu.Unlock()
 		return errUIPromptEmpty
 	}
+	// A greeting, a ping or "what model are you" is answered with nothing but the
+	// message: no tools, no project rules, no history, no thinking, no interface guide.
+	if on, phrases := lightTurnsOn(); command == "" && isLightMessage(text, phrases, on) {
+		workdir, edits, runs, web, effort = "", "", "", "", ""
+		hist, withUI = nil, false
+	}
+	c.turnText, c.turnTools = text, nil
 	c.turn++
 	turn := c.turn
 	turnCtx, cancel := context.WithCancel(ctx)
@@ -372,11 +389,18 @@ func (c *chatSession) noteModelSwitch(ctx context.Context, to string) string {
 	c.modelNote = "The user switched the model to " + to + "."
 	if from != "" {
 		line = "model changed from " + from + " to " + to
-		c.modelNote = "The user switched the model from " + from + " to " + to + ". Earlier replies in this conversation were written by " + from + ", not by you; do not claim to have done what they say unless the tool results show it."
+		c.modelNote = "The user switched the model from " + from + " to " + to + ". Earlier replies in this conversation were written by " + from + ", not by you, but the conversation is yours to carry on: a request marked as unanswered, or one the user asks to retry, is yours to do. The \"Tools used\" lines say what was really done."
 	}
 	c.mu.Unlock()
 	c.post(ctx, gen, "chat.warn", map[string]any{"text": line})
 	return line
+}
+
+// guideWasSent reports whether the interface guide has already been given in this conversation.
+func (c *chatSession) guideWasSent() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.guideSent
 }
 
 // takeModelNote returns the pending model-switch sentence once.
@@ -402,6 +426,8 @@ func (c *chatSession) cancelTurn() bool {
 	cancel, gen := c.cancel, c.gen
 	c.cancel = nil
 	c.busy = false
+	c.history = append(c.history, driver.ChatTurn{Role: "user", Text: c.turnText},
+		driver.ChatTurn{Role: "assistant", Text: unansweredText(whyCancelled, c.turnTools)})
 	c.mu.Unlock()
 	cancel()
 	c.post(context.Background(), gen, "chat.cancelled", nil)
@@ -417,6 +443,7 @@ func (c *chatSession) reset() {
 	c.gen++
 	c.history = nil
 	c.uiMode = false
+	c.guideSent = false
 	c.busy = false
 	cancel := c.cancel
 	c.cancel = nil
@@ -559,6 +586,13 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		Workdir: workdir, Edits: edits, Runs: runs, Web: web,
 		OnApproval: func(ctx context.Context, a driver.Approval) bool { return c.askUser(ctx, gen, a) },
 		OnTool: func(t driver.ToolCall) {
+			if e := toolDigestEntry(t); e != "" {
+				c.mu.Lock()
+				if c.gen == gen && c.turn == turn {
+					c.turnTools = append(c.turnTools, e)
+				}
+				c.mu.Unlock()
+			}
 			c.post(ctx, gen, "chat.tool", map[string]any{
 				"name": t.Name, "arg": t.Arg, "ok": t.OK, "summary": t.Summary, "output": t.Output, "diff": t.Diff,
 			})
@@ -572,7 +606,13 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		// this app or theirs; now the words mean this app only when the user said so.
 		// The guide is read here, not left for the model to fetch: it is the whole
 		// point of the trigger, and it saves the round trip.
-		uiSystem = " " + uiSystemHint + "\n\n" + ui.guideText()
+		if command != "" || !c.guideWasSent() {
+			uiSystem = " " + uiSystemHint + "\n\n" + ui.guideText()
+		} else {
+			// Later messages of the interface conversation: the tools and one sentence.
+			// The guide is a tool call away (ui_guide) for the one that needs it.
+			uiSystem = " " + uiSystemHintLater
+		}
 		params.System += uiSystem
 		params.ClientTools = ui.definitions()
 		params.OnClientTool = func(ctx context.Context, call driver.ClientToolCall) driver.ClientToolResult {
@@ -634,6 +674,14 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		return
 	}
 	if err != nil {
+		// The request stays in the history, marked unanswered: the user's next words
+		// ("reintenta") mean it, whichever model reads them.
+		c.mu.Lock()
+		if c.gen == gen && c.turn == turn {
+			c.history = append(c.history, driver.ChatTurn{Role: "user", Text: text},
+				driver.ChatTurn{Role: "assistant", Text: unansweredText(whyFailed, c.turnTools)})
+		}
+		c.mu.Unlock()
 		c.emit(ctx, gen, "agent.failed", map[string]any{"agent": "assistant"})
 		c.fail(ctx, gen, chatErrorText(err))
 		return
@@ -643,7 +691,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		c.mu.Unlock()
 		return
 	}
-	c.history = append(c.history, driver.ChatTurn{Role: "user", Text: text}, driver.ChatTurn{Role: "assistant", Text: res.Text})
+	c.history = append(c.history, driver.ChatTurn{Role: "user", Text: text}, driver.ChatTurn{Role: "assistant", Text: answeredText(res.Text, c.turnTools)})
 	c.mu.Unlock()
 	model := res.Model
 	if res.Provider != "" && !strings.Contains(model, "/") {

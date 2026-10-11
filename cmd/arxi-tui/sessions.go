@@ -303,8 +303,8 @@ func loadSession(dir, id string) ([]fold.Event, error) {
 }
 
 // historyFromEvents rebuilds what the model has to be told about the conversation so far:
-// each question that got an answer, with that answer. A question that failed or was
-// cancelled never entered the history while it was live, so it does not here either.
+// each question with its answer, and a question that failed or was cancelled with a note
+// saying so, exactly as the live session keeps them, so "retry" means something after a resume.
 func historyFromEvents(evs []fold.Event) []driver.ChatTurn {
 	var out []driver.ChatTurn
 	pending, have := "", false
@@ -312,7 +312,20 @@ func historyFromEvents(evs []fold.Event) []driver.ChatTurn {
 		text, _ := e.Payload["text"].(string)
 		switch e.Type {
 		case "run.prompt":
+			if have {
+				// The previous question never got an answer (see below).
+				out = append(out, driver.ChatTurn{Role: "user", Text: pending}, driver.ChatTurn{Role: "assistant", Text: unansweredText(whyFailed, nil)})
+			}
 			pending, have = text, true
+		case "chat.error", "chat.cancelled":
+			if have {
+				why := whyFailed
+				if e.Type == "chat.cancelled" {
+					why = whyCancelled
+				}
+				out = append(out, driver.ChatTurn{Role: "user", Text: pending}, driver.ChatTurn{Role: "assistant", Text: unansweredText(why, nil)})
+				have = false
+			}
 		case "llm.response":
 			switch {
 			case have:

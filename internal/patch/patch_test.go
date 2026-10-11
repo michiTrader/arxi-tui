@@ -308,6 +308,7 @@ func TestEveryVerbRoundTripsThroughTheValidator(t *testing.T) {
 	lines := map[string]string{
 		"add":    `/ui add node below status {"type":"text","text":"hello"}`,
 		"move":   `/ui move status above chat`,
+		"remove": "/ui remove banner_gap",
 		"style":  "/ui style status dim",
 		"set":    "/ui set status text hello",
 		"hide":   "/ui hide status",

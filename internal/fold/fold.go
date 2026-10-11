@@ -1689,7 +1689,7 @@ var Commands = []SlashMatch{
 	// It is held to patch.Verbs() by a test rather than by a comment; the
 	// import would be a cycle, and a fold that imported the patch surface
 	// would stop being the pure host-owned fold ADR-0002 requires.
-	{"ui", "General", "Talk to the model about the interface, or mutate the scene (add, move, set, style, hide, show, plugin)"},
+	{"ui", "General", "Talk to the model about the interface, or mutate the scene (add, move, remove, set, style, hide, show, plugin)"},
 	// /clear is a host command: it ends the conversation and starts a new one.
 	{"clear", "Session", "Start a new session"},
 	{"copy", "Session", "Copy an answer, or the whole conversation, to the clipboard"},

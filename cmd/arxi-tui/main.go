@@ -92,7 +92,7 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
     { "type": "text", "text": "r", "style": {"style": "brand.2"} },
     { "type": "text", "text": "×", "style": {"style": "brand.3"} },
     { "type": "text", "text": "i", "style": {"style": "brand.4"} },
-    { "type": "text", "text": " v0.1.0 · Run /help for commands", "style": {"style": "dim"} } ] },
+    { "id": "banner_words", "type": "text", "text": " v0.1.0 · Run /help for commands", "style": {"style": "dim"} } ] },
 
   { "id": "banner_gap", "type": "text", "text": "" },
 
@@ -842,6 +842,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// sets one with /effort. mode is how much the agent may do unasked (/mode).
 	cwd, _ := os.Getwd()
 	effort := ""
+	// effortPicks is what the user chose for each model, kept across runs (effort_store.go);
+	// adoptEffort puts the level a model starts with in force once the core names it.
+	effortPicks := loadEffortPicks(effortStorePath())
+	var adoptEffort func()
 	mode := defaultMode
 	hubDoneCh := make(chan hubOutcome, 1)
 	// modelMenu is the `/model ` menu's state; modelCh carries its worker's answers.
@@ -1152,7 +1156,26 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			s.SetEffort(effort)
 		}
 		effortMn.loaded = false
+		// Remembered for this model, so leaving and coming back keeps it.
+		if hubDefault != "" && hubEffortsKnown {
+			effortPicks.remember(hubDefault, effort)
+			effortPicks.save(effortStorePath())
+		}
 		settingChanged("effort", effort, fromHook)
+	}
+	// adoptEffort runs when the core has named the chat model: it starts on the level the
+	// user last chose for it, or on the default (medium when it takes it). A core that did
+	// not list the model's levels leaves the level alone.
+	adoptEffort = func() {
+		lvl, ok := effortStart(effortPicks, hubDefault, hubEfforts, hubEffortsKnown, uiText("effort.default"))
+		if !ok || lvl == effort {
+			return
+		}
+		effort = lvl
+		if s, ok := drv.(effortSetter); ok {
+			s.SetEffort(effort)
+		}
+		effortMn.loaded = false
 	}
 	setMode := func(name string, fromHook bool) {
 		known := false
@@ -2648,8 +2671,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				hubDefaultKnown = true
 				hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
 				effortMn.loaded = false
-				// A default changed from the providers screen may not take the
-				// level in use; drop it so the bar never claims one.
+				// A default changed from the providers screen starts on its own level.
+				adoptEffort()
 				if effort != "" && !effortAllowed(hubEfforts, hubEffortsKnown, effort) {
 					effort = ""
 					if s, ok := drv.(effortSetter); ok {
@@ -2682,6 +2705,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					hubDefault = out.data.def
 					hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
 					effortMn.loaded = false
+					adoptEffort()
 				}
 				repaint()
 				continue
@@ -2698,6 +2722,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
 					effortMn.loaded = false
 				}
+				// Each model starts on the level chosen for it, or on the default.
+				adoptEffort()
 				// A model that does not take the chosen thinking level drops it,
 				// so the bar never claims a level the request will not carry.
 				if effort != "" && !effortAllowed(hubEfforts, hubEffortsKnown, effort) {

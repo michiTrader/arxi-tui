@@ -4,7 +4,7 @@
     { "type": "text", "text": "r", "style": {"style": "brand.2"} },
     { "type": "text", "text": "×", "style": {"style": "brand.3"} },
     { "type": "text", "text": "i", "style": {"style": "brand.4"} },
-    { "type": "text", "text": " v0.1.0 · Run /help for commands", "style": {"style": "dim"} } ] },
+    { "id": "banner_words", "type": "text", "text": " v0.1.0 · Run /help for commands", "style": {"style": "dim"} } ] },
 
   { "id": "banner_gap", "type": "text", "text": "" },
 

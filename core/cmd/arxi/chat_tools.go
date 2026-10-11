@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/michiTrader/arxi/internal/chattools"
@@ -238,6 +239,30 @@ func toolsHint(root, edits string) string {
 		"Look before you answer about the code; never guess file contents."
 	if edits != editsDeny {
 		h += " Read a file before you edit it. If the user declines a change, do not retry it: say what you would do and ask."
+	}
+	return h
+}
+
+// envHint tells the model where it is running: the operating system, the full path of
+// the project and the user's home. A model that is not told assumes Linux, writes ls and
+// $HOME for a Windows user, and then says the Desktop is out of reach (the defect that
+// motivated it: renaming one file on a Desktop took a dozen calls). When the run tool
+// is offered it also says which shell it speaks and that it is not confined to the
+// project, because the file tools are and the model cannot tell the two apart.
+func envHint(root, runs string) string {
+	h := "System: " + runtime.GOOS + "/" + runtime.GOARCH + "."
+	if abs, err := filepath.Abs(root); err == nil {
+		root = abs
+	}
+	h += " Project: " + root + "."
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		h += " Home: " + home + "."
+	}
+	if runs == editsAsk || runs == editsAllow {
+		h += " run uses " + chattools.ShellName() + " and may name any path (the user approves it); the other tools stay inside the project."
+		if runtime.GOOS == "windows" {
+			h += " Use dir, ren, copy, type, not ls, mv, cat; for PowerShell run powershell -NoProfile -Command."
+		}
 	}
 	return h
 }

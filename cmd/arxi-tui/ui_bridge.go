@@ -59,6 +59,11 @@ import (
 const uiSystemHint = "You are running inside arxi-tui, the app the user talks to you through. \"The TUI\", the interface, its colours mean this app, not their project: never search their files or read scene.json. " +
 	"The guide is already below: call ui_guide at most once. Change it only with ui_edit; say done only if it returned \"applied and saved\"."
 
+// uiSystemHintLater is the hint on the messages that follow the one that asked for the
+// interface (the guide is not repeated: it is 20 KB, and most of what follows is not about it).
+const uiSystemHintLater = "You are running inside arxi-tui, the app the user talks to you through. \"The TUI\", the interface, its colours mean this app, not their project: never search their files or read scene.json. " +
+	"To change it, call ui_guide once, then ui_edit; say done only if it returned \"applied and saved\"."
+
 // Names of the two tools, as the model calls them.
 const (
 	uiToolGuide = "ui_guide"
@@ -168,7 +173,7 @@ func (b *uiBridge) definitions() []driver.ClientToolDef {
 			Schema: json.RawMessage(`{"type":"object","properties":{` +
 				`"colors":{"type":"object","additionalProperties":{"type":"string"},"description":"token -> style, e.g. {\"markdown.code\":\"fg=magenta\"}"},` +
 				`"texts":{"type":"object","additionalProperties":{"type":"string"},"description":"key -> sentence, e.g. {\"team.title\":\"Crews\"}; empty restores the factory one"},` +
-				`"commands":{"type":"array","items":{"type":"string"},"description":"/ui add|move|set|style lines"},` +
+				`"commands":{"type":"array","items":{"type":"string"},"description":"/ui add|move|remove|set|style lines"},` +
 				`"scene":{"type":"string","description":"the whole new scene, as JSON"},` +
 				`"behaviour":{"type":"object","description":"animations, menu_keys, keys, commands, hooks; format in ui_guide"},` +
 				`"summary":{"type":"string","description":"one sentence saying what changes, shown to the user"}}}`)},
@@ -402,7 +407,7 @@ func draftScene(base *scene.Document, thm *theme.Theme, commands []string, whole
 				return nil, fmt.Errorf("command %d (%s): %w", i+1, line, err)
 			}
 			if !documentVerb(cmd.Verb) {
-				return nil, fmt.Errorf("command %d (%s): ui_edit takes add, move, set and style; %s is for the user to type", i+1, line, cmd.Verb)
+				return nil, fmt.Errorf("command %d (%s): ui_edit takes add, move, remove, set and style; %s is for the user to type", i+1, line, cmd.Verb)
 			}
 			res, err := patch.Apply(name, src, line)
 			if err != nil {
@@ -437,7 +442,7 @@ func draftScene(base *scene.Document, thm *theme.Theme, commands []string, whole
 // decision to type, not the model's to propose.
 func documentVerb(verb string) bool {
 	switch verb {
-	case "add", "move", "set", "style":
+	case "add", "move", "remove", "set", "style":
 		return true
 	}
 	return false
@@ -541,11 +546,19 @@ Colours of those lines are the chat.* tokens. Numbers are written as text ("3").
 LAYOUT. The interface is a JSON scene document drawn top to bottom: {"root": node}; a node is {"type", "id", ...}; stack lays children out vertically, row horizontally; text draws "text" or the value of "bind"; an empty line is {"type":"text","text":""}; "when": <bind> shows a node only while the bind is truthy; "style": {"style": <token>} picks which token paints a node. Give every node you add a new unique id. Change the layout with commands (preferred), applied in order:
   /ui add node <where> <json-node>
   /ui move <id> <where>
+  /ui remove <id>   (takes the node and everything inside it out for good; the input bar cannot be removed)
   /ui set <id> <key> <value>
   /ui style <id> <token>
   where = above <id> | below <id> | into <id> [top] | above_input | below_input
 Example, one more blank line under the input bar:
   /ui add node below_input {"id":"input_gap_extra","type":"text","text":""}
+BANNER. The top of the screen is nodes like any other, so it is yours to remove, replace or add to; never say it cannot be changed and never search files or run commands for it. The factory one is the row "banner" (the coloured logo letters, and the words node "banner_words" with \"v0.1.0 · Run /help for commands\") followed by the blank row "banner_gap". Recipes:
+  - change only the words: /ui set banner_words text "my words"  (or hide them with an empty text)
+  - drop it: /ui remove banner  (and /ui remove banner_gap for the blank row under it)
+  - ASCII art or any number of lines: ONE text node whose "text" holds line breaks (\n in the JSON), every line is a row: /ui add node above chat {"id":"art","type":"text","text":"line one\nline two\nline three","style":{"style":"brand.1"}}. Put it where you want it: above chat is the top of the screen.
+  - FLOATING (stays put whatever the conversation does) is the default for a node above chat. SCROLLING (leaves as the conversation grows) is the same node with "in_chat":true: /ui add node above chat {"id":"hello","type":"text","text":"Welcome","in_chat":true}. A scene may have both at once: one floating banner and one that scrolls away.
+  - animated colour on a banner: give it an animation token as its style (see FRAMES and behaviour.animations below).
+  - one logo letter, a colour or a word of the factory banner: /ui set <id> text ... or /ui style <id> <token>.
 FRAMES. Only a box (or an overlay) draws a border; a border on any other node is refused. "border" is one of single, double, round (rounded corners), heavy, ascii, or {"shape":"round","style":"<token>"} to colour it. To put a rounded frame around the input bar: /ui add node above prompt {"id":"input_frame","type":"box","border":"round"} then /ui move prompt into input_frame. To make that frame move in colour, define an animation and name it as the frame's style (two ui_edit parts in one call): behaviour: {"animations": {"rainbow": {"colors": ["#ff3b30","#ffcc00","#34c759","#00c7be","#0a84ff","#bf5af2"], "fps": 12, "direction": "diagonal"}}} and commands: ["/ui add node above prompt {\"id\":\"input_frame\",\"type\":\"box\",\"border\":{\"shape\":\"round\",\"style\":\"rainbow\"}}", "/ui move prompt into input_frame"]. If the frame already exists, only /ui set input_frame border {"shape":"round","style":"rainbow"} is needed. A colour that moves is always an animation token like this one, never a colors entry. "direction":"diagonal" (or "radial", "conic", "horizontal", "vertical", "antidiagonal", or an angle such as "60deg"; add "reverse":true or "static":true) makes one smooth gradient run across the whole frame, so the top and bottom lines differ; without it every line repeats the same colours. To give the top and bottom different colours or animations: {"shape":"round","top":"<token>","bottom":"<other token>","style":"<token for the sides>"}. A gradient on a border is possible in any direction and sides can differ: never tell the user it cannot be done. Animate the frame ONLY through the border's style: never put the animation on the input's or the box's own "style", or the typed letters change colour too, which is not what a frame asks for. Do not invent other words ("rounded", "{type:round}"): they are refused.
 Or pass scene: the complete new document, changing as little as the order requires. Every bind and when must come from the bind list; keep the node bound to user.input.
 

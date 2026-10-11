@@ -265,6 +265,12 @@ func Parse(line string) (Command, error) {
 		// /ui move <id> <where>. Parsed against the raw body so it reads the
 		// same where grammar `add` does, through the one shared parser.
 		return parseMove(body)
+	case "remove":
+		// /ui remove <node-id>: takes the node and everything under it out of the document.
+		if len(args) != 1 {
+			return Command{}, fmt.Errorf("/ui remove needs one node id: /ui remove <id>")
+		}
+		return Command{Verb: "remove", Target: args[0]}, nil
 	case "style":
 		// /ui style <node-id> <token>
 		if len(args) != 2 {
@@ -334,7 +340,7 @@ func Parse(line string) (Command, error) {
 // verb that needs a Fetcher because its argument names bytes the host has not
 // read yet.
 func Verbs() []string {
-	return []string{"add", "move", "set", "style", "hide", "show", "plugin"}
+	return []string{"add", "move", "remove", "set", "style", "hide", "show", "plugin"}
 }
 
 // parsePlugin reads the `plugin` verb's `add <url>` / `remove <id>` subcommand.
@@ -376,6 +382,8 @@ func (c Command) apply(name string, src []byte, fetch Fetcher) (Result, error) {
 		return c.applyAdd(name, src)
 	case "move":
 		return c.applyMove(name, src)
+	case "remove":
+		return c.applyRemove(name, src)
 	case "hide", "show":
 		return c.applyViewState(name, src)
 	case "plugin":
@@ -679,6 +687,8 @@ func (c Command) summary() string {
 		return fmt.Sprintf("styled %q as %q", c.Target, c.Value)
 	case "set":
 		return fmt.Sprintf("set %s of %q to %q", c.Key, c.Target, c.Value)
+	case "remove":
+		return fmt.Sprintf("removed %q", c.Target)
 	case "hide":
 		return fmt.Sprintf("hid %q", c.Target)
 	case "show":
