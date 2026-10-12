@@ -641,6 +641,19 @@ func setActiveBehaviour(b behaviour) {
 		}
 		cmds = append(cmds, fold.SlashMatch{Name: c.Name, Category: cat, Description: desc})
 	}
+	// The commands of the packages the user approved sit in the same menu, after their
+	// own. A name the user's behaviour already took is theirs: packages are checked
+	// against it when they load, and the first row of a name is the one kept here too.
+	taken := map[string]bool{}
+	for _, c := range cmds {
+		taken[c.Name] = true
+	}
+	for _, r := range packageRows() {
+		if !taken[r.Name] {
+			taken[r.Name] = true
+			cmds = append(cmds, r)
+		}
+	}
 	fold.SetUserCommands(cmds)
 }
 
