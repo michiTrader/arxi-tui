@@ -14,6 +14,7 @@ import (
 	"github.com/michiTrader/arxi_tui/internal/defaultscene"
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
+	"github.com/michiTrader/arxi_tui/internal/term"
 	"github.com/michiTrader/arxi_tui/internal/theme"
 )
 
@@ -239,5 +240,85 @@ func TestLoopPackageCommandIsInTheMenu(t *testing.T) {
 	out, _ := runPackageLoop(t, map[string]string{"loud": pkgDoc("loud", echoPkg)}, []string{"loud"}, script)
 	if frameWith(out, "say it back") == "" {
 		t.Errorf("the command is not in the / menu; last frame:\n%s", lastFrame(out))
+	}
+}
+
+// A rule that answers for the line: nothing is sent, and what it said is shown as a note.
+func TestLoopRuleThatHandlesALineSendsNothingAndSaysItsAnswer(t *testing.T) {
+	folders := rulePackage(`printf '{"verdict":"handled","say":"answered by the rule"}'`)
+	script := append(enterLine("what time is it"), exitKeys()...)
+	out, sent := runPackageLoop2(t, folders, script)
+	if len(sent) != 0 {
+		t.Fatalf("a line a rule answered for was sent to the model: %q", sent)
+	}
+	if !strings.Contains(screen(out), "answered by the rule") {
+		t.Errorf("what the rule said is not shown; last frame:\n%s", lastFrame(out))
+	}
+}
+
+// What a rule says alongside letting the line through is shown too.
+func TestLoopRuleThatSaysSomethingAndContinuesShowsItAndSends(t *testing.T) {
+	folders := rulePackage(`printf '{"verdict":"continue","say":"just so you know"}'`)
+	script := append(enterLine("hello"), exitKeys()...)
+	out, sent := runPackageLoop2(t, folders, script)
+	if len(sent) != 1 || sent[0] != "hello" {
+		t.Fatalf("sent %q, want the line as typed", sent)
+	}
+	if frameWith(out, "just so you know") == "" {
+		t.Errorf("what the rule said was dropped; last frame:\n%s", lastFrame(out))
+	}
+}
+
+// Enter on an empty bar sends nothing and starts no rule: a rule that rewrites every
+// line it sees would otherwise turn an empty Enter into a message.
+func TestLoopEnterOnAnEmptyBarStartsNoRule(t *testing.T) {
+	folders := rulePackage(`printf '{"verdict":"transform","text":"invented"}'`)
+	script := append([]scheduledEvent{fkey(term.KeyEnter)}, exitKeys()...)
+	_, sent := runPackageLoop2(t, folders, script)
+	if len(sent) != 0 {
+		t.Fatalf("an empty Enter produced a message: %q", sent)
+	}
+}
+
+// A line that starts with "/" and is a command of the host never reaches a rule, whatever
+// the command: the rule here would hold back anything it saw.
+func TestLoopRuleNeverSeesAKnownCommand(t *testing.T) {
+	folders := rulePackage(`printf '{"verdict":"block","reason":"rule saw it"}'`)
+	for _, line := range []string{"/help", "/send plain words", "/effort", "/mode", "/ui hide", "/clear"} {
+		script := append(enterLine(line), exitKeys()...)
+		out, _ := runPackageLoop2(t, folders, script)
+		if frameWith(out, "rule saw it") != "" {
+			t.Errorf("%s was shown to a rule", line)
+		}
+	}
+}
+
+// While the rules still check a line, a second line is not sent past them: it is held
+// with a warning, so a slow rule cannot be skipped by typing faster than it answers.
+func TestLoopSecondLineWhileTheRulesStillRunIsHeldWithAWarning(t *testing.T) {
+	folders := rulePackage(`sleep 2; printf '{"verdict":"continue"}'`)
+	script := append(enterLine("first"), enterLine("second")...)
+	script = append(script, exitKeys()...)
+	out, sent := runPackageLoop2(t, folders, script)
+	if len(sent) != 0 {
+		t.Fatalf("a line got past a rule that had not answered: %q", sent)
+	}
+	if frameWith(out, "still checking the previous line") == "" {
+		t.Errorf("no warning that the rules were busy; last frame:\n%s", lastFrame(out))
+	}
+}
+
+// The same for a slow package command: a second one waits, it does not run beside it.
+func TestLoopSecondPackageCommandWhileOneRunsIsRefusedWithAWarning(t *testing.T) {
+	slow := `,"permissions":{"exec":["sh"]},"commands":[{"name":"slow","description":"d","op":{"kind":"exec","argv":["./s.sh"]}}]`
+	folders := map[string]string{
+		"slow/package.json": pkgDoc("slow", slow),
+		"slow/s.sh":         "#!/bin/sh\nsleep 2\necho done\n",
+	}
+	script := append(enterLine("/slow"), enterLine("/slow")...)
+	script = append(script, exitKeys()...)
+	out, _ := runPackageFolders(t, nil, folders, []string{"slow"}, script)
+	if frameWith(out, "another package command is still running") == "" {
+		t.Errorf("the second command was not refused; last frame:\n%s", lastFrame(out))
 	}
 }
