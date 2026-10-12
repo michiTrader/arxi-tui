@@ -264,3 +264,25 @@ func TestParseActionErrorsListTheWholeSet(t *testing.T) {
 		}
 	}
 }
+
+// Characters outside plain ASCII are refused anywhere in an open: address, not only in
+// the host: a right-to-left override in the path reorders what the user reads, and a
+// look-alike letter in the host stands in for a real one. The host pattern alone would
+// not catch the path.
+func TestParseActionRefusesNonASCIIAnywhereInAnOpenAddress(t *testing.T) {
+	for _, in := range []string{
+		"open:https://example.com/\u202eabc",
+		"open:https://example.com/caf\u00e9",
+		"open:https://example.com/?q=\u2066x",
+		"open:https://example.com/#\u200f",
+		"open:https://ex\u0430mple.com/", // Cyrillic a in the host
+	} {
+		if a, err := ParseAction(in); err == nil {
+			t.Errorf("ParseAction(%q) accepted it as %+v; text a reader sees reordered or swapped must be refused", in, a)
+		}
+	}
+	// The same address, encoded, is fine.
+	if _, err := ParseAction("open:https://example.com/caf%C3%A9"); err != nil {
+		t.Errorf("an encoded address was refused: %v", err)
+	}
+}
