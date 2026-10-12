@@ -171,6 +171,10 @@ func packageHash(p *extv2.Package, dir string) (string, error) {
 	for i := range c.Rules {
 		c.Rules[i].Disabled = false
 	}
+	c.Tools = append([]extv2.Tool(nil), p.Tools...)
+	for i := range c.Tools {
+		c.Tools[i].Disabled = false
+	}
 	h := sha256.New()
 	fmt.Fprintf(h, "digest\x00%s\x00", c.Digest())
 	if dir != "" {

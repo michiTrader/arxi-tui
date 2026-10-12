@@ -58,7 +58,7 @@ func TestIdentityIsRequiredAndStrict(t *testing.T) {
 	refused(t, `{"protocol":"ext/v2","id":"Demo","name":"D","version":"1",`+op+`}`, Options{}, "not a legal identifier")
 	refused(t, `{"protocol":"ext/v2","id":"demo","name":" ","version":"1",`+op+`}`, Options{}, "name is empty")
 	refused(t, `{"protocol":"ext/v2","id":"demo","name":"D","version":"",`+op+`}`, Options{}, "version is empty")
-	refused(t, `{`+head+`}`, Options{}, "no commands and no rules")
+	refused(t, `{`+head+`}`, Options{}, "no commands, rules or tools")
 }
 
 func TestParseRefusesUnknownKeysAndReservedArtifacts(t *testing.T) {
@@ -66,7 +66,7 @@ func TestParseRefusesUnknownKeysAndReservedArtifacts(t *testing.T) {
 	// A key the contract does not know is a setting the author thinks is in force.
 	refused(t, `{`+head+`,"permisions":{},`+op+`}`, Options{}, "malformed", "permisions")
 	// Reserved artifact kinds fail loudly instead of half-loading.
-	for _, k := range []string{"tools", "events", "panels", "services"} {
+	for _, k := range []string{"events", "panels", "services"} {
 		refused(t, `{`+head+`,"`+k+`":[],`+op+`}`, Options{}, `"`+k+`" is reserved`)
 	}
 	refused(t, `[]`, Options{}, "not a JSON object")

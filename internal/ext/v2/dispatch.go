@@ -44,6 +44,31 @@ func (r *Runner) RunCommand(ctx context.Context, p *Package, c Command, args str
 	return out, nil
 }
 
+// MaxToolArgs bounds what the model may pass to a tool, in bytes.
+const MaxToolArgs = 2000
+
+// RunTool runs a tool with the text the model passed. It returns the text the model reads
+// back. Like a command it fails before running anything when the words are too few; unlike
+// one it never has a line to send or to rewrite, so anything but text is refused.
+func (r *Runner) RunTool(ctx context.Context, p *Package, t Tool, args string) (string, error) {
+	args = strings.TrimSpace(args)
+	if len(args) > MaxToolArgs {
+		return "", fmt.Errorf("the text is %d bytes, the most a tool takes is %d; pass less", len(args), MaxToolArgs)
+	}
+	words := strings.Fields(args)
+	if len(words) < t.MinArgs {
+		return "", fmt.Errorf("%s needs at least %d words in args (%s); nothing ran", t.Name, t.MinArgs, t.Usage)
+	}
+	out, err := r.run(ctx, p, t.Op, opCtx{kind: ctxTool, minArgs: t.MinArgs}, Input{Args: args, Words: words})
+	if err != nil {
+		return "", err
+	}
+	if out.Send != "" || out.Verdict != "" || out.Text != "" {
+		return "", fmt.Errorf("%w: tool %s produced something other than text, and a tool can only return text; nothing was used", ErrNotSigned, t.Name)
+	}
+	return out.Say, nil
+}
+
 // RunRule runs one rule against the line the user typed.
 func (r *Runner) RunRule(ctx context.Context, p *Package, rule Rule, line string) (Outcome, error) {
 	return r.run(ctx, p, rule.Op, opCtx{kind: ctxRule}, Input{Line: line})

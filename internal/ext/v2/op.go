@@ -12,6 +12,7 @@ type ctxKind int
 const (
 	ctxCommand ctxKind = iota
 	ctxRule
+	ctxTool
 )
 
 // opCtx is where an operation sits, which decides which placeholders and results it
@@ -106,9 +107,14 @@ func refuseFields(who string, o Op, kind string) error {
 func (p *Package) validateResult(who string, o Op, oc opCtx) error {
 	allowed := []string{ResultSay, ResultSend, ResultOutcome}
 	def := ResultSay
-	if oc.kind == ctxRule {
+	switch oc.kind {
+	case ctxRule:
 		allowed = []string{ResultTransform, ResultOutcome}
 		def = ResultTransform
+	case ctxTool:
+		// What a tool returns goes back to the model that called it, and nowhere else:
+		// there is no line to rewrite and no second channel to send on.
+		allowed = []string{ResultSay}
 	}
 	r := o.Result
 	if r == "" {

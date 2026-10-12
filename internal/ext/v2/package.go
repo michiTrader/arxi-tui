@@ -30,18 +30,22 @@ const Protocol = "ext/v2"
 // Limits bound what one document may ask the host to hold. They sit far above what a
 // person writes by hand and far below what would make the menu or the loop unusable.
 const (
-	MaxDocBytes     = 64 * 1024
-	MaxCommands     = 32
-	MaxRules        = 16
-	MaxPermEntries  = 32
-	MaxNameLen      = 48
-	MaxDescLen      = 200
-	MaxArgvElements = 32
-	MaxArgvElemLen  = 1024
-	MaxURLLen       = 2048
-	MaxHeaders      = 16
-	MaxBodyLen      = 8 * 1024
-	MaxWhenLen      = 200
+	MaxDocBytes = 64 * 1024
+	MaxCommands = 32
+	MaxTools    = 16
+	// MaxToolNameTotal bounds the id and the name together: the model sees the tool as
+	// pkg_<id>_<name> (5 more characters), and providers refuse a tool name over 64.
+	MaxToolNameTotal = 59
+	MaxRules         = 16
+	MaxPermEntries   = 32
+	MaxNameLen       = 48
+	MaxDescLen       = 200
+	MaxArgvElements  = 32
+	MaxArgvElemLen   = 1024
+	MaxURLLen        = 2048
+	MaxHeaders       = 16
+	MaxBodyLen       = 8 * 1024
+	MaxWhenLen       = 200
 )
 
 var (
@@ -86,6 +90,7 @@ type Package struct {
 	Permissions Permissions `json:"permissions,omitempty"`
 	Commands    []Command   `json:"commands,omitempty"`
 	Rules       []Rule      `json:"rules,omitempty"`
+	Tools       []Tool      `json:"tools,omitempty"`
 }
 
 // Permissions is everything a package may reach. Empty means nothing: a package
@@ -117,6 +122,31 @@ type Command struct {
 	Disabled bool `json:"disabled,omitempty"`
 	Op       Op   `json:"op"`
 }
+
+// Tool is an operation the agent may call by itself. It is a command the model types
+// instead of the user: the same operation, the same guards and the same permissions, with
+// the one difference that the model chooses the text it is given and reads what comes
+// back. Because of that the user approves the package knowing it holds tools (the consent
+// text says so), and what an operation returns is handed to the model as data.
+type Tool struct {
+	Name string `json:"name"`
+	// Description tells the model when to use the tool. It is required: a tool the
+	// model cannot tell the purpose of is one it will call at random.
+	Description string `json:"description"`
+	// Usage says what to pass as args ("a city name"). It is shown to the model.
+	Usage string `json:"usage,omitempty"`
+	// MinArgs is how many words the model must pass; fewer is refused before anything runs.
+	MinArgs  int  `json:"min_args,omitempty"`
+	Disabled bool `json:"disabled,omitempty"`
+	Op       Op   `json:"op"`
+}
+
+// ToolPrefix starts the name the model sees; the host recognises its own tools by it.
+const ToolPrefix = "pkg_"
+
+// ModelName is the name the model calls the tool by: pkg_<package id>_<tool name>. Neither
+// part holds an underscore, so the name says unambiguously which package it belongs to.
+func (t Tool) ModelName(pkgID string) string { return ToolPrefix + pkgID + "_" + t.Name }
 
 // Rule is a reaction to a stage of the pipeline.
 type Rule struct {
@@ -166,7 +196,6 @@ type Op struct {
 // reservedKeys are artifact kinds the contract names but no phase has built yet. A
 // package using one is refused with the reason, so it never half-loads.
 var reservedKeys = map[string]string{
-	"tools":    "tools the agent can call arrive with the tools phase",
 	"events":   "reactions to events arrive with the events phase",
 	"panels":   "panels arrive with the panels phase",
 	"services": "long-lived services (voice, watchers) arrive with the service phase",
@@ -246,8 +275,11 @@ func (p *Package) Validate(opt Options) error {
 	if len(p.Rules) > MaxRules {
 		return fmt.Errorf("rules: %d defined, the most is %d; remove some or split the package", len(p.Rules), MaxRules)
 	}
-	if len(p.Commands) == 0 && len(p.Rules) == 0 {
-		return fmt.Errorf("package %q has no commands and no rules, so it would do nothing; add one of each kind it needs", p.ID)
+	if len(p.Tools) > MaxTools {
+		return fmt.Errorf("tools: %d defined, the most is %d; remove some or split the package", len(p.Tools), MaxTools)
+	}
+	if len(p.Commands) == 0 && len(p.Rules) == 0 && len(p.Tools) == 0 {
+		return fmt.Errorf("package %q has no commands, rules or tools, so it would do nothing; add one of each kind it needs", p.ID)
 	}
 	names := map[string]bool{}
 	for i, c := range p.Commands {
@@ -269,7 +301,41 @@ func (p *Package) Validate(opt Options) error {
 		}
 		ids[r.ID] = true
 	}
+	tools := map[string]bool{}
+	for i, t := range p.Tools {
+		if err := p.validateTool(i, t, opt); err != nil {
+			return err
+		}
+		if tools[t.Name] {
+			return fmt.Errorf("tools: %s is defined twice, so the model could not tell them apart; keep one", t.Name)
+		}
+		tools[t.Name] = true
+	}
 	return nil
+}
+
+func (p *Package) validateTool(i int, t Tool, opt Options) error {
+	who := fmt.Sprintf("tools[%d]", i)
+	if len(t.Name) > MaxNameLen || !cmdNameRe.MatchString(t.Name) {
+		return fmt.Errorf("%s: name %q is not usable; the model sees it as %s<id>_<name>, so use lowercase letters, digits and '-', starting with a letter", who, t.Name, ToolPrefix)
+	}
+	who = "tool " + t.Name
+	if len(p.ID)+len(t.Name) > MaxToolNameTotal {
+		return fmt.Errorf("%s: the package id and the tool name together are %d characters, the most is %d, because the model sees %s<id>_<name> and providers refuse a tool name over 64 characters; shorten one", who, len(p.ID)+len(t.Name), MaxToolNameTotal, ToolPrefix)
+	}
+	if err := checkLabel(who+" description", t.Description, MaxDescLen, true); err != nil {
+		return err
+	}
+	if err := checkLabel(who+" usage", t.Usage, MaxDescLen, false); err != nil {
+		return err
+	}
+	if t.MinArgs < 0 || t.MinArgs > 9 {
+		return fmt.Errorf("%s: min_args %d is outside 0..9; the placeholders are ${1} to ${9}", who, t.MinArgs)
+	}
+	if t.MinArgs > 0 && t.Usage == "" {
+		return fmt.Errorf("%s: min_args is %d but there is no usage, so the model would not know what to pass; add a \"usage\" such as \"a city name\"", who, t.MinArgs)
+	}
+	return p.validateOp(who, t.Op, opCtx{kind: ctxTool, minArgs: t.MinArgs}, opt)
 }
 
 func (p *Package) validateCommand(i int, c Command, opt Options) error {
@@ -520,6 +586,13 @@ func (p *Package) Capabilities() []string {
 	if len(p.Rules) > 0 {
 		out = append(out, "read and rewrite every line you type before it is sent")
 	}
+	if len(p.Tools) > 0 {
+		var names []string
+		for _, t := range p.Tools {
+			names = append(names, t.Name)
+		}
+		out = append(out, "let the model call "+strings.Join(names, ", ")+" by itself, with text it chooses, and read what they return")
+	}
 	return out
 }
 
@@ -534,6 +607,11 @@ func (p *Package) hasPackageExec() bool {
 	}
 	for _, r := range p.Rules {
 		if each(r.Op) {
+			return true
+		}
+	}
+	for _, t := range p.Tools {
+		if each(t.Op) {
 			return true
 		}
 	}
