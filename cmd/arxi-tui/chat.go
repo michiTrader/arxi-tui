@@ -478,6 +478,13 @@ func (c *chatSession) setHistory(h []driver.ChatTurn) {
 	c.mu.Unlock()
 }
 
+// setToolLog replaces the record of what earlier turns did, for a resumed conversation.
+func (c *chatSession) setToolLog(r []toolRecord) {
+	c.mu.Lock()
+	c.toolLog = append([]toolRecord(nil), r...)
+	c.mu.Unlock()
+}
+
 // busyNow reports whether a turn is in flight.
 func (c *chatSession) busyNow() bool {
 	c.mu.Lock()

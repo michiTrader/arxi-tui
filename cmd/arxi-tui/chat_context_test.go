@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -251,5 +252,60 @@ func TestAResumedConversationKeepsItsUnansweredRequest(t *testing.T) {
 	h := historyFromEvents([]fold.Event{ev("run.prompt", "uno"), ev("llm.response", "a"), ev("run.prompt", "dos"), ev("chat.error", "boom"), ev("run.prompt", "reintenta")})
 	if len(h) != 4 || h[2].Text != "dos" || !strings.Contains(h[3].Text, "No reply") {
 		t.Errorf("history = %+v", h)
+	}
+}
+
+func savedToolEv(name, arg string, ok bool) fold.Event {
+	return fold.Event{Type: "chat.tool", Payload: map[string]any{"name": name, "arg": arg, "ok": ok}}
+}
+
+// What the live session would have kept is what a resume rebuilds from the saved events:
+// the same request, the same words for the tools.
+func TestAResumedConversationRebuildsTheRecordOfItsTools(t *testing.T) {
+	ev := func(typ, text string) fold.Event { return fold.Event{Type: typ, Payload: map[string]any{"text": text}} }
+	evs := []fold.Event{
+		ev("run.prompt", "mira main.go"), savedToolEv("read", "main.go", true), savedToolEv(uiToolGuide, "", true), savedToolEv("run", "go  test", false), ev("llm.response", "hecho"),
+		ev("run.prompt", "solo charla"), ev("llm.response", "ok"),
+		ev("run.prompt", "se rompio"), savedToolEv("read", "x.go", true), fold.Event{Type: "chat.error", Payload: map[string]any{"text": "boom"}},
+		ev("run.prompt", "cancelada"), savedToolEv("read", "y.go", true), fold.Event{Type: "chat.cancelled"},
+		ev("run.prompt", "otra"), savedToolEv("list", ".", true), ev("llm.response", "pieza uno"), ev("llm.response", " pieza dos"),
+	}
+	got := toolLogFromEvents(evs)
+	if len(got) != 2 {
+		t.Fatalf("records = %+v, want 2 (one per answered turn that used tools)", got)
+	}
+	if got[0].ask != "mira main.go" || strings.Join(got[0].tools, "|") != "read(main.go)|run(go test) failed" {
+		t.Errorf("first record = %+v", got[0])
+	}
+	if got[1].ask != "otra" || strings.Join(got[1].tools, "|") != "list(.)" {
+		t.Errorf("a streamed answer must count once: %+v", got[1])
+	}
+}
+
+func TestTheRebuiltRecordKeepsTheLastTwelveAnsweredTurns(t *testing.T) {
+	var evs []fold.Event
+	for i := 0; i < toolRecordsMax+3; i++ {
+		q := fmt.Sprintf("pregunta %d", i)
+		evs = append(evs, fold.Event{Type: "run.prompt", Payload: map[string]any{"text": q}}, savedToolEv("read", "a.go", true),
+			fold.Event{Type: "llm.response", Payload: map[string]any{"text": "a"}})
+	}
+	got := toolLogFromEvents(evs)
+	if len(got) != toolRecordsMax || got[0].ask != "pregunta 3" || got[len(got)-1].ask != fmt.Sprintf("pregunta %d", toolRecordsMax+2) {
+		t.Errorf("records = %d, first %q, last %q", len(got), got[0].ask, got[len(got)-1].ask)
+	}
+}
+
+// The record reaches the model: a conversation brought back with its history and its
+// tool record tells the next turn what the earlier ones did.
+func TestAResumedConversationTellsTheModelWhatItsEarlierTurnsDid(t *testing.T) {
+	core := &seenChat{}
+	out := make(chan fold.Event, 64)
+	c := newChatSession(core, out)
+	sd := &serveDriver{chat: c}
+	sd.ResumeSession([]driver.ChatTurn{{Role: "user", Text: "mira main.go"}, {Role: "assistant", Text: "hecho"}})
+	sd.ResumeToolLog([]toolRecord{{ask: "mira main.go", tools: []string{"read(main.go)"}}})
+	sendAndWait(t, c, out, "y ahora que", "agent.turn_done")
+	if p := core.last(); !strings.Contains(p.System, "read(main.go)") {
+		t.Errorf("the resumed record never reached the system prompt: %q", p.System)
 	}
 }
