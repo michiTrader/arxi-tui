@@ -30,7 +30,7 @@ import (
 // matched reports whether the line IS a `/max` invocation. A matched line with
 // more than one argument returns matched=true with a located refusal, so the
 // host names the mistake rather than letting it fall through to the slash menu's
-// silent no-match or be submitted to the agent as a prompt.
+// silent no-match or a warning that it is unknown.
 //
 // The pane id is NOT validated against the scene's node ids, and that is a
 // decision rather than an omission: ui.max carries a *logical* pane name the

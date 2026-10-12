@@ -60,7 +60,7 @@ func TestFocusKeyTabMovesTheCursor(t *testing.T) {
 	]}}`)
 	notice := ""
 
-	handled, input, focus := focusKey(term.Key{Type: term.KeyTab}, "typed", "", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), &testDriver{})
+	handled, input, focus := focusKey(term.Key{Type: term.KeyTab}, "typed", "", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, nil, nil, context.Background(), &testDriver{})
 	if !handled {
 		t.Fatal("Tab was not handled, so it would fall through to typeKey and insert a literal tab into the buffer")
 	}
@@ -71,7 +71,7 @@ func TestFocusKeyTabMovesTheCursor(t *testing.T) {
 		t.Errorf("Tab from the input home moved focus to %q, want the first pressable node %q", focus, "one")
 	}
 
-	_, _, back := focusKey(term.Key{Type: term.KeyTab, Mod: term.ModShift}, "typed", "", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), &testDriver{})
+	_, _, back := focusKey(term.Key{Type: term.KeyTab, Mod: term.ModShift}, "typed", "", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, nil, nil, context.Background(), &testDriver{})
 	if back != "two" {
 		t.Errorf("Shift-Tab from the input home moved focus to %q, want the last pressable node %q", back, "two")
 	}
@@ -87,7 +87,7 @@ func TestFocusKeyEnterDispatchesFocusAction(t *testing.T) {
 	]}}`)
 	notice := ""
 
-	handled, input, focus := focusKey(term.Key{Type: term.KeyEnter}, "", "go", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), &testDriver{})
+	handled, input, focus := focusKey(term.Key{Type: term.KeyEnter}, "", "go", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, nil, nil, context.Background(), &testDriver{})
 	if !handled {
 		t.Fatal("Enter on a focused button was not handled, so the button cannot be pressed")
 	}
@@ -99,22 +99,43 @@ func TestFocusKeyEnterDispatchesFocusAction(t *testing.T) {
 	}
 }
 
-// A cmd: action that is not a /ui command is submitted to the driver as a
-// prompt, exactly as typing the command line would — the Phase-0 contract, so a
-// button and a keystroke cannot diverge on what a command means.
-func TestFocusKeyEnterDispatchesCmdViaDriver(t *testing.T) {
+// A cmd: action that is not handled where it is pressed is queued as the line it
+// names, to run through the loop's own door as the Enter of a typed line. It is
+// never submitted to the model from here, so a button and a keystroke cannot
+// diverge on what a command means. (What the line does once it runs is tested
+// at the loop, where /send is a real command; /send is only the fixture here.)
+func TestFocusKeyEnterQueuesCmdLine(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"stack","children":[
-	  {"id":"run","type":"text","text":"Run","on_press":"cmd:/agent 5"}
+	  {"id":"run","type":"text","text":"Run","on_press":"cmd:/send hi"}
 	]}}`)
 	notice := ""
 	drv := &testDriver{evCh: make(chan fold.Event, 4)}
+	var queued []string
 
-	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "", "run", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), drv)
+	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "", "run", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, nil, func(l string) { queued = append(queued, l) }, context.Background(), drv)
 	if !handled {
 		t.Fatal("Enter on a cmd: button was not handled")
 	}
-	if len(drv.submitted) != 1 || drv.submitted[0] != "agent 5" {
-		t.Errorf("pressing cmd:/agent 5 submitted %v, want one prompt \"agent 5\" (leading slash stripped, as typeKey does)", drv.submitted)
+	if len(queued) != 1 || queued[0] != "/send hi" {
+		t.Errorf("pressing cmd:/send hi queued %q, want exactly [\"/send hi\"] (the line, leading slash kept)", queued)
+	}
+	if len(drv.submitted) != 0 {
+		t.Errorf("a press submitted %q to the model itself; it must queue the line and let the loop run it", drv.submitted)
+	}
+}
+
+// With no queue to run it on, a cmd: press says so instead of dropping the press
+// or, worse, sending the text to the model.
+func TestFocusKeyEnterCmdWithoutQueueReportsAndSendsNothing(t *testing.T) {
+	doc := pressDoc(t, `{"root":{"type":"text","text":"Run","id":"run","on_press":"cmd:/send hi"}}`)
+	notice := ""
+	drv := &testDriver{evCh: make(chan fold.Event, 4)}
+	focusKey(term.Key{Type: term.KeyEnter}, "", "run", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, nil, nil, context.Background(), drv)
+	if len(drv.submitted) != 0 {
+		t.Errorf("submitted %q with no queue", drv.submitted)
+	}
+	if !strings.Contains(notice, "/send hi") || !strings.Contains(notice, "cannot run") {
+		t.Errorf("notice %q does not say the press could not run, naming the line", notice)
 	}
 }
 
@@ -126,19 +147,19 @@ func TestFocusKeyEnterDispatchesCmdViaDriver(t *testing.T) {
 // in the ring instead of one slot per row.
 func TestFocusKeyTabRingIncludesTemplateRows(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"list","bind":"team.members",
-	  "row_template":{"id":"go","type":"text","bind":"row.role","on_press":"cmd:/agent {row.id}"}}}`)
+	  "row_template":{"id":"go","type":"text","bind":"row.role","on_press":"cmd:/send {row.id}"}}}`)
 	notice := ""
 
 	// From the input home, Tab lands on row 0's target; a second Tab on row 1's.
 	tab := term.Key{Type: term.KeyTab}
-	_, _, first := focusKey(tab, "", "", &doc, twoMemberFold(), &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), &testDriver{})
+	_, _, first := focusKey(tab, "", "", &doc, twoMemberFold(), &notice, map[string]bool{}, nil, nil, nil, nil, nil, context.Background(), &testDriver{})
 	if first != rowFocusKey("go", 0) {
 		t.Fatalf("Tab from the input home focused %q, want the row-0 key %q\n"+
 			"consequence: a template's instantiated rows are not in the ring, so Tab cannot reach a\n"+
 			"pressable row — the row-click work never becomes usable.\n"+
 			"remedy: focusKey must build the ring from focusRing over the live fold.", first, rowFocusKey("go", 0))
 	}
-	_, _, second := focusKey(tab, "", first, &doc, twoMemberFold(), &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), &testDriver{})
+	_, _, second := focusKey(tab, "", first, &doc, twoMemberFold(), &notice, map[string]bool{}, nil, nil, nil, nil, nil, context.Background(), &testDriver{})
 	if second != rowFocusKey("go", 1) {
 		t.Fatalf("Tab from row 0 focused %q, want the row-1 key %q; the two rows are distinct ring slots", second, rowFocusKey("go", 1))
 	}
@@ -150,19 +171,23 @@ func TestFocusKeyTabRingIncludesTemplateRows(t *testing.T) {
 // pure halves resolve the action and the loop fires it against the pressed row.
 func TestFocusKeyEnterDispatchesRowPress(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"list","bind":"team.members",
-	  "row_template":{"id":"go","type":"text","bind":"row.role","on_press":"cmd:/agent {row.id}"}}}`)
+	  "row_template":{"id":"go","type":"text","bind":"row.role","on_press":"cmd:/send {row.id}"}}}`)
 	notice := ""
 	drv := &testDriver{evCh: make(chan fold.Event, 4)}
+	var queued []string
 
-	handled, input, _ := focusKey(term.Key{Type: term.KeyEnter}, "", rowFocusKey("go", 1), &doc, twoMemberFold(), &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), drv)
+	handled, input, _ := focusKey(term.Key{Type: term.KeyEnter}, "", rowFocusKey("go", 1), &doc, twoMemberFold(), &notice, map[string]bool{}, nil, nil, nil, nil, func(l string) { queued = append(queued, l) }, context.Background(), drv)
 	if !handled {
 		t.Fatal("Enter on a focused template row was not handled, so a row cannot be pressed")
 	}
-	if len(drv.submitted) != 1 || drv.submitted[0] != "agent fe" {
-		t.Errorf("pressing row 1 submitted %v, want one prompt \"agent fe\" (the row's {row.id} resolved to fe)\n"+
+	if len(queued) != 1 || queued[0] != "/send fe" {
+		t.Errorf("pressing row 1 queued %q, want [\"/send fe\"] (the row's {row.id} resolved to fe)\n"+
 			"consequence: pressing a row dispatches the wrong member's command, or the un-expanded\n"+
 			"{row.id} verbatim — the silent-wrong-frame this repo holds worse than an error.\n"+
-			"remedy: recover the (node,row) with parseRowFocusKey and dispatch rowPressOnPress's expanded action.", drv.submitted)
+			"remedy: recover the (node,row) with parseRowFocusKey and dispatch rowPressOnPress's expanded action.", queued)
+	}
+	if len(drv.submitted) != 0 {
+		t.Errorf("a row press submitted %q to the model itself", drv.submitted)
 	}
 	if input != "" {
 		t.Errorf("a row press left %q in the input buffer; a submitted action leaves no text", input)
@@ -174,12 +199,12 @@ func TestFocusKeyEnterDispatchesRowPress(t *testing.T) {
 // pressed Enter on a focused row, so the buffer must not be sent to the driver.
 func TestFocusKeyEnterOnStaleRowIsReportedNotSubmitted(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"list","bind":"team.members",
-	  "row_template":{"id":"go","type":"text","bind":"row.role","on_press":"cmd:/agent {row.id}"}}}`)
+	  "row_template":{"id":"go","type":"text","bind":"row.role","on_press":"cmd:/send {row.id}"}}}`)
 	notice := ""
 	drv := &testDriver{evCh: make(chan fold.Event, 4)}
 
 	// row 5 does not exist in a two-member fold.
-	handled, _, focus := focusKey(term.Key{Type: term.KeyEnter}, "", rowFocusKey("go", 5), &doc, twoMemberFold(), &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), drv)
+	handled, _, focus := focusKey(term.Key{Type: term.KeyEnter}, "", rowFocusKey("go", 5), &doc, twoMemberFold(), &notice, map[string]bool{}, nil, nil, nil, nil, nil, context.Background(), drv)
 	if !handled {
 		t.Fatal("Enter on a stale row target fell through; it must be swallowed so the buffer is not submitted")
 	}
@@ -203,7 +228,7 @@ func TestFocusKeyEnterOnInputFallsThrough(t *testing.T) {
 	]}}`)
 	notice := ""
 
-	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "hello", "", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), &testDriver{})
+	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "hello", "", &doc, fold.State{}, &notice, map[string]bool{}, nil, nil, nil, nil, nil, context.Background(), &testDriver{})
 	if handled {
 		t.Error("Enter was captured while the input held focus; it must fall through so typeKey submits the buffer")
 	}
@@ -247,7 +272,7 @@ func TestDispatchAnswerWithNoPendingItemReports(t *testing.T) {
 	notice := ""
 	drv := &answerDriver{}
 
-	focus := dispatchPress("answer:approve", "btn", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), drv)
+	focus := dispatchPress("answer:approve", "btn", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, nil, nil, context.Background(), drv)
 	if focus != "btn" {
 		t.Errorf("an answer: press moved focus to %q; it should leave the cursor where it was", focus)
 	}
@@ -266,7 +291,7 @@ func TestDispatchAnswerOnADriverThatFollowsNoRunReports(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"text","text":"OK","on_press":"answer:approve"}}`)
 	notice := ""
 
-	focus := dispatchPress("answer:approve", "btn", "", blockedState("abc123"), &doc, &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), &testDriver{})
+	focus := dispatchPress("answer:approve", "btn", "", blockedState("abc123"), &doc, &notice, map[string]bool{}, nil, nil, nil, nil, nil, context.Background(), &testDriver{})
 	if focus != "btn" {
 		t.Errorf("an answer: press moved focus to %q; it should leave the cursor where it was", focus)
 	}
@@ -283,7 +308,7 @@ func TestDispatchAnswerRoutesToTheDecider(t *testing.T) {
 	notice := ""
 	drv := &answerDriver{}
 
-	focus := dispatchPress("answer:reply", "btn", "here is my answer", blockedState("abc123"), &doc, &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), drv)
+	focus := dispatchPress("answer:reply", "btn", "here is my answer", blockedState("abc123"), &doc, &notice, map[string]bool{}, nil, nil, nil, nil, nil, context.Background(), drv)
 	if focus != "btn" {
 		t.Errorf("an answer: press moved focus to %q; it should leave the cursor where it was", focus)
 	}
@@ -304,7 +329,7 @@ func TestDispatchFocusUnknownNodeReportsAndKeepsFocus(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"text","text":"x","id":"here","on_press":"focus:nowhere"}}`)
 	notice := ""
 
-	focus := dispatchPress("focus:nowhere", "here", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), &testDriver{})
+	focus := dispatchPress("focus:nowhere", "here", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, nil, nil, context.Background(), &testDriver{})
 	if focus != "here" {
 		t.Errorf("a focus: to an unknown node moved focus to %q; it must leave the cursor where it was", focus)
 	}
@@ -342,7 +367,7 @@ func TestDispatchExtRoutesToPluginRouter(t *testing.T) {
 	notice := ""
 	router := &fakeRouter{}
 
-	focus := dispatchPress("ext:tick:refresh", "btn", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, router, context.Background(), &testDriver{})
+	focus := dispatchPress("ext:tick:refresh", "btn", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, router, nil, context.Background(), &testDriver{})
 	if focus != "btn" {
 		t.Errorf("an ext: press moved focus to %q; a plugin press is not a focus move and must leave the cursor put", focus)
 	}
@@ -365,7 +390,7 @@ func TestDispatchExtReportsRouterError(t *testing.T) {
 	notice := ""
 	router := &fakeRouter{err: errors.New("no behavioral plugin with that id is mounted: \"tick\"")}
 
-	focus := dispatchPress("ext:tick:refresh", "btn", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, router, context.Background(), &testDriver{})
+	focus := dispatchPress("ext:tick:refresh", "btn", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, router, nil, context.Background(), &testDriver{})
 	if focus != "btn" {
 		t.Errorf("a refused ext: press moved focus to %q; it must leave the cursor put", focus)
 	}
@@ -381,7 +406,7 @@ func TestDispatchExtWithNoRouterReports(t *testing.T) {
 	doc := pressDoc(t, `{"root":{"type":"text","text":"R","id":"btn","on_press":"ext:tick:refresh"}}`)
 	notice := ""
 
-	focus := dispatchPress("ext:tick:refresh", "btn", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, nil, context.Background(), &testDriver{})
+	focus := dispatchPress("ext:tick:refresh", "btn", "", fold.State{}, &doc, &notice, map[string]bool{}, nil, nil, nil, nil, nil, context.Background(), &testDriver{})
 	if focus != "btn" {
 		t.Errorf("an ext: press with no router moved focus to %q; it must leave the cursor put", focus)
 	}

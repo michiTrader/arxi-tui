@@ -76,7 +76,7 @@ func TestPressCmdMaxWritesUIMax(t *testing.T) {
 	uiMax := ""
 	drv := &testDriver{evCh: make(chan fold.Event, 4)}
 
-	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "", "go", &doc, fold.State{}, &notice, map[string]bool{}, &uiMax, nil, nil, nil, context.Background(), drv)
+	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "", "go", &doc, fold.State{}, &notice, map[string]bool{}, &uiMax, nil, nil, nil, nil, context.Background(), drv)
 	if !handled {
 		t.Fatal("Enter on a cmd:/max button was not handled")
 	}
@@ -99,7 +99,7 @@ func TestPressCmdMaxBareRestores(t *testing.T) {
 	uiMax := "chat"
 	drv := &testDriver{evCh: make(chan fold.Event, 4)}
 
-	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "", "go", &doc, fold.State{}, &notice, map[string]bool{}, &uiMax, nil, nil, nil, context.Background(), drv)
+	handled, _, _ := focusKey(term.Key{Type: term.KeyEnter}, "", "go", &doc, fold.State{}, &notice, map[string]bool{}, &uiMax, nil, nil, nil, nil, context.Background(), drv)
 	if !handled {
 		t.Fatal("Enter on a cmd:/max restore button was not handled")
 	}

@@ -112,7 +112,7 @@ type pluginActionRouter interface {
 // with "/", Tab and Enter belong to the menu, so focusKey is never reached then.
 // Ctrl-C never reaches here either, so the escape hatch stays uncapturable
 // (invariant 6) whatever a button's action names.
-func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fold.State, notice *string, hidden map[string]bool, uiMax *string, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) (bool, string, string) {
+func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fold.State, notice *string, hidden map[string]bool, uiMax *string, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, enqueue func(line string), ctx context.Context, drv Driver) (bool, string, string) {
 	switch {
 	case k.Type == term.KeyTab:
 		ids, err := focusRing(*doc, state, hidden)
@@ -154,7 +154,7 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 			// onPress already has its {row.<field>} braces resolved (RowPresses'
 			// contract), so it dispatches exactly like a static node's action and
 			// the interpolation is never re-run.
-			newFocus := dispatchPress(onPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, ctx, drv)
+			newFocus := dispatchPress(onPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, enqueue, ctx, drv)
 			return true, "", newFocus
 		}
 		node := findPressable(*doc, uiFocus)
@@ -163,7 +163,7 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 			// is not a button, say). Enter is not ours; let it submit as usual.
 			return false, input, uiFocus
 		}
-		newFocus := dispatchPress(node.OnPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, ctx, drv)
+		newFocus := dispatchPress(node.OnPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, enqueue, ctx, drv)
 		// Clear the input the way the command paths do: a press is a submitted
 		// action, not text left in the buffer.
 		return true, "", newFocus
@@ -182,9 +182,11 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 //     the same uiCommandKey the typed surface uses (so id prefixing, invariant-3
 //     re-validation and the token layers are reused, not reimplemented), `/max
 //     <pane>` writes the host ui.max cursor through the same parseMax the typed
-//     surface uses, and any other slash line is submitted as a prompt — the
-//     Phase-0 contract typeKey already honours, so a button and a keystroke
-//     cannot diverge on what a command means.
+//     surface uses, and any other line is handed to enqueue, which the loop runs
+//     as the Enter of a typed line. A button therefore never sends text to the
+//     model on its own: what a line does (a command, a local warning, or /send
+//     <text>) is decided in one place, so a button and a keystroke cannot
+//     diverge on what a command means.
 //   - ext: routes the press to a behavioral plugin subprocess (I4). The plugin id
 //     and action name were split by ParseAction; the router resolves the live
 //     plugin, applies its granted capability gate, and writes the `action` frame.
@@ -199,7 +201,7 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 //     optional reason, ignored by approve. A press with no pending item, or on a
 //     driver that follows no run (the mock), is reported, never a silent no-op —
 //     the same propose-and-report discipline focus: and ext: keep.
-func dispatchPress(onPress, currentFocus, answerText string, state fold.State, doc **scene.Document, notice *string, hidden map[string]bool, uiMax *string, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, ctx context.Context, drv Driver) string {
+func dispatchPress(onPress, currentFocus, answerText string, state fold.State, doc **scene.Document, notice *string, hidden map[string]bool, uiMax *string, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, enqueue func(line string), ctx context.Context, drv Driver) string {
 	action, err := scene.ParseAction(onPress)
 	if err != nil {
 		// The document validated at load, so a malformed action should be
@@ -209,11 +211,11 @@ func dispatchPress(onPress, currentFocus, answerText string, state fold.State, d
 	}
 	switch action.Kind {
 	case scene.ActionFocus:
-		if findNodeByID(*doc, action.Arg) == nil {
-			*notice = fmt.Sprintf("focus: no node with id %q in the current scene", action.Arg)
-			return currentFocus
+		next, why := applyFocus(*doc, action.Arg, currentFocus)
+		if why != "" {
+			*notice = why
 		}
-		return action.Arg
+		return next
 	case scene.ActionCmd:
 		enter := term.Key{Type: term.KeyEnter}
 		if handled, _ := uiCommandKey(action.Arg, enter, doc, notice, hidden, fetch, applyTokens); handled {
@@ -237,9 +239,16 @@ func dispatchPress(onPress, currentFocus, answerText string, state fold.State, d
 			}
 			return currentFocus
 		}
-		line := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(action.Arg), "/"))
-		if line != "" {
-			_ = drv.SubmitPrompt(ctx, line)
+		// Any other command line takes the loop's own door: it is queued and
+		// run as the Enter of a typed line, so a pressed button and the same
+		// line typed cannot differ. It is never submitted to the model from
+		// here; a line that is not a command gets the local warning there.
+		if enqueue == nil {
+			*notice = fmt.Sprintf("cmd:%s cannot run: this surface has no command queue", strings.TrimSpace(action.Arg))
+			return currentFocus
+		}
+		if line := strings.TrimSpace(action.Arg); line != "" {
+			enqueue(line)
 		}
 		return currentFocus
 	case scene.ActionExt:
@@ -284,6 +293,19 @@ func dispatchPress(onPress, currentFocus, answerText string, state fold.State, d
 		return currentFocus
 	}
 	return currentFocus
+}
+
+// applyFocus is the one operation behind every way of moving the focus cursor:
+// the focus: action of a pressed node, the same action run from a command's or
+// hook's action list, and the typed /focus command. It returns the cursor to
+// keep (the target when it names a node of the scene, otherwise the current one
+// unchanged) and, when the target is refused, the notice that says why. Keeping
+// it in one place is what makes a button and a keystroke unable to disagree.
+func applyFocus(doc *scene.Document, id, current string) (focus, notice string) {
+	if findNodeByID(doc, id) == nil {
+		return current, fmt.Sprintf("focus: no node with id %q in the current scene", id)
+	}
+	return id, ""
 }
 
 // findNodeByID searches the whole scene tree for a node with the given id,

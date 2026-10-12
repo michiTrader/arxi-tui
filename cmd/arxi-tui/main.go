@@ -1226,10 +1226,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			switch act.Kind {
 			case scene.ActionFocus:
-				if findNodeByID(doc, act.Arg) == nil {
-					sceneNotice = "focus: no node with id \"" + act.Arg + "\" in the current scene"
-				} else {
-					uiFocus = act.Arg
+				var why string
+				uiFocus, why = applyFocus(doc, act.Arg, uiFocus)
+				if why != "" {
+					sceneNotice = why
 				}
 			case scene.ActionExt:
 				if err := pluginActions.SendAction(act.PluginID, act.Arg, nil); err != nil {
@@ -2352,12 +2352,48 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							input = ""
 							caret = 0
 							slashSel = 0
+						} else if sc := classifySlash(input, userCommandNames(effBeh())); ev.Key.Type == term.KeyEnter && sc.refusesEnter(input) {
+							// A "/" line that is not a command the host runs is
+							// never the model's: it gets a local warning and stays
+							// in the buffer, with the focus on the input, so the
+							// user can fix it or send it on purpose with /send.
+							collected = appendLocalWarning(collected, sc.warning())
+						} else if rest, isHelp := stripLeadingVerb(input, "help"); ev.Key.Type == term.KeyEnter && isHelp && rest == "" {
+							// `/help` opens the command menu: the same list a bare "/"
+							// shows, with no call to the model. Typing it and picking it
+							// from the menu both land here (a pick is enqueued as this
+							// line), so the two cannot differ.
+							input, caret, slashSel, slashCat = "/", 1, 0, fold.SlashAll
+						} else if rest, isFocus := stripLeadingVerb(input, "focus"); ev.Key.Type == term.KeyEnter && isFocus {
+							// `/focus <id>` is the focus: action typed by hand, through
+							// the same applyFocus a pressed node uses.
+							if f := strings.Fields(rest); len(f) != 1 {
+								collected = appendLocalWarning(collected, focusUsage)
+							} else {
+								var why string
+								uiFocus, why = applyFocus(doc, f[0], uiFocus)
+								if why != "" {
+									sceneNotice = why
+								}
+								input, caret, slashSel = "", 0, 0
+							}
+						} else if sendText, isSend := parseSend(input); ev.Key.Type == term.KeyEnter && isSend {
+							// `/send <text>` hands the model exactly <text>, even when
+							// it starts with "/". It sits before the slash menu for the
+							// reason /max does: the menu filters on the whole typed
+							// string, so a line with an argument matches nothing there.
+							if sendText == "" {
+								collected = appendLocalWarning(collected, sendUsage)
+							} else {
+								_ = drv.SubmitPrompt(ctx, sendText)
+								input, caret, slashSel = "", 0, 0
+							}
 						} else if pane, matched, perr := parseMax(input); ev.Key.Type == term.KeyEnter && matched {
 							// `/max <pane>` writes the host ui.max cursor, Scene 10's
 							// write half, intercepted here before the slash menu for the
 							// same reason the plugin verbs are: a recognized command line
 							// is never the menu's to swallow (the menu lists "max", and its
-							// Enter would otherwise submit the bare word as a prompt). The
+							// Enter would otherwise be answered by the menu, not the command). The
 							// same parseMax backs the pressed cmd:/max button, so typing and
 							// pressing cannot diverge. `/max` alone restores (clears ui.max).
 							if perr != nil {
@@ -2407,8 +2443,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// and never reaches the buffer. Ctrl-C never gets
 							// here, so the escape hatch stays uncapturable
 							// (invariant 6) no matter what the menu does.
-							input, caret, slashSel, slashCat = slashMenuKey(input, caret, ev.Key, slashSel, slashCat, ctx, drv)
-						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, ctx, drv); handled {
+							var picked string
+							input, caret, slashSel, slashCat, picked = slashMenuKey(input, caret, ev.Key, slashSel, slashCat)
+							if picked != "" {
+								enqueue(actionList{"cmd:" + picked}, false)
+							}
+						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) { enqueue(actionList{"cmd:" + line}, false) }, ctx, drv); handled {
 							// H8 press routing: Tab/Shift-Tab move the ui.focus
 							// cursor over the pressable nodes (ordinary buttons and
 							// each instantiated template row), and Enter on a
@@ -2851,10 +2891,12 @@ func isNewlineGesture(k term.Key) bool {
 
 // typeKey applies one keypress to the input buffer at the caret, or submits the
 // line. It returns the new buffer and the new caret (a rune index into it).
-// Enter submits as run.prompt: in Phase 0 the event lands in the local fold
-// directly (the mock driver feeds it); Phase 0.5 the same event goes to the
-// core over the NDJSON wire and comes back through the log, so the fold never
-// learns a second path.
+// Enter on an ordinary line submits it as run.prompt: with the mock driver the
+// event lands in the local fold directly; with the core it goes over the NDJSON
+// wire and comes back through the log, so the fold never learns a second path.
+// A line that starts with "/" is never submitted from here: the loop answers it
+// first (a command, or a local warning), and /send is how text that starts with
+// "/" reaches the model.
 func typeKey(input string, caret int, k term.Key, ctx context.Context, drv Driver) (string, int) {
 	// A newline gesture inserts a literal '\n' at the caret instead of
 	// submitting, so a prompt can span several lines. Plain Enter still submits;
@@ -2870,15 +2912,12 @@ func typeKey(input string, caret int, k term.Key, ctx context.Context, drv Drive
 		if text == "" {
 			return input, caret
 		}
-		// Slash command: the buffer starts with "/". /ui routes to the
-		// mutation surface; every other slash line is still submitted as a
-		// prompt, which is Phase 0's contract and stays until each command
-		// has a host implementation.
-		if strings.HasPrefix(text, "/") {
-			text = strings.TrimSpace(text[1:])
-			if text == "" {
-				return input, caret
-			}
+		// A slash line is a command, never a prompt: the loop answers it before
+		// it gets here (a handler, or a local warning). This is the last door,
+		// and it stays shut so a line that slipped past cannot reach the model
+		// as its own text minus the "/".
+		if classifySlash(text, nil).Kind != slashNone {
+			return input, caret
 		}
 		_ = drv.SubmitPrompt(ctx, text)
 		return "", 0
@@ -3318,7 +3357,7 @@ func isCtrlC(k term.Key) bool {
 // what the menu's footer promises. The selection comes back because it lives
 // across frames in the loop, the way the input buffer does; any key that
 // changes the filter puts it back on the first row.
-func slashMenuKey(input string, caret int, k term.Key, sel int, cat string, ctx context.Context, drv Driver) (string, int, int, string) {
+func slashMenuKey(input string, caret int, k term.Key, sel int, cat string) (string, int, int, string, string) {
 	typed := strings.TrimPrefix(input, "/")
 	cat = fold.NormalizeSlashCategory(typed, cat)
 	matches := fold.FilterSlashCategory(typed, cat)
@@ -3326,7 +3365,7 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, cat string, ctx 
 	// every menu, so it is read once and turned into the factory key it stands for.
 	switch navAction(k) {
 	case "inert":
-		return input, caret, sel, cat
+		return input, caret, sel, cat, ""
 	case "prev":
 		k = term.Key{Type: term.KeyUp}
 	case "next":
@@ -3336,29 +3375,29 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, cat string, ctx 
 	case "close":
 		k = term.Key{Type: term.KeyEscape}
 	case "first":
-		return input, caret, 0, cat
+		return input, caret, 0, cat, ""
 	case "last":
 		if len(matches) > 0 {
-			return input, caret, len(matches) - 1, cat
+			return input, caret, len(matches) - 1, cat, ""
 		}
-		return input, caret, sel, cat
+		return input, caret, sel, cat, ""
 	}
 	switch k.Type {
 	case term.KeyUp:
 		if len(matches) == 0 {
-			return input, caret, sel, cat
+			return input, caret, sel, cat, ""
 		}
 		// Wrap at both ends: the highlight is the only thing the keyboard moves,
 		// so the user must always feel a row under it no matter how far up they
 		// spin the wheel (rotary, as requested).
 		sel = (sel - 1 + len(matches)) % len(matches)
-		return input, caret, sel, cat
+		return input, caret, sel, cat, ""
 	case term.KeyDown:
 		if len(matches) == 0 {
-			return input, caret, sel, cat
+			return input, caret, sel, cat, ""
 		}
 		sel = (sel + 1) % len(matches)
-		return input, caret, sel, cat
+		return input, caret, sel, cat, ""
 	case term.KeyTab:
 		// Tab steps to the next category tab (All, General, Session, ...) and
 		// Shift-Tab to the previous one, wrapping at both ends. The highlight goes
@@ -3367,20 +3406,32 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, cat string, ctx 
 		if k.Mod&term.ModShift != 0 {
 			dir = -1
 		}
-		return input, caret, 0, fold.NextSlashCategory(typed, cat, dir)
+		return input, caret, 0, fold.NextSlashCategory(typed, cat, dir), ""
 	case term.KeyEscape:
-		return "", 0, 0, fold.SlashAll
+		return "", 0, 0, fold.SlashAll, ""
 	case term.KeyEnter:
 		if len(matches) == 0 {
-			return input, caret, sel, cat
+			return input, caret, sel, cat, ""
 		}
 		if sel >= len(matches) {
 			sel = len(matches) - 1
 		}
-		// Phase 0: a command submits as a prompt (typeKey's contract); Phase 2
-		// routes /ui to the mutation surface.
-		_ = drv.SubmitPrompt(ctx, matches[sel].Name)
-		return "", 0, 0, fold.SlashAll
+		name := matches[sel].Name
+		// /send needs the text it will send, so picking it fills the line
+		// instead of running with nothing to send.
+		if name == "send" {
+			return "/send ", len("/send "), 0, fold.SlashAll, ""
+		}
+		// A row is a command, never a question: it does not go to the model.
+		// The pick becomes the exact command line and the loop runs it through
+		// the same queue a typed command uses, so a row and a typed line cannot
+		// diverge. When the buffer already IS that line (the loop ran it and no
+		// handler took it), there is nothing more to do, which is what stops
+		// the pick from re-running itself forever.
+		if strings.TrimSpace(input) == "/"+name {
+			return input, caret, sel, cat, ""
+		}
+		return "", 0, 0, fold.SlashAll, "/" + name
 	default:
 		// The same caret-aware editor the ordinary path uses, so editing the
 		// slash line (Left/Right/Home/End/Delete/Backspace/insert) behaves
@@ -3388,12 +3439,12 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, cat string, ctx 
 		// because the previously highlighted row may no longer exist.
 		next, nextCaret, ok := applyEdit(input, caret, k)
 		if !ok {
-			return input, caret, sel, cat
+			return input, caret, sel, cat, ""
 		}
 		if next != input {
-			return next, nextCaret, 0, cat
+			return next, nextCaret, 0, cat, ""
 		}
-		return next, nextCaret, sel, cat
+		return next, nextCaret, sel, cat, ""
 	}
 }
 
