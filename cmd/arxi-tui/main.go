@@ -1116,17 +1116,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// keepScene saves the interface after a change to the document, when it is the
 	// user's everyday one. A failed save is said, never swallowed: the change is on
 	// screen but will not survive the session, and the user should know that.
-	keepScene := func(summary string) {
+	keepSceneWith := func(summary string, before packageDelta) {
 		if !persistsScene(doc) {
 			sceneNotice = summary + " (this scene was started with -scene, so the change is not saved)"
 			return
 		}
-		if err := saveInterface(doc, userCols, userWords, userBeh); err != nil {
+		if err := saveInterfaceWith(doc, userCols, userWords, userBeh, before); err != nil {
 			sceneNotice = summary + "; it could not be saved: " + err.Error()
 			return
 		}
 		sceneNotice = summary + " · saved (/ui undo takes it back)"
 	}
+	keepScene := func(summary string) { keepSceneWith(summary, nil) }
 
 	// ---- what the user's behaviour runs (behaviour.go) ----------------------------
 	//
@@ -2086,7 +2087,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								userCols = cols
 								userWords = words
 								userBeh = bh
-								activate()
+								reloadPackages()
 								recomposeTheme()
 							}
 							input, caret = "", 0
@@ -2880,8 +2881,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// applied over it, which would silently undo what the user did.
 			if req.base != doc || (req.colors != nil && !sameTokens(req.baseColors, userCols)) ||
 				(req.texts != nil && !sameTexts(req.baseTexts, userWords)) ||
-				(req.behChanged && !sameBehaviour(req.baseBeh, userBeh)) {
+				(req.behChanged && !sameBehaviour(req.baseBeh, userBeh)) ||
+				(req.pkg != nil && !req.pkg.fresh()) {
 				req.done <- errors.New("the interface changed while the question was open; read it again with ui_guide and redo the change")
+			} else if req.pkg != nil && !persistsScene(doc) {
+				req.done <- errors.New("packages belong to the everyday interface, and this one was started with -scene or -raw; nothing was changed")
+			} else if err := applyPackageEdit(req.pkg, cwd); err != nil {
+				req.done <- err
 			} else {
 				doc = req.doc
 				if req.colors != nil {
@@ -2897,7 +2903,19 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					activate()
 					recomposeTheme()
 				}
-				keepScene("the interface was changed")
+				var before packageDelta
+				if req.pkg != nil {
+					before = req.pkg.base
+				}
+				keepSceneWith("the interface was changed", before)
+				if req.pkg != nil {
+					reloadPackages()
+					for _, id := range req.pkg.put {
+						if p, ok := pkgs.find(id); ok && !p.Granted {
+							collected = appendLocalNote(collected, "The package "+cleanWarnText(id)+" was saved and does nothing until you approve it. Type /package approve "+cleanWarnText(id)+" to see what it can do.")
+						}
+					}
+				}
 				req.done <- nil
 			}
 			repaint()

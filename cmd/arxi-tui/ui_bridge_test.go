@@ -71,10 +71,11 @@ func TestTheGuideCarriesTheLiveDocumentAndEveryVocabulary(t *testing.T) {
 		}
 	}
 	// The guide is paid for only on the turn that reads it; what rides with every
-	// question is the two definitions. Measured at about 1.1k bytes; the ceiling
-	// leaves room to improve the wording without letting it grow into a prompt.
+	// question is the two definitions. Measured at about 1.8k bytes with the
+	// packages argument; the ceiling leaves room to improve the wording without letting
+	// it grow into a prompt.
 	defs, _ := json.Marshal(r.b.definitions())
-	if len(defs) > 1600 {
+	if len(defs) > 1900 {
 		t.Errorf("the tool definitions are %d bytes and are sent with every question.\nConsequence: a plain \"hola\" pays for the interface feature.\nRemedy: keep the definitions short; put the detail in ui_guide.", len(defs))
 	}
 }

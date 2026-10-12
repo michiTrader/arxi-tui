@@ -251,6 +251,11 @@ type interfaceState struct {
 	// Behaviour is what the interface does (behaviour.go): animations, menu keys,
 	// shortcuts, commands, hooks. It travels with the rest for the same reason.
 	Behaviour string `json:"behaviour,omitempty"`
+	// Packages is what the packages an edit touched held before it (package_edit.go):
+	// the document each had, or null for none. It is set only when the last change was
+	// to packages, so /ui undo brings back those and leaves every other package, the
+	// ones the user wrote by hand included, exactly as they are.
+	Packages map[string]*string `json:"packages,omitempty"`
 }
 
 func previousInterfacePath() string {
@@ -313,6 +318,12 @@ func writeInterface(st interfaceState) error {
 // one /ui undo returns to. The previous state is one file, so an undo can never bring
 // back the layout of one change with the colours of another.
 func saveInterface(doc *scene.Document, u userTokens, tx userTexts, bh behaviour) error {
+	return saveInterfaceWith(doc, u, tx, bh, nil)
+}
+
+// saveInterfaceWith is saveInterface for a change that also touched packages: before is
+// what they held, kept as part of what /ui undo returns to.
+func saveInterfaceWith(doc *scene.Document, u userTokens, tx userTexts, bh behaviour, before packageDelta) error {
 	if configDir() == "" {
 		return errNoConfigDir
 	}
@@ -320,6 +331,7 @@ func saveInterface(doc *scene.Document, u userTokens, tx userTexts, bh behaviour
 	if err != nil {
 		return err
 	}
+	prev.Packages = before
 	pb, _ := json.Marshal(prev)
 	if err := os.MkdirAll(configDir(), 0o700); err != nil {
 		return err
@@ -403,9 +415,17 @@ func undoInterface() (*scene.Document, userTokens, userTexts, behaviour, error) 
 	if err != nil {
 		return nil, nil, nil, behaviour{}, err
 	}
+	// The packages the change touched swap places the same way, so a second undo is a
+	// redo for them too.
+	if len(prev.Packages) > 0 {
+		cur.Packages = snapshotPackages(deltaIDs(prev.Packages))
+	}
 	cb, _ := json.Marshal(cur)
 	if err := writeAtomic(previousInterfacePath(), cb); err != nil {
 		return nil, nil, nil, behaviour{}, err
+	}
+	if err := applyPackageDelta(prev.Packages); err != nil {
+		return nil, nil, nil, behaviour{}, fmt.Errorf("the packages could not be put back: %w", err)
 	}
 	return doc, u, tx, bh, writeInterface(prev)
 }
