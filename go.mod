@@ -12,5 +12,6 @@ require (
 	github.com/clipperhouse/uax29/v2 v2.7.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
+	github.com/michiTrader/arxi v0.0.0-20261001124451-633d6d152ff7 // indirect
 	golang.org/x/sys v0.36.0 // indirect
 )

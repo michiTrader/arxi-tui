@@ -97,3 +97,46 @@ func (r *Runner) run(ctx context.Context, p *Package, o Op, oc opCtx, in Input) 
 	}
 	return Outcome{}, fmt.Errorf("operation kind %q cannot run", o.Kind)
 }
+
+// RunEvent runs the operation of an event. Nothing was typed, so it has no text to work
+// with, and what comes back is only ever shown: an event cannot send to the model, rewrite
+// a line, or start anything.
+func (r *Runner) RunEvent(ctx context.Context, p *Package, e Event) (string, error) {
+	out, err := r.run(ctx, p, e.Op, opCtx{kind: ctxEvent}, Input{})
+	if err != nil {
+		return "", err
+	}
+	return onlyText("event "+e.ID, out)
+}
+
+// RunPanel runs the operation of a panel and returns its one line. A panel with no
+// operation is filled by a service and has nothing to run.
+func (r *Runner) RunPanel(ctx context.Context, p *Package, pn Panel) (string, error) {
+	if pn.Op == nil {
+		return "", fmt.Errorf("panel %s has no op; a service fills it", pn.ID)
+	}
+	out, err := r.run(ctx, p, *pn.Op, opCtx{kind: ctxPanel}, Input{})
+	if err != nil {
+		return "", err
+	}
+	text, err := onlyText("panel "+pn.ID, out)
+	if err != nil {
+		return "", err
+	}
+	return PanelLine(text), nil
+}
+
+// onlyText accepts an outcome only when it is text to show. What runs by itself has no
+// line to rewrite and no right to send, so anything else is refused, not trimmed.
+func onlyText(who string, out Outcome) (string, error) {
+	if out.Send != "" || out.Verdict != "" || out.Text != "" {
+		return "", fmt.Errorf("%w: %s produced something other than text, and what runs by itself can only show text; nothing was used", ErrNotSigned, who)
+	}
+	return out.Say, nil
+}
+
+// PanelLine makes text fit the one line a panel owns: the first line, cleaned, cut to
+// MaxPanelRunes.
+func PanelLine(s string) string {
+	return CleanText(strings.TrimSpace(firstLine(strings.TrimSpace(s))), MaxPanelRunes, 1)
+}

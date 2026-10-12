@@ -13,7 +13,14 @@ const (
 	ctxCommand ctxKind = iota
 	ctxRule
 	ctxTool
+	ctxEvent
+	ctxPanel
+	ctxService
 )
+
+// automatic reports whether an operation of this kind runs without the user having typed
+// it: nothing was typed, so there is no text to put in a placeholder.
+func (k ctxKind) automatic() bool { return k == ctxEvent || k == ctxPanel || k == ctxService }
 
 // opCtx is where an operation sits, which decides which placeholders and results it
 // may use.
@@ -62,7 +69,7 @@ func (p *Package) validateOp(who string, o Op, oc opCtx, opt Options) error {
 	case KindExec:
 		return p.validateExec(who, o, oc)
 	case KindService:
-		return fmt.Errorf("%s: kind \"service\" is reserved for long-lived operations such as voice and is not available yet; use \"http\" or \"exec\" for a single request", who)
+		return fmt.Errorf("%s: kind \"service\" is not an operation kind; a long-lived program such as a voice or a watcher is declared in \"services\" with an exec op, and a single request uses \"http\" or \"exec\"", who)
 	case "":
 		return fmt.Errorf("%s: op has no kind, so nothing would run; the kinds are %s, %s and %s", who, KindBuiltin, KindHTTP, KindExec)
 	default:
@@ -114,6 +121,10 @@ func (p *Package) validateResult(who string, o Op, oc opCtx) error {
 	case ctxTool:
 		// What a tool returns goes back to the model that called it, and nowhere else:
 		// there is no line to rewrite and no second channel to send on.
+		allowed = []string{ResultSay}
+	case ctxEvent, ctxPanel, ctxService:
+		// What an automatic operation yields is shown, and only shown: it has no line to
+		// rewrite and the user did not ask it for text to send to the model.
 		allowed = []string{ResultSay}
 	}
 	r := o.Result

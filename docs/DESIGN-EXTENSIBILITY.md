@@ -1,6 +1,9 @@
 # DESIGN — extensibility without Go changes
 
-Status: Phases 0, 1, 2 and 3 implemented (Phase 0 merged in #255, Phase 2 in #256). Phases 4+ not started.
+Status: Phases 0-3 implemented end to end (Phase 0 merged in #255, Phase 2 in #256). Phases 4-6 have their
+**contract and runner** implemented and tested (`internal/ext/v2`) but are **not wired into the host yet**:
+a package that declares `events`, `panels` or `services` validates and can be approved, but nothing in
+`cmd/arxi-tui` runs them. See "Phases 4-6: state" at the end.
 Branch: `feat/extensibility-phase0`.
 
 ## Goal
@@ -40,9 +43,9 @@ and validating it runs nothing. It declares:
 }
 ```
 
-Later artifact kinds (`events`, `panels`) are *reserved keys*: the
-parser refuses them today with a message naming the phase that adds them, so a
-package written for the future fails loudly instead of being half-loaded.
+`tools`, `events`, `panels` and `services` are further artifact kinds. Any other
+top-level key is refused as malformed (the parser rejects unknown fields), so a package
+written for the future fails loudly instead of being half-loaded.
 
 ### Operations
 
@@ -53,7 +56,7 @@ One operation is the unit of "do something". Its `kind` is a closed set:
 | `builtin` | a Go function the host registered by name (the critical operations stay in Go) | 1 |
 | `http` | one request to a declared host | 1 |
 | `exec` | one process, argv only, never a shell | 1 |
-| `service` | a long-lived process/stream (voice, watchers) | reserved; refused with a clear message |
+| `service` | a long-lived process/stream (voice, watchers) | not an op kind: declared in `services` with an `exec` op (Phase 6) |
 
 A new capability = a new kind (or a new field on an existing kind) plus a new
 permission. Nothing in the package format changes shape. This is the answer to
@@ -228,8 +231,9 @@ version the user approved before is running again and any other is inert.
 - **Phase 2** — done: package store and hash-bound grants; `chat.note`; package commands
   in the menu, classifier and workers; `input.pre` in the loop; `/package`;
   `say:`/`open:`/`set:`; `ui_edit` `packages` verbs with consent and undo.
-- **Later (not started)** — factory commands as packages, tools and events artifacts,
-  panels, `service` operations (voice).
+- **Phase 3** — done: model-callable tools.
+- **Phases 4-6** — contract and runner done, host not wired (see the last section).
+- **Later (not started)** — factory commands as packages.
 
 ## Phase 3: package tools the model can call
 
@@ -248,3 +252,30 @@ instead of the user: same op kinds, same permissions, same guards. Differences:
   package tools fill the rest, in name order. What does not fit is reported.
 - Tools need a project folder and a core with client-tool support; without it the
   turn still answers and says so.
+
+## Phases 4-6: state
+
+Implemented and tested in `internal/ext/v2` (strict validation, limits, consent text,
+digest coverage, runner):
+
+- `events`: `on` is `turn.done`, `turn.failed`, `effort`, `mode` or `style` (`is` only on the
+  settings, checked against the host's values). `Runner.RunEvent` returns text only.
+- `panels`: one line (title up to 24 characters, up to 120 runes), refreshed on `turn.done`
+  or every 30..3600 s, or fed by a service. `Runner.RunPanel`, `PanelLine`.
+- `services`: a long-lived `exec` program the user starts with a command. `Runner.StartService`
+  keeps the scrubbed environment, kills the whole process group on stop, cleans and cuts
+  output lines and rations them (burst 10, 5 per second, drops counted).
+
+Everything that runs by itself is narrowed to showing text: no placeholders (nothing was
+typed), no send, no transform, no actions; the runner re-checks at run time.
+
+Not done (host side, `cmd/arxi-tui`):
+
+- firing events from `settingChanged` and the `agent.turn_done` / `agent.failed` events;
+- the `host.panels` bind (fold state, `resolveBind`, `signedBinds`, `BINDS.md`, both `SOBRIA.json`);
+- `/service list|start|stop`, user-typed only and refused when `synth`;
+- `/package list|show` and the `ui_edit` guide text naming the new artifacts;
+- factory commands as packages.
+
+Until then, approving a package that declares these artifacts shows the consent text but
+nothing runs.

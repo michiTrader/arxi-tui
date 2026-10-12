@@ -19,7 +19,7 @@ func TestAToolIsValidatedLikeACommandWithItsOwnRules(t *testing.T) {
 		t.Fatalf("parsed %+v", p.Tools)
 	}
 	// A package of only tools has something to do; one of nothing still does not.
-	refused(t, `{`+toolHead+`}`, Options{}, "no commands, rules or tools")
+	refused(t, `{`+toolHead+`}`, Options{}, "no commands, rules, tools, events, panels or services")
 
 	cases := []struct {
 		name, tool string
@@ -33,7 +33,7 @@ func TestAToolIsValidatedLikeACommandWithItsOwnRules(t *testing.T) {
 		{"send result", `{"name":"say","description":"d","op":{"kind":"exec","argv":["git"],"result":"send"}}`, []string{"not available here", "say"}},
 		{"outcome result", `{"name":"say","description":"d","op":{"kind":"exec","argv":["git"],"result":"outcome"}}`, []string{"not available here"}},
 		{"input placeholder", `{"name":"say","description":"d","op":{"kind":"http","url":"https://api.example.com/${input}"}}`, []string{"${input}"}},
-		{"unknown kind", `{"name":"say","description":"d","op":{"kind":"service"}}`, []string{"reserved"}},
+		{"unknown kind", `{"name":"say","description":"d","op":{"kind":"service"}}`, []string{"not an operation kind"}},
 	}
 	opt := Options{Builtins: func(n string) bool { return n == "echo" }}
 	for _, c := range cases {

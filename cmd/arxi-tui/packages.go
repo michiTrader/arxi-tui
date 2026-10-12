@@ -95,7 +95,7 @@ type packageNamespace struct {
 }
 
 func (ns packageNamespace) options() extv2.Options {
-	return extv2.Options{ReservedCommands: ns.taken, Builtins: ns.builtins}
+	return extv2.Options{ReservedCommands: ns.taken, Builtins: ns.builtins, EventValues: hookValues}
 }
 
 func userPackagesDir() string {
@@ -174,6 +174,18 @@ func packageHash(p *extv2.Package, dir string) (string, error) {
 	c.Tools = append([]extv2.Tool(nil), p.Tools...)
 	for i := range c.Tools {
 		c.Tools[i].Disabled = false
+	}
+	c.Events = append([]extv2.Event(nil), p.Events...)
+	for i := range c.Events {
+		c.Events[i].Disabled = false
+	}
+	c.Panels = append([]extv2.Panel(nil), p.Panels...)
+	for i := range c.Panels {
+		c.Panels[i].Disabled = false
+	}
+	c.Services = append([]extv2.Service(nil), p.Services...)
+	for i := range c.Services {
+		c.Services[i].Disabled = false
 	}
 	h := sha256.New()
 	fmt.Fprintf(h, "digest\x00%s\x00", c.Digest())

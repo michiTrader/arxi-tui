@@ -10,5 +10,7 @@ github.com/lucasb-eyer/go-colorful v1.4.0 h1:UtrWVfLdarDgc44HcS7pYloGHJUjHV/4FwW
 github.com/lucasb-eyer/go-colorful v1.4.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
 github.com/mattn/go-runewidth v0.0.24 h1:cpokDiIn0MGnhdHwuWnJBITySJ20QyNGnY2kR/ay2DU=
 github.com/mattn/go-runewidth v0.0.24/go.mod h1:XBkDxAl56ILZc9knddidhrOlY5R/pDhgLpndooCuJAs=
+github.com/michiTrader/arxi v0.0.0-20261001124451-633d6d152ff7 h1:Sg64zO1GBVzK/L9gFGd9ubD5um7nWLdyEYR25Vr7q9E=
+github.com/michiTrader/arxi v0.0.0-20261001124451-633d6d152ff7/go.mod h1:M3yx4KXbPMAA6l0P8J7kmLiv0mIExs6zRI6yS+CabKc=
 golang.org/x/sys v0.36.0 h1:KVRy2GtZBrk1cBYA7MKu5bEZFxQk4NIDV6RLVcC8o0k=
 golang.org/x/sys v0.36.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=

@@ -18,7 +18,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 	"unicode/utf8"
 )
@@ -33,6 +32,15 @@ const (
 	MaxDocBytes = 64 * 1024
 	MaxCommands = 32
 	MaxTools    = 16
+	MaxEvents   = 16
+	MaxPanels   = 8
+	MaxServices = 4
+	// MaxPanelTitle and MaxPanelRunes bound what a panel puts on the one line it owns.
+	MaxPanelTitle = 24
+	MaxPanelRunes = 120
+	// Panel refresh bounds, in seconds: a faster panel would be a loop in disguise.
+	MinPanelEveryS = 30
+	MaxPanelEveryS = 3600
 	// MaxToolNameTotal bounds the id and the name together: the model sees the tool as
 	// pkg_<id>_<name> (5 more characters), and providers refuse a tool name over 64.
 	MaxToolNameTotal = 59
@@ -91,6 +99,9 @@ type Package struct {
 	Commands    []Command   `json:"commands,omitempty"`
 	Rules       []Rule      `json:"rules,omitempty"`
 	Tools       []Tool      `json:"tools,omitempty"`
+	Events      []Event     `json:"events,omitempty"`
+	Panels      []Panel     `json:"panels,omitempty"`
+	Services    []Service   `json:"services,omitempty"`
 }
 
 // Permissions is everything a package may reach. Empty means nothing: a package
@@ -148,6 +159,65 @@ const ToolPrefix = "pkg_"
 // part holds an underscore, so the name says unambiguously which package it belongs to.
 func (t Tool) ModelName(pkgID string) string { return ToolPrefix + pkgID + "_" + t.Name }
 
+// The events a package may react to. The first two end a turn of the chat; the others
+// are the settings the user can change, the same ones a hook of the behaviour layer can
+// watch (the host knows each one's values).
+const (
+	EventTurnDone   = "turn.done"
+	EventTurnFailed = "turn.failed"
+	EventEffort     = "effort"
+	EventMode       = "mode"
+	EventStyle      = "style"
+)
+
+// EventKinds lists what Event.On may be.
+var EventKinds = []string{EventTurnDone, EventTurnFailed, EventEffort, EventMode, EventStyle}
+
+// IsSettingEvent reports whether an event is a change of a setting, which is the only
+// kind that carries a value.
+func IsSettingEvent(on string) bool {
+	return on == EventEffort || on == EventMode || on == EventStyle
+}
+
+// Event is a reaction to something that happened in the interface. It runs one
+// operation and shows what it said as a note. That is all it can do: it never sees a
+// line the user typed, never sends to the model, and never starts an action, so an event
+// cannot start another event or change the setting it watches.
+type Event struct {
+	ID string `json:"id"`
+	On string `json:"on"`
+	// Is narrows a setting event to one value ("max"); empty reacts to every change.
+	Is       string `json:"is,omitempty"`
+	Disabled bool   `json:"disabled,omitempty"`
+	Op       Op     `json:"op"`
+}
+
+// Panel is one line the package keeps on the screen. Its operation runs when the package
+// loads, again after each turn when Refresh is "turn.done", and every EveryS seconds when
+// that is set. A panel with no operation is filled by a service (Service.Feed).
+type Panel struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
+	// Refresh is "" (only when the package loads) or "turn.done".
+	Refresh  string `json:"refresh,omitempty"`
+	EveryS   int    `json:"every_s,omitempty"`
+	Disabled bool   `json:"disabled,omitempty"`
+	Op       *Op    `json:"op,omitempty"`
+}
+
+// Service is a program that keeps running until the user stops it. It is started by the
+// user typing /service start, never by the package or by a key, button or hook, and each
+// line it prints becomes a note or, with Feed, the text of one of the package's panels.
+type Service struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	// Feed names a panel of this package that the output fills; empty shows each line
+	// as a note.
+	Feed     string `json:"feed,omitempty"`
+	Disabled bool   `json:"disabled,omitempty"`
+	Op       Op     `json:"op"`
+}
+
 // Rule is a reaction to a stage of the pipeline.
 type Rule struct {
 	ID       string `json:"id"`
@@ -193,14 +263,6 @@ type Op struct {
 	Extract string `json:"extract,omitempty"`
 }
 
-// reservedKeys are artifact kinds the contract names but no phase has built yet. A
-// package using one is refused with the reason, so it never half-loads.
-var reservedKeys = map[string]string{
-	"events":   "reactions to events arrive with the events phase",
-	"panels":   "panels arrive with the panels phase",
-	"services": "long-lived services (voice, watchers) arrive with the service phase",
-}
-
 // Parse reads a package from bytes. It is strict: an unknown key is an error, because
 // a key that is silently ignored is a setting the author believes is in force.
 func Parse(data []byte) (*Package, error) {
@@ -217,16 +279,6 @@ func Parse(data []byte) (*Package, error) {
 	}
 	if first.More() {
 		return nil, fmt.Errorf("package has more than one JSON value, so the second would be ignored; keep exactly one object")
-	}
-	keys := make([]string, 0, len(top))
-	for k := range top {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	for _, k := range keys {
-		if why, ok := reservedKeys[k]; ok {
-			return nil, fmt.Errorf("%q is reserved and not available yet: %s; remove it from the package", k, why)
-		}
 	}
 	var p Package
 	dec := json.NewDecoder(bytes.NewReader(data))
@@ -245,6 +297,10 @@ type Options struct {
 	// Builtins reports whether the host registered a builtin by that name; nil
 	// skips the check (the pure validator does not know the host).
 	Builtins func(name string) bool
+	// EventValues lists the values a setting event may be narrowed to ("effort" ->
+	// minimal, low, ...); nil skips the check, because the pure validator does not know
+	// the host's settings.
+	EventValues func(on string) ([]string, bool)
 }
 
 // Validate refuses a package the host could not honour. Every message says what is
@@ -278,8 +334,8 @@ func (p *Package) Validate(opt Options) error {
 	if len(p.Tools) > MaxTools {
 		return fmt.Errorf("tools: %d defined, the most is %d; remove some or split the package", len(p.Tools), MaxTools)
 	}
-	if len(p.Commands) == 0 && len(p.Rules) == 0 && len(p.Tools) == 0 {
-		return fmt.Errorf("package %q has no commands, rules or tools, so it would do nothing; add one of each kind it needs", p.ID)
+	if len(p.Commands) == 0 && len(p.Rules) == 0 && len(p.Tools) == 0 && len(p.Events) == 0 && len(p.Panels) == 0 && len(p.Services) == 0 {
+		return fmt.Errorf("package %q has no commands, rules, tools, events, panels or services, so it would do nothing; add one of each kind it needs", p.ID)
 	}
 	names := map[string]bool{}
 	for i, c := range p.Commands {
@@ -311,7 +367,7 @@ func (p *Package) Validate(opt Options) error {
 		}
 		tools[t.Name] = true
 	}
-	return nil
+	return p.validateAutomatic(opt)
 }
 
 func (p *Package) validateTool(i int, t Tool, opt Options) error {
@@ -593,6 +649,31 @@ func (p *Package) Capabilities() []string {
 		}
 		out = append(out, "let the model call "+strings.Join(names, ", ")+" by itself, with text it chooses, and read what they return")
 	}
+	if len(p.Events) > 0 {
+		var on []string
+		seen := map[string]bool{}
+		for _, e := range p.Events {
+			if !seen[e.On] {
+				seen[e.On] = true
+				on = append(on, e.On)
+			}
+		}
+		out = append(out, "react by itself, with nothing typed, when "+strings.Join(on, ", ")+" happens, and show you a note")
+	}
+	if len(p.Panels) > 0 {
+		var titles []string
+		for _, pn := range p.Panels {
+			titles = append(titles, pn.Title)
+		}
+		out = append(out, "keep a line on your screen ("+strings.Join(titles, ", ")+") and refresh it by itself")
+	}
+	if len(p.Services) > 0 {
+		var names []string
+		for _, sv := range p.Services {
+			names = append(names, sv.Name)
+		}
+		out = append(out, "run a program that keeps running after you start it with /service start ("+strings.Join(names, ", ")+") until you stop it, and show what it prints")
+	}
 	return out
 }
 
@@ -612,6 +693,21 @@ func (p *Package) hasPackageExec() bool {
 	}
 	for _, t := range p.Tools {
 		if each(t.Op) {
+			return true
+		}
+	}
+	for _, e := range p.Events {
+		if each(e.Op) {
+			return true
+		}
+	}
+	for _, pn := range p.Panels {
+		if pn.Op != nil && each(*pn.Op) {
+			return true
+		}
+	}
+	for _, sv := range p.Services {
+		if each(sv.Op) {
 			return true
 		}
 	}
