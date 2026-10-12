@@ -525,6 +525,18 @@ resolved-args map rides on the same template-row dispatch H8 parked (Scene 9's
 `cmd:/agent {row.id}`).
 
 
+Three more prefixes carry the extensibility system (docs/DESIGN-EXTENSIBILITY.md).
+Each is accepted only with validation, and none of them ever reaches the model:
+
+| prefix | argument | effect |
+|---|---|---|
+| `say:` | text, e.g. `say:Saved` | show the text in the conversation as a `chat.note` (§4.3.1, the paragraph on what a user command answers). It is sanitised (escape sequences, control and bidi characters removed) and bounded like any note, and it is never sent to the model. At most 400 characters in a user command, key or hook. |
+| `open:` | an address, e.g. `open:https://docs.example.com/start` | send the user's browser to the address. The address is `https` only, with no user name or password, no port, no IP address or bare name (`localhost`), no space, control or non-ASCII character, at most 2000 characters. The grammar is one reader (`scene.ParseOpenURL`) used at load and at press time. The host adds two rules the scene cannot know: the host must be listed in `permissions.open` of an **approved** package (`/package approve`), and the action is refused when a **hook** runs it (a hook fires with no key pressed). The browser is started by argv (`xdg-open`, `open`, `rundll32`), never through a shell, and the user is always told the full address. |
+| `set:` | `<setting>=<value>`, e.g. `set:effort=max` | change one of the settings a hook can watch: `effort`, `mode`, `style`. The value must be one that setting takes (checked when a user command, key or hook is validated; the host re-checks it, e.g. an effort level the model does not take is refused with the usual message). A change a hook makes fires no further hook. |
+
+A `say:`/`open:`/`set:` pressed on a scene button reaches the loop's queue as the
+action itself, not as a typed line, and a `cmd:` line cannot pose as one.
+
 Argument interpolation reuses §4.7 unchanged: inside a `row_template`, an
 `on_press` argument may contain `{row.<field>}`, replaced by the current
 element's field at press time (Q20). Scene 9's row is `cmd:/agent {row.id}`.
@@ -545,13 +557,16 @@ refinement so no golden depends on a field the engine does not yet read.
 Refusals, each addressed with `file:line`:
 
 - An `on_press` whose prefix is outside the closed set
-  (`cmd:`/`focus:`/`answer:`/`ext:`): refusal naming the node and listing the
-  legal prefixes.
+  (`cmd:`/`focus:`/`answer:`/`ext:`/`say:`/`open:`/`set:`): refusal naming the
+  node and listing the legal prefixes.
 - An `on_press` with a prefix but an empty argument (`cmd:`, `focus:`, `answer:`
   with nothing after the colon): refusal, because a command/id/kind is the whole
   content of the action.
 - An `answer:` whose kind is outside the closed kind set: refusal naming the kind
   and the legal set, the same net a mistyped bind gets.
+- An `open:` that is not a plain `https` host address, or a `set:` that is not
+  `<setting>=<value>` with a setting from `effort`, `mode`, `style`, or a `say:`
+  with no text: refusal, each naming what to write instead.
 - An `ext:` missing either segment (`ext:` with no id, `ext::action` with an
   empty id, or `ext:id` / `ext:id:` with no action): refusal, because the
   `<plugin-id>` and `<action>` are both required to build the `action` frame.

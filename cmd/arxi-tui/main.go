@@ -1255,6 +1255,28 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				if err := pluginActions.SendAction(act.PluginID, act.Arg, nil); err != nil {
 					sceneNotice = err.Error()
 				}
+			case scene.ActionSay:
+				collected = appendLocalNote(collected, act.Arg)
+			case scene.ActionOpen:
+				if why := openRefusal(act, q.hook, pkgs); why != "" {
+					collected = appendLocalWarning(collected, why)
+					break
+				}
+				note, warn := runOpen(act)
+				if warn != "" {
+					collected = appendLocalWarning(collected, warn)
+				} else {
+					collected = appendLocalNote(collected, note)
+				}
+			case scene.ActionSet:
+				switch act.Setting {
+				case "effort":
+					setEffort(act.Arg, q.hook)
+				case "mode":
+					setMode(act.Arg, q.hook)
+				case "style":
+					setStyle(act.Arg, q.hook)
+				}
 			case scene.ActionCmd:
 				f := strings.Fields(act.Arg)
 				switch {
@@ -2500,7 +2522,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if picked != "" {
 								enqueue(actionList{"cmd:" + picked}, false)
 							}
-						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) { enqueue(actionList{"cmd:" + line}, false) }, ctx, drv); handled {
+						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) {
+							if raw, isRaw := strings.CutPrefix(line, rawActionMark); isRaw {
+								enqueue(actionList{raw}, false)
+								return
+							}
+							enqueue(actionList{"cmd:" + line}, false)
+						}, ctx, drv); handled {
 							// H8 press routing: Tab/Shift-Tab move the ui.focus
 							// cursor over the pressable nodes (ordinary buttons and
 							// each instantiated template row), and Enter on a

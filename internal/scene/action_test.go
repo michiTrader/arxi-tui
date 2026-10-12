@@ -188,3 +188,79 @@ func TestValidateOnPressChecksRowInterpolation(t *testing.T) {
 		t.Error("a {row.task} interpolation outside any row_template validated clean; there is no row to be relative to, so it can never resolve")
 	}
 }
+
+// say:, open: and set: parse into their own kinds, and the parts the host needs
+// (the host of an address, the setting and its value) arrive already split, so the
+// dispatcher never reads the string a second time.
+func TestParseActionSayOpenSet(t *testing.T) {
+	got, err := ParseAction("say:Saved: all done")
+	if err != nil || got.Kind != ActionSay || got.Arg != "Saved: all done" {
+		t.Errorf("say: = %+v, %v; want the whole text after the first colon", got, err)
+	}
+	got, err = ParseAction("open:https://docs.example.com/a/b?q=1#top")
+	if err != nil || got.Kind != ActionOpen || got.Host != "docs.example.com" || got.Arg != "https://docs.example.com/a/b?q=1#top" {
+		t.Errorf("open: = %+v, %v; want kind open with host docs.example.com", got, err)
+	}
+	got, err = ParseAction("set:effort=max")
+	if err != nil || got.Kind != ActionSet || got.Setting != "effort" || got.Arg != "max" {
+		t.Errorf("set: = %+v, %v; want setting effort, value max", got, err)
+	}
+}
+
+// Everything an open: address must not be is refused, each one a way to take the
+// user's browser somewhere they could not see from the text.
+func TestParseActionRefusesUnsafeOpenAndMalformedSetSay(t *testing.T) {
+	bad := []string{
+		"open:",
+		"open:http://example.com/",
+		"open:HTTPS://example.com/",
+		"open:javascript:alert(1)",
+		"open:file:///etc/passwd",
+		"open:https://user@example.com/",
+		"open:https://user:pw@example.com/",
+		"open:https://example.com@evil.com/",
+		"open:https://example.com:8443/",
+		"open:https://127.0.0.1/",
+		"open:https://10.0.0.1/",
+		"open:https://[::1]/",
+		"open:https://localhost/",
+		"open:https://example/",
+		"open:https://exa mple.com/",
+		"open:https://example.com/a b",
+		"open:https://example.com/\x1b[31m",
+		"open:https://example.com/\n",
+		"open:https://example.com\\@evil.com/",
+		"open:https://ex\u00e4mple.com/",
+		"open:https://" + strings.Repeat("a", 2100) + ".com/",
+		"say:",
+		"say:   ",
+		"set:effort",
+		"set:effort=",
+		"set:=max",
+		"set:model=gpt",
+		"set:effort=MAX",
+		"set:effort=max;rm",
+		"set:effort=" + strings.Repeat("a", 40),
+	}
+	for _, in := range bad {
+		if a, err := ParseAction(in); err == nil {
+			t.Errorf("ParseAction(%q) accepted it as %+v; it must be refused", in, a)
+		}
+	}
+}
+
+// The error for an unknown prefix lists the whole set, so a model repairing its own
+// draft learns the new kinds from the refusal.
+func TestParseActionErrorsListTheWholeSet(t *testing.T) {
+	for _, in := range []string{"nope:x", "no prefix"} {
+		_, err := ParseAction(in)
+		if err == nil {
+			t.Fatalf("ParseAction(%q) accepted", in)
+		}
+		for _, k := range []string{"say:", "open:", "set:"} {
+			if !strings.Contains(err.Error(), k) {
+				t.Errorf("the refusal of %q does not mention %s: %v", in, k, err)
+			}
+		}
+	}
+}

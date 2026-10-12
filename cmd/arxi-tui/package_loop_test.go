@@ -48,8 +48,19 @@ func runPackageLoopIn(t *testing.T, script []scheduledEvent) (string, []string) 
 
 func runPackageFolders(t *testing.T, docs, folders map[string]string, approve []string, script []scheduledEvent) (string, []string) {
 	t.Helper()
+	return runPackageWithBehaviour(t, "", docs, folders, approve, script)
+}
+
+// runPackageWithBehaviour is runPackageFolders with the user's behaviour.json too ("" for
+// none).
+func runPackageWithBehaviour(t *testing.T, beh string, docs, folders map[string]string, approve []string, script []scheduledEvent) (string, []string) {
+	t.Helper()
 	cfg := t.TempDir()
 	t.Setenv(configDirEnv, cfg)
+	if beh != "" {
+		write(t, userBehaviourPath(), beh, 0o600)
+		t.Cleanup(func() { setActiveBehaviour(behaviour{}) })
+	}
 	t.Setenv(historyEnv, t.TempDir())
 	t.Setenv(sessionsEnv, "")
 	for id, body := range docs {
