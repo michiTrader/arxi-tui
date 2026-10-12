@@ -103,17 +103,6 @@ func runPackageWithBehaviour(t *testing.T, beh string, docs, folders map[string]
 // still reads as one.
 func screen(out string) string { return strings.Join(strings.Fields(lastFrame(out)), " ") }
 
-// frameWith is the plain text of the last frame that shows what, "" when none does.
-func frameWith(out, what string) string {
-	frames := strings.Split(out, frameBegin)
-	for i := len(frames) - 1; i >= 0; i-- {
-		if f := strings.Join(strings.Fields(ansi.Strip(frames[i])), " "); strings.Contains(f, what) {
-			return f
-		}
-	}
-	return ""
-}
-
 const echoPkg = `,"commands":[{"name":"shout","description":"say it back","op":{"kind":"builtin","name":"echo"}}]`
 
 func TestLoopPackageCommandAnswersWithANoteAndSendsNothing(t *testing.T) {
