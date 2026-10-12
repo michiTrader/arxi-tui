@@ -650,6 +650,7 @@ var handled = map[string]bool{
 	"agent.failed":    true,
 	"chat.error":      true,
 	"chat.warn":       true,
+	"chat.note":       true,
 	"chat.thinking":   true,
 	"chat.tool":       true,
 	"chat.approval":   true,
@@ -947,6 +948,15 @@ func (s *State) apply(e Event) {
 		// conversation under its own role, never a banner.
 		if text, _ := e.Payload["text"].(string); text != "" {
 			s.History = append(s.History, ChatLine{Role: "warn", Text: text})
+		}
+
+	case "chat.note":
+		// What the host itself says in answer to something the user did: the output of
+		// a command of theirs. It is a line of the conversation under its own role, so
+		// it is drawn apart from an answer and from a warning, and it keeps its line
+		// breaks. It is never sent to the model: the host appends it to its own log.
+		if text, _ := e.Payload["text"].(string); text != "" {
+			s.History = append(s.History, ChatLine{Role: "note", Text: text})
 		}
 
 	case "chat.cancelled":

@@ -160,3 +160,21 @@ func TestSlashMenuHintIsAdjacentToTheBottomRule(t *testing.T) {
 		t.Errorf("the row above the hint is %q, want the menu's bottom rule", rows[hint-1])
 	}
 }
+
+// A note (what one of the user's own commands answered) reads "· ...", keeps its line
+// breaks, hangs under its marker and is drawn in its own token.
+func TestNoteLineShape(t *testing.T) {
+	rows := plainRows(t, []fold.Event{
+		{Type: "chat.note", Seq: 1, Payload: map[string]any{"text": "first\nsecond"}},
+	})
+	if rows[0] != "· first" || rows[1] != "  second" {
+		t.Errorf("note rows = %q, %q; want \"· first\" and \"  second\"", rows[0], rows[1])
+	}
+	r, js := chatDoc(t)
+	got := r.RenderFrame(mustDoc(t, js), fold.Fold([]fold.Event{
+		{Type: "chat.note", Seq: 1, Payload: map[string]any{"text": "n"}},
+	})).Styled()
+	if !strings.Contains(got, "«chat.note:") {
+		t.Errorf("no span drawn under chat.note:\n%s", got)
+	}
+}

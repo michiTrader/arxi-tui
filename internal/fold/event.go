@@ -42,8 +42,9 @@ type Event struct {
 type ChatLine struct {
 	// Role is "user", "assistant", "tool" (something the agent did while
 	// answering, see the Tool fields), "error" (a failed request or a cancelled
-	// turn, shown in the flow) or "warn" (something the user should know that
-	// did not stop the turn).
+	// turn, shown in the flow), "warn" (something the user should know that
+	// did not stop the turn) or "note" (what the host says in answer to a command of
+	// the user's own; never sent to the model).
 	Role string
 	Text string
 	// Command is the word the user typed in front of a message to address the app

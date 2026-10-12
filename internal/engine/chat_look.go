@@ -42,6 +42,7 @@ type ChatLook struct {
 	// The other voices.
 	ErrorMarker     string // "✗ "
 	WarnMarker      string // "! "
+	NoteMarker      string // "· "
 	AssistantIndent int    // columns an answer is drawn in
 
 	// Spacing and the usage line.
@@ -75,6 +76,7 @@ func DefaultChatLook() ChatLook {
 		UserMore:        "… +{n} lines{hint}",
 		ErrorMarker:     errorTurnMarker,
 		WarnMarker:      warnTurnMarker,
+		NoteMarker:      noteTurnMarker,
 		AssistantIndent: assistantIndent,
 		TurnGap:         1,
 		UsageGap:        1,
@@ -110,6 +112,7 @@ func (l ChatLook) resolved() ChatLook {
 	l.UserMore = pick(l.UserMore, d.UserMore)
 	l.ErrorMarker = pick(l.ErrorMarker, d.ErrorMarker)
 	l.WarnMarker = pick(l.WarnMarker, d.WarnMarker)
+	l.NoteMarker = pick(l.NoteMarker, d.NoteMarker)
 	l.UsageFormat = pick(l.UsageFormat, d.UsageFormat)
 	l.UsageTokens = pick(l.UsageTokens, d.UsageTokens)
 	if l.OutputRows < 1 {
