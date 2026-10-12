@@ -683,6 +683,12 @@ type interfaceBridger interface {
 	InterfaceBridge() *uiBridge
 }
 
+// toolboxHolder is the optional capability a Driver has when its chat lends the tools of
+// the approved packages (serveDriver).
+type toolboxHolder interface {
+	PackageToolbox() *packageToolbox
+}
+
 // noteRefusal counts how many times in a row ui_edit has been refused for the same
 // reason, and returns the count. A success resets it (see resetRefusals).
 func (b *uiBridge) noteRefusal(text string) int {

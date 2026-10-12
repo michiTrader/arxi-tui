@@ -1,6 +1,6 @@
 # DESIGN — extensibility without Go changes
 
-Status: Phases 0, 1 and 2 implemented (Phase 0 merged in #255). Phases 3+ not started.
+Status: Phases 0, 1, 2 and 3 implemented (Phase 0 merged in #255, Phase 2 in #256). Phases 4+ not started.
 Branch: `feat/extensibility-phase0`.
 
 ## Goal
@@ -40,7 +40,7 @@ and validating it runs nothing. It declares:
 }
 ```
 
-Later artifact kinds (`tools`, `events`, `panels`) are *reserved keys*: the
+Later artifact kinds (`events`, `panels`) are *reserved keys*: the
 parser refuses them today with a message naming the phase that adds them, so a
 package written for the future fails loudly instead of being half-loaded.
 
@@ -230,3 +230,21 @@ version the user approved before is running again and any other is inert.
   `say:`/`open:`/`set:`; `ui_edit` `packages` verbs with consent and undo.
 - **Later (not started)** — factory commands as packages, tools and events artifacts,
   panels, `service` operations (voice).
+
+## Phase 3: package tools the model can call
+
+A package may declare `tools`: operations the model calls by itself as
+`pkg_<id>_<name>` with `{"args": "<text>"}`. A tool is a command the model types
+instead of the user: same op kinds, same permissions, same guards. Differences:
+
+- `description` is required; only `result: say` is allowed, and the text goes back
+  to the model only, framed as data and not as instructions.
+- Policy follows the mode: exec tools use the run policy, http tools the web policy,
+  builtins are always allowed. A tool the mode would deny is not offered at all.
+- The consent text (`/package show`) lists the tools and says the model may call
+  them by itself. Revoking a package stops its tools at once, even mid-turn (the
+  name is re-resolved at every call).
+- The core takes at most 8 client tools per turn; the `/ui` tools come first and
+  package tools fill the rest, in name order. What does not fit is reported.
+- Tools need a project folder and a core with client-tool support; without it the
+  turn still answers and says so.

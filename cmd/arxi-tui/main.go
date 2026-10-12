@@ -594,6 +594,7 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 	}
 	sd.chat = newChatSession(nd, sd.relay)
 	sd.chat.ui = newUIBridge()
+	sd.chat.tools = newPackageToolbox()
 	sd.SetMode(defaultMode)
 	// The model may look into the folder arxi-tui was opened in.
 	if cwd, err := os.Getwd(); err == nil {
@@ -999,6 +1000,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	activate := func() {
 		setActiveTexts(mergeTexts(userWords, proj.words))
 		setActivePackages(pkgs)
+		if th, ok := drv.(toolboxHolder); ok && th.PackageToolbox() != nil {
+			th.PackageToolbox().publish(pkgs)
+		}
 		setActiveBehaviour(effBeh())
 	}
 	reloadPackages := func() {

@@ -327,7 +327,7 @@ func draftPackages(raw json.RawMessage, existing packageSet, beh behaviour) (*pa
 // what is there now.
 func packagesGuide(set packageSet) string {
 	var b strings.Builder
-	b.WriteString(`PACKAGES. A package adds / commands and rules without any program: one JSON document in the user's packages folder. Pass packages: [...] to ui_edit, a list of entries, each exactly one of
+	b.WriteString(`PACKAGES. A package adds / commands, rules and tools without any program: one JSON document in the user's packages folder. Pass packages: [...] to ui_edit, a list of entries, each exactly one of
   {"put": <package>}      create it, or replace the package with that id
   {"remove": "<id>"}      delete it
   {"disable": "<id>"} / {"enable": "<id>"}   switch it off or on without deleting it
@@ -342,6 +342,7 @@ You can only change the user's own packages that are a single document; packages
   permissions everything the package may reach; empty means nothing. net: hosts an http op may call ("api.example.com", "api.example.com:8443", or "local:127.0.0.1:8080" for this machine). exec: bare program names an exec op may start ("git"). open: https hosts the open: action may send the browser to. send: true lets a command's text go to the model. List only what an op uses; the user reads this list before approving.
   commands    [{"name","description","usage","min_args","category","op"}]. The op runs when the user types /name <words>.
   rules       [{"id","stage":"input.pre","when":{"prefix"|"contains"|"matches"},"on_error":"continue"|"block","op"}]. A rule sees every plain-text line (never a / line) before it is sent. It can reword the line (result "transform"), hold it back or answer for it, with {"result":"outcome"} and the op printing {"verdict":"continue|transform|handled|block","text":"...","say":"...","reason":"..."}. It can never send more than the user typed, and a rule that fails lets the line through unless on_error is "block".
+  tools       [{"name","description","usage","min_args","op"}]. An operation YOU (the model) may call by yourself as pkg_<id>_<name> with {"args": "<text>"}; the text it returns comes back to you as data. description is required and says when to use it. Only "result":"say" (the default) is allowed. A tool that starts a program asks the user like the run tool does, one that makes a request like the web tools do. The user is told at approval that the package lets the model call its tools. Offer a tool only when the user wants you to be able to do it unasked; at most 8 per package, id and name together at most 59 characters, no underscores in either.
   op          {"kind":"builtin","name":"<host function>"} | {"kind":"http","url","method":"GET|POST","headers","body","body_encoding":"json|form|text","extract":"a.b.0.c"} | {"kind":"exec","argv":["./script.sh","${args}"]}. "result" says what the output is, and is only for http and exec: leave it out of a builtin. "say" (shown to the user, the default for commands), "send" (to the model; needs permissions.send), "transform" (rules), "outcome" (a JSON outcome). extract picks one value out of a JSON answer by a dotted path.
   templates   ${args} (everything typed after the name), ${1}..${9} (its words), ${input} (the line, in rules). A url must start with https://host/ written out; in a JSON body a placeholder sits inside a JSON string. exec is argv only, never a shell; ./name is a file inside the package folder, which you cannot create, so use a program named in permissions.exec.
   builtins    `)
@@ -365,6 +366,9 @@ A package you write DOES NOTHING until the user approves exactly that version by
 		fmt.Fprintf(&b, "\n  %s (%s, %s): %s", cleanWarnText(p.ID), p.Scope, kind, packageState(p, grants, cwd))
 		for _, c := range p.Commands {
 			b.WriteString(" /" + cleanWarnText(c.Name))
+		}
+		for _, t := range p.Tools {
+			b.WriteString(" tool:" + cleanWarnText(t.Name))
 		}
 	}
 	for _, pr := range set.problems {

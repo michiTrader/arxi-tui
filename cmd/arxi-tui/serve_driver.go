@@ -285,6 +285,14 @@ func (d *serveDriver) InterfaceBridge() *uiBridge {
 	return d.chat.ui
 }
 
+// PackageToolbox is where the loop publishes the packages whose tools the chat lends.
+func (d *serveDriver) PackageToolbox() *packageToolbox {
+	if d.chat == nil {
+		return nil
+	}
+	return d.chat.tools
+}
+
 // SetUIMode turns the interface conversation on or off (see chatSession.uiMode).
 func (d *serveDriver) SetUIMode(on bool) {
 	if d.chat != nil {
