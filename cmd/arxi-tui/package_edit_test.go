@@ -376,6 +376,17 @@ func TestUndoPutsBackAReplacedPackageAsItWas(t *testing.T) {
 	}
 }
 
+// Found with a real model: it quoted a made-up code after the id (the host shows the real
+// one), and gave a builtin a "result" the validator refuses. The guide now says both.
+func TestGuideTellsTheModelToLeaveTheCodeToTheHostAndResultOutOfBuiltins(t *testing.T) {
+	g := packagesGuide(packageSet{})
+	for _, want := range []string{"with nothing after the id", "Never make up or quote a code", "leave it out of a builtin"} {
+		if !strings.Contains(g, want) {
+			t.Errorf("the packages guide does not say %q", want)
+		}
+	}
+}
+
 func TestGuideTeachesPackagesAndListsWhatIsThere(t *testing.T) {
 	r := newPkgRig(t, "ask")
 	write(t, filepath.Join(userPackagesDir(), "mine.json"), pkgDoc("mine", echoPkg), 0o644)

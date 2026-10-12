@@ -351,7 +351,7 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	b.resetRefusals()
 	text := "applied and saved: the interface on screen now shows the change. /ui undo takes it back."
 	if pkgEdit != nil && len(pkgEdit.put) > 0 {
-		text += "\nPackages written: " + strings.Join(pkgEdit.put, ", ") + ". They do NOTHING yet: the user has to type /package approve <id> themselves (the app shows them what it can do and a code). You cannot approve them. Tell the user to do that, and do not say they work before."
+		text += "\nPackages written: " + strings.Join(pkgEdit.put, ", ") + ". They do NOTHING yet: the user has to type /package approve <id> themselves, with nothing after the id (the app shows them what it can do and the code to type; never quote a code yourself). You cannot approve them. Tell the user to do that, and do not say they work before."
 	}
 	for _, n := range unpaintedFrames(next, nextThm) {
 		text += fmt.Sprintf("\nBUT: the frame of %q is NOT animated. Its \"style\" paints what is inside the box; the frame is painted by the border's own style. Do not tell the user the frame moves. To make it so: /ui set %s border {\"shape\":%q,\"style\":%q}", n.id, n.id, n.shape, n.token)
