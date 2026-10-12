@@ -164,6 +164,10 @@ it was typed, picked from the menu or pressed from a button:
 | a command the host runs (menu command, alias such as `/login`, or a command the user added) | the command runs locally |
 | `/help` | opens the command menu locally, with no call to the model |
 | `/focus <id>` | the `focus:` action typed by hand: one operation, one notice (`applyFocus`) |
+| `/package` | lists the packages found (user and project) with their state: `approved`, `not approved, not running`, `changed since you approved it, not running` or `switched off`; problems with a file are listed under it |
+| `/package show <id>` | what the package is and every power it has (`Capabilities()`), in plain words |
+| `/package approve <id>` | shows the same and the code to type; `/package approve <id> <code>` approves exactly the version the code was shown for (the code is the start of the hash a grant is bound to, so an edit between looking and typing is refused). Only a line the user typed decides: a shortcut, button, user command or hook that runs `/package approve` or `revoke` is answered with a warning and changes nothing |
+| `/package revoke <id>` | withdraws the approval |
 | a registered command with no behaviour yet (`/surface`) | a local warning, "is not available yet. Nothing was sent." The text stays in the input |
 | anything else | a local warning, "Unknown command /x. Nothing was sent.", pointing at `/help` and `/send`. The text stays in the input and keeps the focus, and is never cleared automatically |
 

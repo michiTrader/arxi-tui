@@ -3,10 +3,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 	"unicode"
+
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
@@ -425,8 +428,12 @@ func TestLoopSlashMenuEscapeCloses(t *testing.T) {
 	}
 
 	out := tty.output()
-	if !strings.Contains(out, "Commands 1") {
-		t.Errorf("filtered menu (\"/h\" → help) never rendered; output:\n%s", out)
+	// The count is read from the registry and matched whole: the literal "Commands 1" this
+	// replaces was also a prefix of "Commands 19", the unfiltered menu, so it passed
+	// whether or not the filter ever drew.
+	want := fmt.Sprintf("Commands %d", len(fold.FilterSlashMatches("h")))
+	if !regexp.MustCompile(regexp.QuoteMeta(want) + `\b`).MatchString(ansi.Strip(out)) {
+		t.Errorf("filtered menu (\"/h\" → %q) never rendered; output:\n%s", want, out)
 	}
 
 	// After escape the buffer is cleared (the placeholder returns) and the

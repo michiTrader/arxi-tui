@@ -2292,6 +2292,21 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							caret = len([]rune(input))
 							slashSel = 0
 							modelMn.loaded = false
+						} else if pc, isPkgCmd := packageLineOf(input, slashSel, slashCat); isPkgCmd && ev.Key.Type == term.KeyEnter {
+							// `/package` lists the packages and `/package approve|revoke` records
+							// the user's decision (package_cmd.go). A line the behaviour layer
+							// synthesised may look but never decide: synth says which this is.
+							dec := runPackageCommand(pc, pkgs, cwd, synth)
+							if dec.Note != "" {
+								collected = appendLocalNote(collected, dec.Note)
+							}
+							if dec.Warn != "" {
+								collected = appendLocalWarning(collected, dec.Warn)
+							}
+							if dec.Changed {
+								reloadPackages()
+							}
+							input, caret, slashSel = "", 0, 0
 						} else if verb, isProj := projectLine(input, slashSel, slashCat); isProj && ev.Key.Type == term.KeyEnter {
 							// `/project` reports, `/project trust` lets this folder's
 							// .arxi settings load (now and on later starts), and

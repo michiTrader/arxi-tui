@@ -28,6 +28,24 @@ func runPackageLoop(t *testing.T, docs map[string]string, approve []string, scri
 // runPackageFolders is runPackageLoop with packages that are folders too: folders maps
 // "id/file" to the file's text ("id/package.json" is the document; a name ending in .sh
 // is written executable).
+// runPackageLoopIn runs the loop on the built-in interface with whatever the test already
+// put in the config folder (it sets nothing up itself).
+func runPackageLoopIn(t *testing.T, script []scheduledEvent) (string, []string) {
+	t.Helper()
+	doc, err := scene.ParseNamed(defaultscene.Name, defaultscene.JSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tty := newFakeTTY(100, 30, script)
+	drv := &testDriver{evCh: make(chan fold.Event, 64), seq: 1000}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	return tty.output(), drv.submitted
+}
+
 func runPackageFolders(t *testing.T, docs, folders map[string]string, approve []string, script []scheduledEvent) (string, []string) {
 	t.Helper()
 	cfg := t.TempDir()
