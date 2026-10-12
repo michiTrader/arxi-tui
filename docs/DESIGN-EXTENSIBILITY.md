@@ -1,6 +1,6 @@
 # DESIGN — extensibility without Go changes
 
-Status: Phase 1 (contract, pure core) in progress; Phase 2 (wiring) next.
+Status: Phases 0, 1 and 2 implemented (Phase 0 merged in #255). Phases 3+ not started.
 Branch: `feat/extensibility-phase0`.
 
 ## Goal
@@ -123,13 +123,25 @@ done; it can never widen it.** Concretely:
 
 ### The new actions: `say:`, `open:`, `set:`
 
-Added to the scene action grammar (Phase 2) **only with validation**:
+Scene actions (`scene.ParseAction`), accepted **only with validation**, usable from
+`on_press` buttons, keys, menu rows, user commands and hooks (docs/BINDS.md §4.8):
 
-- `say:<text>` — a local message, sanitised and bounded; never sent to the model.
-- `open:<url>` — `https` only, no credentials in the URL, host in the package's
-  `permissions.open`; only from a keypress or a typed command, never from a hook.
-- `set:<setting>=<value>` — only the closed settings a hook can watch
-  (`effort`, `mode`, `style`) with a value from that setting's own value set.
+- `say:<text>` — a local note (`chat.note`), sanitised, at most 400 runes. Never sent
+  to the model.
+- `open:<url>` — `scene.ParseOpenURL`: `https` only, no credentials, no port, no IP
+  address, no bare host name, no space, control or non-ASCII character (an
+  international name is written as punycode, a non-ASCII path byte percent-encoded),
+  at most 2000 bytes. At run time the host must also be listed in `permissions.open`
+  of a package the user has **approved**, and it is refused when the action comes from
+  a hook (a hook fires without a keypress). The browser is started by argv, never
+  through a shell.
+- `set:<setting>=<value>` — only the closed settings a hook can watch (`effort`,
+  `mode`, `style`), with a value from that setting's own value set, checked when the
+  document is validated. A `set:` made by a hook starts no further hook, so two hooks
+  cannot loop.
+
+A button's raw action line cannot be forged from a `cmd:` line: the loop queues it under
+a private mark (`rawActionMark`) that `press.go` refuses at the front.
 
 ## Factory commands as packages
 
@@ -142,22 +154,79 @@ replace its *authority*.
 
 ## Persistence, consent, undo
 
-Packages live in `<config>/packages/<id>.json` (user) and `.arxi/packages/` (project),
-validated whole on every load and every patch, saved and undone like the other
-settings. Anything that can run code or reach the network (`http`, `exec`,
-`send`, `open`) is put to the user for consent when added or changed, even in
-full-access mode, because the user approved "full access" for the agent's work
-and not for what their own keyboard will do later (the rule behaviour already
-applies to keys, commands and hooks). Consent is bound to the package digest, so
-editing a package re-asks.
+### Where packages live
+
+`<config>/packages/<id>.json` (a single document) or `<config>/packages/<id>/package.json`
+(a folder that may also hold scripts for `exec` ops), and the same under the project's
+`.arxi/packages/`. Every document is parsed strictly and validated whole on every load
+and every edit; the id must equal the file or folder name. A package that fails to load
+is listed with the reason (`/package`), never half-run. At most 64 packages; links are
+not followed. The user's packages win over a project's on a clashing id or command name.
+
+### Consent
+
+Nothing runs until the user approves it. The grant lives in `packages-consent.json`,
+keyed by scope and id (a project package also by folder) and **bound to the package
+digest**, so any edit, by anyone, makes it inert until approved again. The user
+approves with `/package approve <id>`, which shows what the package can do in plain
+words and a code (the first 10 hex characters of the digest), then
+`/package approve <id> <code>`. The two-step form exists so that approval is a
+deliberate act on a version the user just saw. It cannot come from a menu row, a
+button, a key, a user command or a hook: those travel the loop as synthesised lines
+(`synth`) and are refused. `/package list|show|approve|revoke` are the only verbs.
+
+### What the interface agent may do (`ui_edit` `packages`)
+
+A list of `{put}`, `{remove}`, `{disable}`, `{enable}` entries (at most 8 per call),
+reaching only what a person could do with a text editor in the user's own packages
+folder:
+
+- only the user's own **single-document** packages; a folder package has files of its
+  own and a project package belongs to the repository, so both are refused;
+- every document is validated exactly as at load before the user is asked anything,
+  and a refusal names the entry and the reason and changes nothing;
+- the user is shown a diff plus, for each package written or switched on, what it can
+  do, and is **asked even in full access** (`put` and `enable` widen what runs;
+  `disable` and `remove` only narrow and are not asked in full access);
+- writing never approves: the tool result tells the agent the package does nothing
+  until the user types `/package approve`, and the loop tells the user the same;
+- `remove` withdraws the grant too, so the same id used later is a new question;
+- the loop refuses a change whose packages moved on while the question was open (the
+  user edited a file by hand), and refuses it for a scene started with `-scene`;
+- plan mode refuses it.
+
+### Undo
+
+`/ui undo` restores what the last change touched. A package change records the
+document each touched package held before (`interfaceState.Packages`, a nil for none),
+so undo restores those packages and leaves every other one, the ones the user wrote by
+hand included, as they are. Undo swaps the two states, so a second undo is a redo.
+Restoring a package does not restore its approval: the digest decides, so a restored
+version the user approved before is running again and any other is inert.
+
+### How a package reaches the screen
+
+- **Commands.** A runnable package's commands are published to the `/` menu and to the
+  line classifier (so `/name` is a command, not an unknown word). They run on a worker,
+  never on the render loop. The answer is a `chat.note`.
+- **`chat.note`.** The host's answer to a command of the user's. A role of its own: it
+  is drawn like the other local lines, never sent to the model, never saved to the
+  session, and styled by the `chat.note.*` tokens.
+- **Rules.** `input.pre` runs on a worker for a plain-text line headed to the model,
+  before the line is submitted, within the budget in `input.pre` above. A line
+  that starts with `/` never reaches a rule. The bar is cleared when the rules start; a
+  second line sent while they still run is not sent and gets a local warning asking
+  the user to press Enter again.
+- **Unknown `/word`.** A `/…` line that is no registered command is a local warning and
+  is never sent to the model; `/send <text>` is the explicit send (Phase 0).
 
 ## Phases
 
-- **Phase 1** — `internal/ext/v2`: contract, strict validation, templates,
-  http/exec runners with their guards, outcome parsing, the `input.pre`
-  pipeline. Pure and fully tested; no UI wiring.
-- **Phase 2** — wiring: load packages, register commands in the slash menu and
-  classifier, run `input.pre` in the loop, `say:/open:/set:` actions, `/ui`
-  and `ui_edit` verbs to create / modify / disable / remove a package, consent.
-- **Later** — factory commands as packages, tools and events artifacts, panels,
-  `service` operations (voice).
+- **Phase 0** — done (#255): a `/…` line is never sent to the model by accident.
+- **Phase 1** — done: `internal/ext/v2`: contract, strict validation, templates,
+  http/exec runners with their guards, outcome parsing, the `input.pre` pipeline.
+- **Phase 2** — done: package store and hash-bound grants; `chat.note`; package commands
+  in the menu, classifier and workers; `input.pre` in the loop; `/package`;
+  `say:`/`open:`/`set:`; `ui_edit` `packages` verbs with consent and undo.
+- **Later (not started)** — factory commands as packages, tools and events artifacts,
+  panels, `service` operations (voice).
