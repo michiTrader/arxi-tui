@@ -581,7 +581,10 @@ line reminder; the guide is one `ui_guide` tool call away if the model needs it 
 
 - A request that failed or was cancelled stays in the history, with a note saying it got no
   reply, so after switching model and typing "reintenta" the new model knows what to retry.
-- Answered turns that used tools carry a one-line digest (`[Tools used for this reply: ...]`).
+- The tools an answered turn used are listed in the system prompt of the following turns (the
+  request, shortened, and the tools; the last 12 turns), not appended to the replies, so the model
+  knows what was really done without learning to write such a footer itself. `/clear` forgets
+  the list; a light turn ("hola") carries none.
 - Resumed conversations (`/resume`) rebuild the same history, unanswered requests included.
 - The model is told where it runs: OS and architecture, the project folder, the home folder
   and the shell `run` uses (`cmd`, PowerShell, `sh`), plus a Windows reminder to use `dir`,
