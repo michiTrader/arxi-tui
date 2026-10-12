@@ -203,11 +203,24 @@ func TestAgentCannotChangeAProjectPackage(t *testing.T) {
 	t.Chdir(t.TempDir())
 	r := newPkgRig(t, "full access")
 	cwd, _ := os.Getwd()
+	// The project's settings folder must exist before projectPackagesDir names a
+	// packages folder inside it; without it the helper answers "" and the file would
+	// land loose in the working directory, a package the interface never sees.
+	if err := os.MkdirAll(filepath.Join(cwd, projectDirName), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(projectPackagesDir(cwd), "proj.json")
+	if path == "proj.json" {
+		t.Fatal("the project packages folder was not found, so this test would prove nothing")
+	}
 	write(t, path, pkgDoc("proj", echoPkg), 0o644)
+	if _, ok := loadAllPackages(cwd, behaviour{}).find("proj"); !ok {
+		t.Fatal("the project package is not loaded, so refusing it would be for another reason")
+	}
 	for _, args := range []string{`{"packages":[{"remove":"proj"}]}`, `{"packages":[{"disable":"proj"}]}`, `{"packages":[{"enable":"proj"}]}`} {
-		if res := r.edit(t, args, true); res.OK {
-			t.Errorf("%s changed a project package: %+v", args, res)
+		res := r.edit(t, args, true)
+		if res.OK || !strings.Contains(res.Text, "belongs to the project folder") {
+			t.Errorf("%s: want a refusal that names the project folder, got %+v", args, res)
 		}
 	}
 	if _, err := os.Stat(path); err != nil {
