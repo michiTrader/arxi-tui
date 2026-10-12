@@ -384,6 +384,21 @@ func validateActions(who string, list actionList, allowExt bool, self string) er
 			if !allowExt {
 				return fmt.Errorf("%s: %q routes to a plugin without a keypress of its own; bind it to a key or a command instead", who, a)
 			}
+		case scene.ActionOpen:
+			// allowExt is true exactly where a keypress or a typed command starts the
+			// action, which is the only place an address may be opened from.
+			if !allowExt {
+				return fmt.Errorf("%s: %q would open your browser from a hook, which fires with no key pressed; bind it to a key or a command instead", who, a)
+			}
+		case scene.ActionSet:
+			vals, _ := hookValues(act.Setting)
+			if !contains(vals, act.Arg) {
+				return fmt.Errorf("%s: %q: %s is never %q; its values are %s", who, a, act.Setting, act.Arg, strings.Join(vals, ", "))
+			}
+		case scene.ActionSay:
+			if utf8.RuneCountInString(act.Arg) > 400 {
+				return fmt.Errorf("%s: %q is longer than 400 characters", who, a)
+			}
 		case scene.ActionCmd:
 			if !strings.HasPrefix(act.Arg, "/") {
 				return fmt.Errorf("%s: %q runs a line as if you typed it, so it starts with '/': write \"cmd:/%s\"", who, a, act.Arg)
@@ -641,6 +656,19 @@ func setActiveBehaviour(b behaviour) {
 		}
 		cmds = append(cmds, fold.SlashMatch{Name: c.Name, Category: cat, Description: desc})
 	}
+	// The commands of the packages the user approved sit in the same menu, after their
+	// own. A name the user's behaviour already took is theirs: packages are checked
+	// against it when they load, and the first row of a name is the one kept here too.
+	taken := map[string]bool{}
+	for _, c := range cmds {
+		taken[c.Name] = true
+	}
+	for _, r := range packageRows() {
+		if !taken[r.Name] {
+			taken[r.Name] = true
+			cmds = append(cmds, r)
+		}
+	}
 	fold.SetUserCommands(cmds)
 }
 
@@ -757,7 +785,7 @@ func behaviourGuide(b behaviour) string {
       Appear in the / menu and run when picked. The name cannot be an existing command.
   hooks       [{"on":"effort","is":"max","do":["cmd:/ui style status header"]}]
       on is effort, mode or style; is is one of its values (effort also has "none" for cleared) or left out for any change. Hooks fire when the user changes the setting, never when an action did, so nothing loops.
-  An action is one of: cmd:/<line typed as the user would type it>, focus:<node id>, ext:<plugin-id>:<action> (keys and commands only; plugins are installed with /ui plugin add <url> and ask the user's consent). answer: is not allowed here.
+  An action is one of: cmd:/<line typed as the user would type it>, focus:<node id>, say:<text shown to the user, never sent to the model>, set:<setting>=<value> (effort, mode or style with one of its values, e.g. set:effort=max), open:<https address> (keys and commands only, never a hook; the host must be in permissions.open of a package the user approved), ext:<plugin-id>:<action> (keys and commands only; plugins are installed with /ui plugin add <url> and ask the user's consent). answer: is not allowed here.
   A key, a command or a hook can be removed with null (keys) or by sending the list without it. Changes to keys, commands and hooks are always put to the user, even in full access, because they decide what their own keyboard does later.
   The user types the common ones themselves: /ui animate <name> <colour,colour,...> [fps=N] [spread=N] [diagonal|radial|...] [bold] | off, /ui key <key> <action...> | off, /ui menukeys <action> <key...> | off.
 

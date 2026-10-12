@@ -395,6 +395,9 @@ func SOBRIA() *Theme {
 		// A command the user typed in front of a message (/ui ...): its own colour and
 		// italics, so what addressed the app reads apart from what was said to the model.
 		"chat.command": {FG: ui.MustHex("#5eead4"), Attrs: ui.AttrItalic},
+		// What a command of the user's answered: the host speaking, so neither the
+		// agent's colour nor the amber of a warning.
+		"chat.note": {FG: ui.MustHex("#9ad1c4")},
 		// A tool call the agent made: a blue dot and a bold name, with what came of
 		// it in grey underneath (red when the tool refused or failed).
 		"chat.tool":          {Attrs: ui.AttrBold},

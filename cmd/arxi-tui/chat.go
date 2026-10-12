@@ -100,6 +100,9 @@ type chatSession struct {
 	// without an answer (cancelled, failed) can still be put in the history.
 	turnText  string
 	turnTools []string
+	// toolLog is what the answered turns of this conversation did, for the system prompt
+	// (chat_history.go). Like the history it belongs to the conversation, so reset() ends it.
+	toolLog []toolRecord
 	// uiMode is the interface conversation: once the user has said /ui, the guide and the
 	// tools ride with every message after it, so they can go on talking about the
 	// interface without repeating the switch. It belongs to the conversation, so
@@ -389,7 +392,7 @@ func (c *chatSession) noteModelSwitch(ctx context.Context, to string) string {
 	c.modelNote = "The user switched the model to " + to + "."
 	if from != "" {
 		line = "model changed from " + from + " to " + to
-		c.modelNote = "The user switched the model from " + from + " to " + to + ". Earlier replies in this conversation were written by " + from + ", not by you, but the conversation is yours to carry on: a request marked as unanswered, or one the user asks to retry, is yours to do. The \"Tools used\" lines say what was really done."
+		c.modelNote = "The user switched the model from " + from + " to " + to + ". Earlier replies in this conversation were written by " + from + ", not by you, but the conversation is yours to carry on: a request marked as unanswered, or one the user asks to retry, is yours to do. The list of tools used in earlier turns, below, says what was really done."
 	}
 	c.mu.Unlock()
 	c.post(ctx, gen, "chat.warn", map[string]any{"text": line})
@@ -442,6 +445,7 @@ func (c *chatSession) reset() {
 	c.mu.Lock()
 	c.gen++
 	c.history = nil
+	c.toolLog = nil
 	c.uiMode = false
 	c.guideSent = false
 	c.busy = false
@@ -562,6 +566,15 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 	system := chatSystem()
 	if n := c.takeModelNote(); n != "" {
 		system += " " + n
+	}
+	// A turn that carries no history (a light one) carries no record of it either.
+	if len(hist) > 0 {
+		c.mu.Lock()
+		recs := append([]toolRecord(nil), c.toolLog...)
+		c.mu.Unlock()
+		if t := toolRecordsText(recs); t != "" {
+			system += "\n\n" + t
+		}
 	}
 	if workdir != "" {
 		// Read on every turn, so an edit to the file counts from the next question;
@@ -691,7 +704,13 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		c.mu.Unlock()
 		return
 	}
-	c.history = append(c.history, driver.ChatTurn{Role: "user", Text: text}, driver.ChatTurn{Role: "assistant", Text: answeredText(res.Text, c.turnTools)})
+	c.history = append(c.history, driver.ChatTurn{Role: "user", Text: text}, driver.ChatTurn{Role: "assistant", Text: res.Text})
+	if rec, ok := newToolRecord(text, c.turnTools); ok {
+		c.toolLog = append(c.toolLog, rec)
+		if len(c.toolLog) > toolRecordsMax {
+			c.toolLog = append([]toolRecord(nil), c.toolLog[len(c.toolLog)-toolRecordsMax:]...)
+		}
+	}
 	c.mu.Unlock()
 	model := res.Model
 	if res.Provider != "" && !strings.Contains(model, "/") {

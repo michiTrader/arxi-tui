@@ -372,3 +372,19 @@ func TestLastContextPrefersTheCoresLastAskOverTheSumOfTheTurn(t *testing.T) {
 		t.Errorf("an older core reports no context_tokens; LastContext = %d, want in+out 160500", s.LastContext)
 	}
 }
+
+// What a command of the user's answered is a line of the conversation under its own
+// role: it is not an answer (copy and the model never see it) and not a warning.
+func TestNoteIsALineOfItsOwn(t *testing.T) {
+	if !Handles("chat.note") {
+		t.Fatal("chat.note must be in the handled set, or the fold would report it as an unknown event")
+	}
+	s := Fold([]Event{
+		{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "hi"}},
+		{Type: "chat.note", Seq: 2, Payload: map[string]any{"text": "one\ntwo"}},
+		{Type: "chat.note", Seq: 3, Payload: map[string]any{"text": ""}},
+	})
+	if len(s.History) != 2 || s.History[1].Role != "note" || s.History[1].Text != "one\ntwo" {
+		t.Fatalf("history = %+v, want the prompt and one note that keeps its line break", s.History)
+	}
+}

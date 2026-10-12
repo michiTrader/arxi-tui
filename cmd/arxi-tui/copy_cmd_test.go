@@ -205,3 +205,16 @@ func TestCopyPickedReportsWhatWasCopied(t *testing.T) {
 		t.Errorf("empty = %q", msg)
 	}
 }
+
+// What a command of the user's answered is not part of the conversation with the model:
+// copying it would paste text the model never said.
+func TestCopyIgnoresNotes(t *testing.T) {
+	h := []fold.ChatLine{{Role: "user", Text: "q"}, {Role: "note", Text: "a note"}, {Role: "assistant", Text: "answer"}}
+	all, _, _ := copyText(h, "all")
+	if strings.Contains(all, "note") {
+		t.Errorf("copy all included a note: %q", all)
+	}
+	if got := answers(h); len(got) != 1 || got[0] != "answer" {
+		t.Errorf("answers = %q, want only the assistant's", got)
+	}
+}

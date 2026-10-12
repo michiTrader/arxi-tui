@@ -157,3 +157,31 @@ func TestLocalWarningDisappearsWhenTheLogIsReplaced(t *testing.T) {
 		t.Errorf("history after the log was replaced = %+v, want empty", h)
 	}
 }
+
+func TestLocalNoteKeepsLinesAndIsMadeSafe(t *testing.T) {
+	e := localNote("a\x1b[31m\r\nb\tc\x1b]0;x\x07\nevil\u202egpj\x00")
+	if e.Type != "chat.note" || e.Actor != "host" {
+		t.Fatalf("event = %+v, want a chat.note from the host", e)
+	}
+	if got, want := warnText(t, e), "a\nb    c\nevilgpj"; got != want {
+		t.Errorf("note text = %q, want %q", got, want)
+	}
+}
+
+func TestLocalNoteIsBounded(t *testing.T) {
+	long := warnText(t, localNote(strings.Repeat("x", localNoteMax*3)))
+	if n := len([]rune(long)); n > localNoteMax+1 || !strings.HasSuffix(long, "…") {
+		t.Errorf("a long note has %d runes and ends %q; want it cut with a mark", n, long[len(long)-3:])
+	}
+	many := warnText(t, localNote(strings.Repeat("l\n", localNoteLines*3)))
+	if n := strings.Count(many, "\n") + 1; n > localNoteLines || !strings.HasSuffix(many, "…") {
+		t.Errorf("a note of many lines has %d lines; want at most %d with a mark", n, localNoteLines)
+	}
+}
+
+func TestAppendLocalNoteContinuesTheLog(t *testing.T) {
+	got := appendLocalNote([]fold.Event{{Type: "run.prompt", Seq: 4}}, "x")
+	if len(got) != 2 || got[1].Type != "chat.note" || got[1].Seq != 5 {
+		t.Errorf("log = %+v", got)
+	}
+}

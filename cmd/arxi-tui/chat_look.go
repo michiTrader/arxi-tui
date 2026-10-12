@@ -46,6 +46,7 @@ func chatLookKeys(add func(key, def, role string, paragraph bool)) {
 	add("chat.user.more", d.UserMore, "chat: the row that says a message of yours was cut; {n} is the rows hidden, {hint} the expand hint", false)
 	add("chat.error.marker", d.ErrorMarker, "chat: the mark before an error", false)
 	add("chat.warn.marker", d.WarnMarker, "chat: the mark before a warning", false)
+	add("chat.note.marker", d.NoteMarker, "chat: the mark before what one of your own commands answered", false)
 	add("chat.answer.indent", strconv.Itoa(d.AssistantIndent), "chat: columns the agent's answers are indented", false)
 	add("chat.turn_gap", strconv.Itoa(d.TurnGap), "chat: blank rows between one turn and the next (0 packs the conversation)", false)
 	add("chat.usage_gap", strconv.Itoa(d.UsageGap), "chat: blank rows between an answer and its time/tokens line", false)
@@ -89,6 +90,7 @@ func chatLook() *engine.ChatLook {
 		UserMore:        uiText("chat.user.more"),
 		ErrorMarker:     uiText("chat.error.marker"),
 		WarnMarker:      uiText("chat.warn.marker"),
+		NoteMarker:      uiText("chat.note.marker"),
 		UsageFormat:     uiText("chat.usage.format"),
 		UsageTokens:     uiText("chat.usage.tokens"),
 		OutputRows:      n(uiText("tool.output_rows"), d.OutputRows),

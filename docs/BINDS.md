@@ -110,7 +110,7 @@ events from the log file the core writes.
 
 | bind | type | source events / payload | update timing | empty-state |
 |---|---|---|---|---|
-| `chat.history` | markdown text stream | fold of `run.prompt.text` + `llm.response.text` + `chat.error.text` + `chat.warn.text` + `chat.cancelled.text` + `chat.tool.{name,arg,ok,summary,diff}`. The user's turn carries a `┃ ` marker; an answer is drawn two columns in (the width of that marker) and, when the event reported usage, is followed by a dim line such as `2s (↑2 ↓57)` (duration, tokens sent ↑, tokens received ↓) under the `chat.usage` token; a failed request has role `error` and a `✗ ` marker under `chat.error` (`agent.failed.error` lands the same way); a warning has role `warn` and a `! ` marker under `chat.warn`; a tool call the agent made (`chat.tool`) has role `tool` and is drawn as a `● ` dot that shows how the call went (white `chat.tool.dot.ok` when it worked, red `chat.tool.dot.fail` when it failed or was refused, blue `chat.tool.dot` while it waits for the user's answer), the tool's name in bold (`chat.tool`) and its argument, then the outcome under a dim `└ ` elbow (`chat.tool.result`, or `chat.tool.fail` when the tool refused), with the calls of one answer stacked and no blank row between them; a change waiting for the user (`chat.approval`, role `approval`) is drawn as the tool line it will become with up to 40 diff rows and the amber question `Allow this change?  y yes · n no (Esc)` (`chat.approval` token), and goes away at the next event; a `run` (a command the model ran) draws its output under the outcome (`Exit 0 in 2s`): the first 5 rows then `… +N lines (ctrl+o to expand)`, and a waiting command is asked as `Allow this command?`; `Ctrl+O` switches the whole conversation between this cut view and the full output and diffs (host view state, `Renderer.ExpandTools`, not part of the fold); a `write` or `edit` that changed a file also draws its diff under the outcome (at most 14 rows then `… +N more lines (ctrl+o to expand)`; removed rows red `chat.diff.del`, added rows green `chat.diff.add`, context grey `chat.diff.ctx`); a turn the user stopped (`chat.cancelled`) lands as an `error` line reading `✗ request failed: Cancelled`, without repeating the prompt | on every `run.prompt`, `llm.response`, `chat.error`, `chat.warn`, `chat.tool` or `chat.cancelled` | empty string — the prompt line renders alone |
+| `chat.history` | markdown text stream | fold of `run.prompt.text` + `llm.response.text` + `chat.error.text` + `chat.warn.text` + `chat.note.text` + `chat.cancelled.text` + `chat.tool.{name,arg,ok,summary,diff}`. The user's turn carries a `┃ ` marker; an answer is drawn two columns in (the width of that marker) and, when the event reported usage, is followed by a dim line such as `2s (↑2 ↓57)` (duration, tokens sent ↑, tokens received ↓) under the `chat.usage` token; a failed request has role `error` and a `✗ ` marker under `chat.error` (`agent.failed.error` lands the same way); a warning has role `warn` and a `! ` marker under `chat.warn`; a note (what one of the user's own commands answered, role `note`) has a `· ` marker (text `chat.note.marker`) under `chat.note`, keeps its line breaks and is never sent to the model or copied; a tool call the agent made (`chat.tool`) has role `tool` and is drawn as a `● ` dot that shows how the call went (white `chat.tool.dot.ok` when it worked, red `chat.tool.dot.fail` when it failed or was refused, blue `chat.tool.dot` while it waits for the user's answer), the tool's name in bold (`chat.tool`) and its argument, then the outcome under a dim `└ ` elbow (`chat.tool.result`, or `chat.tool.fail` when the tool refused), with the calls of one answer stacked and no blank row between them; a change waiting for the user (`chat.approval`, role `approval`) is drawn as the tool line it will become with up to 40 diff rows and the amber question `Allow this change?  y yes · n no (Esc)` (`chat.approval` token), and goes away at the next event; a `run` (a command the model ran) draws its output under the outcome (`Exit 0 in 2s`): the first 5 rows then `… +N lines (ctrl+o to expand)`, and a waiting command is asked as `Allow this command?`; `Ctrl+O` switches the whole conversation between this cut view and the full output and diffs (host view state, `Renderer.ExpandTools`, not part of the fold); a `write` or `edit` that changed a file also draws its diff under the outcome (at most 14 rows then `… +N more lines (ctrl+o to expand)`; removed rows red `chat.diff.del`, added rows green `chat.diff.add`, context grey `chat.diff.ctx`); a turn the user stopped (`chat.cancelled`) lands as an `error` line reading `✗ request failed: Cancelled`, without repeating the prompt | on every `run.prompt`, `llm.response`, `chat.error`, `chat.warn`, `chat.note`, `chat.tool` or `chat.cancelled` | empty string — the prompt line renders alone |
 | `thinking.text` | text | `chat.thinking` payload `text`: the model's reasoning as the provider streams it, fragments joined and whitespace collapsed to one line, only the last 240 characters kept (cut at a word). Cleared by `run.prompt`, `llm.response`, `agent.turn_done`, `agent.failed`, `chat.error` and `chat.cancelled`. The Thinking line scrolls it sideways (`scroll`) when it is wider than the room after the label | on each `chat.thinking` while a turn is in flight | empty string — nothing to scroll; the line still draws its `host.thinking` label while `agent.working` holds |
 | `agent.working` | bool | `agent.activated` (→true), `agent.turn_done` (→false), `agent.failed` (→false) | on `agent.activated`/`turn_done`/`failed` | `false` — no member is active |
 | `agent.mode` | text | derived: `"live"` or `"sim"` from `run.started.simulated`, plus stage state from `stage.entered`/`stage.advanced` | on `run.started`, `stage.entered`, `stage.advanced` | `"idle"` before `run.started` lands |
@@ -164,6 +164,10 @@ it was typed, picked from the menu or pressed from a button:
 | a command the host runs (menu command, alias such as `/login`, or a command the user added) | the command runs locally |
 | `/help` | opens the command menu locally, with no call to the model |
 | `/focus <id>` | the `focus:` action typed by hand: one operation, one notice (`applyFocus`) |
+| `/package` | lists the packages found (user and project) with their state: `approved`, `not approved, not running`, `changed since you approved it, not running` or `switched off`; problems with a file are listed under it |
+| `/package show <id>` | what the package is and every power it has (`Capabilities()`), in plain words |
+| `/package approve <id>` | shows the same and the code to type; `/package approve <id> <code>` approves exactly the version the code was shown for (the code is the start of the hash a grant is bound to, so an edit between looking and typing is refused). Only a line the user typed decides: a shortcut, button, user command or hook that runs `/package approve` or `revoke` is answered with a warning and changes nothing |
+| `/package revoke <id>` | withdraws the approval |
 | a registered command with no behaviour yet (`/surface`) | a local warning, "is not available yet. Nothing was sent." The text stays in the input |
 | anything else | a local warning, "Unknown command /x. Nothing was sent.", pointing at `/help` and `/send`. The text stays in the input and keeps the focus, and is never cleared automatically |
 
@@ -171,6 +175,12 @@ A local warning is a `chat.warn` line appended to the host's own log, so it is
 not in the model's history, not saved with the session, not copied by `/copy`,
 and goes away with `/clear`. A partial name that still has menu rows (`/mod`) is
 a menu pick, not a warning. Picking a menu row never sends the word on it.
+
+What a command of the user's answers (a package command's `say`) is a `chat.note`
+line, appended the same way: same exclusions, but it keeps its line breaks and
+is drawn with its own marker and token. The text is made safe first (escape
+sequences, control and bidi characters removed) and cut to 4000 characters and
+40 lines.
 
 | bind | type | view mechanism | update timing | empty-state |
 |---|---|---|---|---|
@@ -515,6 +525,18 @@ resolved-args map rides on the same template-row dispatch H8 parked (Scene 9's
 `cmd:/agent {row.id}`).
 
 
+Three more prefixes carry the extensibility system (docs/DESIGN-EXTENSIBILITY.md).
+Each is accepted only with validation, and none of them ever reaches the model:
+
+| prefix | argument | effect |
+|---|---|---|
+| `say:` | text, e.g. `say:Saved` | show the text in the conversation as a `chat.note` (§4.3.1, the paragraph on what a user command answers). It is sanitised (escape sequences, control and bidi characters removed) and bounded like any note, and it is never sent to the model. At most 400 characters in a user command, key or hook. |
+| `open:` | an address, e.g. `open:https://docs.example.com/start` | send the user's browser to the address. The address is `https` only, with no user name or password, no port, no IP address or bare name (`localhost`), no space, control or non-ASCII character, at most 2000 characters. The grammar is one reader (`scene.ParseOpenURL`) used at load and at press time. The host adds two rules the scene cannot know: the host must be listed in `permissions.open` of an **approved** package (`/package approve`), and the action is refused when a **hook** runs it (a hook fires with no key pressed). The browser is started by argv (`xdg-open`, `open`, `rundll32`), never through a shell, and the user is always told the full address. |
+| `set:` | `<setting>=<value>`, e.g. `set:effort=max` | change one of the settings a hook can watch: `effort`, `mode`, `style`. The value must be one that setting takes (checked when a user command, key or hook is validated; the host re-checks it, e.g. an effort level the model does not take is refused with the usual message). A change a hook makes fires no further hook. |
+
+A `say:`/`open:`/`set:` pressed on a scene button reaches the loop's queue as the
+action itself, not as a typed line, and a `cmd:` line cannot pose as one.
+
 Argument interpolation reuses §4.7 unchanged: inside a `row_template`, an
 `on_press` argument may contain `{row.<field>}`, replaced by the current
 element's field at press time (Q20). Scene 9's row is `cmd:/agent {row.id}`.
@@ -535,13 +557,16 @@ refinement so no golden depends on a field the engine does not yet read.
 Refusals, each addressed with `file:line`:
 
 - An `on_press` whose prefix is outside the closed set
-  (`cmd:`/`focus:`/`answer:`/`ext:`): refusal naming the node and listing the
-  legal prefixes.
+  (`cmd:`/`focus:`/`answer:`/`ext:`/`say:`/`open:`/`set:`): refusal naming the
+  node and listing the legal prefixes.
 - An `on_press` with a prefix but an empty argument (`cmd:`, `focus:`, `answer:`
   with nothing after the colon): refusal, because a command/id/kind is the whole
   content of the action.
 - An `answer:` whose kind is outside the closed kind set: refusal naming the kind
   and the legal set, the same net a mistyped bind gets.
+- An `open:` that is not a plain `https` host address, or a `set:` that is not
+  `<setting>=<value>` with a setting from `effort`, `mode`, `style`, or a `say:`
+  with no text: refusal, each naming what to write instead.
 - An `ext:` missing either segment (`ext:` with no id, `ext::action` with an
   empty id, or `ext:id` / `ext:id:` with no action): refusal, because the
   `<plugin-id>` and `<action>` are both required to build the `action` frame.

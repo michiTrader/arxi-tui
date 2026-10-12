@@ -15,10 +15,13 @@ import (
 //
 //   - a request that got no answer stays in the history with a note saying so, and the
 //     tools that did run before it stopped;
-//   - an answer is followed by a one-line digest of the tools used to produce it.
+//   - the tools that produced an answer are listed in the system prompt of the next
+//     turns (toolRecord), not pasted after the answer. A bracketed footer on every
+//     earlier reply is a pattern the model copies into its own replies; a record the
+//     app keeps is read as what it is.
 //
-// Both are small (a line each), and both are what lets a different model, or the same one
-// a minute later, carry on instead of starting from nothing.
+// Both are small, and both are what lets a different model, or the same one a minute
+// later, carry on instead of starting from nothing.
 
 const (
 	digestMaxTools = 12
@@ -53,12 +56,43 @@ func toolDigest(tools []string) string {
 	return strings.Join(tools, "; ")
 }
 
-// answeredText is the assistant's history entry for a turn that got an answer.
-func answeredText(answer string, tools []string) string {
-	if d := toolDigest(tools); d != "" {
-		return answer + "\n\n[Tools used for this reply: " + d + "]"
+// toolRecord is what one answered turn did: the request, shortened, and the tools used.
+type toolRecord struct {
+	ask   string
+	tools []string
+}
+
+const (
+	toolRecordsMax = 12 // answered turns remembered; the oldest go first
+	toolRecordAsk  = 60 // runes of the request kept
+)
+
+// newToolRecord shortens the request and keeps the tools. It is empty when the turn used
+// none, which is what most turns are.
+func newToolRecord(ask string, tools []string) (toolRecord, bool) {
+	if len(tools) == 0 {
+		return toolRecord{}, false
 	}
-	return answer
+	ask = strings.Join(strings.Fields(ask), " ")
+	if r := []rune(ask); len(r) > toolRecordAsk {
+		ask = string(r[:toolRecordAsk]) + "…"
+	}
+	return toolRecord{ask: ask, tools: append([]string(nil), tools...)}, true
+}
+
+// toolRecordsText is the paragraph the system prompt carries, "" when there is nothing
+// to say. It says what it is, so the model neither repeats it in its replies nor takes
+// it for something the user wrote.
+func toolRecordsText(recs []toolRecord) string {
+	if len(recs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Tools used in earlier turns of this conversation, kept by the app (not part of your replies; do not copy this list into them):")
+	for _, r := range recs {
+		b.WriteString("\n- \"" + r.ask + "\": " + toolDigest(r.tools))
+	}
+	return b.String()
 }
 
 // unansweredText is the assistant's history entry for a request that got no answer. The

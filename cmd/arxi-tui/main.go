@@ -982,11 +982,31 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		}
 	}
 	effBeh := func() behaviour { return mergeBehaviour(userBeh, proj.beh) }
+	// The packages (packages.go) are read for the everyday interface only, for the same
+	// reason the user's layers are: -raw and -scene boot exactly what was asked for. A
+	// package that the user has not approved is listed and does nothing.
+	var pkgs packageSet
+	pkgRunner := newPackageRunner(pkgs)
+	pkgDoneCh := make(chan pkgOutcome, 1)
+	pipeDoneCh := make(chan pipeOutcome, 1)
+	pkgBusy, pipeBusy := false, false
 	activate := func() {
 		setActiveTexts(mergeTexts(userWords, proj.words))
+		setActivePackages(pkgs)
 		setActiveBehaviour(effBeh())
 	}
-	activate()
+	reloadPackages := func() {
+		pkgs = packageSet{}
+		if persistsScene(doc) {
+			pkgs = loadAllPackages(cwd, effBeh())
+		}
+		pkgRunner = newPackageRunner(pkgs)
+		activate()
+	}
+	reloadPackages()
+	for _, pr := range pkgs.problems {
+		collected = appendLocalWarning(collected, "packages: "+pr)
+	}
 	belowUser := theme
 	recomposeTheme := func() {
 		belowUser = composeTheme(baseTheme, pluginLayers)
@@ -1096,17 +1116,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// keepScene saves the interface after a change to the document, when it is the
 	// user's everyday one. A failed save is said, never swallowed: the change is on
 	// screen but will not survive the session, and the user should know that.
-	keepScene := func(summary string) {
+	keepSceneWith := func(summary string, before packageDelta) {
 		if !persistsScene(doc) {
 			sceneNotice = summary + " (this scene was started with -scene, so the change is not saved)"
 			return
 		}
-		if err := saveInterface(doc, userCols, userWords, userBeh); err != nil {
+		if err := saveInterfaceWith(doc, userCols, userWords, userBeh, before); err != nil {
 			sceneNotice = summary + "; it could not be saved: " + err.Error()
 			return
 		}
 		sceneNotice = summary + " · saved (/ui undo takes it back)"
 	}
+	keepScene := func(summary string) { keepSceneWith(summary, nil) }
 
 	// ---- what the user's behaviour runs (behaviour.go) ----------------------------
 	//
@@ -1234,6 +1255,28 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			case scene.ActionExt:
 				if err := pluginActions.SendAction(act.PluginID, act.Arg, nil); err != nil {
 					sceneNotice = err.Error()
+				}
+			case scene.ActionSay:
+				collected = appendLocalNote(collected, act.Arg)
+			case scene.ActionOpen:
+				if why := openRefusal(act, q.hook, pkgs); why != "" {
+					collected = appendLocalWarning(collected, why)
+					break
+				}
+				note, warn := runOpen(act)
+				if warn != "" {
+					collected = appendLocalWarning(collected, warn)
+				} else {
+					collected = appendLocalNote(collected, note)
+				}
+			case scene.ActionSet:
+				switch act.Setting {
+				case "effort":
+					setEffort(act.Arg, q.hook)
+				case "mode":
+					setMode(act.Arg, q.hook)
+				case "style":
+					setStyle(act.Arg, q.hook)
 				}
 			case scene.ActionCmd:
 				f := strings.Fields(act.Arg)
@@ -2044,7 +2087,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								userCols = cols
 								userWords = words
 								userBeh = bh
-								activate()
+								reloadPackages()
 								recomposeTheme()
 							}
 							input, caret = "", 0
@@ -2272,6 +2315,21 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							caret = len([]rune(input))
 							slashSel = 0
 							modelMn.loaded = false
+						} else if pc, isPkgCmd := packageLineOf(input, slashSel, slashCat); isPkgCmd && ev.Key.Type == term.KeyEnter {
+							// `/package` lists the packages and `/package approve|revoke` records
+							// the user's decision (package_cmd.go). A line the behaviour layer
+							// synthesised may look but never decide: synth says which this is.
+							dec := runPackageCommand(pc, pkgs, cwd, synth)
+							if dec.Note != "" {
+								collected = appendLocalNote(collected, dec.Note)
+							}
+							if dec.Warn != "" {
+								collected = appendLocalWarning(collected, dec.Warn)
+							}
+							if dec.Changed {
+								reloadPackages()
+							}
+							input, caret, slashSel = "", 0, 0
 						} else if verb, isProj := projectLine(input, slashSel, slashCat); isProj && ev.Key.Type == term.KeyEnter {
 							// `/project` reports, `/project trust` lets this folder's
 							// .arxi settings load (now and on later starts), and
@@ -2352,12 +2410,29 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							input = ""
 							caret = 0
 							slashSel = 0
-						} else if sc := classifySlash(input, userCommandNames(effBeh())); ev.Key.Type == term.KeyEnter && sc.refusesEnter(input) {
+						} else if name, args, isPkg := pkgs.packageLine(input, slashSel, slashCat); ev.Key.Type == term.KeyEnter && isPkg {
+							// Enter on a command a package added. It runs on a worker, so a slow
+							// program or service never holds the interface up, and what it said
+							// comes back through pkgDoneCh below.
+							p, c, _ := pkgs.commandOwner(name)
+							if pkgBusy {
+								collected = appendLocalWarning(collected, "/"+cleanWarnText(name)+": another package command is still running; wait for it to finish. Nothing ran.")
+							} else {
+								pkgBusy = true
+								sceneNotice = "/" + cleanWarnText(name) + ": running …"
+								startPackageCommand(ctx, pkgRunner, p, c, args, pkgDoneCh)
+								input, caret, slashSel = "", 0, 0
+							}
+						} else if sc := classifySlash(input, knownCommandNames(effBeh())); ev.Key.Type == term.KeyEnter && sc.refusesEnter(input) {
 							// A "/" line that is not a command the host runs is
 							// never the model's: it gets a local warning and stays
 							// in the buffer, with the focus on the input, so the
 							// user can fix it or send it on purpose with /send.
-							collected = appendLocalWarning(collected, sc.warning())
+							warn := sc.warning()
+							if why, inert := pkgs.inertOwner(sc.Name); inert && sc.Kind == slashUnknown {
+								warn = why + " Nothing was sent. Send this line on purpose with /send <text>."
+							}
+							collected = appendLocalWarning(collected, warn)
 						} else if rest, isHelp := stripLeadingVerb(input, "help"); ev.Key.Type == term.KeyEnter && isHelp && rest == "" {
 							// `/help` opens the command menu: the same list a bare "/"
 							// shows, with no call to the model. Typing it and picking it
@@ -2448,7 +2523,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if picked != "" {
 								enqueue(actionList{"cmd:" + picked}, false)
 							}
-						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) { enqueue(actionList{"cmd:" + line}, false) }, ctx, drv); handled {
+						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) {
+							if raw, isRaw := strings.CutPrefix(line, rawActionMark); isRaw {
+								enqueue(actionList{raw}, false)
+								return
+							}
+							enqueue(actionList{"cmd:" + line}, false)
+						}, ctx, drv); handled {
 							// H8 press routing: Tab/Shift-Tab move the ui.focus
 							// cursor over the pressable nodes (ordinary buttons and
 							// each instantiated template row), and Enter on a
@@ -2480,6 +2561,19 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								dir = 1
 							}
 							caret = engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w), dir)
+						} else if line := strings.TrimSpace(input); ev.Key.Type == term.KeyEnter && !isNewlineGesture(ev.Key) && line != "" && classifySlash(line, nil).Kind == slashNone && pkgs.hasRules() {
+							// A plain-text line headed to the model goes through the input.pre
+							// rules of the approved packages first (internal/ext/v2/pipeline.go).
+							// They run on a worker, bounded to two seconds in all; the line is
+							// sent, reworded, held or consumed when they answer (pipeDoneCh).
+							// A "/" line never gets here: commands are the host's, not a rule's.
+							if pipeBusy {
+								collected = appendLocalWarning(collected, "The rules are still checking the previous line. Nothing was sent; press Enter again in a moment.")
+							} else {
+								pipeBusy = true
+								startInputPre(ctx, pkgRunner, pkgs.runnablePackages(), line, pipeDoneCh)
+								input, caret = "", 0
+							}
 						} else {
 							input, caret = typeKey(input, caret, ev.Key, ctx, drv)
 						}
@@ -2787,8 +2881,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// applied over it, which would silently undo what the user did.
 			if req.base != doc || (req.colors != nil && !sameTokens(req.baseColors, userCols)) ||
 				(req.texts != nil && !sameTexts(req.baseTexts, userWords)) ||
-				(req.behChanged && !sameBehaviour(req.baseBeh, userBeh)) {
+				(req.behChanged && !sameBehaviour(req.baseBeh, userBeh)) ||
+				(req.pkg != nil && !req.pkg.fresh()) {
 				req.done <- errors.New("the interface changed while the question was open; read it again with ui_guide and redo the change")
+			} else if req.pkg != nil && !persistsScene(doc) {
+				req.done <- errors.New("packages belong to the everyday interface, and this one was started with -scene or -raw; nothing was changed")
+			} else if err := applyPackageEdit(req.pkg, cwd); err != nil {
+				req.done <- err
 			} else {
 				doc = req.doc
 				if req.colors != nil {
@@ -2804,8 +2903,65 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					activate()
 					recomposeTheme()
 				}
-				keepScene("the interface was changed")
+				var before packageDelta
+				if req.pkg != nil {
+					before = req.pkg.base
+				}
+				keepSceneWith("the interface was changed", before)
+				if req.pkg != nil {
+					reloadPackages()
+					for _, id := range req.pkg.put {
+						if p, ok := pkgs.find(id); ok && !p.Granted {
+							collected = appendLocalNote(collected, "The package "+cleanWarnText(id)+" was saved and does nothing until you approve it. Type /package approve "+cleanWarnText(id)+" to see what it can do.")
+						}
+					}
+				}
 				req.done <- nil
+			}
+			repaint()
+
+		case out := <-pkgDoneCh:
+			// A package command finished. What it said is a note of the host's own (never
+			// the model's), a failure is a warning, and text for the model goes out only
+			// when the package asked for that permission (RunCommand already checked).
+			pkgBusy = false
+			sceneNotice = ""
+			notes, warns, send := commandResult(out)
+			for _, n := range notes {
+				collected = appendLocalNote(collected, n)
+			}
+			for _, w := range warns {
+				collected = appendLocalWarning(collected, w)
+			}
+			if send != "" {
+				_ = drv.SubmitPrompt(ctx, send)
+			}
+			repaint()
+
+		case out := <-pipeDoneCh:
+			// The rules answered for a line the user sent.
+			pipeBusy = false
+			res := out.res
+			for _, n := range res.Notes {
+				who := strings.Trim(n.Package+"/"+n.Rule, "/")
+				if who != "" {
+					who += ": "
+				}
+				collected = appendLocalWarning(collected, "rule "+who+n.Message)
+			}
+			for _, say := range res.Say {
+				collected = appendLocalNote(collected, say)
+			}
+			switch {
+			case res.Blocked:
+				collected = appendLocalWarning(collected, "Held back by a rule: "+res.Reason+". Nothing was sent.")
+				if input == "" {
+					input, caret = out.original, len([]rune(out.original))
+				}
+			case res.Handled:
+				// A rule took the line and answered it; nothing goes to the model.
+			default:
+				_ = drv.SubmitPrompt(ctx, res.Line)
 			}
 			repaint()
 
@@ -3421,6 +3577,11 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, cat string) (str
 		// instead of running with nothing to send.
 		if name == "send" {
 			return "/send ", len("/send "), 0, fold.SlashAll, ""
+		}
+		// The same for a package command that needs words: it would only answer
+		// "needs more", so the line is left open for them.
+		if packageNeedsArgs(name) {
+			return "/" + name + " ", len("/" + name + " "), 0, fold.SlashAll, ""
 		}
 		// A row is a command, never a question: it does not go to the model.
 		// The pick becomes the exact command line and the loop runs it through

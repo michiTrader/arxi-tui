@@ -2,14 +2,18 @@ package scene
 
 import (
 	"fmt"
+	"net/url"
+	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // ActionKind is the closed prefix set of an on_press action (BINDS.md §4.8).
 //
 // It is a closed set because Q18's decision is that the action vocabulary is
 // closed per surface: a prefix outside this set is a load-time refusal, not a
-// silent no-op. The set is small on purpose — four live kinds — so the host's
+// silent no-op. The set is small on purpose — seven live kinds — so the host's
 // dispatch switch is exhaustive and a new kind is a signed change to this type,
 // never a string the host quietly ignores.
 type ActionKind int
@@ -30,7 +34,83 @@ const (
 	// dispatcher reports on, never a load-time refusal — the same split focus:
 	// already lives under (a focus: naming no node reports at press time).
 	ActionExt
+	// ActionSay shows a local message (say:Saved). The text is the host's own
+	// answer to the user: it is sanitised and bounded when shown and is never sent
+	// to the model. The scene layer checks only that there is text to show.
+	ActionSay
+	// ActionOpen sends the user's browser to a web address (open:https://example.com/).
+	// The grammar here is the part that needs no host state: https only, no
+	// credentials, a plain host name (no address, no port). Whether the host is one a
+	// package the user approved may open is a runtime concern, and so is the rule that
+	// a hook never opens anything; both are the host dispatcher's to refuse.
+	ActionOpen
+	// ActionSet changes one of the closed settings (set:effort=max). The scene layer
+	// checks the shape and the setting name; the values each setting takes belong to
+	// the host (the effort levels depend on the model in use), which refuses the rest.
+	ActionSet
 )
+
+// SetSettings are the settings a set: action may change, in a stable order. They are
+// the ones a hook can already watch, so the closed set is the same everywhere.
+func SetSettings() []string { return []string{"effort", "mode", "style"} }
+
+const (
+	// MaxOpenURL bounds an open: address.
+	MaxOpenURL = 2000
+	// MaxSetValue bounds the value of a set: action.
+	MaxSetValue = 32
+)
+
+var (
+	openHostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
+	setValueRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+)
+
+// ParseOpenURL checks an open: address and returns its host. It is the one reader of
+// what an address may be, so the validator at load and the host at press time (after
+// a {row.<field>} was expanded into it) cannot disagree. https only; no user or
+// password; a registered-looking name, never an IP address, a bare name such as
+// localhost, or a port; no whitespace or control characters.
+func ParseOpenURL(raw string) (string, error) {
+	if raw == "" {
+		return "", fmt.Errorf("open: needs an address; write open:https://example.com/")
+	}
+	if utf8.RuneCountInString(raw) > MaxOpenURL {
+		return "", fmt.Errorf("open: address is longer than %d characters", MaxOpenURL)
+	}
+	for _, r := range raw {
+		if unicode.IsControl(r) || unicode.IsSpace(r) || r == '\\' || r > unicode.MaxASCII {
+			return "", fmt.Errorf("open: address %q holds a space, control or non-ASCII character; write the address in its encoded form", raw)
+		}
+	}
+	if !strings.HasPrefix(raw, "https://") {
+		return "", fmt.Errorf("open: address %q must start with https://; no other scheme can be opened", raw)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", fmt.Errorf("open: address %q is not valid: %v", raw, err)
+	}
+	if u.User != nil || strings.Contains(strings.SplitN(strings.TrimPrefix(raw, "https://"), "/", 2)[0], "@") {
+		return "", fmt.Errorf("open: address %q carries a user name or password; an address that hides where it goes is refused", raw)
+	}
+	if u.Port() != "" || strings.Contains(u.Host, ":") {
+		return "", fmt.Errorf("open: address %q names a port; only the plain https address of a host can be opened", raw)
+	}
+	host := u.Hostname()
+	if !openHostRe.MatchString(host) || !hasLetter(host[strings.LastIndexByte(host, '.')+1:]) {
+		return "", fmt.Errorf("open: %q is not a host name (an IP address, localhost or a name with odd characters cannot be opened); write a name like example.com", host)
+	}
+	return host, nil
+}
+
+func hasLetter(s string) bool {
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' {
+			return true
+		}
+	}
+	return false
+}
 
 // Action is a parsed on_press value: one of the closed kinds and its argument.
 //
@@ -54,6 +134,12 @@ type Action struct {
 	// re-splitting the string — a second split would be a second reader of the
 	// grammar, the drift this one-parser design exists to prevent.
 	PluginID string
+	// Setting is the setting of an ActionSet (the "effort" of set:effort=max), and
+	// empty for every other kind; Arg holds its value. For an ActionOpen, Arg is the
+	// address and Host its host name, so the dispatcher checks the host without
+	// parsing the address a second time.
+	Setting string
+	Host    string
 }
 
 // answerKinds is the closed kind set an `answer:` action may name (BINDS.md
@@ -90,7 +176,7 @@ func AnswerKinds() []string {
 func ParseAction(s string) (Action, error) {
 	prefix, arg, ok := strings.Cut(s, ":")
 	if !ok {
-		return Action{}, fmt.Errorf("on_press %q has no action prefix; it must be one of cmd:<command>, focus:<node>, answer:<kind>, ext:<plugin-id>:<action> (BINDS.md §4.8)", s)
+		return Action{}, fmt.Errorf("on_press %q has no action prefix; it must be one of cmd:<command>, focus:<node>, answer:<kind>, ext:<plugin-id>:<action>, say:<text>, open:<https address>, set:<setting>=<value> (BINDS.md §4.8)", s)
 	}
 	switch prefix {
 	case "cmd":
@@ -124,8 +210,35 @@ func ParseAction(s string) (Action, error) {
 			return Action{}, fmt.Errorf("on_press %q names an ext: action on plugin %q with no action name; the form is ext:<plugin-id>:<action>, and the action is the name the plugin registered (BINDS.md §4.8, DESIGN-BLOCK-I §I-E)", s, pluginID)
 		}
 		return Action{Kind: ActionExt, PluginID: pluginID, Arg: action}, nil
+	case "say":
+		if strings.TrimSpace(arg) == "" {
+			return Action{}, fmt.Errorf("on_press %q names a say: action with no text; write say:<text to show> (BINDS.md §4.8)", s)
+		}
+		return Action{Kind: ActionSay, Arg: arg}, nil
+	case "open":
+		host, err := ParseOpenURL(arg)
+		if err != nil {
+			return Action{}, fmt.Errorf("on_press %q: %w (BINDS.md §4.8)", s, err)
+		}
+		return Action{Kind: ActionOpen, Arg: arg, Host: host}, nil
+	case "set":
+		setting, value, ok := strings.Cut(arg, "=")
+		if !ok || setting == "" || value == "" {
+			return Action{}, fmt.Errorf("on_press %q must read set:<setting>=<value>, with a setting from %s (BINDS.md §4.8)", s, strings.Join(SetSettings(), ", "))
+		}
+		known := false
+		for _, n := range SetSettings() {
+			known = known || n == setting
+		}
+		if !known {
+			return Action{}, fmt.Errorf("on_press %q sets %q, which a set: action cannot change; the settings are %s (BINDS.md §4.8)", s, setting, strings.Join(SetSettings(), ", "))
+		}
+		if len(value) > MaxSetValue || !setValueRe.MatchString(value) {
+			return Action{}, fmt.Errorf("on_press %q gives the value %q, which is not a plain lowercase word of at most %d characters (BINDS.md §4.8)", s, value, MaxSetValue)
+		}
+		return Action{Kind: ActionSet, Setting: setting, Arg: value}, nil
 	default:
-		return Action{}, fmt.Errorf("on_press %q uses an unknown action prefix %q; the closed set is cmd:, focus:, answer:, ext: (BINDS.md §4.8)", s, prefix)
+		return Action{}, fmt.Errorf("on_press %q uses an unknown action prefix %q; the closed set is cmd:, focus:, answer:, ext:, say:, open:, set: (BINDS.md §4.8)", s, prefix)
 	}
 }
 

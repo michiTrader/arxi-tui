@@ -114,7 +114,9 @@ type uiApply struct {
 	// drafted from.
 	beh, baseBeh behaviour
 	behChanged   bool
-	done         chan error
+	// pkg is the change to packages, nil when it touches none (package_edit.go).
+	pkg  *packageEdit
+	done chan error
 }
 
 func newUIBridge() *uiBridge {
@@ -169,13 +171,14 @@ func (b *uiBridge) definitions() []driver.ClientToolDef {
 			Description: "Read how YOUR OWN interface is built: the terminal app you are running in and the user is looking at (banner, chat, input bar, status bar, and the colours of everything you write). It is NOT in the project folder; never search files for it. Call this first whenever the user asks to change anything about how you or this screen look: layout, spacing, colours, styles.",
 			Schema:      json.RawMessage(`{"type":"object","properties":{}}`)},
 		{Name: uiToolEdit,
-			Description: "Change your own interface (call ui_guide first). The user sees the diff and approves it; it is kept across sessions. colors recolours; texts rewords menus and screens; commands (/ui lines) or scene change the layout; behaviour changes what it DOES: animated colours, menu keys (horizontal menus), shortcuts, own / commands, reactions to settings. A refusal says what to fix.",
+			Description: "Change your own interface (call ui_guide first). The user sees the diff and approves it; it is kept across sessions. colors recolours; texts rewords menus and screens; commands (/ui lines) or scene change the layout; behaviour changes what it DOES: animated colours, menu keys (horizontal menus), shortcuts, own / commands, reactions to settings; packages add / commands and input rules as data. A refusal says what to fix.",
 			Schema: json.RawMessage(`{"type":"object","properties":{` +
 				`"colors":{"type":"object","additionalProperties":{"type":"string"},"description":"token -> style, e.g. {\"markdown.code\":\"fg=magenta\"}"},` +
 				`"texts":{"type":"object","additionalProperties":{"type":"string"},"description":"key -> sentence, e.g. {\"team.title\":\"Crews\"}; empty restores the factory one"},` +
 				`"commands":{"type":"array","items":{"type":"string"},"description":"/ui add|move|remove|set|style lines"},` +
 				`"scene":{"type":"string","description":"the whole new scene, as JSON"},` +
 				`"behaviour":{"type":"object","description":"animations, menu_keys, keys, commands, hooks; format in ui_guide"},` +
+				`"packages":{"type":"array","items":{"type":"object"},"description":"[{put:<package>}|{remove:id}|{disable:id}|{enable:id}]; the user approves a package before it runs; see ui_guide"},` +
 				`"summary":{"type":"string","description":"one sentence saying what changes, shown to the user"}}}`)},
 	}
 }
@@ -186,7 +189,8 @@ func (b *uiBridge) guideText() string {
 	if doc == nil {
 		return ""
 	}
-	return uiGuide(doc, thm) + "\n" + behaviourGuide(b.behaviourNow())
+	cwd, _ := os.Getwd()
+	return uiGuide(doc, thm) + "\n" + behaviourGuide(b.behaviourNow()) + "\n" + packagesGuide(loadAllPackages(cwd, b.behaviourNow()))
 }
 
 // call runs one tool call. ask puts a change to the user and blocks until they decide.
@@ -231,6 +235,7 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 		Commands  []string          `json:"commands"`
 		Scene     string            `json:"scene"`
 		Behaviour json.RawMessage   `json:"behaviour"`
+		Packages  json.RawMessage   `json:"packages"`
 		Summary   string            `json:"summary"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
@@ -253,6 +258,14 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
 		}
 		behChanged = !sameBehaviour(userBeh, nextBeh)
+	}
+	var pkgEdit *packageEdit
+	if len(args.Packages) > 0 && string(args.Packages) != "null" {
+		cwd, _ := os.Getwd()
+		var err error
+		if pkgEdit, err = draftPackages(args.Packages, loadAllPackages(cwd, nextBeh), nextBeh); err != nil {
+			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
+		}
 	}
 	var colors userTokens
 	var words userTexts
@@ -292,6 +305,9 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 		}
 		diff += "      behaviour.json:\n" + bd
 	}
+	if pkgEdit != nil {
+		diff += pkgEdit.diff
+	}
 	next := base
 	if len(args.Commands) > 0 || strings.TrimSpace(args.Scene) != "" {
 		var err error
@@ -303,8 +319,8 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 			return refuse("The change was refused", err.Error())
 		}
 		diff += d
-	} else if len(args.Colors) == 0 && len(args.Texts) == 0 && len(args.Behaviour) == 0 {
-		return refuse("The change was refused", "ui_edit needs colors, texts, behaviour, commands or scene")
+	} else if len(args.Colors) == 0 && len(args.Texts) == 0 && len(args.Behaviour) == 0 && len(args.Packages) == 0 {
+		return refuse("The change was refused", "ui_edit needs colors, texts, behaviour, packages, commands or scene")
 	}
 	if diff == "" {
 		return driver.ClientToolResult{OK: true, Arg: "interface", Summary: "Nothing to change", Text: "the new document is the same as the one on screen; nothing was changed"}
@@ -314,13 +330,13 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 		summary = "Change the interface"
 	}
 	// What runs on a keypress or a setting change is asked about even in full access.
-	if (policy != policyAllow || (behChanged && behPatch.touchesWhatRuns())) && !ask(driver.Approval{Name: uiToolEdit, Arg: "interface", Summary: summary, Diff: diff}) {
+	if (policy != policyAllow || (behChanged && behPatch.touchesWhatRuns()) || (pkgEdit != nil && pkgEdit.mustAsk)) && !ask(driver.Approval{Name: uiToolEdit, Arg: "interface", Summary: summary, Diff: diff}) {
 		return refuse("You did not allow this change", "the user did not allow this change to the interface, so it was not made; do not retry it, ask what they want instead")
 	}
 	done := make(chan error, 1)
 	var err error
 	select {
-	case b.apply <- uiApply{base: base, doc: next, colors: colors, baseColors: user, texts: words, baseTexts: userWords, beh: nextBeh, baseBeh: userBeh, behChanged: behChanged, done: done}:
+	case b.apply <- uiApply{base: base, doc: next, colors: colors, baseColors: user, texts: words, baseTexts: userWords, beh: nextBeh, baseBeh: userBeh, behChanged: behChanged, pkg: pkgEdit, done: done}:
 	case <-ctx.Done():
 		return refuse("Cancelled", "the turn ended before the change was applied")
 	}
@@ -334,6 +350,9 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	}
 	b.resetRefusals()
 	text := "applied and saved: the interface on screen now shows the change. /ui undo takes it back."
+	if pkgEdit != nil && len(pkgEdit.put) > 0 {
+		text += "\nPackages written: " + strings.Join(pkgEdit.put, ", ") + ". They do NOTHING yet: the user has to type /package approve <id> themselves (the app shows them what it can do and a code). You cannot approve them. Tell the user to do that, and do not say they work before."
+	}
 	for _, n := range unpaintedFrames(next, nextThm) {
 		text += fmt.Sprintf("\nBUT: the frame of %q is NOT animated. Its \"style\" paints what is inside the box; the frame is painted by the border's own style. Do not tell the user the frame moves. To make it so: /ui set %s border {\"shape\":%q,\"style\":%q}", n.id, n.id, n.shape, n.token)
 	}

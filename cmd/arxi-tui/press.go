@@ -248,8 +248,23 @@ func dispatchPress(onPress, currentFocus, answerText string, state fold.State, d
 			return currentFocus
 		}
 		if line := strings.TrimSpace(action.Arg); line != "" {
+			if strings.HasPrefix(line, rawActionMark) {
+				// A line may not pose as a raw action: that door is for say:/open:/set:
+				// as written in the scene, which the scene validator has checked.
+				*notice = "cmd: cannot carry a control character"
+				return currentFocus
+			}
 			enqueue(line)
 		}
+		return currentFocus
+	case scene.ActionSay, scene.ActionOpen, scene.ActionSet:
+		// These are carried out by the loop, which owns the conversation, the settings
+		// and the approved packages. They go through its queue like a typed line does.
+		if enqueue == nil {
+			*notice = fmt.Sprintf("%s cannot run: this surface has no command queue", onPress)
+			return currentFocus
+		}
+		enqueue(rawActionMark + onPress)
 		return currentFocus
 	case scene.ActionExt:
 		if actions == nil {

@@ -893,6 +893,8 @@ const (
 const (
 	warnTurnMarker = "! "
 	warnTurnToken  = "chat.warn"
+	noteTurnMarker = "· "
+	noteTurnToken  = "chat.note"
 	// commandTurnToken draws the command word of a message ("/ui") in the user's turn.
 	commandTurnToken = "chat.command"
 	usageTurnToken   = "chat.usage"
@@ -1272,6 +1274,11 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 				text = lk.WarnMarker + text
 				turnToken = warnTurnToken
 				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(lk.WarnMarker)), Style: warnTurnToken}}
+			}
+			if h.Role == "note" {
+				text = lk.NoteMarker + text
+				turnToken = noteTurnToken
+				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(lk.NoteMarker)), Style: noteTurnToken}}
 			}
 			if h.Role == "assistant" {
 				// The agent's answer is Markdown: headings, lists, tables, fenced code and

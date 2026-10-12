@@ -96,3 +96,60 @@ func appendLocalWarning(log []fold.Event, text string) []fold.Event {
 	out = append(out, log...)
 	return append(out, e)
 }
+
+// localNoteMax and localNoteLines bound what a command may print into the conversation,
+// so a command that prints a book cannot make every frame fold and wrap it again.
+const (
+	localNoteMax   = 4000
+	localNoteLines = 40
+)
+
+// localNote builds the chat.note event for text: what a command of the user's said. Unlike
+// a warning it keeps its line breaks (a list is a list), and like one it is made safe
+// first: the text came from a program or a service, so escape sequences, control
+// characters and the ones that reorder text are removed, and it is cut to a size.
+func localNote(text string) fold.Event {
+	return fold.Event{
+		Type:    "chat.note",
+		Actor:   "host",
+		Payload: map[string]any{"text": cleanNoteText(text)},
+	}
+}
+
+func cleanNoteText(s string) string {
+	s = strings.ToValidUTF8(s, "")
+	s = ansi.Strip(s)
+	s = strings.NewReplacer("\r\n", "\n", "\r", "\n", "\t", "    ").Replace(s)
+	var b strings.Builder
+	lines, runes := 1, 0
+	for _, r := range s {
+		if r == '\n' {
+			if lines >= localNoteLines {
+				return strings.TrimRight(b.String(), " \n") + "…"
+			}
+			lines++
+			b.WriteRune(r)
+			continue
+		}
+		if unicode.IsControl(r) || isBidiControl(r) {
+			continue
+		}
+		if runes >= localNoteMax {
+			return strings.TrimRight(b.String(), " \n") + "…"
+		}
+		runes++
+		b.WriteRune(r)
+	}
+	return strings.TrimRight(b.String(), " \n")
+}
+
+// appendLocalNote is appendLocalWarning for a note.
+func appendLocalNote(log []fold.Event, text string) []fold.Event {
+	e := localNote(text)
+	if n := len(log); n > 0 {
+		e.Seq = log[n-1].Seq + 1
+	}
+	out := make([]fold.Event, 0, len(log)+1)
+	out = append(out, log...)
+	return append(out, e)
+}
