@@ -13,10 +13,10 @@ It was being done from `D:\projects\pitlane-strategies` with `apinex/free/mimo-v
   look for where `line_width` is set for each primitive kind.
 - With `/folder add D:\projects\tradetropy` (or "ask" mode) the model can now read that folder directly.
 
+## Done since: second status line (cwd + branch), PgUp/PgDn/End, hint only when scrolled up (03d3b44)
+
 ## arxi-tui work not done yet
 
-- Status bar: cwd + git branch on a separate line (`host.branch` bind; both SOBRIA.json identical).
-- Key to jump to the bottom of the chat, with a hint shown only when scrolled up.
 - Mouse-draggable scrollbar (needs `?1002h` drag events and a drawn scrollbar).
 - Background shells ("N shell", output inside the TUI, `/shell` list/show/stop).
 - Extensibility phases 4-6 host wiring (`/service`, `/package list|show`, `host.panels`), docs.
