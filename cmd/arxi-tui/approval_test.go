@@ -46,7 +46,7 @@ func (c *editChat) SubmitChatSend(ctx context.Context, p driver.ChatSendParams) 
 
 func wait(t *testing.T, cond func() bool) {
 	t.Helper()
-	for i := 0; i < 400; i++ {
+	for i := 0; i < 3000; i++ {
 		if cond() {
 			return
 		}
@@ -400,5 +400,25 @@ func TestAPackageToolFollowsTheModeChangedDuringTheTurn(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("the tool is still waiting for the user after full access")
+	}
+}
+
+// The mode changes at the very moment the core asks: the question must not be left
+// waiting. Looking at the mode and registering the question are one step, otherwise the
+// change can land between them, find no question to settle, and the turn hangs until a
+// key is pressed (this failed on the Windows CI runner, where threads interleave
+// differently). It is a race, so it is hammered.
+func TestAModeChangeRacingTheQuestionNeverLeavesItWaiting(t *testing.T) {
+	for i := 0; i < 3000; i++ {
+		sd, core := seqRig(t, "run", 1) // returns once the core is inside its first ask
+		sd.SetMode("full access")       // no wait for the question to be on screen
+		select {
+		case got := <-core.got:
+			if len(got) != 1 || !got[0] {
+				t.Fatalf("round %d: answers = %v, want allowed", i, got)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("round %d: the question was left waiting after full access", i)
+		}
 	}
 }

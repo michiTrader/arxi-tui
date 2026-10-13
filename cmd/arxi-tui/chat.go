@@ -326,6 +326,11 @@ type pendingApproval struct {
 func (c *chatSession) liveAllows(a driver.Approval) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	return c.liveAllowsLocked(a)
+}
+
+// liveAllowsLocked is liveAllows for a caller that already holds c.mu.
+func (c *chatSession) liveAllowsLocked(a driver.Approval) bool {
 	switch a.Name {
 	case "write", "edit":
 		return c.edits == policyAllow
@@ -363,11 +368,16 @@ func (c *chatSession) modeChanged() {
 // askUser puts one change to the user and blocks the turn until they decide, or the
 // turn ends (cancelled, or /clear), which counts as a no.
 func (c *chatSession) askUser(ctx context.Context, gen int64, a driver.Approval) bool {
-	if c.liveAllows(a) {
+	p := &pendingApproval{reply: make(chan bool, 1), what: a}
+	// Looking at the live mode and registering the question are ONE step under the
+	// lock. Apart, a mode change landing between them looks for a waiting question
+	// before this one is registered, finds none, and leaves it waiting for a key nobody
+	// should have to press (seen on Windows, where threads interleave differently).
+	c.mu.Lock()
+	if c.liveAllowsLocked(a) {
+		c.mu.Unlock()
 		return true
 	}
-	p := &pendingApproval{reply: make(chan bool, 1), what: a}
-	c.mu.Lock()
 	c.approval = p
 	c.mu.Unlock()
 	defer func() {
