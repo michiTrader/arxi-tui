@@ -79,8 +79,10 @@ func TestNoRulesMeansTheBareSystemPrompt(t *testing.T) {
 	c := newChatSession(core, out)
 	c.setWorkdir(t.TempDir())
 	turn(t, c, out, "what is in this folder")
-	if got := core.last(); got != chatSystem() {
-		t.Fatalf("with no rules file the system prompt must be untouched:\n%s", got)
+	// The only addition on a turn with a project folder is the act-don't-announce line;
+	// nothing that looks like rules.
+	if got := core.last(); got != chatSystem()+" "+actHint {
+		t.Fatalf("with no rules file the system prompt must carry nothing but the standing lines:\n%s", got)
 	}
 }
 

@@ -3130,6 +3130,8 @@ func resolveBind(bind string, state fold.State) string {
 		return state.HostScroll
 	case "host.shells":
 		return state.HostShells
+	case "host.panels":
+		return state.HostPanels
 	case "host.run.actor":
 		// Host view state, not a projection: the loop resolves the actor from the
 		// run.start config and re-attaches it each frame (BINDS.md §4.3, M2). It

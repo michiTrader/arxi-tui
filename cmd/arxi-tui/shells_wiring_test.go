@@ -172,3 +172,19 @@ func TestAShellThatEndsByItselfIsReported(t *testing.T) {
 		}
 	}
 }
+
+// A turn with a project folder is told to act instead of announcing ("let me check..." and
+// then nothing). Without a folder there are no tools to act with, and a greeting stays cheap.
+func TestTurnsWithToolsAreToldToActInsteadOfAnnouncing(t *testing.T) {
+	if p := shellChat(t, policyAsk).turn(t, "arregla el banner"); !strings.Contains(p.System, actHint) {
+		t.Errorf("a turn with tools lacks the act-don't-announce instruction: %q", p.System)
+	}
+	r := shellChat(t, policyAsk)
+	r.c.setWorkdir("")
+	if p := r.turn(t, "arregla el banner"); strings.Contains(p.System, actHint) {
+		t.Errorf("a turn with no tools was told to call them: %q", p.System)
+	}
+	if p := shellChat(t, policyAsk).turn(t, "hola"); strings.Contains(p.System, actHint) {
+		t.Errorf("a greeting paid for the hint: %q", p.System)
+	}
+}

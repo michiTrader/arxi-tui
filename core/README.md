@@ -64,6 +64,10 @@ it — `--budget` or `ARXI_BUDGET` moves it, and an `ARXI_BUDGET` that is not a
 number of dollars is refused before the run directory exists, rather than falling
 back to the default it was written to replace.
 
+A chat turn that uses tools stops after 40 tool rounds (a guard against a model that
+never stops asking, not a quality limit). The answer says so when it was cut.
+`ARXI_MAX_TOOL_ROUNDS=<1..200>` moves it; anything else is refused instead of guessed.
+
 ## The core
 
 ```go
