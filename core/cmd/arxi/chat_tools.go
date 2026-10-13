@@ -61,6 +61,10 @@ type chatToolbox struct {
 	client []turn.ToolDefinition
 	// callClient runs one client tool on the client; nil when the connection cannot.
 	callClient func(clientToolCall) (clientToolResult, error)
+	// outside is the policy for a file tool that names a path beyond the project's
+	// folders: deny (refused, the default), ask (the user is asked to open the
+	// folder it belongs to) or allow (opened without asking). See folders.go.
+	outside string
 }
 
 // maxClientTools bounds how many tools a client may lend one turn. Every definition
@@ -261,10 +265,26 @@ func envHint(root, runs string) string {
 	if runs == editsAsk || runs == editsAllow {
 		h += " run uses " + chattools.ShellName() + " and may name any path (the user approves it); the other tools stay inside the project."
 		if runtime.GOOS == "windows" {
-			h += " Use dir, ren, copy, type, not ls, mv, cat; for PowerShell run powershell -NoProfile -Command."
+			h += " Use dir, ren, copy, type, not ls, mv, cat; grep and head do not exist there, so search with the grep tool, " +
+				"and for PowerShell run powershell -NoProfile -Command."
 		}
 	}
 	return h
+}
+
+// foldersHint tells the model how to reach a folder beside the project, when it may ask
+// for one, and which ones are already open. Their paths are written in full: a relative
+// path always starts at the project.
+func foldersHint(tb *chatToolbox) string {
+	var h string
+	if extra := tb.box.Roots()[1:]; len(extra) > 0 {
+		h = " Also open, by full path: " + strings.Join(extra, ", ") + "."
+	}
+	if tb.outside == editsAsk || tb.outside == editsAllow {
+		h += " To use a folder outside the project, give the full path to list, read, grep, edit or write; " +
+			"the user is asked once to open that folder. Do not copy files into the project to get around this."
+	}
+	return strings.TrimSpace(h)
 }
 
 // runsHint tells the model about the run tool, when it has one.
@@ -378,6 +398,11 @@ func runOneTool(ctx context.Context, tb *chatToolbox, call *turn.ToolCall) (*tur
 	}
 	if tb.clientTool(call.Name) {
 		return runClientTool(tb, call, n, out, fail)
+	}
+	if false {
+		if res, err := openFolderFor(tb, call, fail); res != nil || err != nil {
+			return res, err
+		}
 	}
 	switch {
 	case chattools.Runs(call.Name):

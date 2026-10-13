@@ -481,7 +481,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	}
 
 	if box := toolsFrom(ctx); box != nil {
-		system = strings.TrimSpace(system + " " + toolsHint(box.box.Root(), box.edits) + " " + envHint(box.box.Root(), box.runs) + " " + runsHint(box.runs) + " " + webHint(box.web))
+		system = strings.TrimSpace(system + " " + toolsHint(box.box.Root(), box.edits) + " " + envHint(box.box.Root(), box.runs) + " " + foldersHint(box) + " " + runsHint(box.runs) + " " + webHint(box.web))
 	}
 	var messages []turn.Message
 	text := func(role turn.Role, s string) turn.Message {
@@ -694,6 +694,9 @@ func handleChatSendThinking(streams *connStreams, params map[string]any) (any, e
 		if ctx, err = withWeb(ctx, stringParam(params, "web")); err != nil {
 			return nil, err
 		}
+		if ctx, err = withFolders(ctx, stringParam(params, "folders"), stringParam(params, "outside")); err != nil {
+			return nil, err
+		}
 		if ctx, err = withClientTools(ctx, stringParam(params, "client_tools"), streams.callClient); err != nil {
 			return nil, err
 		}
@@ -705,8 +708,8 @@ func handleChatSendThinking(streams *connStreams, params map[string]any) (any, e
 }
 
 func handleChatSend(params map[string]any) (any, error) {
-	if stringParam(params, "workdir") != "" || stringParam(params, "edits") != "" || stringParam(params, "runs") != "" || stringParam(params, "web") != "" || stringParam(params, "client_tools") != "" {
-		return nil, badInvocation{errors.New("workdir, edits, runs, web and client_tools need a live connection to report the tool calls on")}
+	if stringParam(params, "workdir") != "" || stringParam(params, "edits") != "" || stringParam(params, "runs") != "" || stringParam(params, "web") != "" || stringParam(params, "client_tools") != "" || stringParam(params, "folders") != "" || stringParam(params, "outside") != "" {
+		return nil, badInvocation{errors.New("workdir, edits, runs, web, folders, outside and client_tools need a live connection to report the tool calls on")}
 	}
 	return chatSendEffort(context.Background(), stringParam(params, "prompt"), stringParam(params, "history"),
 		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))
