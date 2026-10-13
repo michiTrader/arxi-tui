@@ -23,6 +23,12 @@ import (
 type Price struct {
 	InUSDPerMTok  float64 `json:"in_usd_per_mtok"`
 	OutUSDPerMTok float64 `json:"out_usd_per_mtok"`
+
+	// CacheReadUSDPerMTok and CacheWriteUSDPerMTok are the prices of the tokens a
+	// provider serves from, or writes to, its prompt cache. Zero means "not declared",
+	// not "free": the operator who has a cache price states it.
+	CacheReadUSDPerMTok  float64 `json:"cache_read_usd_per_mtok,omitempty"`
+	CacheWriteUSDPerMTok float64 `json:"cache_write_usd_per_mtok,omitempty"`
 }
 
 // Cost converts a token count into dollars.

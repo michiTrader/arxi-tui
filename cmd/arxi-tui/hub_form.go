@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"math"
 	"net/url"
 	"strconv"
 	"strings"
@@ -24,6 +26,7 @@ const (
 	kindEnv              // the NAME of an environment variable
 	kindModels           // model ids, comma separated
 	kindPrice            // a price, USD per million tokens
+	kindWindow           // a context window in tokens: 1000000, 1M or 200k
 )
 
 // hubField is one input of a form.
@@ -148,10 +151,39 @@ func cleanFilterText(s string) string {
 	}, s)
 }
 
+// parseWindow reads a context window the way a person writes it: 1000000, 1M, 1.5M, 200k
+// (underscores and commas are ignored). Empty is "not given" (0, no error). Anything
+// else must be a whole number of tokens between a thousand and a hundred million.
+func parseWindow(s string) (int, error) {
+	s = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(s, "_", ""), ",", ""))
+	if s == "" {
+		return 0, nil
+	}
+	mult := 1.0
+	switch last := s[len(s)-1]; last {
+	case 'k', 'K':
+		mult, s = 1_000, s[:len(s)-1]
+	case 'm', 'M':
+		mult, s = 1_000_000, s[:len(s)-1]
+	}
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return 0, fmt.Errorf("is not a number")
+	}
+	n := math.Round(f*mult*1000) / 1000
+	if n != math.Trunc(n) || n < 1_000 || n > 100_000_000 {
+		return 0, fmt.Errorf("must be a whole number of tokens between 1000 and 100000000")
+	}
+	return int(n), nil
+}
+
 func priceFields() []hubField {
 	return []hubField{
 		{label: "Price in (USD / 1M tokens)", kind: kindPrice},
 		{label: "Price out (USD / 1M tokens)", kind: kindPrice},
+		{label: "Cache read price (USD / 1M tokens)", kind: kindPrice},
+		{label: "Cache write price (USD / 1M tokens)", kind: kindPrice},
+		{label: "Context window (tokens)", kind: kindWindow},
 	}
 }
 
@@ -209,7 +241,8 @@ func newModelsForm(prov string) *hubForm {
 		title: "Add models to " + prov,
 		prov:  prov,
 		help: "Type one or more model ids separated by commas, exactly as the service names them. " +
-			"Prices are optional (USD per million tokens) and apply to every id you list; give both or neither.",
+			"Prices are optional (USD per million tokens) and apply to every id you list; give in and out together. " +
+			"Cache prices go beside them. The context window (e.g. 1M) is optional: left empty, arxi uses what the service reports when it reports one.",
 		fields: append([]hubField{{label: "Model ids", required: true, kind: kindModels}}, priceFields()...),
 	}
 }
@@ -271,6 +304,10 @@ func (f *hubForm) submit() (hubWork, string) {
 			if v != sanitizeProviderName(v) {
 				return hubWork{}, fl.label + " may use only lower-case letters, digits, - and _"
 			}
+		case kindWindow:
+			if _, err := parseWindow(v); err != nil {
+				return hubWork{}, fl.label + " " + err.Error() + " (write 1000000, 1M or 200k)"
+			}
 		case kindPrice:
 			if v != "" {
 				if n, err := strconv.ParseFloat(v, 64); err != nil || n < 0 {
@@ -327,6 +364,19 @@ func (f *hubForm) submit() (hubWork, string) {
 			out, _ := strconv.ParseFloat(pout, 64)
 			w.In, w.Out = &in, &out
 		}
+		cr, cwr := f.get("Cache read price (USD / 1M tokens)"), f.get("Cache write price (USD / 1M tokens)")
+		if (cr != "" || cwr != "") && pin == "" {
+			return hubWork{}, "a cache price needs the input and output price too: cache tokens are priced against them"
+		}
+		if cr != "" {
+			v, _ := strconv.ParseFloat(cr, 64)
+			w.CacheRead = &v
+		}
+		if cwr != "" {
+			v, _ := strconv.ParseFloat(cwr, 64)
+			w.CacheWrite = &v
+		}
+		w.Window, _ = parseWindow(f.get("Context window (tokens)"))
 		return w, ""
 	}
 	return hubWork{}, "unknown form"

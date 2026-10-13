@@ -353,8 +353,27 @@ func cmdModelAdd(args []string) {
 	if err == nil {
 		var out *float64
 		out, err = num("out")
+		var cr, cw, win *float64
 		if err == nil {
-			_, err = addModel(vals["provider"], vals["model"], in, out)
+			cr, err = num("cache-read")
+		}
+		if err == nil {
+			cw, err = num("cache-write")
+		}
+		if err == nil {
+			win, err = num("context-window")
+		}
+		if err == nil {
+			x := modelExtras{CacheRead: cr, CacheWrite: cw}
+			if win != nil {
+				if *win != float64(int(*win)) {
+					err = fmt.Errorf("--context-window %v is not a whole number of tokens", *win)
+				}
+				x.ContextWindow = int(*win)
+			}
+			if err == nil {
+				_, err = addModelWith(vals["provider"], vals["model"], in, out, x)
+			}
 		}
 	}
 	if err != nil {

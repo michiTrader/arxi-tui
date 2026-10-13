@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/michiTrader/arxi/internal/model"
@@ -29,6 +30,64 @@ const maxDiscovered = 2000
 // used as a model reference (whitespace). Gemini prefixes its ids with
 // "models/"; that prefix is not part of the id the chat endpoint accepts.
 func (c *Client) ListModels(ctx context.Context, protocol string) ([]string, error) {
+	infos, err := c.ListModelInfo(ctx, protocol)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(infos))
+	for i, m := range infos {
+		ids[i] = m.ID
+	}
+	return ids, nil
+}
+
+// ModelInfo is one model a listing named, with the context window the listing
+// reported for it (0 when it reported none: many servers do not).
+type ModelInfo struct {
+	ID            string
+	ContextWindow int
+}
+
+// Bounds on a reported window. Anything outside is not a context window (a field
+// that meant something else under the same name), and storing it would make every
+// percentage on screen wrong.
+const (
+	minContextWindow = 1_000
+	maxContextWindow = 100_000_000
+)
+
+// windowFields are the names listings use for the context window, in the order
+// they are trusted: the input limit first, since that is what a prompt must fit.
+var windowFields = []string{"max_input_tokens", "inputTokenLimit", "context_length", "context_window", "max_model_len", "n_ctx"}
+
+// windowOf reads a context window out of one listing entry, 0 when it has none or
+// the number is not plausible. JSON numbers arrive as float64; a string of digits
+// is accepted too, since some gateways quote it.
+func windowOf(entry map[string]any) int {
+	for _, f := range windowFields {
+		var n float64
+		switch v := entry[f].(type) {
+		case float64:
+			n = v
+		case string:
+			x, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+			if err != nil {
+				continue
+			}
+			n = x
+		default:
+			continue
+		}
+		if n != float64(int64(n)) || n < minContextWindow || n > maxContextWindow {
+			continue
+		}
+		return int(n)
+	}
+	return 0
+}
+
+// ListModelInfo is ListModels with what each entry says about its context window.
+func (c *Client) ListModelInfo(ctx context.Context, protocol string) ([]ModelInfo, error) {
 	key, err := c.credential()
 	if err != nil {
 		return nil, err
@@ -70,43 +129,39 @@ func (c *Client) ListModels(ctx context.Context, protocol string) ([]string, err
 			strings.TrimSpace(truncate(string(raw), 300)))
 	}
 	var doc struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-		Models []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-		} `json:"models"`
+		Data   []map[string]any `json:"data"`
+		Models []map[string]any `json:"models"`
 	}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return nil, fmt.Errorf("%s did not answer with a model list: %w", url, err)
 	}
 	seen := map[string]bool{}
-	var ids []string
-	add := func(id string) {
+	var out []ModelInfo
+	add := func(id string, entry map[string]any) {
 		id = strings.TrimPrefix(strings.TrimSpace(id), "models/")
 		if id == "" || strings.ContainsAny(id, " \t\r\n") || seen[id] {
 			return
 		}
 		seen[id] = true
-		ids = append(ids, id)
+		out = append(out, ModelInfo{ID: id, ContextWindow: windowOf(entry)})
 	}
+	str := func(v any) string { s, _ := v.(string); return s }
 	for _, d := range doc.Data {
-		add(d.ID)
+		add(str(d["id"]), d)
 	}
 	for _, m := range doc.Models {
-		if m.ID != "" {
-			add(m.ID)
+		if id := str(m["id"]); id != "" {
+			add(id, m)
 		} else {
-			add(m.Name)
+			add(str(m["name"]), m)
 		}
 	}
-	if len(ids) == 0 {
+	if len(out) == 0 {
 		return nil, fmt.Errorf("%s answered, but it lists no models", url)
 	}
-	sort.Strings(ids)
-	if len(ids) > maxDiscovered {
-		ids = ids[:maxDiscovered]
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	if len(out) > maxDiscovered {
+		out = out[:maxDiscovered]
 	}
-	return ids, nil
+	return out, nil
 }

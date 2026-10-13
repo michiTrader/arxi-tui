@@ -201,6 +201,25 @@ func listProviders() ([]providerRow, error) {
 // start, while an omitted one leaves the model unpriced and a run refuses it.
 // They must be given together; half a price would price one direction at zero.
 func addModel(providerName, modelID string, in, out *float64) (model.Provider, error) {
+	return addModelWith(providerName, modelID, in, out, modelExtras{})
+}
+
+// modelExtras is what a model may carry besides its id and its price: the price of
+// cached tokens and the context window. All optional.
+type modelExtras struct {
+	CacheRead, CacheWrite *float64
+	ContextWindow         int
+}
+
+// addModelWith is addModel with the cache prices and the context window.
+func addModelWith(providerName, modelID string, in, out *float64, x modelExtras) (model.Provider, error) {
+	if (x.CacheRead != nil || x.CacheWrite != nil) && in == nil {
+		return model.Provider{}, errors.New("a cache price needs the input and output price too (--in and --out): " +
+			"cache tokens are priced against them, and a cache price alone would leave the model unpriced")
+	}
+	if x.ContextWindow < 0 {
+		return model.Provider{}, errors.New("the context window cannot be negative")
+	}
 	if (in == nil) != (out == nil) {
 		return model.Provider{}, errors.New("a price needs both --in and --out (USD per million tokens); " +
 			"giving only one would price the other direction at zero and under-charge every run")
@@ -208,6 +227,12 @@ func addModel(providerName, modelID string, in, out *float64) (model.Provider, e
 	var price *model.Price
 	if in != nil {
 		price = &model.Price{InUSDPerMTok: *in, OutUSDPerMTok: *out}
+		if x.CacheRead != nil {
+			price.CacheReadUSDPerMTok = *x.CacheRead
+		}
+		if x.CacheWrite != nil {
+			price.CacheWriteUSDPerMTok = *x.CacheWrite
+		}
 	}
 	store, err := modelstore.Open(providerDir)
 	if err != nil {
@@ -220,6 +245,7 @@ func addModel(providerName, modelID string, in, out *float64) (model.Provider, e
 	if err := p.AddModel(modelID, price); err != nil {
 		return model.Provider{}, err
 	}
+	p.SetContextWindow(strings.TrimSpace(modelID), x.ContextWindow)
 	if err := store.Save(p); err != nil {
 		return model.Provider{}, err
 	}

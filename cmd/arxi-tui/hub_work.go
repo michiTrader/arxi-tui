@@ -39,8 +39,12 @@ type hubWork struct {
 	Ref     string   // model ref ("provider/id")
 	Models  []string // model ids to add by hand
 	In, Out *float64 // prices for the models above
-	On      bool     // opToggle: the state to set
-	Close   bool     // leave the hub when this succeeds
+	// CacheRead and CacheWrite price the cached tokens (they need In and Out); Window
+	// is the context window in tokens, 0 to leave it to what the service reports.
+	CacheRead, CacheWrite *float64
+	Window                int
+	On                    bool // opToggle: the state to set
+	Close                 bool // leave the hub when this succeeds
 }
 
 // hubCore is everything the hub needs from the core. *driver.NDJSONDriver satisfies
@@ -302,7 +306,7 @@ func addModels(ctx context.Context, core hubCore, w hubWork) (int, []string) {
 	added := 0
 	var errs []string
 	for _, id := range w.Models {
-		if _, err := core.SubmitModelAdd(ctx, driver.ModelAddParams{Provider: w.Name, Model: id, In: w.In, Out: w.Out}); err != nil {
+		if _, err := core.SubmitModelAdd(ctx, driver.ModelAddParams{Provider: w.Name, Model: id, In: w.In, Out: w.Out, CacheRead: w.CacheRead, CacheWrite: w.CacheWrite, ContextWindow: w.Window}); err != nil {
 			errs = append(errs, id+": "+err.Error())
 			continue
 		}

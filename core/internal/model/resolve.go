@@ -22,6 +22,9 @@ type Resolution struct {
 	// Price is the operator's declared price for this model, or nil when none
 	// was declared and the shipped table (PriceOf) is the authority.
 	Price *Price
+
+	// ContextWindow is the model's window in tokens, 0 when not known.
+	ContextWindow int
 }
 
 // Ref is how a model is named on a command line or in a blueprint: either a
@@ -128,6 +131,8 @@ func Resolve(ps []Provider, ref string) (Resolution, error) {
 		BaseURL:   h.p.BaseURL,
 		APIKeyEnv: h.p.APIKeyEnv,
 		Price:     h.m.Price,
+
+		ContextWindow: h.m.ContextWindow,
 	}, nil
 }
 
