@@ -143,3 +143,37 @@ func TestLoopTheEndOfATurnRefreshesAPanelAndFailureFiresAnEvent(t *testing.T) {
 		t.Errorf("the turn.failed event did not show its note; last frame:\n%s", lastFrame(tty.output()))
 	}
 }
+
+// shellTestDriver is a driver that owns a registry of background shells, as the real one
+// does through its chat session.
+type shellTestDriver struct {
+	testDriver
+	reg *shellRegistry
+}
+
+func (d *shellTestDriver) Shells() *shellRegistry { return d.reg }
+
+// A shell started by hand is counted on the real status line.
+func TestLoopARunningShellIsCountedOnTheBar(t *testing.T) {
+	t.Setenv(configDirEnv, t.TempDir())
+	t.Setenv(historyEnv, t.TempDir())
+	t.Setenv(sessionsEnv, "")
+	doc, err := scene.ParseNamed(defaultscene.Name, defaultscene.JSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drv := &shellTestDriver{testDriver: testDriver{evCh: make(chan fold.Event, 64), seq: 1000}, reg: newShellRegistry(nil)}
+	defer drv.reg.stopAll()
+	if _, err := drv.reg.start("sleep 30", t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	tty := newFakeTTY(100, 30, exitAfter(400))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	if s := screen(tty.output()); !strings.Contains(s, "1 shell") {
+		t.Errorf("the running shell is not counted on the bar; last frame:\n%s", lastFrame(tty.output()))
+	}
+}
