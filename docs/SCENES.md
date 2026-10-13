@@ -115,9 +115,18 @@ the `input` node.
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.effort" },
     { "type": "text", "bind": "host.effort", "style": {"style": "dim"},
       "when": "host.effort" },
-    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.cwd" },
-    { "type": "text", "bind": "host.cwd", "style": {"style": "dim"},
-      "when": "host.cwd" } ] }
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.usage" },
+    { "type": "text", "bind": "host.usage", "style": {"style": "dim"},
+      "when": "host.usage" } ] },
+
+  { "id": "where", "type": "row", "when": "host.cwd", "children": [
+    { "type": "text", "bind": "host.cwd", "style": {"style": "dim"} },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.branch" },
+    { "type": "text", "bind": "host.branch", "style": {"style": "dim"},
+      "when": "host.branch" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.scroll" },
+    { "type": "text", "bind": "host.scroll", "style": {"style": "header"},
+      "when": "host.scroll" } ] }
 ]}}
 ```
 

@@ -350,6 +350,13 @@ type State struct {
 	// view state, like HostCwd. Empty draws nothing.
 	HostUsage string `json:"host.usage"`
 
+	// HostBranch is the git branch of the working directory (a short commit id when HEAD is
+	// detached), empty outside a repository. HostScroll is the hint that the chat is scrolled up
+	// and how to get back to the latest line; empty while the chat is at its tail. Both are host
+	// view state like HostCwd: no event carries them, the loop re-attaches them each frame.
+	HostBranch string `json:"host.branch"`
+	HostScroll string `json:"host.scroll"`
+
 	// BudgetMicrounits is run.started.budget_usd × 1000, captured when the run
 	// starts. Combined with CostMicrounits it produces session.tokens_used.
 	BudgetMicrounits uint64

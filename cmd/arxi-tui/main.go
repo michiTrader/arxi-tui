@@ -142,10 +142,16 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
       "when": "host.effort" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.usage" },
     { "type": "text", "bind": "host.usage", "style": {"style": "dim"},
-      "when": "host.usage" },
-    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.cwd" },
-    { "type": "text", "bind": "host.cwd", "style": {"style": "dim"},
-      "when": "host.cwd" } ] }
+      "when": "host.usage" } ] },
+
+  { "id": "where", "type": "row", "when": "host.cwd", "children": [
+    { "type": "text", "bind": "host.cwd", "style": {"style": "dim"} },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.branch" },
+    { "type": "text", "bind": "host.branch", "style": {"style": "dim"},
+      "when": "host.branch" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.scroll" },
+    { "type": "text", "bind": "host.scroll", "style": {"style": "header"},
+      "when": "host.scroll" } ] }
 ]}}`
 
 // version is the build's version string, stamped by the release build
@@ -877,6 +883,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// thinking level the next request asks for; empty sends nothing until the user
 	// sets one with /effort. mode is how much the agent may do unasked (/mode).
 	cwd, _ := os.Getwd()
+	var branches branchCache
 	effort := ""
 	// effortPicks is what the user chose for each model, kept across runs (effort_store.go);
 	// adoptEffort puts the level a model starts with in force once the core names it.
@@ -1527,13 +1534,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		}
 		if state.SlashActive {
 			state.HostEffort, state.HostCwd, state.HostMode, state.ModelName = "", "", "", ""
-			state.HostUsage = ""
+			state.HostUsage, state.HostBranch, state.HostScroll = "", "", ""
 		} else {
 			state.HostEffort, state.HostCwd, state.HostMode = effortLabel(effort), shortCwd(cwd), mode
 			if m, _ := drv.(uiModer); m != nil && m.UIMode() {
 				state.HostMode += " · /ui"
 			}
 			state.HostUsage = statusUsage(state.LastContext, state.UsageIn, state.UsageOut, hubWindow, autoCompact)
+			state.HostBranch = branches.get(cwd, time.Now())
+			state.HostScroll = scrollLabel(chatScroll)
 		}
 
 		var r engine.Renderer
@@ -1956,6 +1965,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								chatScroll = 0
 							}
 						}
+					} else if next, spent := scrollKey(ev.Key, input, caret, chatScroll, scrollPage(ttyHeight(tty))); spent && !strings.HasPrefix(input, "/") {
+						// PgUp/PgDn page the chat and End (when the caret has nowhere left to
+						// go) or ctrl+End jump to its latest line. A line starting with "/" is
+						// a menu, and there the keys stay the menu's.
+						panicGesture.Reset()
+						chatScroll = next
 					} else {
 						panicGesture.Reset() // any other key disarms the gesture
 						// The /ui dispatch is asked before the menu, and the order

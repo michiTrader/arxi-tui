@@ -307,14 +307,41 @@ func TestSobriaStatusShowsEffortAndCwd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	st := fold.State{HostMode: "ask", ModelName: "p/m", StatusActive: "true", HostEffort: "high", HostCwd: "~/proj"}
+	st := fold.State{HostMode: "ask", ModelName: "p/m", StatusActive: "true", HostEffort: "high", HostCwd: "~/proj", HostBranch: "main"}
 	r := Renderer{Width: 80, Height: 24}
 	got := r.RenderFrame(doc, st).Plain()
-	if !strings.Contains(got, "ask · p/m · high · ~/proj") {
+	if !strings.Contains(got, "ask · p/m · high") {
 		t.Errorf("status bar wrong:\n%s", got)
 	}
+	// The directory and the branch ride a line of their own, below the usage line.
+	lines := strings.Split(got, "\n")
+	var top, where int = -1, -1
+	for i, l := range lines {
+		if strings.Contains(l, "ask · p/m") {
+			top = i
+		}
+		if strings.Contains(l, "~/proj · main") {
+			where = i
+		}
+	}
+	if top < 0 || where != top+1 {
+		t.Errorf("cwd and branch must sit on the line right under the status line (status %d, where %d):\n%s", top, where, got)
+	}
+	if strings.Contains(lines[top], "~/proj") {
+		t.Errorf("the cwd is still on the status line:\n%s", got)
+	}
+	// Outside a repository there is no branch and no dangling separator.
+	st.HostBranch = ""
+	if got := r.RenderFrame(doc, st).Plain(); !strings.Contains(got, "~/proj ") || strings.Contains(got, "~/proj ·") {
+		t.Errorf("a missing branch left a separator behind:\n%s", got)
+	}
+	// The scroll hint shows after the branch, and only when the host gives one.
+	st.HostBranch, st.HostScroll = "main", "scrolled up · End: latest"
+	if got := r.RenderFrame(doc, st).Plain(); !strings.Contains(got, "~/proj · main · scrolled up · End: latest") {
+		t.Errorf("scroll hint missing:\n%s", got)
+	}
 	// With the menu open the bar must not also show them.
-	st.StatusActive, st.HostEffort, st.HostCwd, st.HostMode = "false", "", "", ""
+	st.StatusActive, st.HostEffort, st.HostCwd, st.HostMode, st.HostBranch, st.HostScroll = "false", "", "", "", "", ""
 	if got := r.RenderFrame(doc, st).Plain(); strings.Contains(got, "~/proj") || strings.Contains(got, "ask ·") {
 		t.Errorf("cwd leaked while the menu hides the bar:\n%s", got)
 	}
