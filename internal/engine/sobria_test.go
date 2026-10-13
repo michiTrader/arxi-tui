@@ -350,6 +350,15 @@ func TestSobriaStatusShowsEffortAndCwd(t *testing.T) {
 		t.Errorf("no shells must leave neither the word nor a separator:\n%s", got)
 	}
 	st.HostUsage = ""
+	// A package's panels get their own row, only when there is something to say.
+	st.HostPanels = "Clock: 12:00 · Disk: 40%"
+	if got := r.RenderFrame(doc, st).Plain(); !strings.Contains(got, "Clock: 12:00 · Disk: 40%") {
+		t.Errorf("the panels row is missing:\n%s", got)
+	}
+	st.HostPanels = ""
+	if got := r.RenderFrame(doc, st).Plain(); strings.Contains(got, "Clock") {
+		t.Errorf("an empty panels line must leave nothing behind:\n%s", got)
+	}
 	// With the menu open the bar must not also show them.
 	st.StatusActive, st.HostEffort, st.HostCwd, st.HostMode, st.HostBranch, st.HostScroll = "false", "", "", "", "", ""
 	if got := r.RenderFrame(doc, st).Plain(); strings.Contains(got, "~/proj") || strings.Contains(got, "ask ·") {
