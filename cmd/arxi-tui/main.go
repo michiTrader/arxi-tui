@@ -844,6 +844,35 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// as hubDefault; hubEffortsKnown is false until the core has said.
 	var hubEfforts []string
 	var hubEffortsKnown bool
+	// hubWindow is the chat model's context window in tokens, 0 when the core did not
+	// say. autoCompact is the /settings choice; settingsMn is its menu.
+	var hubWindow int
+	autoCompact := loadAutoCompact(settingsPath())
+	var settingsMn modelMenu
+	// autoCompactCh wakes the loop to try the autocompact again: the turn_done that
+	// asks for it is emitted a moment before the session frees itself, so the first
+	// try can meet "busy" (autoCompactTry).
+	autoCompactCh := make(chan int, 1)
+	autoCompactTry := func(attempt int) {
+		hr, ok1 := drv.(historyReader)
+		c, ok2 := drv.(sessionCompactor)
+		if !ok1 || !ok2 || !autoCompactDue(collected, autoCompact, hubWindow, hr.ChatHistory()) {
+			return
+		}
+		err := c.Compact(ctx, "")
+		switch {
+		case err == nil:
+		case errors.Is(err, errChatBusy) && attempt < autoCompactRetries:
+			time.AfterFunc(autoCompactRetryWait, func() {
+				select {
+				case autoCompactCh <- attempt + 1:
+				default:
+				}
+			})
+		default:
+			sceneNotice = "autocompact: " + err.Error()
+		}
+	}
 	// cwd is where the TUI was started, shown in the bottom bar. effort is the
 	// thinking level the next request asks for; empty sends nothing until the user
 	// sets one with /effort. mode is how much the agent may do unasked (/mode).
@@ -1371,6 +1400,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			state.ModelActive = true
 			state.ModelMatches, state.ModelSelected = effortMn.view(filter)
+		} else if filter, open := settingsMenuOpen(input); open && hub == nil {
+			// `/settings ` borrows the same overlay.
+			if !settingsMn.loaded {
+				settingsMn.setRows(settingsMenuData(autoCompact, hubWindow))
+			}
+			state.ModelActive = true
+			state.ModelMatches, state.ModelSelected = settingsMn.view(filter)
 		} else if filter, open := modeMenuOpen(input); open && hub == nil {
 			// `/mode ` borrows the same overlay.
 			if !modeMn.loaded {
@@ -1402,6 +1438,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.ModelMatches, state.ModelSelected = resumeMn.view(filter)
 		} else if strings.HasPrefix(input, "/") {
 			effortMn.loaded = false
+			settingsMn.loaded = false
 			modeMn.loaded = false
 			resumeMn.loaded = false
 			styleMn.loaded = false
@@ -1496,7 +1533,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			if m, _ := drv.(uiModer); m != nil && m.UIMode() {
 				state.HostMode += " · /ui"
 			}
-			state.HostUsage = usageLabel(state.LastContext, state.UsageIn, state.UsageOut)
+			state.HostUsage = statusUsage(state.LastContext, state.UsageIn, state.UsageOut, hubWindow, autoCompact)
 		}
 
 		var r engine.Renderer
@@ -2176,6 +2213,19 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								setEffort(after, false)
 								sceneNotice = ""
 							}
+						} else if _, open := settingsMenuOpen(input); open {
+							// The `/settings ` menu: same keys; a pick sets autocompact
+							// and is remembered.
+							var pick string
+							input, caret, pick = choiceMenuKey(&settingsMn, settingsPrefix, input, caret, ev.Key)
+							if pick != "" {
+								autoCompact = settingsAfterPick(autoCompact, pick)
+								sceneNotice = settingsNotice(autoCompact, hubWindow)
+								if err := saveAutoCompact(settingsPath(), autoCompact); err != nil {
+									sceneNotice += " (not saved: " + err.Error() + ")"
+								}
+								settingsMn.loaded = false
+							}
 						} else if _, open := styleMenuOpen(input); open {
 							// The `/style ` menu: same keys; a pick changes how your
 							// messages are drawn and is remembered.
@@ -2316,6 +2366,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							caret = len([]rune(input))
 							slashSel = 0
 							modeMn.loaded = false
+						} else if ev.Key.Type == term.KeyEnter && settingsCommand(input, slashSel, slashCat) {
+							input = settingsPrefix
+							caret = len([]rune(input))
+							slashSel = 0
+							settingsMn.loaded = false
 						} else if ev.Key.Type == term.KeyEnter && effortCommand(input, slashSel, slashCat) {
 							input = effortPrefix
 							caret = len([]rune(input))
@@ -2713,6 +2768,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				if err := sessLog.Record(e); err != nil {
 					sceneNotice = err.Error()
 				}
+				// Autocompact: a turn that just ended and left the window past the
+				// chosen share is followed by a compaction (compact.go says when).
+				if e.Type == "agent.turn_done" && autoCompact.On {
+					autoCompactTry(0)
+				}
 				repaint()
 			}
 
@@ -2781,6 +2841,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			repaint()
 
+		case attempt := <-autoCompactCh:
+			autoCompactTry(attempt)
+			repaint()
+
 		case out := <-flowCh:
 			// An answer's worker reported; a user who closed /flow meanwhile
 			// does not see it reappear.
@@ -2830,6 +2894,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				hubDefault = out.data.def
 				hubDefaultKnown = true
 				hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
+				hubWindow = out.data.windowOf(out.data.def)
 				effortMn.loaded = false
 				// A default changed from the providers screen starts on its own level.
 				adoptEffort()
@@ -2864,6 +2929,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				if out.err == "" {
 					hubDefault = out.data.def
 					hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
+					hubWindow = out.data.windowOf(out.data.def)
 					effortMn.loaded = false
 					adoptEffort()
 				}
@@ -2880,6 +2946,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					modelMn.setData(out.data)
 					hubDefault = out.data.def
 					hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
+					hubWindow = out.data.windowOf(out.data.def)
 					effortMn.loaded = false
 				}
 				// Each model starts on the level chosen for it, or on the default.

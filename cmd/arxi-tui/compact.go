@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/michiTrader/arxi_tui/internal/driver"
+	"github.com/michiTrader/arxi_tui/internal/fold"
 )
 
 // This file is /compact: replacing the older part of the conversation with a summary,
@@ -362,3 +363,34 @@ type historyReader interface {
 
 // noCompactNotice is the answer to /compact on a connection with no chat to compact.
 const noCompactNotice = "/compact: there is no live conversation with a model to compact; set ARXI_BIN to an arxi binary and restart"
+
+// autoCompactDue decides, from the events on screen, whether a turn that just ended
+// should be followed by a compaction. Besides shouldAutoCompact's own test it needs the
+// turn to have been a real answer: the last llm.response must come AFTER the last
+// compaction. Without that, the turn_done that ends a compaction itself would be read
+// as a reason to compact again whenever the summary still sits above the threshold.
+func autoCompactDue(log []fold.Event, s autoCompactSetting, window int, hist []driver.ChatTurn) bool {
+	if !s.On || len(log) == 0 || log[len(log)-1].Type != "agent.turn_done" {
+		return false
+	}
+	lastAnswer, lastCompact := -1, -1
+	for i, e := range log {
+		switch e.Type {
+		case "llm.response":
+			lastAnswer = i
+		case "chat.compacted":
+			lastCompact = i
+		}
+	}
+	if lastAnswer < 0 || lastAnswer < lastCompact {
+		return false
+	}
+	return shouldAutoCompact(s, fold.Fold(log).LastContext, window, hist)
+}
+
+// The autocompact is asked for by the turn_done event, which the session emits a moment
+// before it frees itself; the retries cover that gap and no more.
+const (
+	autoCompactRetries   = 6
+	autoCompactRetryWait = 150 * time.Millisecond
+)
