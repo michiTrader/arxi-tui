@@ -182,3 +182,15 @@ func TestTheHintMentionsRunningOnlyWhenItIsOffered(t *testing.T) {
 		t.Error("the ask hint must mention the run tool")
 	}
 }
+
+// A model on a gateway answered "I can't run or execute anything" to a plain request to
+// launch the project. The hint must tell it that run does execute, and the file hint
+// that a file is read whole, so a session does not spend its rate limit on 60-line reads.
+func TestTheHintsSayRunExecutesAndFilesAreReadWhole(t *testing.T) {
+	if h := runsHint(editsAsk); !strings.Contains(h, "launch") || !strings.Contains(h, "never say you cannot execute") {
+		t.Errorf("run hint does not push the model to run things: %q", h)
+	}
+	if h := toolsHint("/p/x", editsAsk); !strings.Contains(h, "whole in one call") || !strings.Contains(h, "same part twice") {
+		t.Errorf("tools hint does not tell the model to read whole files: %q", h)
+	}
+}

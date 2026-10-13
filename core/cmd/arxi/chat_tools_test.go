@@ -340,3 +340,44 @@ func TestTheModelIsToldTheSystemTheProjectAndTheShell(t *testing.T) {
 		t.Error("on Windows the model must be told the commands are cmd.exe's")
 	}
 }
+
+// vyceai/deepseek-v4.1 answered once with a tool call that had no name and the whole
+// turn died with "tool name is required", so the user had to type "continua". It is a
+// broken reply, not an answer: the call is asked again and the turn goes on.
+func TestANamelessToolCallIsAskedAgainAndTheTurnGoesOn(t *testing.T) {
+	f := setUpFake(t)
+	f.script = []scripted{{name: namelessCall}, {name: "list", args: `{"path":"."}`}, {text: "all done"}}
+	ctx, got := collect(t, projectDir(t))
+	res, err := chatSendEffort(ctx, "go", "", "", "", "")
+	if err != nil {
+		t.Fatalf("a nameless call must not end the turn: %v", err)
+	}
+	if res.Text != "all done" || len(*got) != 1 || f.calls != 3 {
+		t.Errorf("text %q, tool calls %d, asks %d; want the answer after one retry and one real call", res.Text, len(*got), f.calls)
+	}
+}
+
+// A turn cut at the round cap used to end like any other: no sign that the work was
+// unfinished, so it looked like the model "stopped suddenly".
+func TestACutTurnSaysItWasCutAndAFinishedOneDoesNot(t *testing.T) {
+	f := setUpFake(t)
+	for i := 0; i < maxToolRounds+4; i++ {
+		f.script = append(f.script, scripted{name: "list", args: `{"path":"."}`})
+	}
+	ctx, _ := collect(t, projectDir(t))
+	res, err := chatSendEffort(ctx, "loop", "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(res.Text, "limit of 16 tool rounds") || !strings.Contains(res.Text, "continue") {
+		t.Errorf("a cut turn does not say so: %q", res.Text)
+	}
+
+	f2 := setUpFake(t)
+	f2.script = []scripted{{name: "list", args: `{"path":"."}`}, {text: "done"}}
+	ctx2, _ := collect(t, projectDir(t))
+	res2, err := chatSendEffort(ctx2, "ok", "", "", "", "")
+	if err != nil || strings.Contains(res2.Text, "tool rounds") {
+		t.Errorf("a finished turn must not carry the note: %q %v", res2.Text, err)
+	}
+}

@@ -47,6 +47,9 @@ type fakeLLM struct {
 // answers a request by asking for the named tool; afterwards it answers text.
 type scripted struct{ name, args, text string }
 
+// namelessCall as a scripted name makes the fake send a tool call with no function name.
+const namelessCall = "<nameless>"
+
 func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 	t.Helper()
 	f := &fakeLLM{models: models, status: 200}
@@ -162,6 +165,23 @@ func (f *fakeLLM) answerScripted(w http.ResponseWriter, st scripted, stream bool
 		b, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": st.text}, "finish_reason": "stop"}},
 			"usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 5}})
 		io.WriteString(w, "data: "+string(b)+"\n\ndata: [DONE]\n\n")
+		return
+	}
+	if st.name == namelessCall {
+		// A gateway's broken reply: a tool call whose function has no name.
+		if !stream {
+			json.NewEncoder(w).Encode(map[string]any{
+				"id": "x",
+				"choices": []any{map[string]any{"index": 0, "finish_reason": "tool_calls", "message": map[string]any{
+					"role": "assistant", "content": nil,
+					"tool_calls": []any{map[string]any{"id": "chatcmpl-tool-x", "type": "function", "function": map[string]any{"arguments": "{}"}}},
+				}}},
+				"usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 5},
+			})
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"chatcmpl-tool-x","type":"function","function":{"arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`+"\n\ndata: [DONE]\n\n")
 		return
 	}
 	id := "call_" + st.name

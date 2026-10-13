@@ -15,3 +15,10 @@ func TestChatSystemCarriesTodaysDate(t *testing.T) {
 		t.Errorf("system = %q", got)
 	}
 }
+
+// The model drifted into English mid-session (nothing told it which language to use).
+func TestSystemPromptKeepsTheUsersLanguage(t *testing.T) {
+	if !strings.Contains(chatSystem(), "language the user writes in") {
+		t.Errorf("the system prompt does not fix the reply language: %q", chatSystem())
+	}
+}

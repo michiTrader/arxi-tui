@@ -27,7 +27,7 @@ const chatMaxHistoryBytes = 100_000
 //
 // It is sent with every message and the provider counts it, so it is kept to one short
 // sentence: a bare "hola" should not cost dozens of tokens before the model reads it.
-const chatSystemPrompt = "You are a concise assistant in a terminal."
+const chatSystemPrompt = "You are a concise assistant in a terminal. Reply in the language the user writes in."
 
 // chatNow is the clock behind the date line; tests replace it.
 var chatNow = time.Now

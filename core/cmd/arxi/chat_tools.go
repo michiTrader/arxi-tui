@@ -240,7 +240,8 @@ type chatToolNotification struct {
 // toolsHint tells the model what it can do and how paths are read.
 func toolsHint(root, edits string) string {
 	h := "You can use tools on the user's project (root: " + filepath.Base(root) + "; paths are relative to it). " +
-		"Look before you answer about the code; never guess file contents."
+		"Look before you answer about the code; never guess file contents. " +
+		"Read a file whole in one call unless it is huge, and do not read the same part twice."
 	if edits != editsDeny {
 		h += " Read a file before you edit it. If the user declines a change, do not retry it: say what you would do and ask."
 	}
@@ -292,7 +293,8 @@ func runsHint(runs string) string {
 	if runs == editsDeny || runs == "" {
 		return ""
 	}
-	return "Use run only for what the other tools cannot do (build, test, git); nothing interactive or endless. " +
+	return "run really executes commands here: when the user asks you to run, launch or test something, do it with run " +
+		"and never say you cannot execute things. Nothing interactive or endless. " +
 		"If the user declines a command, do not retry it: ask."
 }
 
@@ -329,6 +331,9 @@ func (tb *chatToolbox) definitions() []turn.ToolDefinition {
 	return append(out, tb.client...)
 }
 
+// roundCapNote is added to the answer of a turn that was cut at maxToolRounds.
+var roundCapNote = fmt.Sprintf("\n\n[This answer stopped at the limit of %d tool rounds per turn, not because the work is done. Say \"continue\" to keep going.]", maxToolRounds)
+
 // runToolLoop asks the model, runs the tools it requests, and asks again until
 // it answers in plain text. complete performs one request (with its retries).
 func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
@@ -345,6 +350,12 @@ func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 		resp, err := complete(*req)
 		if err != nil {
 			return resp, err
+		}
+		if round >= maxToolRounds && resp.FinishReason != turn.FinishRefusal {
+			// The turn ends here because of the cap, not because the model was done: say
+			// so, or it looks like it stopped for no reason and the user has to guess to
+			// type "continue".
+			resp.Content = append(resp.Content, turn.ContentBlock{Type: turn.BlockText, Text: roundCapNote})
 		}
 		// A model that cannot use the tool channel writes its call as text; run it
 		// instead of showing it as the answer (textcalls.go).

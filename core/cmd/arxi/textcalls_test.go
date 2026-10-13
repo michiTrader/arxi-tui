@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/michiTrader/arxi/internal/chattools"
+	"github.com/michiTrader/arxi/internal/turn"
 	"strings"
 	"testing"
 
@@ -170,4 +173,51 @@ func TestTheRawBlockIsNotKeptInWhatTheModelReadsNext(t *testing.T) {
 	if calls, _ := assistant["tool_calls"].([]any); len(calls) != 1 {
 		t.Errorf("the call is not in the history as a call: %v", assistant)
 	}
+}
+
+// The shapes from the user's own sessions: two calls in one reply, a Windows path with
+// backslashes, and a multi-line value that holds quotes and a "$".
+func TestTheUsersOwnTextCallsAreRun(t *testing.T) {
+	twoReads := "<tool_call>\n<function=read>\n<parameter=limit>\n30\n</parameter>\n<parameter=offset>\n0\n</parameter>\n<parameter=path>\nmain.go\n</parameter>\n</function>\n</tool_call>\n" +
+		"<tool_call>\n<function=read>\n<parameter=limit>\n2\n</parameter>\n<parameter=path>\nmain.go\n</parameter>\n</function>\n</tool_call>"
+	f := setUpFake(t)
+	f.script = []scripted{{text: twoReads}}
+	ctx, got := collect(t, projectDir(t))
+	res, err := chatSendEffort(ctx, "go", "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*got) != 2 || !(*got)[0].OK || !(*got)[1].OK {
+		t.Fatalf("both calls of one reply must run: %+v", *got)
+	}
+	if strings.Contains(res.Text, "<tool_call>") {
+		t.Errorf("a call came back as the answer: %q", res.Text)
+	}
+}
+
+func TestATextRunCallWithBackslashesAndQuotesKeepsThemExactly(t *testing.T) {
+	cmd := "powershell -NoProfile -Command \"$c = Get-Content 'D:\\projects\\x\\_tools.py' -Raw\""
+	text := "<tool_call>\n<function=run>\n<parameter=command>\n" + cmd + "\n</parameter>\n<parameter=timeout_seconds>\n60\n</parameter>\n</function>\n</tool_call>"
+	calls, rest := textCalls(text, chattoolDefs(), "t")
+	if len(calls) != 1 || strings.TrimSpace(rest) != "" {
+		t.Fatalf("calls=%d rest=%q", len(calls), rest)
+	}
+	var args map[string]any
+	if err := json.Unmarshal(calls[0].Arguments, &args); err != nil {
+		t.Fatal(err)
+	}
+	if args["command"] != cmd {
+		t.Errorf("command = %q, want %q", args["command"], cmd)
+	}
+	if n, ok := args["timeout_seconds"].(float64); !ok || n != 60 {
+		t.Errorf("timeout_seconds = %#v, want the number 60", args["timeout_seconds"])
+	}
+}
+
+func chattoolDefs() []turn.ToolDefinition {
+	var out []turn.ToolDefinition
+	for _, d := range append(chattools.Definitions(), chattools.RunDefinitions()...) {
+		out = append(out, turn.ToolDefinition{Name: d.Name, Description: d.Description, InputSchema: d.Schema})
+	}
+	return out
 }
