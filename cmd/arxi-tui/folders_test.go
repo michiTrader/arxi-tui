@@ -181,3 +181,25 @@ func TestFolderLineRecognisesTheCommand(t *testing.T) {
 		t.Error("plain text is not /folder")
 	}
 }
+
+// On Windows `\` and `\Users\x` are rooted but name no drive, so IsAbs says no; they must
+// mean the drive the project is on, not a folder under the project. (CI on Windows caught
+// "/folder add \" opening the project folder instead of being refused.)
+func TestOnVolumeCompletesARootedWindowsPath(t *testing.T) {
+	cases := []struct{ goos, base, dir, want string }{
+		{"windows", `C:\work\proj`, `\`, `C:\`},
+		{"windows", `D:\work\proj`, `\Users\x`, `D:\Users\x`},
+		{"windows", `C:\work\proj`, `/`, `C:/`},
+		{"windows", `C:\work\proj`, `\\srv\share`, `\\srv\share`},
+		{"windows", `C:\work\proj`, `other`, `other`},
+		{"windows", `C:\work\proj`, `D:\x`, `D:\x`},
+		{"windows", `\\srv\share\p`, `\x`, `\x`},
+		{"linux", `/work/proj`, `\`, `\`},
+		{"linux", `/work/proj`, `/`, `/`},
+	}
+	for _, c := range cases {
+		if got := onVolume(c.goos, c.base, c.dir); got != c.want {
+			t.Errorf("onVolume(%s, %q, %q) = %q, want %q", c.goos, c.base, c.dir, got, c.want)
+		}
+	}
+}

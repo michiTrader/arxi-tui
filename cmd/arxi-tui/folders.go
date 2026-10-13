@@ -54,6 +54,24 @@ func samePath(a, b string) bool {
 	return a == b
 }
 
+// onVolume completes a Windows path that starts at the root of a drive but names none
+// (`\` or `\Users\x`): filepath.IsAbs says no to it, so it would be joined under the
+// base folder and `/folder add \` would open the base instead of being refused as the
+// whole drive. It means the drive the base is on. Elsewhere, and for every other path,
+// dir is returned as it came.
+func onVolume(goos, base, dir string) string {
+	if goos != "windows" || dir == "" || (dir[0] != '\\' && dir[0] != '/') {
+		return dir
+	}
+	if len(dir) > 1 && (dir[1] == '\\' || dir[1] == '/') {
+		return dir // \\server\share: already complete
+	}
+	if len(base) >= 2 && base[1] == ':' {
+		return base[:2] + dir
+	}
+	return dir
+}
+
 // checkFolder resolves dir against base and says whether it may be opened: it has to be
 // a folder that exists, and not one so wide that opening it says nothing about the work
 // (a drive or filesystem root, the home folder). The core applies the same rule again.
@@ -67,6 +85,7 @@ func checkFolder(base, dir string) (string, error) {
 			dir = filepath.Join(home, dir[1:])
 		}
 	}
+	dir = onVolume(runtime.GOOS, base, dir)
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(base, dir)
 	}
