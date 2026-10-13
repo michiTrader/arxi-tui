@@ -130,9 +130,9 @@ func TestStatusUsage(t *testing.T) {
 	}{
 		{"fresh screen, off: nothing", 0, 0, 0, 1_000_000, off, ""},
 		{"fresh screen, on: says so", 0, 0, 0, 1_000_000, on, "autocompact 80%"},
-		{"percentage of a known window", 37_000, 929_000, 13_000, 1_000_000, on, "ctx 37k 3% · ↑929k ↓13k · autocompact 80%"},
-		{"unknown window: no invented percentage", 37_000, 929_000, 13_000, 0, off, "ctx 37k · ↑929k ↓13k · autocompact off"},
-		{"something held never reads 0%", 100, 100, 10, 1_000_000, off, "ctx 100 1% · ↑100 ↓10 · autocompact off"},
+		{"percentage of a known window", 37_000, 929_000, 13_000, 1_000_000, on, "ctx 3% · ↑929k ↓13k · autocompact 80%"},
+		{"unknown window: no invented percentage", 37_000, 929_000, 13_000, 0, off, "ctx ? · ↑929k ↓13k · autocompact off"},
+		{"something held never reads 0%", 100, 100, 10, 1_000_000, off, "ctx 1% · ↑100 ↓10 · autocompact off"},
 	}
 	for _, c := range cases {
 		if got := statusUsage(c.ctx, c.in, c.out, c.window, c.ac); got != c.want {
