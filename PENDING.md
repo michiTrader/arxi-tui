@@ -26,10 +26,25 @@ It was being done from `D:\projects\pitlane-strategies` with `apinex/free/mimo-v
   a real model calling the tools, a real terminal showing the bar.
 - Not done: the model is not told to act instead of announcing ("let me check...") without a tool call.
 
+## Extensibility phases 4-6 (events, panels, services): host wired
+
+- `cmd/arxi-tui/package_auto.go`: events (turn.done, turn.failed, effort, mode, style), panels
+  (`host.panels` bind, refresh on load / turn.done / every_s), services (`/service list|start|stop`,
+  only when the user types it). `/package show|list` and the `ui_edit` guide describe them.
+- Tested on Linux with a real `sh` (unit tests, race detector, mutation checks; the stale-answer
+  check found and fixed a real bug). NOT verified: Windows runtime, a real model writing such a
+  package, a real terminal showing the panels row.
+
 ## arxi-tui work not done yet
 
-- Extensibility phases 4-6 host wiring (`settingChanged` events, `agent.turn_done`/`agent.failed`,
-  `host.panels` bind, `/service list|start|stop`, `/package list|show`, `ui_edit` guide text) and docs
-  (`DESIGN-EXTENSIBILITY.md`; `/folder`, `folders`/`outside` wire params, scrollbar, `/shell`).
-- Re-run mutation checks on the scrollbar tests.
+- Loop-level tests (real `loop`) for `/service` typed in the TUI, `host.panels` on the bar
+  (+ an assertion in `internal/engine/sobria_test.go`), and events reaching packageAuto via `settingChanged`.
+  Today they are covered only at the `packageAuto` level and by the full suite not breaking.
+- Docs: `docs/DESIGN-EXTENSIBILITY.md` still says the host is not wired ("Phases 4-6: state");
+  also document `/folder`, `folders`/`outside` wire params, scrollbar/`host.scroll`/`host.branch`,
+  `/shell`, `/service`, `host.shells`, `host.panels` in BINDS/SCENES notes.
+- Decide whether factory commands become packages (not decided).
+- Tell the model not to announce an action without doing it ("let me check...").
+- Re-run mutation checks on the scrollbar tests; `host.shells` bar mutation (`barvis`) survives.
+- Tradetropy plotting investigation (outside this repo).
 - Rate-limit pacing: the free model allows 5 requests/min; a turn of ~13 tool rounds waits several minutes.
