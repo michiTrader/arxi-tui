@@ -33,10 +33,11 @@ func winAlive(pid int) bool {
 }
 
 func TestWindowsAShellRunsInTheBackgroundAndItsOutputIsKept(t *testing.T) {
+	dir := t.TempDir() // made first: cleanups run in reverse, and a live process locks its directory
 	r := newShellRegistry(nil)
 	t.Cleanup(func() { r.stopAll() })
 	t0 := time.Now()
-	info, err := r.start("echo hello-from-shell & ping -n 30 127.0.0.1 >nul", t.TempDir())
+	info, err := r.start("echo hello-from-shell & ping -n 30 127.0.0.1 >nul", dir)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,9 +59,9 @@ func TestWindowsAShellRunsInTheBackgroundAndItsOutputIsKept(t *testing.T) {
 
 // Stopping the shell must end what it started too, or a dev server would outlive /shell stop.
 func TestWindowsStopEndsTheWholeProcessTree(t *testing.T) {
+	dir := t.TempDir()
 	r := newShellRegistry(nil)
 	t.Cleanup(func() { r.stopAll() })
-	dir := t.TempDir()
 	pidFile := filepath.Join(dir, "child.pid")
 	// powershell starts a grandchild (a long ping) and writes its pid.
 	cmd := `powershell -NoProfile -Command "$p = Start-Process -PassThru -WindowStyle Hidden ping -ArgumentList '-n','60','127.0.0.1'; $p.Id | Out-File -Encoding ascii child.pid; Wait-Process -Id $p.Id"`
@@ -90,10 +91,11 @@ func TestWindowsStopEndsTheWholeProcessTree(t *testing.T) {
 }
 
 func TestWindowsAShellThatExitsOnItsOwnIsReportedWithItsCode(t *testing.T) {
+	dir := t.TempDir()
 	got := make(chan shellInfo, 1)
 	r := newShellRegistry(func(i shellInfo) { got <- i })
 	t.Cleanup(func() { r.stopAll() })
-	if _, err := r.start("exit 3", t.TempDir()); err != nil {
+	if _, err := r.start("exit 3", dir); err != nil {
 		t.Fatal(err)
 	}
 	select {
