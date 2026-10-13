@@ -142,7 +142,10 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
       "when": "host.effort" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.usage" },
     { "type": "text", "bind": "host.usage", "style": {"style": "dim"},
-      "when": "host.usage" } ] },
+      "when": "host.usage" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.shells" },
+    { "type": "text", "bind": "host.shells", "style": {"style": "dim"},
+      "when": "host.shells" } ] },
 
   { "id": "where", "type": "row", "when": "host.cwd", "children": [
     { "type": "text", "bind": "host.cwd", "style": {"style": "dim"} },
@@ -1540,7 +1543,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		}
 		if state.SlashActive {
 			state.HostEffort, state.HostCwd, state.HostMode, state.ModelName = "", "", "", ""
-			state.HostUsage, state.HostBranch, state.HostScroll = "", "", ""
+			state.HostUsage, state.HostBranch, state.HostScroll, state.HostShells = "", "", "", ""
 		} else {
 			state.HostEffort, state.HostCwd, state.HostMode = effortLabel(effort), shortCwd(cwd), mode
 			if m, _ := drv.(uiModer); m != nil && m.UIMode() {
@@ -1549,6 +1552,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.HostUsage = statusUsage(state.LastContext, state.UsageIn, state.UsageOut, hubWindow, autoCompact)
 			state.HostBranch = branches.get(cwd, time.Now())
 			state.HostScroll = scrollLabel(chatScroll)
+			state.HostShells = shellsLabel(runningShells(drv))
 		}
 
 		var r engine.Renderer
@@ -2474,6 +2478,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							} else {
 								sceneNotice = ""
 							}
+							input, caret, slashSel = "", 0, 0
+						} else if args, isShell := shellLine(input, slashSel, slashCat); isShell && ev.Key.Type == term.KeyEnter {
+							// `/shell` lists, reads, starts and stops the commands left
+							// running in the background (shells.go). What it says is a
+							// note in the conversation, not a banner: it can be long.
+							var reg *shellRegistry
+							if h, ok := drv.(shellHost); ok {
+								reg = h.Shells()
+							}
+							collected = appendLocalNote(collected, runShellCommand(args, reg, cwd))
+							chatScroll = 0
 							input, caret, slashSel = "", 0, 0
 						} else if args, isFolder := folderLine(input, slashSel, slashCat); isFolder && ev.Key.Type == term.KeyEnter {
 							// `/folder` lists, opens and closes the folders beside the

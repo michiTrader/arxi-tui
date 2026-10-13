@@ -117,7 +117,10 @@ the `input` node.
       "when": "host.effort" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.usage" },
     { "type": "text", "bind": "host.usage", "style": {"style": "dim"},
-      "when": "host.usage" } ] },
+      "when": "host.usage" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.shells" },
+    { "type": "text", "bind": "host.shells", "style": {"style": "dim"},
+      "when": "host.shells" } ] },
 
   { "id": "where", "type": "row", "when": "host.cwd", "children": [
     { "type": "text", "bind": "host.cwd", "style": {"style": "dim"} },

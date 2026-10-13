@@ -384,6 +384,10 @@ func (d *serveDriver) ClearSession() {
 }
 
 func (d *serveDriver) Close() error {
+	// Background shells must not outlive the program.
+	if d.chat != nil {
+		d.chat.shells.stopAll()
+	}
 	d.mu.Lock()
 	cancel := d.runCancel
 	d.mu.Unlock()

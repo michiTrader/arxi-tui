@@ -589,3 +589,25 @@ func (s *shell) hasNew() bool {
 	defer s.mu.Unlock()
 	return s.written > s.readPos
 }
+
+// shellHost is the optional capability a Driver has when it owns a conversation that
+// can keep commands running (serveDriver). The mock has none.
+type shellHost interface {
+	Shells() *shellRegistry
+}
+
+// Shells makes serveDriver a shellHost.
+func (d *serveDriver) Shells() *shellRegistry {
+	if d.chat == nil {
+		return nil
+	}
+	return d.chat.shells
+}
+
+// runningShells is how many shells the driver has running, for the status bar.
+func runningShells(drv any) int {
+	if h, ok := drv.(shellHost); ok {
+		return h.Shells().running()
+	}
+	return 0
+}

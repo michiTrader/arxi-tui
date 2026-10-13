@@ -340,6 +340,16 @@ func TestSobriaStatusShowsEffortAndCwd(t *testing.T) {
 	if got := r.RenderFrame(doc, st).Plain(); !strings.Contains(got, "~/proj · main · scrolled up · End: latest") {
 		t.Errorf("scroll hint missing:\n%s", got)
 	}
+	// Running shells are counted on the status line, and only when there are any.
+	st.HostUsage, st.HostShells = "ctx 1k", "2 shells"
+	if got := r.RenderFrame(doc, st).Plain(); !strings.Contains(got, "ctx 1k · 2 shells") {
+		t.Errorf("shell count missing from the status line:\n%s", got)
+	}
+	st.HostShells = ""
+	if got := r.RenderFrame(doc, st).Plain(); strings.Contains(got, "shell") || strings.Contains(got, "ctx 1k ·") {
+		t.Errorf("no shells must leave neither the word nor a separator:\n%s", got)
+	}
+	st.HostUsage = ""
 	// With the menu open the bar must not also show them.
 	st.StatusActive, st.HostEffort, st.HostCwd, st.HostMode, st.HostBranch, st.HostScroll = "false", "", "", "", "", ""
 	if got := r.RenderFrame(doc, st).Plain(); strings.Contains(got, "~/proj") || strings.Contains(got, "ask ·") {

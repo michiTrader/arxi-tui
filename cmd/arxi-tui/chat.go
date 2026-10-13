@@ -125,6 +125,11 @@ type chatSession struct {
 	ui *uiBridge
 	// tools are the tools of the approved packages, lent to the model on every turn.
 	tools *packageToolbox
+	// shells are the commands the model (or the user) left running in the background.
+	// They live here, not in the core: the core is started for each turn and gone after
+	// it, so a server it started would die with the turn. They outlive turns, and only
+	// /clear or closing the program ends them.
+	shells *shellRegistry
 
 	// dial gives each turn its own connection (nil = every turn shares core, which
 	// is what the tests and the mock use; cancelling then only abandons the answer).
@@ -148,7 +153,24 @@ type retryWait struct {
 }
 
 func newChatSession(core chatSender, out chan<- fold.Event) *chatSession {
-	return &chatSession{core: core, out: out}
+	c := &chatSession{core: core, out: out}
+	c.shells = newShellRegistry(c.shellEnded)
+	return c
+}
+
+// shellEnded tells the conversation that a background shell ended by itself (a stopped
+// one was the user's or the model's own doing and needs no word). It is a warning line:
+// something the user may want to look at, never sent to the model.
+func (c *chatSession) shellEnded(i shellInfo) {
+	c.mu.Lock()
+	gen := c.gen
+	c.mu.Unlock()
+	how := "ended"
+	if i.Code != 0 {
+		how = fmt.Sprintf("ended with code %d", i.Code)
+	}
+	c.post(context.Background(), gen, "chat.warn", map[string]any{
+		"text": fmt.Sprintf("shell %d %s: %s (/shell show %d)", i.ID, how, i.Command, i.ID)})
 }
 
 // noteRetry records that the core is waiting to ask the provider again, puts a line in
@@ -528,7 +550,11 @@ func (c *chatSession) reset() {
 	c.compacting = false
 	cancel := c.cancel
 	c.cancel = nil
+	shells := c.shells
 	c.mu.Unlock()
+	// A new conversation does not inherit the previous one's servers. Stopping waits
+	// for them to exit, so it must not hold up the screen.
+	go shells.stopAll()
 	if cancel != nil {
 		cancel()
 	}
@@ -731,10 +757,24 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 			params.System += pkgSystem
 		}
 	}
-	if defs := append(append([]driver.ClientToolDef{}, uiDefs...), pkgDefs...); len(defs) > 0 {
-		ui, tools := c.ui, c.tools
+	// Background shells ride on the same policy as run: not offered when commands are
+	// denied. They count against the tool budget like any other client tool.
+	shellSystem := ""
+	var shellDefs []driver.ClientToolDef
+	if c.shells != nil && workdir != "" && (runs == policyAsk || runs == policyAllow) {
+		if room := clientToolBudget - len(uiDefs) - len(pkgDefs); room >= len(shellDefinitions()) {
+			shellDefs = shellDefinitions()
+			shellSystem = " " + shellsHint
+			params.System += shellSystem
+		}
+	}
+	if defs := append(append(append([]driver.ClientToolDef{}, uiDefs...), pkgDefs...), shellDefs...); len(defs) > 0 {
+		ui, tools, shells := c.ui, c.tools, c.shells
 		params.ClientTools = defs
 		params.OnClientTool = func(ctx context.Context, call driver.ClientToolCall) driver.ClientToolResult {
+			if isShellTool(call.Name) && shells != nil {
+				return shells.call(ctx, call, workdir, runs, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
+			}
 			if ownsToolName(call.Name) && tools != nil {
 				return tools.call(ctx, call, runs, web, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
 			}
@@ -758,13 +798,15 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 				what = "change the interface or use package tools"
 			case len(pkgDefs) > 0:
 				what = "use package tools"
+			case len(uiDefs) == 0 && len(shellDefs) > 0:
+				what = "start background shells"
 			}
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model " + what + ", " +
 				"so it will not; " + rebuildRemedy})
 			params.ClientTools, params.OnClientTool = nil, nil
 			// The hints name tools; without them they would send the model looking
 			// for ones it does not have.
-			params.System = strings.TrimSuffix(strings.TrimSuffix(params.System, pkgSystem), uiSystem)
+			params.System = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(params.System, shellSystem), pkgSystem), uiSystem)
 		case errors.Is(err, driver.ErrEditsUnsupported):
 			// A core that can look but not change files: say so, and go on looking.
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model change files, " +
@@ -799,7 +841,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot give the model access to your files, " +
 			"so it answers without looking; " + rebuildRemedy})
 		params.Workdir, params.OnTool, params.ClientTools, params.OnClientTool = "", nil, nil, nil
-		params.System = strings.TrimSuffix(strings.TrimSuffix(params.System, pkgSystem), uiSystem)
+		params.System = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(params.System, shellSystem), pkgSystem), uiSystem)
 		res, err = core.SubmitChatSend(ctx, params)
 	}
 	if ctx.Err() != nil {
