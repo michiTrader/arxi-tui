@@ -61,7 +61,7 @@ func TestShellToolsAreOfferedOnlyWhereCommandsMayRun(t *testing.T) {
 func TestNoShellToolsWithoutAProjectFolder(t *testing.T) {
 	r := shellChat(t, policyAllow)
 	r.c.setWorkdir("")
-	if n := len(r.turn(t, "hola").ClientTools); n != 0 {
+	if n := len(r.turn(t, "arregla el banner").ClientTools); n != 0 {
 		t.Errorf("tools lent with no workdir: %d", n)
 	}
 }
@@ -74,7 +74,7 @@ func TestShellToolsNeverExceedTheBudgetOrComeInPart(t *testing.T) {
 		ts = append(ts, echoT(n))
 	}
 	r.c.tools = boxOf(toolPkg(t, "p", true, ts...))
-	p := r.turn(t, "hola")
+	p := r.turn(t, "arregla el banner")
 	if len(p.ClientTools) > clientToolBudget {
 		t.Fatalf("%d tools lent, budget %d", len(p.ClientTools), clientToolBudget)
 	}
@@ -102,7 +102,7 @@ func TestACoreWithoutClientToolsGetsNoShellHint(t *testing.T) {
 	}}
 	c, out := pkgToolChat(t, core, newPackageToolbox())
 	t.Cleanup(func() { c.shells.stopAll() })
-	sendAndWait(t, c, out, "hola", "agent.turn_done")
+	sendAndWait(t, c, out, "arregla el banner", "agent.turn_done")
 	p := core.last()
 	if len(p.ClientTools) != 0 || strings.Contains(p.System, shellsHint) {
 		t.Errorf("the retry still names the shell tools: %v", names(p.ClientTools))
