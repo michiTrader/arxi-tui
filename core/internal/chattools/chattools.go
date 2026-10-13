@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 )
@@ -91,6 +92,9 @@ type Result struct {
 // Toolbox runs the tools against one directory.
 type Toolbox struct {
 	root string
+	// extra are further folders the user opened for this session (WithDir). The file
+	// tools treat them like the root; relative paths still start at root.
+	extra []string
 	// edits is whether write and edit may run. A toolbox starts read-only; the
 	// caller that has settled with the user that files may change says so.
 	edits bool
@@ -131,8 +135,12 @@ func (t *Toolbox) WithEdits() *Toolbox {
 	return &c
 }
 
-// Root is the resolved directory the tools are confined to.
+// Root is the resolved directory the tools start in and are confined to, together
+// with any folder opened by WithDir.
 func (t *Toolbox) Root() string { return t.root }
+
+// Roots is the root followed by the extra folders.
+func (t *Toolbox) Roots() []string { return append([]string{t.root}, t.extra...) }
 
 // Definition is one tool as the model is told about it.
 type Definition struct {
@@ -226,9 +234,39 @@ func num(m map[string]any, k string) int {
 	return 0
 }
 
+// outside reports whether full lies beyond every folder the toolbox may use.
 func outside(t *Toolbox, full string) bool {
-	r, err := filepath.Rel(t.root, full)
-	return err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator))
+	_, ok := t.within(full)
+	return !ok
+}
+
+// relUnder is full relative to root, and whether it is inside it. Windows paths are
+// compared without regard to case: D:\x and d:\x are one place.
+func relUnder(root, full string) (string, bool) {
+	a, b := root, full
+	if runtime.GOOS == "windows" {
+		a, b = strings.ToLower(a), strings.ToLower(b)
+	}
+	r, err := filepath.Rel(a, b)
+	if err != nil || r == ".." || strings.HasPrefix(r, ".."+string(filepath.Separator)) {
+		return "", false
+	}
+	if runtime.GOOS == "windows" && r != "." {
+		// Rel was computed on lower-cased text; give back the real spelling.
+		r = full[len(full)-len(r):]
+	}
+	return r, true
+}
+
+// within finds the folder, root or extra, that contains full, and the path of full
+// under it.
+func (t *Toolbox) within(full string) (rel string, ok bool) {
+	for _, r := range t.Roots() {
+		if rel, ok = relUnder(r, full); ok {
+			return rel, true
+		}
+	}
+	return "", false
 }
 
 // resolve turns a model-supplied path into an absolute one inside the root.
@@ -257,7 +295,7 @@ func (t *Toolbox) resolve(p string) (string, error) {
 	if outside(t, real) {
 		return "", fmt.Errorf("%s is outside the project folder, so it is not available", display(p))
 	}
-	rel, _ := filepath.Rel(t.root, real)
+	rel, _ := t.within(real)
 	if rel != "." {
 		for _, part := range strings.Split(rel, string(filepath.Separator)) {
 			if strings.EqualFold(part, ".git") {
@@ -280,11 +318,11 @@ func display(p string) string {
 
 // rel is a path as the user would type it: relative to the root, forward slashes.
 func (t *Toolbox) rel(full string) string {
-	r, err := filepath.Rel(t.root, full)
-	if err != nil {
-		return full
+	if r, ok := relUnder(t.root, full); ok {
+		return filepath.ToSlash(r)
 	}
-	return filepath.ToSlash(r)
+	// In an extra folder a relative path would read as the project's: spell it out.
+	return filepath.ToSlash(full)
 }
 
 func (t *Toolbox) list(p string) (Result, error) {
