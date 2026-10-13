@@ -1851,7 +1851,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// escape hatch is never captured) and before the other
 						// handlers, so a "y" cannot reach the chat input.
 						panicGesture.Reset()
-						if allow, decided := approvalKey(ev.Key); decided {
+						if ev.Key.Type == term.KeyTab && ev.Key.Mod&term.ModShift != 0 {
+							// Shift+Tab walks the modes even while a question waits: moving
+							// to one that allows it (full access) answers it.
+							setMode(nextMode(mode), false)
+						} else if allow, decided := approvalKey(ev.Key); decided {
 							ap.Decide(allow)
 						}
 					} else if auto != nil {

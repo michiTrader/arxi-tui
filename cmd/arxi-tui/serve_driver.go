@@ -275,6 +275,8 @@ func (d *serveDriver) SetMode(name string) {
 		d.chat.setRuns(m.policy(classRun))
 		d.chat.setWeb(m.policy(classWeb))
 		d.chat.setOutside(m.policy(classFolder))
+		// A question already waiting is answered by the new mode if it allows it.
+		d.chat.modeChanged()
 	}
 }
 

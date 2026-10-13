@@ -312,12 +312,61 @@ func (c *chatSession) setWeb(policy string) {
 }
 
 // pendingApproval is a change on its way to the user: the turn blocks on reply.
-type pendingApproval struct{ reply chan bool }
+type pendingApproval struct {
+	reply chan bool
+	what  driver.Approval
+}
+
+// liveAllows reports whether the mode in force NOW lets the model do what this approval
+// asks about without asking. A turn takes its policies when it starts and the core keeps
+// asking for the whole turn, so a user who answers "yes" and then switches to full access
+// would otherwise be asked again for every next step of the same turn. Only the kinds of
+// approval a mode decides are covered: what a mode never covers (a change to the
+// interface that decides what their own keyboard does) is not in this list.
+func (c *chatSession) liveAllows(a driver.Approval) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch a.Name {
+	case "write", "edit":
+		return c.edits == policyAllow
+	case "run":
+		return c.runs == policyAllow
+	case "web_fetch", "web_search":
+		return c.web == policyAllow
+	case "folder":
+		return c.outside == policyAllow
+	}
+	return false
+}
+
+// upgraded is the policy a turn should apply to a tool it decides itself: the one it
+// started with, unless the user has since moved to a mode that allows it (ask -> allow).
+// It never goes the other way: what the core was told at the start it keeps.
+func upgraded(started, live string) string {
+	if started == policyAsk && live == policyAllow {
+		return policyAllow
+	}
+	return started
+}
+
+// modeChanged is called after the mode moved: a question that is waiting and that the new
+// mode allows is answered yes, as if the user had said it.
+func (c *chatSession) modeChanged() {
+	c.mu.Lock()
+	p := c.approval
+	c.mu.Unlock()
+	if p != nil && c.liveAllows(p.what) {
+		c.decide(true)
+	}
+}
 
 // askUser puts one change to the user and blocks the turn until they decide, or the
 // turn ends (cancelled, or /clear), which counts as a no.
 func (c *chatSession) askUser(ctx context.Context, gen int64, a driver.Approval) bool {
-	p := &pendingApproval{reply: make(chan bool, 1)}
+	if c.liveAllows(a) {
+		return true
+	}
+	p := &pendingApproval{reply: make(chan bool, 1), what: a}
 	c.mu.Lock()
 	c.approval = p
 	c.mu.Unlock()
@@ -781,11 +830,15 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		ui, tools, shells := c.ui, c.tools, c.shells
 		params.ClientTools = defs
 		params.OnClientTool = func(ctx context.Context, call driver.ClientToolCall) driver.ClientToolResult {
+			// The mode may have changed since the turn began (ask -> full access).
+			c.mu.Lock()
+			liveRuns, liveWeb := upgraded(runs, c.runs), upgraded(web, c.web)
+			c.mu.Unlock()
 			if isShellTool(call.Name) && shells != nil {
-				return shells.call(ctx, call, workdir, runs, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
+				return shells.call(ctx, call, workdir, liveRuns, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
 			}
 			if ownsToolName(call.Name) && tools != nil {
-				return tools.call(ctx, call, runs, web, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
+				return tools.call(ctx, call, liveRuns, liveWeb, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
 			}
 			if ui == nil {
 				return driver.ClientToolResult{Text: call.Name + " is not a tool of this session", Summary: "Unknown tool"}
