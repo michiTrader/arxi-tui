@@ -465,3 +465,43 @@ func TestAStalePanelAnswerIsDiscardedAfterAReload(t *testing.T) {
 		t.Errorf("the old package's answer replaced the new one: %q", got)
 	}
 }
+
+// ---- what the user and the model are told about them ---------------------------
+
+func autoShowRig(t *testing.T) (packageSet, string) {
+	t.Helper()
+	body := `"events":[{"id":"e","on":"mode","is":"ask","op":{"kind":"exec","argv":["./e.sh"]}}],` +
+		`"panels":[{"id":"p","title":"Clock","every_s":60,"op":{"kind":"exec","argv":["./p.sh"]}}],` +
+		`"services":[{"name":"watch","description":"Watch things","op":{"kind":"exec","argv":["./s.sh"]}}]`
+	set, cwd := loadedWith(t, map[string]string{"au": execPkg("au", "", body)})
+	if len(set.pkgs) != 1 {
+		t.Fatalf("did not load: %s", problemsText(set))
+	}
+	return set, cwd
+}
+
+func TestShowAndListSayThatAPackageRunsByItself(t *testing.T) {
+	set, cwd := autoShowRig(t)
+	show := runPackageCommand(packageCommand{Verb: "show", ID: "au"}, set, cwd, false).Note
+	for _, want := range []string{"Event e on mode = ask", "Panel Clock", "every 60s", "Service watch: Watch things", "keeps running until you stop it", "only /service start watch typed by you"} {
+		if !strings.Contains(show, want) {
+			t.Errorf("show does not say %q:\n%s", want, show)
+		}
+	}
+	list := runPackageCommand(packageCommand{Verb: "list"}, set, cwd, false).Note
+	for _, want := range []string{"1 event(s)", "1 panel(s)", "1 service(s)"} {
+		if !strings.Contains(list, want) {
+			t.Errorf("list does not say %q:\n%s", want, list)
+		}
+	}
+}
+
+func TestGuideTeachesEventsPanelsAndServicesAndListsThem(t *testing.T) {
+	set, _ := autoShowRig(t)
+	g := packagesGuide(set)
+	for _, want := range []string{"events      [", "panels      [", "services    [", "/service start <name>", "event:e", "panel:p", "service:watch"} {
+		if !strings.Contains(g, want) {
+			t.Errorf("the guide does not say %q", want)
+		}
+	}
+}

@@ -97,6 +97,15 @@ func packageListText(s packageSet, grants map[string]string, cwd string) string 
 			if n := len(p.Tools); n > 0 {
 				rules += fmt.Sprintf(" · %d tool(s) the model may call", n)
 			}
+			if n := len(p.Events); n > 0 {
+				rules += fmt.Sprintf(" · %d event(s)", n)
+			}
+			if n := len(p.Panels); n > 0 {
+				rules += fmt.Sprintf(" · %d panel(s)", n)
+			}
+			if n := len(p.Services); n > 0 {
+				rules += fmt.Sprintf(" · %d service(s) (/service)", n)
+			}
 			fmt.Fprintf(&b, "\n  %s %s (%s) · %s%s%s", cleanWarnText(p.ID), cleanWarnText(p.Version), p.Scope, packageState(p, grants, cwd), cmds, rules)
 		}
 		b.WriteString("\n/package show <id> says what one can do.")
@@ -148,6 +157,34 @@ func packageShowText(p installedPackage, grants map[string]string, cwd string) s
 	}
 	for _, r := range p.Rules {
 		b.WriteString("\nRule " + cleanWarnText(r.ID) + " on " + cleanWarnText(r.Stage))
+	}
+	for _, e := range p.Events {
+		line := "\nEvent " + cleanWarnText(e.ID) + " on " + cleanWarnText(e.On)
+		if e.Is != "" {
+			line += " = " + cleanWarnText(e.Is)
+		}
+		b.WriteString(line + " (runs by itself, shows a note)")
+	}
+	for _, pn := range p.Panels {
+		line := "\nPanel " + cleanWarnText(pn.Title) + " on the bar"
+		switch {
+		case pn.Op == nil:
+			line += " (filled by a service)"
+		case pn.EveryS > 0:
+			line += fmt.Sprintf(" (refreshes by itself every %ds)", pn.EveryS)
+		case pn.Refresh != "":
+			line += " (refreshes by itself after each answer)"
+		default:
+			line += " (filled once, when the package loads)"
+		}
+		b.WriteString(line)
+	}
+	for _, sv := range p.Services {
+		line := "\nService " + cleanWarnText(sv.Name)
+		if sv.Description != "" {
+			line += ": " + cleanWarnText(sv.Description)
+		}
+		b.WriteString(line + " (keeps running until you stop it; only /service start " + cleanWarnText(sv.Name) + " typed by you starts it)")
 	}
 	if p.Dir != "" {
 		b.WriteString("\nIt is a folder: approving covers every file in " + cleanWarnText(p.Dir) + ", and changing any of them asks again.")
