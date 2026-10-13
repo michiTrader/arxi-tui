@@ -94,6 +94,9 @@ func packageListText(s packageSet, grants map[string]string, cwd string) string 
 			if n := len(p.Rules); n > 0 {
 				rules = fmt.Sprintf(" · %d rule(s)", n)
 			}
+			if n := len(p.Tools); n > 0 {
+				rules += fmt.Sprintf(" · %d tool(s) the model may call", n)
+			}
 			fmt.Fprintf(&b, "\n  %s %s (%s) · %s%s%s", cleanWarnText(p.ID), cleanWarnText(p.Version), p.Scope, packageState(p, grants, cwd), cmds, rules)
 		}
 		b.WriteString("\n/package show <id> says what one can do.")
@@ -135,6 +138,13 @@ func packageShowText(p installedPackage, grants map[string]string, cwd string) s
 			line += ": " + cleanWarnText(c.Description)
 		}
 		b.WriteString(line)
+	}
+	for _, t := range p.Tools {
+		line := "\nTool " + cleanWarnText(t.ModelName(p.ID))
+		if t.Description != "" {
+			line += ": " + cleanWarnText(t.Description)
+		}
+		b.WriteString(line + " (the model may call it by itself)")
 	}
 	for _, r := range p.Rules {
 		b.WriteString("\nRule " + cleanWarnText(r.ID) + " on " + cleanWarnText(r.Stage))

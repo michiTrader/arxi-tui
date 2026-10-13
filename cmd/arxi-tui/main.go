@@ -385,6 +385,12 @@ type sessionResumer interface {
 	ResumeSession(history []driver.ChatTurn)
 }
 
+// toolLogResumer is the part of that which carries the record of tools earlier turns
+// used, so a resumed conversation tells the model the same as it did before.
+type toolLogResumer interface {
+	ResumeToolLog(recs []toolRecord)
+}
+
 // turnCanceller is the optional capability a Driver has when it can stop the turn in
 // flight (serveDriver). CancelTurn reports whether there was a turn to stop, which is
 // how Esc and Ctrl-C know whether "cancel" is what the key means right now.
@@ -588,6 +594,7 @@ func openServeDriver(ctx context.Context, arxiBin string) (Driver, <-chan fold.E
 	}
 	sd.chat = newChatSession(nd, sd.relay)
 	sd.chat.ui = newUIBridge()
+	sd.chat.tools = newPackageToolbox()
 	sd.SetMode(defaultMode)
 	// The model may look into the folder arxi-tui was opened in.
 	if cwd, err := os.Getwd(); err == nil {
@@ -993,6 +1000,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	activate := func() {
 		setActiveTexts(mergeTexts(userWords, proj.words))
 		setActivePackages(pkgs)
+		if th, ok := drv.(toolboxHolder); ok && th.PackageToolbox() != nil {
+			th.PackageToolbox().publish(pkgs)
+		}
 		setActiveBehaviour(effBeh())
 	}
 	reloadPackages := func() {
@@ -2200,6 +2210,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 									}
 									if r, ok := drv.(sessionResumer); ok {
 										r.ResumeSession(historyFromEvents(evs))
+									}
+									if r, ok := drv.(toolLogResumer); ok {
+										r.ResumeToolLog(toolLogFromEvents(evs))
 									}
 									for drained := false; !drained; {
 										select {

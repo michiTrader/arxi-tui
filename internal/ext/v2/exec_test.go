@@ -290,3 +290,6 @@ func TestExecRefusesNULInAnArgument(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+// osStat is os.Stat under a name the service tests share.
+func osStat(p string) (os.FileInfo, error) { return os.Stat(p) }

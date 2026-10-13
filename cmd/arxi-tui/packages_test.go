@@ -70,7 +70,7 @@ func TestLoadPackagesNamesWhatIsWrongAndKeepsTheRest(t *testing.T) {
 	write(t, filepath.Join(dir, "broken.json"), `{"protocol":`, 0o644)
 	write(t, filepath.Join(dir, "mismatch.json"), pkgDoc("other", sayCmd), 0o644)
 	write(t, filepath.Join(dir, "shadow.json"), pkgDoc("shadow", `,"commands":[{"name":"help","op":{"kind":"builtin","name":"x"}}]`), 0o644)
-	write(t, filepath.Join(dir, "future.json"), pkgDoc("future", `,"tools":[]`), 0o644)
+	write(t, filepath.Join(dir, "future.json"), pkgDoc("future", `,"timers":[]`), 0o644)
 	write(t, filepath.Join(dir, "big.json"), pkgDoc("big", `,"description":"`+strings.Repeat("x", extv2.MaxDocBytes)+`"`), 0o644)
 	if err := os.Symlink(filepath.Join(dir, "good.json"), filepath.Join(dir, "link.json")); err != nil {
 		t.Fatal(err)
@@ -81,7 +81,7 @@ func TestLoadPackagesNamesWhatIsWrongAndKeepsTheRest(t *testing.T) {
 		t.Fatalf("one broken file must not take the others down: %+v", set.pkgs)
 	}
 	text := problemsText(set)
-	for _, want := range []string{"broken.json", "saved as", "mismatch.json", "shadow.json", "future.json", "reserved", "big.json", "link.json", "is a link"} {
+	for _, want := range []string{"broken.json", "saved as", "mismatch.json", "shadow.json", "future.json", "malformed", "big.json", "link.json", "is a link"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("problems lack %q:\n%s", want, text)
 		}

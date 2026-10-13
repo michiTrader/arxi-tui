@@ -20,12 +20,19 @@ type resumeDriver struct {
 	mu      sync.Mutex
 	cleared int
 	resumed []driver.ChatTurn
+	tools   []toolRecord
 }
 
 func (d *resumeDriver) ClearSession() { d.mu.Lock(); d.cleared++; d.mu.Unlock() }
 func (d *resumeDriver) ResumeSession(h []driver.ChatTurn) {
 	d.mu.Lock()
 	d.resumed = h
+	d.mu.Unlock()
+}
+
+func (d *resumeDriver) ResumeToolLog(r []toolRecord) {
+	d.mu.Lock()
+	d.tools = r
 	d.mu.Unlock()
 }
 
@@ -41,7 +48,8 @@ func TestLoopResumeBringsBackAConversation(t *testing.T) {
 	drv := &resumeDriver{testDriver: testDriver{evCh: make(chan fold.Event, 64)}}
 	// The driver answers every question, so the conversation has both halves.
 	drv.evCh <- fold.Event{Type: "run.prompt", Seq: 1, Payload: map[string]any{"text": "remember zebra"}}
-	drv.evCh <- fold.Event{Type: "llm.response", Seq: 2, Payload: map[string]any{"text": "noted: zebra", "model": "p/m"}}
+	drv.evCh <- fold.Event{Type: "chat.tool", Seq: 2, Payload: map[string]any{"name": "read", "arg": "zebra.txt", "ok": true}}
+	drv.evCh <- fold.Event{Type: "llm.response", Seq: 3, Payload: map[string]any{"text": "noted: zebra", "model": "p/m"}}
 
 	keys := func(s string) []scheduledEvent {
 		var out []scheduledEvent
@@ -71,6 +79,9 @@ func TestLoopResumeBringsBackAConversation(t *testing.T) {
 	}
 	if len(drv.resumed) != 2 || drv.resumed[0].Text != "remember zebra" || drv.resumed[1].Text != "noted: zebra" {
 		t.Errorf("the model must get the old history, got %+v", drv.resumed)
+	}
+	if len(drv.tools) != 1 || drv.tools[0].ask != "remember zebra" || len(drv.tools[0].tools) != 1 || drv.tools[0].tools[0] != "read(zebra.txt)" {
+		t.Errorf("the model must get the record of the tools too, got %+v", drv.tools)
 	}
 	// The answer is on screen before /clear, gone after it, and back only through
 	// /resume: look for it in the frames drawn after the menu was last open.

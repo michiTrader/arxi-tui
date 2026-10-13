@@ -76,6 +76,8 @@ func checkPlaceholders(who string, parts []tmplPart, oc opCtx) error {
 			continue
 		}
 		switch {
+		case oc.kind.automatic():
+			return fmt.Errorf("%s: ${%s} has nothing to fill it, because this runs by itself and the user typed no text; write the value out", who, p.ph)
 		case p.ph == "input" && oc.kind != ctxRule:
 			return fmt.Errorf("%s: ${input} is the line a rule looks at, and a command has no such line; use ${args} or ${1}", who)
 		case p.ph != "input" && oc.kind == ctxRule:

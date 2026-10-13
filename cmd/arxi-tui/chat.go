@@ -117,6 +117,8 @@ type chatSession struct {
 	// ui lends the model the interface tools (ui_bridge.go); nil lends none. Like
 	// workdir it is a setting, and it travels with the tools, so it needs a workdir.
 	ui *uiBridge
+	// tools are the tools of the approved packages, lent to the model on every turn.
+	tools *packageToolbox
 
 	// dial gives each turn its own connection (nil = every turn shares core, which
 	// is what the tests and the mock use; cancelling then only abandons the answer).
@@ -478,6 +480,13 @@ func (c *chatSession) setHistory(h []driver.ChatTurn) {
 	c.mu.Unlock()
 }
 
+// setToolLog replaces the record of what earlier turns did, for a resumed conversation.
+func (c *chatSession) setToolLog(r []toolRecord) {
+	c.mu.Lock()
+	c.toolLog = append([]toolRecord(nil), r...)
+	c.mu.Unlock()
+}
+
 // busyNow reports whether a turn is in flight.
 func (c *chatSession) busyNow() bool {
 	c.mu.Lock()
@@ -612,6 +621,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		},
 	}
 	uiSystem := ""
+	var uiDefs []driver.ClientToolDef
 	if withUI && c.ui != nil && workdir != "" {
 		ui := c.ui
 		// Only on a question that asked for it (/ui <request> or @ui). Always-on, the
@@ -627,12 +637,37 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 			uiSystem = " " + uiSystemHintLater
 		}
 		params.System += uiSystem
-		params.ClientTools = ui.definitions()
-		params.OnClientTool = func(ctx context.Context, call driver.ClientToolCall) driver.ClientToolResult {
-			return ui.call(ctx, call, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
-		}
+		uiDefs = ui.definitions()
 	} else if withUI {
 		c.post(ctx, gen, "chat.warn", map[string]any{"text": "/ui: the model can change the interface only inside a project folder with a core that supports it"})
+	}
+	// The tools of the packages the user approved are lent on every turn, not only on
+	// /ui ones: they are what the user installed to be used.
+	pkgSystem := ""
+	var pkgDefs []driver.ClientToolDef
+	if c.tools != nil && workdir != "" {
+		var omitted []string
+		pkgDefs, omitted = c.tools.definitions(clientToolBudget-len(uiDefs), runs, web)
+		if len(omitted) > 0 {
+			c.post(ctx, gen, "chat.warn", map[string]any{"text": "too many package tools for one turn; not offered this time: " + strings.Join(omitted, ", ")})
+		}
+		if len(pkgDefs) > 0 {
+			pkgSystem = " " + packageToolsHint
+			params.System += pkgSystem
+		}
+	}
+	if defs := append(append([]driver.ClientToolDef{}, uiDefs...), pkgDefs...); len(defs) > 0 {
+		ui, tools := c.ui, c.tools
+		params.ClientTools = defs
+		params.OnClientTool = func(ctx context.Context, call driver.ClientToolCall) driver.ClientToolResult {
+			if ownsToolName(call.Name) && tools != nil {
+				return tools.call(ctx, call, runs, web, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
+			}
+			if ui == nil {
+				return driver.ClientToolResult{Text: call.Name + " is not a tool of this session", Summary: "Unknown tool"}
+			}
+			return ui.call(ctx, call, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
+		}
 	}
 	res, err := core.SubmitChatSend(ctx, params)
 	// An older core refuses what it does not know, one parameter at a time. Take away
@@ -640,14 +675,21 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 	for i := 0; i < 4 && ctx.Err() == nil; i++ {
 		switch {
 		case errors.Is(err, driver.ErrClientToolsUnsupported):
-			// The interface tools are this client's own; a core that cannot carry
-			// them still answers, it just cannot change the interface.
-			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model change the interface, " +
+			// The interface tools and the package tools are this client's own; a core
+			// that cannot carry them still answers, it just cannot use them.
+			what := "change the interface"
+			switch {
+			case len(pkgDefs) > 0 && len(uiDefs) > 0:
+				what = "change the interface or use package tools"
+			case len(pkgDefs) > 0:
+				what = "use package tools"
+			}
+			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model " + what + ", " +
 				"so it will not; " + rebuildRemedy})
 			params.ClientTools, params.OnClientTool = nil, nil
-			// The hint names ui_guide; without the tool it would send the model
-			// looking for one it does not have.
-			params.System = strings.TrimSuffix(params.System, uiSystem)
+			// The hints name tools; without them they would send the model looking
+			// for ones it does not have.
+			params.System = strings.TrimSuffix(strings.TrimSuffix(params.System, pkgSystem), uiSystem)
 		case errors.Is(err, driver.ErrEditsUnsupported):
 			// A core that can look but not change files: say so, and go on looking.
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model change files, " +
@@ -678,7 +720,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot give the model access to your files, " +
 			"so it answers without looking; " + rebuildRemedy})
 		params.Workdir, params.OnTool, params.ClientTools, params.OnClientTool = "", nil, nil, nil
-		params.System = strings.TrimSuffix(params.System, uiSystem)
+		params.System = strings.TrimSuffix(strings.TrimSuffix(params.System, pkgSystem), uiSystem)
 		res, err = core.SubmitChatSend(ctx, params)
 	}
 	if ctx.Err() != nil {

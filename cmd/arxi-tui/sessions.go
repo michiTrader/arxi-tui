@@ -339,6 +339,41 @@ func historyFromEvents(evs []fold.Event) []driver.ChatTurn {
 	return out
 }
 
+// toolLogFromEvents rebuilds what the live session keeps in toolLog: for each answered
+// question that used tools, the question and the tools, in the same words the live turn
+// wrote. A question that got no answer has none, as live: its tools are already in the
+// note history keeps for it.
+func toolLogFromEvents(evs []fold.Event) []toolRecord {
+	var out []toolRecord
+	var tools []string
+	pending := ""
+	for _, e := range evs {
+		switch e.Type {
+		case "run.prompt":
+			pending, _ = e.Payload["text"].(string)
+			tools = nil // a failed or cancelled turn leaves nothing behind
+		case "chat.tool":
+			var t driver.ToolCall
+			t.Name, _ = e.Payload["name"].(string)
+			t.Arg, _ = e.Payload["arg"].(string)
+			t.OK, _ = e.Payload["ok"].(bool)
+			if d := toolDigestEntry(t); d != "" {
+				tools = append(tools, d)
+			}
+		case "llm.response":
+			// A streamed answer arrives in pieces: only the first finds tools to record.
+			if r, ok := newToolRecord(pending, tools); ok {
+				out = append(out, r)
+			}
+			tools = nil
+		}
+	}
+	if len(out) > toolRecordsMax {
+		out = out[len(out)-toolRecordsMax:]
+	}
+	return out
+}
+
 // sessionAge words how long ago a conversation was last used.
 func sessionAge(now, t time.Time) string {
 	d := now.Sub(t)

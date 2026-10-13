@@ -285,6 +285,14 @@ func (d *serveDriver) InterfaceBridge() *uiBridge {
 	return d.chat.ui
 }
 
+// PackageToolbox is where the loop publishes the packages whose tools the chat lends.
+func (d *serveDriver) PackageToolbox() *packageToolbox {
+	if d.chat == nil {
+		return nil
+	}
+	return d.chat.tools
+}
+
 // SetUIMode turns the interface conversation on or off (see chatSession.uiMode).
 func (d *serveDriver) SetUIMode(on bool) {
 	if d.chat != nil {
@@ -311,6 +319,13 @@ func (d *serveDriver) CancelTurn() bool {
 func (d *serveDriver) ResumeSession(history []driver.ChatTurn) {
 	if d.chat != nil {
 		d.chat.setHistory(history)
+	}
+}
+
+// ResumeToolLog gives the resumed conversation the record of what its earlier turns did.
+func (d *serveDriver) ResumeToolLog(r []toolRecord) {
+	if d.chat != nil {
+		d.chat.setToolLog(r)
 	}
 }
 
