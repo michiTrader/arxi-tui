@@ -23,7 +23,12 @@ func TestBarGrab(t *testing.T) {
 	}{
 		{"on the thumb keeps the offset inside it", 99, 2 + 7, 1, true},
 		{"on the track takes the middle of the thumb", 99, 2 + 1, 2, true},
+		{"first row of the thumb", 99, 2 + 6, 0, true},
+		{"last row of the thumb", 99, 2 + 9, 3, true},
+		{"the row just above the thumb is track, not thumb", 99, 2 + 5, 2, true},
+		{"last row of the bar", 99, 2 + 9, 3, true},
 		{"beside the bar is not a grab", 98, 2 + 7, 0, false},
+		{"the column after the bar", 100, 2 + 7, 0, false},
 		{"above the pane", 99, 1, 0, false},
 		{"below the pane", 99, 12, 0, false},
 	}
@@ -32,6 +37,23 @@ func TestBarGrab(t *testing.T) {
 		if g != c.grab || ok != c.ok {
 			t.Errorf("%s: got (%d,%v), want (%d,%v)", c.name, g, ok, c.grab, c.ok)
 		}
+	}
+	// A thumb in the middle: the rows either side of it are track (they take the middle of
+	// the thumb), the thumb's own rows keep the offset.
+	mid := engine.ChatBar{Col: 99, Top: 2, Height: 10, ThumbTop: 3, ThumbLen: 3, Max: 60}
+	for _, c := range []struct {
+		row, grab int
+		what      string
+	}{
+		{2 + 2, 1, "just above the thumb"}, {2 + 3, 0, "first row of the thumb"},
+		{2 + 5, 2, "last row of the thumb"}, {2 + 6, 1, "just under the thumb"},
+	} {
+		if g, ok := barGrab(mid, 99, c.row); !ok || g != c.grab {
+			t.Errorf("%s: got (%d,%v), want (%d,true)", c.what, g, ok, c.grab)
+		}
+	}
+	if _, ok := barGrab(mid, 99, 2+10); ok {
+		t.Error("the row after the last one is not on the bar")
 	}
 	if _, ok := barGrab(engine.ChatBar{}, 0, 0); ok {
 		t.Error("a frame with no bar must never be grabbed")
@@ -51,6 +73,21 @@ func TestBarScrollEndsAndRoundTrip(t *testing.T) {
 	}
 	if got := barScroll(b, 500, 0); got != 0 {
 		t.Errorf("pointer far below = %d, want 0", got)
+	}
+	// One row past either end is pinned, not extrapolated beyond the chat.
+	if got := barScroll(b, b.Top-1, 0); got != b.Max {
+		t.Errorf("one row above the bar = %d, want %d", got, b.Max)
+	}
+	if got := barScroll(b, b.Top+b.Height-b.ThumbLen+1, 0); got != 0 {
+		t.Errorf("thumb one row past the bottom = %d, want 0", got)
+	}
+	// The offset is rounded to the nearest thumb position (the renderer places the thumb
+	// with the inverse): span 6, Max 61, thumb row 4 is 4*61/6 = 40.67 lines from the tail,
+	// which is 41, so the chat sits 61-41 = 20 lines from the oldest.
+	odd := b
+	odd.Max = 61
+	if got := barScroll(odd, odd.Top+4, 0); got != 20 {
+		t.Errorf("thumb at row 4 of 6 with 61 lines = %d, want 20 (rounded, not cut)", got)
 	}
 	span := b.Height - b.ThumbLen
 	for scroll := 0; scroll <= b.Max; scroll++ {
