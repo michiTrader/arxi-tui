@@ -2381,6 +2381,19 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								sceneNotice = projectSummary(cwd, proj)
 							}
 							input, caret, slashSel = "", 0, 0
+						} else if focus, isCompact := compactLine(input, slashSel, slashCat); isCompact && ev.Key.Type == term.KeyEnter {
+							// `/compact [what to keep]` replaces the older conversation
+							// with a summary. It runs like a turn (the work happens on
+							// its own goroutine and reports in the conversation), so
+							// the interface never waits on the model.
+							if c, ok := drv.(sessionCompactor); !ok {
+								sceneNotice = noCompactNotice
+							} else if err := c.Compact(ctx, focus); err != nil {
+								sceneNotice = "/compact: " + err.Error()
+							} else {
+								sceneNotice = ""
+							}
+							input, caret, slashSel = "", 0, 0
 						} else if ev.Key.Type == term.KeyEnter && clearCommand(input, slashSel, slashCat) {
 							// `/clear` starts a new session: the transcript, the
 							// chat history the driver sends along, any run being

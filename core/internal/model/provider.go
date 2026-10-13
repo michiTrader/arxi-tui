@@ -90,6 +90,11 @@ type Model struct {
 	// provider's. A gateway can leave one wire open for one model and wall the other;
 	// the wire that worked is remembered here.
 	Protocol string `json:"protocol,omitempty"`
+
+	// ContextWindow is how many tokens the model can hold at once, 0 when not known.
+	// It is only ever stored when the provider reported it or the operator typed it,
+	// never guessed: a wrong window would make a percentage on screen a lie.
+	ContextWindow int `json:"context_window,omitempty"`
 }
 
 const (
@@ -543,11 +548,31 @@ func validatePrice(id string, price *Price) error {
 	if price == nil {
 		return nil
 	}
+	if price.CacheReadUSDPerMTok < 0 || price.CacheWriteUSDPerMTok < 0 {
+		return fmt.Errorf("model %q has a negative cache price: a negative rate would "+
+			"credit the budget for every cached token the run uses", id)
+	}
 	if price.InUSDPerMTok < 0 || price.OutUSDPerMTok < 0 {
 		return fmt.Errorf("model %q has a negative price: a negative rate would "+
 			"credit the budget for every token the run spends", id)
 	}
 	return nil
+}
+
+// SetContextWindow records the context window of a model already in the provider.
+// A non-positive value changes nothing (0 means "not known", and must not erase one
+// that is). It reports whether the model exists.
+func (p *Provider) SetContextWindow(id string, tokens int) bool {
+	for i := range p.Models {
+		if p.Models[i].ID != id {
+			continue
+		}
+		if tokens > 0 {
+			p.Models[i].ContextWindow = tokens
+		}
+		return true
+	}
+	return false
 }
 
 // SetEnabled turns one model on or off, reporting whether anything changed.

@@ -21,7 +21,8 @@ import (
 // fakeLLM is an OpenAI-compatible endpoint on loopback. It records what it was
 // sent, so the tests can assert on the wire and not only on the return value.
 type fakeLLM struct {
-	srv *httptest.Server
+	srv     *httptest.Server
+	windows map[string]int // context window each model reports in its listing
 
 	mu       sync.Mutex
 	auth     []string
@@ -61,9 +62,13 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 		}
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/models"):
-			var data []map[string]string
+			var data []map[string]any
 			for _, m := range f.models {
-				data = append(data, map[string]string{"id": m})
+				e := map[string]any{"id": m}
+				if w := f.windows[m]; w > 0 {
+					e["context_length"] = w
+				}
+				data = append(data, e)
 			}
 			json.NewEncoder(w).Encode(map[string]any{"data": data})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/chat/completions"):

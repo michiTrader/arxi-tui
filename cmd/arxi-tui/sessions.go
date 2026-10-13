@@ -317,6 +317,18 @@ func historyFromEvents(evs []fold.Event) []driver.ChatTurn {
 				out = append(out, driver.ChatTurn{Role: "user", Text: pending}, driver.ChatTurn{Role: "assistant", Text: unansweredText(whyFailed, nil)})
 			}
 			pending, have = text, true
+		case "chat.compacted":
+			// The conversation was compacted here: from this point the model held the
+			// summary and the last `keep` messages, not what came before them.
+			summary, _ := e.Payload["summary"].(string)
+			keep, _ := e.Payload["keep"].(float64)
+			k := int(keep)
+			if k < 0 || k > len(out) {
+				k = len(out)
+			}
+			if summary != "" {
+				out = compactedHistory(summary, append([]driver.ChatTurn(nil), out[len(out)-k:]...))
+			}
 		case "chat.error", "chat.cancelled":
 			if have {
 				why := whyFailed

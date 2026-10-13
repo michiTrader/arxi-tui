@@ -160,7 +160,7 @@ func discoverModels(ctx context.Context, name string) (discovered, error) {
 	ctx, cancel := context.WithTimeout(ctx, discoverTimeout)
 	defer cancel()
 	c := &provider.Client{BaseURL: p.BaseURL, APIKeyEnv: p.APIKeyEnv, Provider: p.Name, Secret: secretsLookup}
-	ids, err := c.ListModels(ctx, p.EffectiveProtocol())
+	infos, err := c.ListModelInfo(ctx, p.EffectiveProtocol())
 	if err != nil {
 		return discovered{}, fmt.Errorf("could not list the models of %s: %w", p.Name, err)
 	}
@@ -168,22 +168,44 @@ func discoverModels(ctx context.Context, name string) (discovered, error) {
 	for _, m := range p.Models {
 		have[m.ID] = true
 	}
+	ids := make([]string, len(infos))
+	for i, m := range infos {
+		ids[i] = m.ID
+	}
 	out := discovered{Provider: p.Name, Found: len(ids), Models: ids}
-	for _, id := range ids {
-		if have[id] {
+	learned := false
+	for _, in := range infos {
+		if have[in.ID] {
+			// A model the operator already has keeps everything they set; a window
+			// is learned for it only when none is known yet.
+			if in.ContextWindow > 0 && windowUnknown(p, in.ID) {
+				p.SetContextWindow(in.ID, in.ContextWindow)
+				learned = true
+			}
 			continue
 		}
-		if err := p.AddModel(id, nil); err != nil {
+		if err := p.AddModel(in.ID, nil); err != nil {
 			continue // an id the model package refuses is skipped, not fatal
 		}
+		p.SetContextWindow(in.ID, in.ContextWindow)
 		out.Added++
 	}
-	if out.Added > 0 {
+	if out.Added > 0 || learned {
 		if err := store.Save(p); err != nil {
 			return discovered{}, err
 		}
 	}
 	return out, nil
+}
+
+// windowUnknown reports whether the model has no context window stored yet.
+func windowUnknown(p model.Provider, id string) bool {
+	for _, m := range p.Models {
+		if m.ID == id {
+			return m.ContextWindow == 0
+		}
+	}
+	return false
 }
 
 // removeModel deletes a model from the provider that owns it, and clears the
@@ -365,6 +387,20 @@ type chatResult struct {
 	ContextTokens int `json:"context_tokens,omitempty"`
 }
 
+// contextHeld is how many tokens the model held at one ask. Anthropic reports the part
+// of the prompt it read from or wrote to its cache apart from input_tokens, so adding
+// only input and output understates a cached conversation by almost all of it (a
+// gateway with prompt caching showed 37k for a conversation the model held 900k of).
+// OpenAI counts cached tokens inside prompt_tokens already, and reports them as a
+// detail of it, so only the Anthropic wire adds them: its cache write is never inside
+// input_tokens, and neither is its cache read.
+func contextHeld(u turn.Usage, protocol string) int {
+	if protocol == model.ProtocolAnthropicMessages {
+		return u.InputTokens + u.CacheReadTokens + u.CacheWriteTokens + u.OutputTokens
+	}
+	return u.InputTokens + u.OutputTokens
+}
+
 // chatSend sends one prompt, with earlier turns, to a model and returns the
 // reply. It bills the provider directly; it starts no run, needs no agent and
 // writes nothing to disk.
@@ -535,7 +571,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	return chatResult{
 		Text: reply, Model: res.Model, Provider: res.Provider,
 		InputTokens: used.InputTokens, OutputTokens: used.OutputTokens,
-		ContextTokens: last.InputTokens + last.OutputTokens,
+		ContextTokens: contextHeld(last, res.Protocol),
 	}, nil
 }
 

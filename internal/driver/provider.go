@@ -136,6 +136,9 @@ type ModelRow struct {
 	// (off, on, minimal, low, medium, high, xhigh, max). Nil means the core did
 	// not say (an older core); empty means the model has no level to choose.
 	Efforts []string `json:"efforts"`
+	// ContextWindow is the model's window in tokens; 0 when the core does not know it
+	// (the provider did not report one and the operator did not type one).
+	ContextWindow int `json:"context_window,omitempty"`
 }
 
 // ModelListResult wraps the rows model.list returns. An empty slice is a valid
@@ -331,6 +334,10 @@ type ModelAddParams struct {
 	Provider string
 	Model    string
 	In, Out  *float64
+	// CacheRead and CacheWrite price the cached tokens; they need In and Out.
+	CacheRead, CacheWrite *float64
+	// ContextWindow is the window in tokens, 0 to leave it to what the provider reports.
+	ContextWindow int
 }
 
 // SubmitModelAdd adds a model by hand to a registered provider.
@@ -346,6 +353,18 @@ func (d *NDJSONDriver) SubmitModelAdd(ctx context.Context, p ModelAddParams) (*P
 	if p.In != nil {
 		params["in"] = *p.In
 		params["out"] = *p.Out
+	}
+	if (p.CacheRead != nil || p.CacheWrite != nil) && p.In == nil {
+		return nil, fmt.Errorf("ndjson: model.add needs the input and output price with a cache price")
+	}
+	if p.CacheRead != nil {
+		params["cache_read"] = *p.CacheRead
+	}
+	if p.CacheWrite != nil {
+		params["cache_write"] = *p.CacheWrite
+	}
+	if p.ContextWindow > 0 {
+		params["context_window"] = p.ContextWindow
 	}
 	req := protoRequest{ID: "model-add", Type: "model.add", Params: params}
 

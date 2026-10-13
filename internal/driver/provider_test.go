@@ -222,3 +222,39 @@ func TestModelEnableOkWithNoModelFailsLoud(t *testing.T) {
 		t.Fatalf("returned an unusable result: %+v", res)
 	}
 }
+
+// TestModelAddSendsTheCachePricesAndTheWindowAndModelListReadsTheWindow pins the wire
+// of the context options: what the user types in the form must reach the core under
+// the names it reads, and the window it reports must come back on the row.
+func TestModelAddSendsTheCachePricesAndTheWindowAndModelListReadsTheWindow(t *testing.T) {
+	var w recordingWriter
+	d := sessionWithWriter(t, &w, `{"id":"model-add","ok":true,"result":{"name":"p"}}`)
+	in, out, cr, cw := 3.0, 15.0, 0.3, 3.75
+	if _, err := d.SubmitModelAdd(context.Background(), ModelAddParams{Provider: "p", Model: "m", In: &in, Out: &out, CacheRead: &cr, CacheWrite: &cw, ContextWindow: 1_000_000}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"cache_read":0.3`, `"cache_write":3.75`, `"context_window":1000000`} {
+		if !strings.Contains(w.String(), want) {
+			t.Errorf("request lacks %s: %s", want, w.String())
+		}
+	}
+	var w2 recordingWriter
+	d2 := sessionWithWriter(t, &w2, `{"id":"model-add","ok":true,"result":{"name":"p"}}`)
+	if _, err := d2.SubmitModelAdd(context.Background(), ModelAddParams{Provider: "p", Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(w2.String(), "context_window") || strings.Contains(w2.String(), "cache_") {
+		t.Errorf("an empty extra must not be sent: %s", w2.String())
+	}
+	if _, err := d2.SubmitModelAdd(context.Background(), ModelAddParams{Provider: "p", Model: "m", CacheRead: &cr}); err == nil {
+		t.Error("a cache price without in/out must be refused before it is sent")
+	}
+	d3 := session(t, `{"id":"model-list","ok":true,"result":{"models":[{"provider":"p","id":"m","enabled":true,"context_window":1000000},{"provider":"p","id":"n","enabled":true}]}}`)
+	res, err := d3.SubmitModelList(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Models[0].ContextWindow != 1_000_000 || res.Models[1].ContextWindow != 0 {
+		t.Fatalf("windows = %d, %d", res.Models[0].ContextWindow, res.Models[1].ContextWindow)
+	}
+}

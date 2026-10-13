@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync"
@@ -312,6 +313,24 @@ func (d *serveDriver) Decide(allow bool) bool { return d.chat != nil && d.chat.d
 // CancelTurn stops the chat turn in flight and reports whether there was one.
 func (d *serveDriver) CancelTurn() bool {
 	return d.chat != nil && d.chat.cancelTurn()
+}
+
+// Compact summarises the older part of the conversation (see chatSession.compact).
+func (d *serveDriver) Compact(ctx context.Context, focus string) error {
+	if d.chat == nil {
+		return errors.New(noCompactNotice)
+	}
+	return d.chat.compact(ctx, focus)
+}
+
+// ChatHistory is a copy of what the next question will carry.
+func (d *serveDriver) ChatHistory() []driver.ChatTurn {
+	if d.chat == nil {
+		return nil
+	}
+	d.chat.mu.Lock()
+	defer d.chat.mu.Unlock()
+	return append([]driver.ChatTurn(nil), d.chat.history...)
 }
 
 // ResumeSession makes history the conversation in progress. It is called right after

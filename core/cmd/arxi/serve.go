@@ -879,7 +879,20 @@ func handleModelAdd(params map[string]any) (any, error) {
 	if v, ok := params["out"].(float64); ok {
 		out = &v
 	}
-	p, err := addModel(stringParam(params, "provider"), stringParam(params, "model"), in, out)
+	var x modelExtras
+	if v, ok := params["cache_read"].(float64); ok {
+		x.CacheRead = &v
+	}
+	if v, ok := params["cache_write"].(float64); ok {
+		x.CacheWrite = &v
+	}
+	if v, ok := params["context_window"].(float64); ok {
+		if v != float64(int(v)) {
+			return nil, fmt.Errorf("context_window %v is not a whole number of tokens", v)
+		}
+		x.ContextWindow = int(v)
+	}
+	p, err := addModelWith(stringParam(params, "provider"), stringParam(params, "model"), in, out, x)
 	if err != nil {
 		return nil, err
 	}
@@ -914,10 +927,16 @@ func handleModelList(map[string]any) (any, error) {
 		ID       string   `json:"id"`
 		Enabled  bool     `json:"enabled"`
 		Efforts  []string `json:"efforts"`
+		// ContextWindow is the model's window in tokens, 0 when not known.
+		ContextWindow int `json:"context_window,omitempty"`
 	}
 	protocol := map[string]string{}
+	window := map[string]int{}
 	for _, p := range ps {
 		protocol[p.Name] = p.EffectiveProtocol()
+		for _, m := range p.Models {
+			window[p.Name+"/"+m.ID] = m.ContextWindow
+		}
 	}
 	rows := model.Rows(ps)
 	out := make([]row, 0, len(rows))
@@ -926,7 +945,7 @@ func handleModelList(map[string]any) (any, error) {
 		if levels == nil {
 			levels = []string{}
 		}
-		out = append(out, row{Provider: r.Provider, ID: r.Name, Enabled: r.Enabled, Efforts: levels})
+		out = append(out, row{Provider: r.Provider, ID: r.Name, Enabled: r.Enabled, Efforts: levels, ContextWindow: window[r.Provider+"/"+r.Name]})
 	}
 	return struct {
 		Models []row `json:"models"`
