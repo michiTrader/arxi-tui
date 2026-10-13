@@ -133,9 +133,22 @@ func canonicalOpenAIResponse(resp *chatResponse) (turn.Response, error) {
 	if choice.Message.Content != nil {
 		out.Content = append(out.Content, turn.ContentBlock{Type: turn.BlockText, Text: *choice.Message.Content})
 	}
-	for _, wire := range choice.Message.ToolCalls {
+	kept, dropped := 0, 0
+	for i, wire := range choice.Message.ToolCalls {
 		if wire.Type != "" && wire.Type != "function" {
 			return out, fmt.Errorf("provider tool call %q has unsupported type %q", wire.ID, wire.Type)
+		}
+		// Some gateways (vLLM-style ones among them) stream a call whose function has no
+		// name: a stray fragment, not something the model asked for. There is nothing to
+		// run, and failing the whole turn over it threw away a good answer, so it is
+		// dropped and counted.
+		if strings.TrimSpace(wire.Function.Name) == "" {
+			dropped++
+			continue
+		}
+		// A gateway may also leave the id out; the call is still well formed.
+		if strings.TrimSpace(wire.ID) == "" {
+			wire.ID = fmt.Sprintf("call_%d", i)
 		}
 		// A tool that takes no arguments may stream none at all.
 		rawArgs := strings.TrimSpace(wire.Function.Arguments)
@@ -147,11 +160,19 @@ func canonicalOpenAIResponse(resp *chatResponse) (turn.Response, error) {
 			return out, fmt.Errorf("provider tool call %q: %w", wire.ID, err)
 		}
 		out.Content = append(out.Content, turn.ContentBlock{Type: turn.BlockToolCall, ToolCall: &call})
+		kept++
+	}
+	if dropped > 0 && kept == 0 && !hasText(out.Content) {
+		// The model meant to call a tool and the call arrived without its name. Asking
+		// again usually fixes it, so this is a transient refusal, not a failed turn.
+		out.FinishReason = turn.FinishRefusal
+		out.Refusal = &turn.Refusal{Code: "http_502", Retryable: true, Message: "the provider sent a tool call with no name (a broken reply, not an answer)"}
+		return out, nil
 	}
 	if presentJSON(choice.Message.FunctionCall) {
 		return out, fmt.Errorf("legacy function_call has no provider call ID and cannot be resumed safely")
 	}
-	out.FinishReason = openAIFinishReason(choice.FinishReason, len(choice.Message.ToolCalls) > 0)
+	out.FinishReason = openAIFinishReason(choice.FinishReason, kept > 0)
 	if out.FinishReason == turn.FinishRefusal {
 		out.Refusal = &turn.Refusal{Code: "content_filter", Message: "the provider filtered the response"}
 	}
@@ -185,4 +206,14 @@ func decodeArguments(raw json.RawMessage) (map[string]any, error) {
 		return nil, fmt.Errorf("decode canonical tool arguments: %w", err)
 	}
 	return args, nil
+}
+
+// hasText reports whether any block carries non-blank text.
+func hasText(blocks []turn.ContentBlock) bool {
+	for _, b := range blocks {
+		if b.Type == turn.BlockText && strings.TrimSpace(b.Text) != "" {
+			return true
+		}
+	}
+	return false
 }

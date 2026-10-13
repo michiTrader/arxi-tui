@@ -350,6 +350,18 @@ type State struct {
 	// view state, like HostCwd. Empty draws nothing.
 	HostUsage string `json:"host.usage"`
 
+	// HostBranch is the git branch of the working directory (a short commit id when HEAD is
+	// detached), empty outside a repository. HostScroll is the hint that the chat is scrolled up
+	// and how to get back to the latest line; empty while the chat is at its tail. Both are host
+	// view state like HostCwd: no event carries them, the loop re-attaches them each frame.
+	HostBranch string `json:"host.branch"`
+	HostScroll string `json:"host.scroll"`
+
+	// HostShells is how many background shells run ("1 shell", "3 shells"), empty when none.
+	// Host view state like HostBranch: the shells live in the host, so the loop counts them
+	// each frame.
+	HostShells string `json:"host.shells"`
+
 	// BudgetMicrounits is run.started.budget_usd × 1000, captured when the run
 	// starts. Combined with CostMicrounits it produces session.tokens_used.
 	BudgetMicrounits uint64
@@ -1720,6 +1732,9 @@ var Commands = []SlashMatch{
 	// /clear is a host command: it ends the conversation and starts a new one.
 	{"clear", "Session", "Start a new session"},
 	{"compact", "Session", "Summarise the earlier conversation to free context (optionally: what to keep)"},
+	{"shell", "General", "Background shells: list, show <n>, stop <n|all>, start <command>"},
+	{"folder", "General", "Folders beside the project the model may use: list, add <path>, remove <path|all>"},
+	{"settings", "General", "Host settings: autocompact on/off and at what share of the context window"},
 	{"copy", "Session", "Copy an answer, or the whole conversation, to the clipboard"},
 	// The provider/model management commands (K2). They are host-intercepted
 	// round-trips over the serve protocol, not patch verbs, so they are NOT held

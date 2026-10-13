@@ -475,7 +475,7 @@ func TestSlashMenuSelectionColours(t *testing.T) {
 func TestSlashMenuSelectionClampsToMatches(t *testing.T) {
 	// Tall enough for the header and every row: the menu does not scroll, so a
 	// registry longer than the frame would clip the row this test lights.
-	r := Renderer{Width: 90, Height: 24}
+	r := Renderer{Width: 90, Height: 32}
 	styled := r.RenderFrame(slashMenuDoc(t), slashState(99)).Styled()
 	last := fold.Commands[len(fold.Commands)-1].Name
 	if !strings.Contains(styled, "«menu.name.selected:/"+last+"»") {

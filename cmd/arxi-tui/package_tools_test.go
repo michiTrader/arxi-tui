@@ -52,6 +52,18 @@ func names(defs []driver.ClientToolDef) []string {
 	return n
 }
 
+// withoutShells drops the background-shell tools, which the chat lends on its own
+// wherever commands may run; these tests are about the other tools.
+func withoutShells(in []string) []string {
+	var out []string
+	for _, n := range in {
+		if !isShellTool(n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
 func callOf(name, args string) driver.ClientToolCall {
 	raw, _ := json.Marshal(map[string]string{"args": args})
 	return driver.ClientToolCall{Name: name, Arguments: raw}
@@ -267,7 +279,7 @@ func TestTheChatLendsPackageToolsAndRoutesTheCalls(t *testing.T) {
 	c, out := pkgToolChat(t, core, boxOf(toolPkg(t, "p", true, echoT("say"))))
 	sendAndWait(t, c, out, "arregla el banner", "agent.turn_done")
 	p := core.last()
-	if got := names(p.ClientTools); len(got) != 1 || got[0] != "pkg_p_say" || p.OnClientTool == nil {
+	if got := withoutShells(names(p.ClientTools)); len(got) != 1 || got[0] != "pkg_p_say" || p.OnClientTool == nil {
 		t.Fatalf("lent %v", got)
 	}
 	if !strings.Contains(p.System, packageToolsHint) {
@@ -291,8 +303,8 @@ func TestNoToolsMeansNothingExtraIsSent(t *testing.T) {
 	c, out := pkgToolChat(t, core, newPackageToolbox())
 	sendAndWait(t, c, out, "arregla el banner", "agent.turn_done")
 	p := core.last()
-	if len(p.ClientTools) != 0 || p.OnClientTool != nil || strings.Contains(p.System, "pkg_") {
-		t.Errorf("an empty toolbox changed the request: %v", names(p.ClientTools))
+	if got := withoutShells(names(p.ClientTools)); len(got) != 0 || strings.Contains(p.System, "pkg_") {
+		t.Errorf("an empty toolbox changed the request: %v", got)
 	}
 	// Without a project folder the core refuses client tools: none are lent.
 	core2 := &seenChat{}

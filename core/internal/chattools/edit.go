@@ -205,8 +205,10 @@ func (t *Toolbox) resolveForWrite(p string) (string, error) {
 	if outside(t, full) {
 		return "", fmt.Errorf("%s is outside the project folder, so it is not available", display(p))
 	}
-	if full == t.root {
-		return "", fmt.Errorf("%s is the project folder itself, not a file", display(p))
+	for _, r := range t.Roots() {
+		if full == r {
+			return "", fmt.Errorf("%s is the project folder itself, not a file", display(p))
+		}
 	}
 	real, tail := full, ""
 	for {
@@ -231,7 +233,7 @@ func (t *Toolbox) resolveForWrite(p string) (string, error) {
 	if outside(t, real) {
 		return "", fmt.Errorf("%s is outside the project folder, so it is not available", display(p))
 	}
-	rel, _ := filepath.Rel(t.root, real)
+	rel, _ := t.within(real)
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
 		if strings.EqualFold(part, ".git") {
 			return "", fmt.Errorf("%s is repository bookkeeping and may not be changed", display(p))

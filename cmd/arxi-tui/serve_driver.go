@@ -274,6 +274,7 @@ func (d *serveDriver) SetMode(name string) {
 		d.chat.setEdits(m.policy(classEdit))
 		d.chat.setRuns(m.policy(classRun))
 		d.chat.setWeb(m.policy(classWeb))
+		d.chat.setOutside(m.policy(classFolder))
 	}
 }
 
@@ -383,6 +384,10 @@ func (d *serveDriver) ClearSession() {
 }
 
 func (d *serveDriver) Close() error {
+	// Background shells must not outlive the program.
+	if d.chat != nil {
+		d.chat.shells.stopAll()
+	}
 	d.mu.Lock()
 	cancel := d.runCancel
 	d.mu.Unlock()

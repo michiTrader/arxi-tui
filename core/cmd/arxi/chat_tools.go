@@ -61,6 +61,10 @@ type chatToolbox struct {
 	client []turn.ToolDefinition
 	// callClient runs one client tool on the client; nil when the connection cannot.
 	callClient func(clientToolCall) (clientToolResult, error)
+	// outside is the policy for a file tool that names a path beyond the project's
+	// folders: deny (refused, the default), ask (the user is asked to open the
+	// folder it belongs to) or allow (opened without asking). See folders.go.
+	outside string
 }
 
 // maxClientTools bounds how many tools a client may lend one turn. Every definition
@@ -236,7 +240,8 @@ type chatToolNotification struct {
 // toolsHint tells the model what it can do and how paths are read.
 func toolsHint(root, edits string) string {
 	h := "You can use tools on the user's project (root: " + filepath.Base(root) + "; paths are relative to it). " +
-		"Look before you answer about the code; never guess file contents."
+		"Look before you answer about the code; never guess file contents. " +
+		"Read a file whole in one call unless it is huge, and do not read the same part twice."
 	if edits != editsDeny {
 		h += " Read a file before you edit it. If the user declines a change, do not retry it: say what you would do and ask."
 	}
@@ -261,10 +266,26 @@ func envHint(root, runs string) string {
 	if runs == editsAsk || runs == editsAllow {
 		h += " run uses " + chattools.ShellName() + " and may name any path (the user approves it); the other tools stay inside the project."
 		if runtime.GOOS == "windows" {
-			h += " Use dir, ren, copy, type, not ls, mv, cat; for PowerShell run powershell -NoProfile -Command."
+			h += " Use dir, ren, copy, type, not ls, mv, cat; grep and head do not exist there, so search with the grep tool, " +
+				"and for PowerShell run powershell -NoProfile -Command."
 		}
 	}
 	return h
+}
+
+// foldersHint tells the model how to reach a folder beside the project, when it may ask
+// for one, and which ones are already open. Their paths are written in full: a relative
+// path always starts at the project.
+func foldersHint(tb *chatToolbox) string {
+	var h string
+	if extra := tb.box.Roots()[1:]; len(extra) > 0 {
+		h = " Also open, by full path: " + strings.Join(extra, ", ") + "."
+	}
+	if tb.outside == editsAsk || tb.outside == editsAllow {
+		h += " To use a folder outside the project, give the full path to list, read, grep, edit or write; " +
+			"the user is asked once to open that folder. Do not copy files into the project to get around this."
+	}
+	return strings.TrimSpace(h)
 }
 
 // runsHint tells the model about the run tool, when it has one.
@@ -272,7 +293,8 @@ func runsHint(runs string) string {
 	if runs == editsDeny || runs == "" {
 		return ""
 	}
-	return "Use run only for what the other tools cannot do (build, test, git); nothing interactive or endless. " +
+	return "run really executes commands here: when the user asks you to run, launch or test something, do it with run " +
+		"and never say you cannot execute things. Nothing interactive or endless. " +
 		"If the user declines a command, do not retry it: ask."
 }
 
@@ -309,6 +331,9 @@ func (tb *chatToolbox) definitions() []turn.ToolDefinition {
 	return append(out, tb.client...)
 }
 
+// roundCapNote is added to the answer of a turn that was cut at maxToolRounds.
+var roundCapNote = fmt.Sprintf("\n\n[This answer stopped at the limit of %d tool rounds per turn, not because the work is done. Say \"continue\" to keep going.]", maxToolRounds)
+
 // runToolLoop asks the model, runs the tools it requests, and asks again until
 // it answers in plain text. complete performs one request (with its retries).
 func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
@@ -325,6 +350,17 @@ func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 		resp, err := complete(*req)
 		if err != nil {
 			return resp, err
+		}
+		if round >= maxToolRounds && resp.FinishReason != turn.FinishRefusal {
+			// The turn ends here because of the cap, not because the model was done: say
+			// so, or it looks like it stopped for no reason and the user has to guess to
+			// type "continue".
+			resp.Content = append(resp.Content, turn.ContentBlock{Type: turn.BlockText, Text: roundCapNote})
+		}
+		// A model that cannot use the tool channel writes its call as text; run it
+		// instead of showing it as the answer (textcalls.go).
+		if len(req.Tools) > 0 && resp.FinishReason != turn.FinishRefusal {
+			resp = withTextCalls(resp, req.Tools, round)
 		}
 		var calls []*turn.ToolCall
 		for _, b := range resp.Content {
@@ -373,6 +409,11 @@ func runOneTool(ctx context.Context, tb *chatToolbox, call *turn.ToolCall) (*tur
 	}
 	if tb.clientTool(call.Name) {
 		return runClientTool(tb, call, n, out, fail)
+	}
+	if chattools.FileTool(call.Name) {
+		if res, err := openFolderFor(tb, call, fail); res != nil || err != nil {
+			return res, err
+		}
 	}
 	switch {
 	case chattools.Runs(call.Name):

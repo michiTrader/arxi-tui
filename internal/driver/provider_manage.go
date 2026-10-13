@@ -208,6 +208,14 @@ type ChatSendParams struct {
 	// with the tools. A core that does not know the parameter makes the call fail
 	// with ErrWebUnsupported.
 	Web string
+	// Folders are further folders the file tools may use, besides Workdir, as full
+	// paths: the ones the user opened earlier in the session. Outside is what the model
+	// may do about a path in none of them: "deny" (the default: refused), "ask" (the
+	// folder it belongs to is put to OnApproval, as an Approval named "folder") or
+	// "allow". Both need Workdir. A core that does not know them makes the call fail
+	// with ErrFoldersUnsupported.
+	Folders []string
+	Outside string
 	// ClientTools are tools this client lends the model and runs itself: the core
 	// offers them and hands every call to OnClientTool, whose answer goes back to the
 	// model. They need Workdir, because they travel with the tools. A core that does
@@ -295,6 +303,10 @@ var ErrRunsUnsupported = errors.New("this arxi core cannot let the model run com
 // ErrWebUnsupported is returned when the core is too old to let the model read the web.
 var ErrWebUnsupported = errors.New("this arxi core cannot let the model read web pages (it does not know web)")
 
+// ErrFoldersUnsupported is returned when the core is too old to open folders beside the
+// project (it does not know folders or outside).
+var ErrFoldersUnsupported = errors.New("this arxi core cannot open folders beside the project (it does not know folders)")
+
 // ErrClientToolsUnsupported is returned when the core is too old to take tools the
 // client runs itself.
 var ErrClientToolsUnsupported = errors.New("this arxi core cannot take tools the client runs (it does not know client_tools)")
@@ -349,6 +361,16 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 	if p.Web != "" && p.Workdir != "" {
 		params["web"] = p.Web
 	}
+	if len(p.Folders) > 0 && p.Workdir != "" {
+		b, err := json.Marshal(p.Folders)
+		if err != nil {
+			return nil, fmt.Errorf("ndjson: encode folders: %w", err)
+		}
+		params["folders"] = string(b)
+	}
+	if p.Outside != "" && p.Workdir != "" {
+		params["outside"] = p.Outside
+	}
 	if len(p.ClientTools) > 0 && p.Workdir != "" {
 		b, err := json.Marshal(p.ClientTools)
 		if err != nil {
@@ -378,6 +400,8 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 		// to be the one an older core refuses.
 		case strings.Contains(refused, "client_tools"):
 			return nil, fmt.Errorf("%w: %s", ErrClientToolsUnsupported, ref.Message)
+		case strings.Contains(refused, "folders") || strings.Contains(refused, "outside"):
+			return nil, fmt.Errorf("%w: %s", ErrFoldersUnsupported, ref.Message)
 		case strings.Contains(refused, "workdir"):
 			return nil, fmt.Errorf("%w: %s", ErrToolsUnsupported, ref.Message)
 		case strings.Contains(refused, "edits"):

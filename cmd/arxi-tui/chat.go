@@ -27,7 +27,7 @@ const chatMaxHistoryBytes = 100_000
 //
 // It is sent with every message and the provider counts it, so it is kept to one short
 // sentence: a bare "hola" should not cost dozens of tokens before the model reads it.
-const chatSystemPrompt = "You are a concise assistant in a terminal."
+const chatSystemPrompt = "You are a concise assistant in a terminal. Reply in the language the user writes in."
 
 // chatNow is the clock behind the date line; tests replace it.
 var chatNow = time.Now
@@ -86,6 +86,12 @@ type chatSession struct {
 	// web is the same for reading web pages: "deny" (not offered), "ask" (each
 	// address waits for the user) or "allow". It follows the agent mode too.
 	web string
+	// outside is what the model may do about a path beyond the project: "deny",
+	// "ask" (the folder it belongs to is put to the user) or "allow". It follows the
+	// agent mode too. folders are the ones the user opened in this conversation
+	// (folders.go); the core keeps nothing between turns, so they ride with each one.
+	outside string
+	folders []string
 	// modelNote is what the model is told, once, on its next turn: the user switched
 	// the model or provider, so earlier replies in the history were not its own.
 	modelNote string
@@ -119,6 +125,11 @@ type chatSession struct {
 	ui *uiBridge
 	// tools are the tools of the approved packages, lent to the model on every turn.
 	tools *packageToolbox
+	// shells are the commands the model (or the user) left running in the background.
+	// They live here, not in the core: the core is started for each turn and gone after
+	// it, so a server it started would die with the turn. They outlive turns, and only
+	// /clear or closing the program ends them.
+	shells *shellRegistry
 
 	// dial gives each turn its own connection (nil = every turn shares core, which
 	// is what the tests and the mock use; cancelling then only abandons the answer).
@@ -142,7 +153,24 @@ type retryWait struct {
 }
 
 func newChatSession(core chatSender, out chan<- fold.Event) *chatSession {
-	return &chatSession{core: core, out: out}
+	c := &chatSession{core: core, out: out}
+	c.shells = newShellRegistry(c.shellEnded)
+	return c
+}
+
+// shellEnded tells the conversation that a background shell ended by itself (a stopped
+// one was the user's or the model's own doing and needs no word). It is a warning line:
+// something the user may want to look at, never sent to the model.
+func (c *chatSession) shellEnded(i shellInfo) {
+	c.mu.Lock()
+	gen := c.gen
+	c.mu.Unlock()
+	how := "ended"
+	if i.Code != 0 {
+		how = fmt.Sprintf("ended with code %d", i.Code)
+	}
+	c.post(context.Background(), gen, "chat.warn", map[string]any{
+		"text": fmt.Sprintf("shell %d %s: %s (/shell show %d)", i.ID, how, i.Command, i.ID)})
 }
 
 // noteRetry records that the core is waiting to ask the provider again, puts a line in
@@ -262,6 +290,14 @@ func (c *chatSession) setRuns(policy string) {
 	c.mu.Unlock()
 }
 
+// setOutside chooses what the model may do about a path beyond the project from the
+// next turn on.
+func (c *chatSession) setOutside(policy string) {
+	c.mu.Lock()
+	c.outside = policy
+	c.mu.Unlock()
+}
+
 // setWeb chooses what the model may do about reading web pages from the next turn on.
 func (c *chatSession) setWeb(policy string) {
 	c.mu.Lock()
@@ -291,10 +327,58 @@ func (c *chatSession) askUser(ctx context.Context, gen int64, a driver.Approval)
 	})
 	select {
 	case allow := <-p.reply:
+		if allow && a.Name == "folder" {
+			c.openFolder(a.Arg)
+		}
 		return allow
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// openFolder remembers a folder the user opened, so the next turns carry it.
+func (c *chatSession) openFolder(dir string) bool {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, f := range c.folders {
+		if samePath(f, dir) {
+			return false
+		}
+	}
+	c.folders = append(c.folders, dir)
+	return true
+}
+
+// closeFolder forgets one opened folder, or all of them when dir is "". It reports how
+// many were forgotten.
+func (c *chatSession) closeFolder(dir string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if strings.TrimSpace(dir) == "" {
+		n := len(c.folders)
+		c.folders = nil
+		return n
+	}
+	keep := c.folders[:0:0]
+	for _, f := range c.folders {
+		if !samePath(f, dir) {
+			keep = append(keep, f)
+		}
+	}
+	n := len(c.folders) - len(keep)
+	c.folders = keep
+	return n
+}
+
+// openFolders is a copy of the folders opened so far.
+func (c *chatSession) openFolders() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.folders...)
 }
 
 // pendingApproval reports whether a change is waiting for the user's answer.
@@ -339,6 +423,10 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	effort := c.effort
 	workdir := c.workdir
 	edits, runs, web := c.edits, c.runs, c.web
+	outside, folders := c.outside, append([]string(nil), c.folders...)
+	if outside == policyDeny {
+		outside = ""
+	}
 	if runs == policyDeny {
 		// Denied is what a core that knows nothing about commands already does, and
 		// naming it would make an older core refuse the whole request.
@@ -366,7 +454,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	// A greeting, a ping or "what model are you" is answered with nothing but the
 	// message: no tools, no project rules, no history, no thinking, no interface guide.
 	if on, phrases := lightTurnsOn(); command == "" && isLightMessage(text, phrases, on) {
-		workdir, edits, runs, web, effort = "", "", "", "", ""
+		workdir, edits, runs, web, effort, outside, folders = "", "", "", "", "", "", nil
 		hist, withUI = nil, false
 	}
 	c.turnText, c.turnTools = text, nil
@@ -375,7 +463,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	turnCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.mu.Unlock()
-	go c.run(turnCtx, text, command, withUI, hist, gen, effort, workdir, edits, runs, web, turn)
+	go c.run(turnCtx, text, command, withUI, hist, gen, effort, workdir, edits, runs, web, outside, folders, turn)
 	return nil
 }
 
@@ -454,13 +542,19 @@ func (c *chatSession) reset() {
 	c.gen++
 	c.history = nil
 	c.toolLog = nil
+	// A folder was opened for the conversation; a new one starts closed.
+	c.folders = nil
 	c.uiMode = false
 	c.guideSent = false
 	c.busy = false
 	c.compacting = false
 	cancel := c.cancel
 	c.cancel = nil
+	shells := c.shells
 	c.mu.Unlock()
+	// A new conversation does not inherit the previous one's servers. Stopping waits
+	// for them to exit, so it must not hold up the screen.
+	go shells.stopAll()
 	if cancel != nil {
 		cancel()
 	}
@@ -551,7 +645,7 @@ func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload m
 	}
 }
 
-func (c *chatSession) run(ctx context.Context, text, command string, withUI bool, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs, web string, turn int64) {
+func (c *chatSession) run(ctx context.Context, text, command string, withUI bool, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs, web, outside string, folders []string, turn int64) {
 	defer func() {
 		c.mu.Lock()
 		// Only the turn that is still current frees the session: a cancelled turn
@@ -612,7 +706,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		// A rate limit or an overload is waited out by the core itself; this only shows it.
 		OnRetry: func(r driver.Retry) { c.noteRetry(ctx, gen, r) },
 		// What it looks at while answering is shown as it happens.
-		Workdir: workdir, Edits: edits, Runs: runs, Web: web,
+		Workdir: workdir, Edits: edits, Runs: runs, Web: web, Outside: outside, Folders: folders,
 		OnApproval: func(ctx context.Context, a driver.Approval) bool { return c.askUser(ctx, gen, a) },
 		OnTool: func(t driver.ToolCall) {
 			if e := toolDigestEntry(t); e != "" {
@@ -663,10 +757,24 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 			params.System += pkgSystem
 		}
 	}
-	if defs := append(append([]driver.ClientToolDef{}, uiDefs...), pkgDefs...); len(defs) > 0 {
-		ui, tools := c.ui, c.tools
+	// Background shells ride on the same policy as run: not offered when commands are
+	// denied. They count against the tool budget like any other client tool.
+	shellSystem := ""
+	var shellDefs []driver.ClientToolDef
+	if c.shells != nil && workdir != "" && (runs == policyAsk || runs == policyAllow) {
+		if room := clientToolBudget - len(uiDefs) - len(pkgDefs); room >= len(shellDefinitions()) {
+			shellDefs = shellDefinitions()
+			shellSystem = " " + shellsHint
+			params.System += shellSystem
+		}
+	}
+	if defs := append(append(append([]driver.ClientToolDef{}, uiDefs...), pkgDefs...), shellDefs...); len(defs) > 0 {
+		ui, tools, shells := c.ui, c.tools, c.shells
 		params.ClientTools = defs
 		params.OnClientTool = func(ctx context.Context, call driver.ClientToolCall) driver.ClientToolResult {
+			if isShellTool(call.Name) && shells != nil {
+				return shells.call(ctx, call, workdir, runs, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
+			}
 			if ownsToolName(call.Name) && tools != nil {
 				return tools.call(ctx, call, runs, web, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
 			}
@@ -690,13 +798,15 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 				what = "change the interface or use package tools"
 			case len(pkgDefs) > 0:
 				what = "use package tools"
+			case len(uiDefs) == 0 && len(shellDefs) > 0:
+				what = "start background shells"
 			}
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model " + what + ", " +
 				"so it will not; " + rebuildRemedy})
 			params.ClientTools, params.OnClientTool = nil, nil
 			// The hints name tools; without them they would send the model looking
 			// for ones it does not have.
-			params.System = strings.TrimSuffix(strings.TrimSuffix(params.System, pkgSystem), uiSystem)
+			params.System = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(params.System, shellSystem), pkgSystem), uiSystem)
 		case errors.Is(err, driver.ErrEditsUnsupported):
 			// A core that can look but not change files: say so, and go on looking.
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model change files, " +
@@ -706,6 +816,10 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model run commands, " +
 				"so it will not; " + rebuildRemedy})
 			params.Runs = ""
+		case errors.Is(err, driver.ErrFoldersUnsupported):
+			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot open folders beside the project, " +
+				"so the model stays inside it; " + rebuildRemedy})
+			params.Outside, params.Folders = "", nil
 		case errors.Is(err, driver.ErrWebUnsupported):
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model read web pages, " +
 				"so it will not; " + rebuildRemedy})
@@ -716,7 +830,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		}
 		// ui_edit asks through the same channel, but on the client's side; it needs
 		// no approval from the core, so OnApproval stays for it.
-		if params.Edits == "" && params.Runs == "" && params.Web == "" && params.OnClientTool == nil {
+		if params.Edits == "" && params.Runs == "" && params.Web == "" && params.Outside == "" && params.OnClientTool == nil {
 			params.OnApproval = nil
 		}
 		res, err = core.SubmitChatSend(ctx, params)
@@ -727,7 +841,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot give the model access to your files, " +
 			"so it answers without looking; " + rebuildRemedy})
 		params.Workdir, params.OnTool, params.ClientTools, params.OnClientTool = "", nil, nil, nil
-		params.System = strings.TrimSuffix(strings.TrimSuffix(params.System, pkgSystem), uiSystem)
+		params.System = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(params.System, shellSystem), pkgSystem), uiSystem)
 		res, err = core.SubmitChatSend(ctx, params)
 	}
 	if ctx.Err() != nil {

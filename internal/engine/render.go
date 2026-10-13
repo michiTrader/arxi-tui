@@ -242,9 +242,30 @@ type Renderer struct {
 	// count and the budget. Zero when the chat fits and there is nothing to scroll.
 	ChatScrollMax int
 
+	// Scrollbar asks the chat pane to keep its last column for a scrollbar and to draw one
+	// there while there is more transcript than window. Off (the default, and every golden)
+	// the pane uses the full width and draws nothing. The host turns it on only when it
+	// tracks the mouse, since a bar nobody can grab is just a lost column.
+	Scrollbar bool
+
+	// ChatBar is the render's report of where the bar ended up, in the coordinates of the
+	// frame: the host hit-tests mouse reports against it. Zero Height means no bar is on
+	// screen this frame (nothing to scroll, or the pane sits somewhere the stack walk
+	// could not place).
+	ChatBar ChatBar
+
 	// chatHead is what the enclosing stack drew for its in_chat children, handed to the
 	// chat pane that is drawn right after it in the same stack.
 	chatHead []ui.Line
+}
+
+// ChatBar is the geometry of the chat pane's scrollbar for the frame just drawn. Col is the
+// column it sits in, Top and Height its rows, ThumbTop (relative to Top) and ThumbLen the
+// grip, and Max the largest legal ChatScroll, so a host can turn a row back into an offset.
+type ChatBar struct {
+	Col, Top, Height   int
+	ThumbTop, ThumbLen int
+	Max                int
 }
 
 // AnimActivity is one visible animating node, reported back to the loop so it
@@ -368,7 +389,7 @@ func (r *Renderer) renderByType(n *scene.Node, state fold.State, budget int) ui.
 	case "box":
 		return r.renderBox(n, state, budget)
 	case "markdown":
-		return r.renderMarkdown(n, state, budget)
+		return r.renderChatPane(n, state, budget)
 	case "input":
 		return r.renderInput(n, state)
 	case "text":
@@ -567,7 +588,16 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		if remaining > 0 && growSum > 0 {
 			share = remaining * s.grow / growSum
 		}
+		prevBar := r.ChatBar
+		r.ChatBar = ChatBar{}
 		f := r.renderNode(s.node, state, share)
+		if r.ChatBar.Height > 0 {
+			// The pane reports its bar relative to itself; every stack it is inside adds
+			// the row it started at on the way out.
+			r.ChatBar.Top += len(live)
+		} else {
+			r.ChatBar = prevBar
+		}
 		grown := f.Live
 		// Grow children reserve their full share even when content is short.
 		// This is what pins the input to the bottom of the screen instead
@@ -924,7 +954,7 @@ const (
 )
 
 // toolTitles are the names a person reads; an unknown tool shows its own name.
-var toolTitles = map[string]string{"list": "List", "read": "Read", "grep": "Search", "edit": "Edit", "write": "Write", "run": "Run", "web_fetch": "Fetch", "web_search": "Search web", "ui_guide": "Read", "ui_edit": "Change"}
+var toolTitles = map[string]string{"list": "List", "read": "Read", "grep": "Search", "edit": "Edit", "write": "Write", "run": "Run", "web_fetch": "Fetch", "web_search": "Search web", "ui_guide": "Read", "ui_edit": "Change", "folder": "Open folder", "shell_start": "Start shell", "shell_read": "Read shell", "shell_stop": "Stop shell"}
 
 // toolLines draws one tool line: "● Read(main.go)" and what came of it. A result of a
 // single row goes on the call's own row, "● Read(main.go) - Read 12 lines"; one that
@@ -1191,6 +1221,23 @@ func (r *Renderer) cutUserTurn(rows []ui.Line, lk ChatLook) []ui.Line {
 	return append(out, last)
 }
 
+// renderChatPane draws a markdown node and, for the chat pane when the host asked for a
+// scrollbar, keeps its last column for the bar. Anything else is renderMarkdown untouched.
+func (r *Renderer) renderChatPane(n *scene.Node, state fold.State, budget int) ui.Frame {
+	if n.Bind == "chat.history" && r.Scrollbar && r.Width > 8 {
+		// The pane is laid out one column narrower and the bar takes the column that was
+		// held back, so what a line says never sits under it and the text does not reflow
+		// when the bar appears.
+		sub := *r
+		sub.Width--
+		sub.Scrollbar = false
+		f := sub.renderMarkdown(n, state, budget)
+		r.ChatScrollMax = sub.ChatScrollMax
+		return r.withScrollbar(f, sub.ChatScrollMax, sub.ChatScroll)
+	}
+	return r.renderMarkdown(n, state, budget)
+}
+
 // renderMarkdown renders a bound markdown pane, wrapped to the frame width.
 // Wrapping goes through the ported Line/Span machinery, so a row can never end
 // in bare air or overflow the frame no matter what the fold hands it.
@@ -1388,6 +1435,53 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 		}
 	}
 	return ui.Frame{Live: lines, Width: r.Width}
+}
+
+// withScrollbar adds the bar's column to a chat window f that was laid out one column short
+// of the pane. Every row is padded to that width and gets one cell: a track, with a thumb
+// where the window sits in the transcript. With nothing to scroll the cell is a blank, so
+// the layout holds still.
+func (r *Renderer) withScrollbar(f ui.Frame, max, scroll int) ui.Frame {
+	rows := len(f.Live)
+	f.Width = r.Width
+	thumbLen, thumbTop := 0, 0
+	if max > 0 && rows > 0 {
+		if scroll < 0 {
+			scroll = 0
+		}
+		if scroll > max {
+			scroll = max
+		}
+		total := max + rows
+		thumbLen = rows * rows / total
+		if thumbLen < 1 {
+			thumbLen = 1
+		}
+		if thumbLen > rows {
+			thumbLen = rows
+		}
+		if rows > thumbLen {
+			thumbTop = (max - scroll) * (rows - thumbLen) / max
+		}
+	}
+	out := make([]ui.Line, rows)
+	for i, l := range f.Live {
+		l = padLine(l, r.Width-1)
+		cell := ui.Span{Text: " "}
+		if thumbLen > 0 {
+			if i >= thumbTop && i < thumbTop+thumbLen {
+				cell = ui.Span{Text: "┃", Style: "header"}
+			} else {
+				cell = ui.Span{Text: "│", Style: "dim"}
+			}
+		}
+		out[i] = append(append(ui.Line{}, l...), cell)
+	}
+	f.Live = out
+	if thumbLen > 0 {
+		r.ChatBar = ChatBar{Col: r.Width - 1, Top: 0, Height: rows, ThumbTop: thumbTop, ThumbLen: thumbLen, Max: max}
+	}
+	return f
 }
 
 // renderInput renders the input row and the column the terminal caret belongs
@@ -3030,6 +3124,12 @@ func resolveBind(bind string, state fold.State) string {
 		return state.HostThinking
 	case "host.usage":
 		return state.HostUsage
+	case "host.branch":
+		return state.HostBranch
+	case "host.scroll":
+		return state.HostScroll
+	case "host.shells":
+		return state.HostShells
 	case "host.run.actor":
 		// Host view state, not a projection: the loop resolves the actor from the
 		// run.start config and re-attaches it each frame (BINDS.md §4.3, M2). It

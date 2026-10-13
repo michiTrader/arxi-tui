@@ -35,6 +35,10 @@ const (
 	// brings back text nobody vouches for, so it is asked about in every mode but the
 	// one that asks about nothing.
 	classWeb toolClass = "web"
+	// classFolder is reaching a folder beside the project. The file tools stay inside
+	// the project; a path outside it is put to the user once, and in the mode that asks
+	// about nothing it is opened without asking.
+	classFolder toolClass = "folder"
 )
 
 // The core's three policies, spelled as the core spells them.
@@ -48,17 +52,17 @@ const (
 type agentMode struct {
 	name string
 	hint string
-	// read, edit, run and web are the policy for each tool class.
-	read, edit, run, web string
+	// read, edit, run, web and folder are the policy for each tool class.
+	read, edit, run, web, folder string
 }
 
 // agentModes lists the modes in the order Shift+Tab walks them. The first is the
 // default: the safest one that still lets the agent work.
 var agentModes = []agentMode{
-	{"ask", "asks before editing files or running commands", policyAllow, policyAsk, policyAsk, policyAsk},
-	{"auto", "edits files on its own, asks before running commands", policyAllow, policyAllow, policyAsk, policyAsk},
-	{"plan", "read-only: looks around and proposes, changes nothing", policyAllow, policyDeny, policyDeny, policyAsk},
-	{"full access", "edits and runs commands without asking", policyAllow, policyAllow, policyAllow, policyAllow},
+	{"ask", "asks before editing files or running commands", policyAllow, policyAsk, policyAsk, policyAsk, policyAsk},
+	{"auto", "edits files on its own, asks before running commands", policyAllow, policyAllow, policyAsk, policyAsk, policyAsk},
+	{"plan", "read-only: looks around and proposes, changes nothing", policyAllow, policyDeny, policyDeny, policyAsk, policyAsk},
+	{"full access", "edits and runs commands without asking", policyAllow, policyAllow, policyAllow, policyAllow, policyAllow},
 }
 
 // defaultMode is the mode a session starts in.
@@ -87,6 +91,8 @@ func (m agentMode) policy(c toolClass) string {
 		return m.run
 	case classWeb:
 		return m.web
+	case classFolder:
+		return m.folder
 	}
 	return policyDeny
 }

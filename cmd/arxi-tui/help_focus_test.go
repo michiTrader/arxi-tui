@@ -43,8 +43,8 @@ func TestLoopHelpOpensTheCommandMenuWithoutTheModel(t *testing.T) {
 }
 
 func TestLoopHelpPickedFromTheMenuBehavesLikeTypingIt(t *testing.T) {
-	// "/he" leaves help as the only row; Enter picks it.
-	out, got := runLoopDoc(t, factorySobria, append(enterLine("/he"), exitKeys()...))
+	// "/help" leaves help as the only row (a shorter filter such as "/he" also matches shell); Enter picks it.
+	out, got := runLoopDoc(t, factorySobria, append(enterLine("/help"), exitKeys()...))
 	if len(got) != 0 {
 		t.Errorf("picking help reached the model: %q", got)
 	}
