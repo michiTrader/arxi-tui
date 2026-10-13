@@ -24,7 +24,6 @@ It was being done from `D:\projects\pitlane-strategies` with `apinex/free/mimo-v
   started per turn).
 - Verified only on Linux with a real `sh`. NOT verified: Windows runtime (`cmd.exe`, `taskkill`),
   a real model calling the tools, a real terminal showing the bar.
-- Not done: the model is not told to act instead of announcing ("let me check...") without a tool call.
 
 ## Extensibility phases 4-6 (events, panels, services): host wired
 
@@ -38,6 +37,5 @@ It was being done from `D:\projects\pitlane-strategies` with `apinex/free/mimo-v
 ## arxi-tui work not done yet
 
 - Decide whether factory commands become packages (not decided).
-- Tell the model not to announce an action without doing it ("let me check...").
-- Re-run mutation checks on the scrollbar tests; `host.shells` bar mutation (`barvis`) survives.
+- `host.shells` bar mutation (`barvis`) still survives: nothing asserts the shell count on the real bar through the loop.
 - Rate-limit pacing: the free model allows 5 requests/min; a long turn of tool rounds waits minutes (the round limit itself is now 40, `ARXI_MAX_TOOL_ROUNDS`).

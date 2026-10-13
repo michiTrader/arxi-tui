@@ -29,6 +29,12 @@ const chatMaxHistoryBytes = 100_000
 // sentence: a bare "hola" should not cost dozens of tokens before the model reads it.
 const chatSystemPrompt = "You are a concise assistant in a terminal. Reply in the language the user writes in."
 
+// actHint is added to turns that have tools (a project folder). A model that writes "let
+// me check..." and then ends its turn leaves the user to type "continue" for nothing: the
+// words are only worth anything when the tool call comes in the same turn. Light turns
+// (a greeting) carry no tools and so do not carry this either.
+const actHint = "When you say you will look, check or run something, do it in the same answer with a tool call; never end a turn with only the announcement."
+
 // chatNow is the clock behind the date line; tests replace it.
 var chatNow = time.Now
 
@@ -720,6 +726,9 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 				"name": t.Name, "arg": t.Arg, "ok": t.OK, "summary": t.Summary, "output": t.Output, "diff": t.Diff,
 			})
 		},
+	}
+	if workdir != "" {
+		params.System += " " + actHint
 	}
 	uiSystem := ""
 	var uiDefs []driver.ClientToolDef
