@@ -1,7 +1,7 @@
 # DESIGN — extensibility without Go changes
 
 Status: Phases 0-6 implemented end to end: the contract and runner in `internal/ext/v2`, and the host
-side in `cmd/arxi-tui` (`package_auto.go`). Only factory commands as packages is left undecided. See
+side in `cmd/arxi-tui` (`package_auto.go`). Factory commands stay Go code (decided: not now). See
 "Phases 4-6: state" at the end for what was and was not verified.
 Branch: `feat/extensibility-phase0`.
 
@@ -231,8 +231,8 @@ version the user approved before is running again and any other is inert.
   in the menu, classifier and workers; `input.pre` in the loop; `/package`;
   `say:`/`open:`/`set:`; `ui_edit` `packages` verbs with consent and undo.
 - **Phase 3** — done: model-callable tools.
-- **Phases 4-6** — contract and runner done, host not wired (see the last section).
-- **Later (not started)** — factory commands as packages.
+- **Phases 4-6** — done, host wired (see the last section).
+- **Not now (decided)** — factory commands as packages.
 
 ## Phase 3: package tools the model can call
 
@@ -296,6 +296,6 @@ setting change firing an event. Only on Linux with a real `sh`.
 Not verified: Windows runtime (`cmd.exe`, `taskkill`), a real model writing such a package,
 a real terminal showing the row.
 
-Not decided: factory commands as packages. They are Go code today (the Commands registry in
+Decided, not now: factory commands as packages. They stay Go code (the Commands registry in
 `internal/fold`); turning them into packages would make them removable by the model, which
-needs its own design (what may never be removed, e.g. `/package`, `/ui reset`).
+would need its own design (what may never be removed, e.g. `/package`, `/ui reset`).

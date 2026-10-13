@@ -23,7 +23,7 @@
 
 ## arxi-tui work not done yet
 
-- Decide whether factory commands become packages (not decided).
+- Factory commands as packages: decided NOT now (they stay Go code; see DESIGN-EXTENSIBILITY.md). Reopen only with a design for what may never be removed (`/package`, `/ui reset`).
 - Rate-limit pacing: the free model allows 5 requests/min; a long turn of tool rounds waits minutes (the round limit itself is now 40, `ARXI_MAX_TOOL_ROUNDS`).
 - CI (GitHub Actions, ubuntu + windows) runs only on pushes to `master` and on pull requests, so
   commits pushed to this branch without a PR are not tested there. Last green run on both OSes:
