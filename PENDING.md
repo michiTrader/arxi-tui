@@ -37,12 +37,6 @@ It was being done from `D:\projects\pitlane-strategies` with `apinex/free/mimo-v
 
 ## arxi-tui work not done yet
 
-- Loop-level tests (real `loop`) for `/service` typed in the TUI, `host.panels` on the bar
-  (+ an assertion in `internal/engine/sobria_test.go`), and events reaching packageAuto via `settingChanged`.
-  Today they are covered only at the `packageAuto` level and by the full suite not breaking.
-- Docs: `docs/DESIGN-EXTENSIBILITY.md` still says the host is not wired ("Phases 4-6: state");
-  also document `/folder`, `folders`/`outside` wire params, scrollbar/`host.scroll`/`host.branch`,
-  `/shell`, `/service`, `host.shells`, `host.panels` in BINDS/SCENES notes.
 - Decide whether factory commands become packages (not decided).
 - Tell the model not to announce an action without doing it ("let me check...").
 - Re-run mutation checks on the scrollbar tests; `host.shells` bar mutation (`barvis`) survives.

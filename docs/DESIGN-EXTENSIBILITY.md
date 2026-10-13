@@ -1,9 +1,8 @@
 # DESIGN — extensibility without Go changes
 
-Status: Phases 0-3 implemented end to end (Phase 0 merged in #255, Phase 2 in #256). Phases 4-6 have their
-**contract and runner** implemented and tested (`internal/ext/v2`) but are **not wired into the host yet**:
-a package that declares `events`, `panels` or `services` validates and can be approved, but nothing in
-`cmd/arxi-tui` runs them. See "Phases 4-6: state" at the end.
+Status: Phases 0-6 implemented end to end: the contract and runner in `internal/ext/v2`, and the host
+side in `cmd/arxi-tui` (`package_auto.go`). Only factory commands as packages is left undecided. See
+"Phases 4-6: state" at the end for what was and was not verified.
 Branch: `feat/extensibility-phase0`.
 
 ## Goal
@@ -269,13 +268,34 @@ digest coverage, runner):
 Everything that runs by itself is narrowed to showing text: no placeholders (nothing was
 typed), no send, no transform, no actions; the runner re-checks at run time.
 
-Not done (host side, `cmd/arxi-tui`):
+Host side (`cmd/arxi-tui/package_auto.go`), wired and tested:
 
-- firing events from `settingChanged` and the `agent.turn_done` / `agent.failed` events;
-- the `host.panels` bind (fold state, `resolveBind`, `signedBinds`, `BINDS.md`, both `SOBRIA.json`);
-- `/service list|start|stop`, user-typed only and refused when `synth`;
-- `/package list|show` and the `ui_edit` guide text naming the new artifacts;
-- factory commands as packages.
+- **Events** fire from `settingChanged` (effort, mode, style; also when the user's own hook
+  made the change, since an event only shows a note) and from the end of a turn
+  (`agent.turn_done`, `agent.failed`). A run that is still going is never started again on
+  top of itself, and a failing event warns once, not on every firing.
+- **Panels** are joined as `Title: text` into the `host.panels` bind (its own row on the bar,
+  blank while the slash menu is open). A panel runs when the package loads, after each turn
+  if `refresh` is `turn.done`, and every `every_s` seconds (a 5 s clock exists only while some
+  panel has a timer). A failure shows `(failed)` and warns once. An answer that was still on
+  its way when the package changed is discarded (the package's hash is part of the job key).
+- **Services** are started with `/service start <name>`, listed with `/service` or
+  `/service list`, and stopped with `/service stop <name>`. Only a line the user typed starts
+  one: a menu row, button, key or command/hook of the behaviour layer is refused (`synth`).
+  A service whose package is revoked, switched off or edited is stopped at the next reload and
+  the user is told. Everything stops on exit.
+- `/package show` says what runs by itself and that only the user starts a service;
+  `/package list` counts events, panels and services; the `ui_edit` guide teaches the three
+  artifacts and lists them per package.
 
-Until then, approving a package that declares these artifacts shows the consent text but
-nothing runs.
+Verified: unit tests of `packageAuto` (race detector, mutation checks), and through the real
+`loop` (`package_auto_loop_test.go`): `/service` list and start, refusal from a behaviour
+command, a panel on the bar, the end of a turn refreshing a panel and firing `turn.failed`, a
+setting change firing an event. Only on Linux with a real `sh`.
+
+Not verified: Windows runtime (`cmd.exe`, `taskkill`), a real model writing such a package,
+a real terminal showing the row.
+
+Not decided: factory commands as packages. They are Go code today (the Commands registry in
+`internal/fold`); turning them into packages would make them removable by the model, which
+needs its own design (what may never be removed, e.g. `/package`, `/ui reset`).

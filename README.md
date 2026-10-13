@@ -30,6 +30,46 @@ the chat repeats the question you are reading the answer to (at most two rows, w
 where it is cut), so a long answer never loses its question. It is drawn only for rows that
 have really left the window, and not at all while you follow the newest text.
 
+A scrollbar sits at the right edge of the chat: drag its thumb, or click the track, to move
+(it needs the mouse; in Termux it is off unless you turn the mouse on). When you are scrolled
+away from the bottom the bar says so and names the key back (`End`, or `ctrl+End` from the
+middle of a line); the hint is absent while you follow the newest text.
+
+### Folders beside the project: `/folder`
+
+The file tools stay inside the project, because what they read goes to a remote provider. When
+the model names a path outside it, you are shown the folder (the nearest project above that
+path) and agree or not, once for the conversation; with `full access` it opens without asking.
+`/folder` lists what is open, `/folder add <path>` opens one ahead of time (relative paths start
+at the project), `/folder remove <path|all>` closes them. `/clear` closes every one.
+
+### Background shells: `/shell`
+
+For a dev server or a watcher the model has `shell_start`, `shell_read` and `shell_stop`
+(offered only where `run` may run commands, under the same policy as `run`). Nothing opens a
+separate console window: the output is read inside the conversation. `/shell` lists them,
+`/shell show <n>` prints what shell *n* wrote last, `/shell stop <n|all>` ends them,
+`/shell start <command>` starts one by hand. The status line counts them (`2 shells`), you
+are told when one ends by itself, and `/clear` or leaving stops all of them, with their child
+processes. They live in the TUI, not in the core (the core is started per turn).
+
+### What packages run by themselves: `/service`
+
+An approved package may declare `events` (react to the end of a turn or to a change of
+effort, mode or style), `panels` (a line kept on the bar) and `services` (a program that
+keeps running). `/package show <id>` says which of these a package has before you approve it.
+Events and panels only show text. A service starts only when *you* type
+`/service start <name>` (never from a shortcut, a button or a command of your behaviour);
+`/service` lists them and `/service stop <name>` ends one. Revoking or editing the package
+stops its services. See `docs/DESIGN-EXTENSIBILITY.md`.
+
+### Tool rounds per answer
+
+When the model uses tools, one answer may go back to it at most 40 times. That is a guard
+against a model that never stops asking, not a quality limit: when it is hit the answer says
+so and you can type `continue`. `ARXI_MAX_TOOL_ROUNDS=<1..200>` (set where the core runs)
+changes it; a value that is not a number in range is refused rather than guessed.
+
 ### How your messages look: `/style`
 
 `/style` chooses how your own messages are drawn in the conversation: `bar` (a `┃`
