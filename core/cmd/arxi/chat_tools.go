@@ -326,6 +326,11 @@ func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 		if err != nil {
 			return resp, err
 		}
+		// A model that cannot use the tool channel writes its call as text; run it
+		// instead of showing it as the answer (textcalls.go).
+		if len(req.Tools) > 0 && resp.FinishReason != turn.FinishRefusal {
+			resp = withTextCalls(resp, req.Tools, round)
+		}
 		var calls []*turn.ToolCall
 		for _, b := range resp.Content {
 			if b.Type == turn.BlockToolCall && b.ToolCall != nil {
