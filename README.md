@@ -67,8 +67,8 @@ stops its services. See `docs/DESIGN-EXTENSIBILITY.md`.
 
 When the model uses tools, one answer may go back to it at most 40 times. That is a guard
 against a model that never stops asking, not a quality limit: when it is hit the answer says
-so and you can type `continue`. `ARXI_MAX_TOOL_ROUNDS=<1..200>` (set where the core runs)
-changes it; a value that is not a number in range is refused rather than guessed.
+so and you can type `continue`. `ARXI_MAX_TOOL_ROUNDS=<1..200>` (set in the environment you start
+arxi-tui from; the core it launches each turn inherits it) changes it; a value that is not a number in range is refused rather than guessed.
 
 ### How your messages look: `/style`
 

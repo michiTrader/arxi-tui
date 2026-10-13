@@ -38,3 +38,8 @@ It was being done from `D:\projects\pitlane-strategies` with `apinex/free/mimo-v
 
 - Decide whether factory commands become packages (not decided).
 - Rate-limit pacing: the free model allows 5 requests/min; a long turn of tool rounds waits minutes (the round limit itself is now 40, `ARXI_MAX_TOOL_ROUNDS`).
+- CI (GitHub Actions, ubuntu + windows) runs only on pushes to `master` and on pull requests, so
+  commits pushed to this branch without a PR are not tested there. Last green run on both OSes:
+  `8e29592` (includes the Windows `onVolume` fix and the Windows shell code). Everything after it
+  (package events/panels/services, scrollbar tests, tool-round limit, act-don't-announce hint) has
+  only run on Linux locally, plus `GOOS=windows go vet`. Opening a PR (even a draft) would run it.
