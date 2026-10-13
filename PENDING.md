@@ -17,7 +17,6 @@ It was being done from `D:\projects\pitlane-strategies` with `apinex/free/mimo-v
 
 ## arxi-tui work not done yet
 
-- Mouse-draggable scrollbar (needs `?1002h` drag events and a drawn scrollbar).
 - Background shells ("N shell", output inside the TUI, `/shell` list/show/stop).
 - Extensibility phases 4-6 host wiring (`/service`, `/package list|show`, `host.panels`), docs.
 - Rate-limit pacing: the free model allows 5 requests/min; a turn of ~13 tool rounds waits several minutes.

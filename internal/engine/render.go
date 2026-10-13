@@ -389,7 +389,7 @@ func (r *Renderer) renderByType(n *scene.Node, state fold.State, budget int) ui.
 	case "box":
 		return r.renderBox(n, state, budget)
 	case "markdown":
-		return r.renderMarkdown(n, state, budget)
+		return r.renderChatPane(n, state, budget)
 	case "input":
 		return r.renderInput(n, state)
 	case "text":
@@ -1221,10 +1221,9 @@ func (r *Renderer) cutUserTurn(rows []ui.Line, lk ChatLook) []ui.Line {
 	return append(out, last)
 }
 
-// renderMarkdown renders a bound markdown pane, wrapped to the frame width.
-// Wrapping goes through the ported Line/Span machinery, so a row can never end
-// in bare air or overflow the frame no matter what the fold hands it.
-func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) ui.Frame {
+// renderChatPane draws a markdown node and, for the chat pane when the host asked for a
+// scrollbar, keeps its last column for the bar. Anything else is renderMarkdown untouched.
+func (r *Renderer) renderChatPane(n *scene.Node, state fold.State, budget int) ui.Frame {
 	if n.Bind == "chat.history" && r.Scrollbar && r.Width > 8 {
 		// The pane is laid out one column narrower and the bar takes the column that was
 		// held back, so what a line says never sits under it and the text does not reflow
@@ -1236,6 +1235,13 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 		r.ChatScrollMax = sub.ChatScrollMax
 		return r.withScrollbar(f, sub.ChatScrollMax, sub.ChatScroll)
 	}
+	return r.renderMarkdown(n, state, budget)
+}
+
+// renderMarkdown renders a bound markdown pane, wrapped to the frame width.
+// Wrapping goes through the ported Line/Span machinery, so a row can never end
+// in bare air or overflow the frame no matter what the fold hands it.
+func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) ui.Frame {
 	var lines []ui.Line
 	var starts []int
 

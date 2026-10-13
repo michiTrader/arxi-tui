@@ -19,7 +19,7 @@ func barHistory(n int) fold.State {
 // Off by default: no column is held back and nothing is drawn, so no golden moves.
 func TestChatScrollbarIsOffUnlessAsked(t *testing.T) {
 	r := Renderer{Width: 40}
-	f := r.renderMarkdown(&scene.Node{Bind: "chat.history"}, barHistory(30), 10)
+	f := r.renderChatPane(&scene.Node{Bind: "chat.history"}, barHistory(30), 10)
 	if strings.ContainsAny(f.Plain(), "┃│") || r.ChatBar.Height != 0 {
 		t.Fatalf("a bar showed without Scrollbar:\n%s", f.Plain())
 	}
@@ -31,7 +31,7 @@ func TestChatScrollbarThumbFollowsTheOffset(t *testing.T) {
 	st := barHistory(30)
 	node := &scene.Node{Bind: "chat.history"}
 	r := Renderer{Width: 40, Scrollbar: true}
-	f := r.renderMarkdown(node, st, 10)
+	f := r.renderChatPane(node, st, 10)
 	rows := strings.Split(f.Plain(), "\n")
 	if len(rows) != 10 {
 		t.Fatalf("window is %d rows, want 10", len(rows))
@@ -58,7 +58,7 @@ func TestChatScrollbarThumbFollowsTheOffset(t *testing.T) {
 		}
 	}
 	r = Renderer{Width: 40, Scrollbar: true, ChatScroll: 1 << 20}
-	r.renderMarkdown(node, st, 10)
+	r.renderChatPane(node, st, 10)
 	if r.ChatBar.ThumbTop != 0 {
 		t.Errorf("at the oldest line the thumb must sit on the top: %+v", r.ChatBar)
 	}
@@ -67,7 +67,7 @@ func TestChatScrollbarThumbFollowsTheOffset(t *testing.T) {
 // Nothing to scroll: no bar is reported, so a click there is not a grab.
 func TestChatScrollbarAbsentWhenEverythingFits(t *testing.T) {
 	r := Renderer{Width: 40, Scrollbar: true}
-	f := r.renderMarkdown(&scene.Node{Bind: "chat.history"}, barHistory(1), 10)
+	f := r.renderChatPane(&scene.Node{Bind: "chat.history"}, barHistory(1), 10)
 	if strings.ContainsAny(f.Plain(), "┃│") || r.ChatBar.Height != 0 {
 		t.Fatalf("a bar showed with nothing to scroll: %+v\n%s", r.ChatBar, f.Plain())
 	}
