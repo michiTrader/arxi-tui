@@ -240,6 +240,7 @@ var signedBinds = map[string]bool{
 	"host.branch":          true,
 	"host.scroll":          true,
 	"host.shells":          true,
+	"host.panels":          true,
 }
 
 // SignedBinds returns the §4.5 inventory: every bind path a scene may

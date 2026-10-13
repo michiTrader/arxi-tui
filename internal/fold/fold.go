@@ -362,6 +362,10 @@ type State struct {
 	// each frame.
 	HostShells string `json:"host.shells"`
 
+	// HostPanels is the one line each approved package keeps on screen, "Title: text" joined
+	// with " · ", empty when no package has one. Host view state like HostBranch.
+	HostPanels string `json:"host.panels"`
+
 	// BudgetMicrounits is run.started.budget_usd × 1000, captured when the run
 	// starts. Combined with CostMicrounits it produces session.tokens_used.
 	BudgetMicrounits uint64
@@ -1732,6 +1736,7 @@ var Commands = []SlashMatch{
 	// /clear is a host command: it ends the conversation and starts a new one.
 	{"clear", "Session", "Start a new session"},
 	{"compact", "Session", "Summarise the earlier conversation to free context (optionally: what to keep)"},
+	{"service", "General", "Programs the approved packages keep running: list, start <name>, stop <name|all>"},
 	{"shell", "General", "Background shells: list, show <n>, stop <n|all>, start <command>"},
 	{"folder", "General", "Folders beside the project the model may use: list, add <path>, remove <path|all>"},
 	{"settings", "General", "Host settings: autocompact on/off and at what share of the context window"},

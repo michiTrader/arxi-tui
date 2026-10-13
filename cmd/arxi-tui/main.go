@@ -154,7 +154,10 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
       "when": "host.branch" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.scroll" },
     { "type": "text", "bind": "host.scroll", "style": {"style": "header"},
-      "when": "host.scroll" } ] }
+      "when": "host.scroll" } ] },
+
+  { "id": "panels", "type": "row", "when": "host.panels", "children": [
+    { "type": "text", "bind": "host.panels", "style": {"style": "dim"} } ] }
 ]}}`
 
 // version is the build's version string, stamped by the release build
@@ -1042,6 +1045,30 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	pkgDoneCh := make(chan pkgOutcome, 1)
 	pipeDoneCh := make(chan pipeOutcome, 1)
 	pkgBusy, pipeBusy := false, false
+	// What the approved packages do by themselves (package_auto.go): events, panels and
+	// services. They speak to the loop only through pkgAutoCh.
+	pkgAutoCh := make(chan autoMsg, 16)
+	pkgAuto := newPackageAuto(ctx, pkgAutoCh)
+	defer pkgAuto.stopAll()
+	var pkgAutoTicker *time.Ticker
+	var pkgAutoTickCh <-chan time.Time
+	defer func() {
+		if pkgAutoTicker != nil {
+			pkgAutoTicker.Stop()
+		}
+	}()
+	// armPkgAuto keeps a clock only while some panel refreshes on one, so an idle interface
+	// with no such panel wakes for nothing.
+	armPkgAuto := func() {
+		switch {
+		case pkgAuto.hasTimed() && pkgAutoTicker == nil:
+			pkgAutoTicker = time.NewTicker(5 * time.Second)
+			pkgAutoTickCh = pkgAutoTicker.C
+		case !pkgAuto.hasTimed() && pkgAutoTicker != nil:
+			pkgAutoTicker.Stop()
+			pkgAutoTicker, pkgAutoTickCh = nil, nil
+		}
+	}
 	activate := func() {
 		setActiveTexts(mergeTexts(userWords, proj.words))
 		setActivePackages(pkgs)
@@ -1057,6 +1084,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		}
 		pkgRunner = newPackageRunner(pkgs)
 		activate()
+		pkgAuto.reload(pkgs, pkgRunner)
+		armPkgAuto()
 	}
 	reloadPackages()
 	for _, pr := range pkgs.problems {
@@ -1208,11 +1237,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// settingChanged is the one place a hook can start: a setting the user watches took a
 	// new value. fromHook is true while a hook's own action is running.
 	settingChanged := func(event, value string, fromHook bool) {
-		if fromHook {
-			return
-		}
 		if value == "" {
 			value = "none"
+		}
+		// A package event only shows a note: it cannot start anything or change the
+		// setting, so it may react even to a change the user's own hook made.
+		pkgAuto.fire(event, value)
+		if fromHook {
+			return
 		}
 		enqueue(effBeh().hooksFor(event, value), true)
 	}
@@ -1544,6 +1576,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		if state.SlashActive {
 			state.HostEffort, state.HostCwd, state.HostMode, state.ModelName = "", "", "", ""
 			state.HostUsage, state.HostBranch, state.HostScroll, state.HostShells = "", "", "", ""
+			state.HostPanels = ""
 		} else {
 			state.HostEffort, state.HostCwd, state.HostMode = effortLabel(effort), shortCwd(cwd), mode
 			if m, _ := drv.(uiModer); m != nil && m.UIMode() {
@@ -1553,6 +1586,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.HostBranch = branches.get(cwd, time.Now())
 			state.HostScroll = scrollLabel(chatScroll)
 			state.HostShells = shellsLabel(runningShells(drv))
+			state.HostPanels = pkgAuto.panelsLine()
 		}
 
 		var r engine.Renderer
@@ -2479,6 +2513,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								sceneNotice = ""
 							}
 							input, caret, slashSel = "", 0, 0
+						} else if args, isService := serviceLine(input, slashSel, slashCat); isService && ev.Key.Type == term.KeyEnter {
+							// `/service` lists, starts and stops the programs the approved
+							// packages declare (package_auto.go). Starting one is refused for
+							// a line the interface synthesised: only the user's own typing
+							// may start a program that keeps running.
+							collected = appendLocalNote(collected, runServiceCommand(args, pkgAuto, synth))
+							chatScroll = 0
+							input, caret, slashSel = "", 0, 0
 						} else if args, isShell := shellLine(input, slashSel, slashCat); isShell && ev.Key.Type == term.KeyEnter {
 							// `/shell` lists, reads, starts and stops the commands left
 							// running in the background (shells.go). What it says is a
@@ -2841,6 +2883,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				if e.Type == "agent.turn_done" && autoCompact.On {
 					autoCompactTry(0)
 				}
+				// The packages' own reactions to the end of a turn (package_auto.go).
+				switch e.Type {
+				case "agent.turn_done":
+					pkgAuto.turnDone()
+				case "agent.failed":
+					pkgAuto.turnFailed()
+				}
 				repaint()
 			}
 
@@ -3080,6 +3129,19 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				req.done <- nil
 			}
 			repaint()
+
+		case m := <-pkgAutoCh:
+			// A package reacted by itself: a note, a warning, or a panel took a new line.
+			if m.Note != "" {
+				collected = appendLocalNote(collected, m.Note)
+			}
+			if m.Warn != "" {
+				collected = appendLocalWarning(collected, m.Warn)
+			}
+			repaint()
+
+		case <-pkgAutoTickCh:
+			pkgAuto.tick()
 
 		case out := <-pkgDoneCh:
 			// A package command finished. What it said is a note of the host's own (never
