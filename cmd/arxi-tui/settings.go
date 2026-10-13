@@ -140,12 +140,74 @@ func settingsNotice(s autoCompactSetting, window int) string {
 	return n
 }
 
-// windowOf is the context window of the model a reference names ("provider/id"), 0
-// when the core did not say.
+// windowOf is the context window of the model a reference names ("provider/id"). The
+// core's figure wins (the provider reported it, or the user typed it when adding the
+// model). Without one, ARXI_CONTEXT_WINDOW (tokens) is the user's own word for it, and
+// then the table of well-known families; 0 when none of them knows, which the bar shows
+// as "ctx ?" rather than a made-up share.
 func (d hubData) windowOf(ref string) int {
 	for _, m := range d.models {
 		if modelRef(m) == ref {
-			return m.ContextWindow
+			if m.ContextWindow > 0 {
+				return m.ContextWindow
+			}
+			break
+		}
+	}
+	if n := envWindow(); n > 0 {
+		return n
+	}
+	return knownWindow(ref)
+}
+
+// envWindow reads ARXI_CONTEXT_WINDOW: a plain token count, or one with a k/m suffix
+// ("200k", "1m"). Anything else, or a figure outside what a model can have, is ignored.
+func envWindow() int {
+	v := strings.ToLower(strings.TrimSpace(os.Getenv("ARXI_CONTEXT_WINDOW")))
+	if v == "" {
+		return 0
+	}
+	mult := 1
+	switch {
+	case strings.HasSuffix(v, "k"):
+		mult, v = 1_000, strings.TrimSuffix(v, "k")
+	case strings.HasSuffix(v, "m"):
+		mult, v = 1_000_000, strings.TrimSuffix(v, "m")
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n <= 0 || n*mult < 1_000 || n*mult > 100_000_000 {
+		return 0
+	}
+	return n * mult
+}
+
+// knownWindows are the windows of model families whose size is public and stable, used
+// only when neither the core nor the user gave one. A model id must START with the name
+// (a substring would match "o3" inside unrelated ids), the first match wins, and a family
+// not listed is left unknown on purpose: a wrong window is worse than "ctx ?".
+var knownWindows = []struct {
+	part   string
+	tokens int
+}{
+	{"gpt-4.1", 1_000_000},
+	{"gpt-5", 400_000},
+	{"gpt-4o", 128_000},
+	{"gpt-4-turbo", 128_000},
+	{"o3", 200_000},
+	{"o4-mini", 200_000},
+	{"claude", 200_000},
+	{"gemini", 1_000_000},
+}
+
+// knownWindow looks a "provider/id" reference up in knownWindows, 0 when it is not there.
+func knownWindow(ref string) int {
+	low := strings.ToLower(ref)
+	if i := strings.LastIndex(low, "/"); i >= 0 {
+		low = low[i+1:]
+	}
+	for _, k := range knownWindows {
+		if strings.HasPrefix(low, k.part) {
+			return k.tokens
 		}
 	}
 	return 0

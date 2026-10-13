@@ -59,8 +59,9 @@ func settingsLoop(t *testing.T, drv *compactDriver, script []scheduledEvent) str
 }
 
 func newCompactDriver(window int, turns int) *compactDriver {
-	core := &modelCore{def: "openai/gpt-4o", models: []driver.ModelRow{
-		{Provider: "openai", ID: "gpt-4o", Enabled: true, ContextWindow: window},
+	// A model no table knows, so a window of 0 really is "unknown" here.
+	core := &modelCore{def: "openai/mimo-pro", models: []driver.ModelRow{
+		{Provider: "openai", ID: "mimo-pro", Enabled: true, ContextWindow: window},
 	}}
 	return &compactDriver{
 		hubTestDriver: hubTestDriver{testDriver: testDriver{evCh: make(chan fold.Event, 64)}, hub: core},

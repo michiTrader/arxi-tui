@@ -202,3 +202,48 @@ func TestAutoCompactOffIsRemembered(t *testing.T) {
 		t.Fatalf("reloaded %+v, want off at 60", got)
 	}
 }
+
+func TestWindowOfPrefersTheCoreThenTheEnvThenTheKnownFamilies(t *testing.T) {
+	t.Setenv("ARXI_CONTEXT_WINDOW", "")
+	d := hubData{models: []driver.ModelRow{
+		{Provider: "p", ID: "gpt-4o", ContextWindow: 64_000},
+		{Provider: "p", ID: "claude-sonnet-4"},
+		{Provider: "apinex2/free", ID: "mimo-v2.6-pro"},
+	}}
+	if got := d.windowOf("p/gpt-4o"); got != 64_000 {
+		t.Errorf("the core's own figure must win over the table: %d", got)
+	}
+	if got := d.windowOf("p/claude-sonnet-4"); got != 200_000 {
+		t.Errorf("a known family with no figure from the core: %d", got)
+	}
+	if got := d.windowOf("apinex2/free/mimo-v2.6-pro"); got != 0 {
+		t.Errorf("an unknown model has no window (the bar says ctx ?): %d", got)
+	}
+	t.Setenv("ARXI_CONTEXT_WINDOW", "256k")
+	if got := d.windowOf("apinex2/free/mimo-v2.6-pro"); got != 256_000 {
+		t.Errorf("ARXI_CONTEXT_WINDOW=256k: %d", got)
+	}
+	if got := d.windowOf("p/gpt-4o"); got != 64_000 {
+		t.Errorf("the core still wins over the env: %d", got)
+	}
+}
+
+func TestEnvWindowReadsPlainAndSuffixedCountsAndIgnoresNonsense(t *testing.T) {
+	for in, want := range map[string]int{"128000": 128_000, "200k": 200_000, " 1M ": 1_000_000, "": 0, "abc": 0, "-5": 0, "5": 0, "999m": 0, "0k": 0} {
+		t.Setenv("ARXI_CONTEXT_WINDOW", in)
+		if got := envWindow(); got != want {
+			t.Errorf("ARXI_CONTEXT_WINDOW=%q: %d, want %d", in, got, want)
+		}
+	}
+}
+
+func TestKnownWindowMatchesThePrefixOfTheIdNotASubstring(t *testing.T) {
+	for ref, want := range map[string]int{
+		"openai/gpt-4.1-mini": 1_000_000, "openai/o3-mini": 200_000, "anthropic/claude-opus-4": 200_000,
+		"x/gemini-2.5-pro": 1_000_000, "x/mimo-v3": 0, "x/pro3-large": 0, "x/deepseek-v3": 0, "gpt-5": 400_000,
+	} {
+		if got := knownWindow(ref); got != want {
+			t.Errorf("%s: %d, want %d", ref, got, want)
+		}
+	}
+}
