@@ -86,6 +86,12 @@ type chatSession struct {
 	// web is the same for reading web pages: "deny" (not offered), "ask" (each
 	// address waits for the user) or "allow". It follows the agent mode too.
 	web string
+	// outside is what the model may do about a path beyond the project: "deny",
+	// "ask" (the folder it belongs to is put to the user) or "allow". It follows the
+	// agent mode too. folders are the ones the user opened in this conversation
+	// (folders.go); the core keeps nothing between turns, so they ride with each one.
+	outside string
+	folders []string
 	// modelNote is what the model is told, once, on its next turn: the user switched
 	// the model or provider, so earlier replies in the history were not its own.
 	modelNote string
@@ -262,6 +268,14 @@ func (c *chatSession) setRuns(policy string) {
 	c.mu.Unlock()
 }
 
+// setOutside chooses what the model may do about a path beyond the project from the
+// next turn on.
+func (c *chatSession) setOutside(policy string) {
+	c.mu.Lock()
+	c.outside = policy
+	c.mu.Unlock()
+}
+
 // setWeb chooses what the model may do about reading web pages from the next turn on.
 func (c *chatSession) setWeb(policy string) {
 	c.mu.Lock()
@@ -291,10 +305,58 @@ func (c *chatSession) askUser(ctx context.Context, gen int64, a driver.Approval)
 	})
 	select {
 	case allow := <-p.reply:
+		if allow && a.Name == "folder" {
+			c.openFolder(a.Arg)
+		}
 		return allow
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// openFolder remembers a folder the user opened, so the next turns carry it.
+func (c *chatSession) openFolder(dir string) bool {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, f := range c.folders {
+		if samePath(f, dir) {
+			return false
+		}
+	}
+	c.folders = append(c.folders, dir)
+	return true
+}
+
+// closeFolder forgets one opened folder, or all of them when dir is "". It reports how
+// many were forgotten.
+func (c *chatSession) closeFolder(dir string) int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if strings.TrimSpace(dir) == "" {
+		n := len(c.folders)
+		c.folders = nil
+		return n
+	}
+	keep := c.folders[:0:0]
+	for _, f := range c.folders {
+		if !samePath(f, dir) {
+			keep = append(keep, f)
+		}
+	}
+	n := len(c.folders) - len(keep)
+	c.folders = keep
+	return n
+}
+
+// openFolders is a copy of the folders opened so far.
+func (c *chatSession) openFolders() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.folders...)
 }
 
 // pendingApproval reports whether a change is waiting for the user's answer.
@@ -339,6 +401,10 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	effort := c.effort
 	workdir := c.workdir
 	edits, runs, web := c.edits, c.runs, c.web
+	outside, folders := c.outside, append([]string(nil), c.folders...)
+	if outside == policyDeny {
+		outside = ""
+	}
 	if runs == policyDeny {
 		// Denied is what a core that knows nothing about commands already does, and
 		// naming it would make an older core refuse the whole request.
@@ -366,7 +432,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	// A greeting, a ping or "what model are you" is answered with nothing but the
 	// message: no tools, no project rules, no history, no thinking, no interface guide.
 	if on, phrases := lightTurnsOn(); command == "" && isLightMessage(text, phrases, on) {
-		workdir, edits, runs, web, effort = "", "", "", "", ""
+		workdir, edits, runs, web, effort, outside, folders = "", "", "", "", "", "", nil
 		hist, withUI = nil, false
 	}
 	c.turnText, c.turnTools = text, nil
@@ -375,7 +441,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	turnCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.mu.Unlock()
-	go c.run(turnCtx, text, command, withUI, hist, gen, effort, workdir, edits, runs, web, turn)
+	go c.run(turnCtx, text, command, withUI, hist, gen, effort, workdir, edits, runs, web, outside, folders, turn)
 	return nil
 }
 
@@ -454,6 +520,8 @@ func (c *chatSession) reset() {
 	c.gen++
 	c.history = nil
 	c.toolLog = nil
+	// A folder was opened for the conversation; a new one starts closed.
+	c.folders = nil
 	c.uiMode = false
 	c.guideSent = false
 	c.busy = false
@@ -551,7 +619,7 @@ func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload m
 	}
 }
 
-func (c *chatSession) run(ctx context.Context, text, command string, withUI bool, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs, web string, turn int64) {
+func (c *chatSession) run(ctx context.Context, text, command string, withUI bool, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs, web, outside string, folders []string, turn int64) {
 	defer func() {
 		c.mu.Lock()
 		// Only the turn that is still current frees the session: a cancelled turn
@@ -612,7 +680,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		// A rate limit or an overload is waited out by the core itself; this only shows it.
 		OnRetry: func(r driver.Retry) { c.noteRetry(ctx, gen, r) },
 		// What it looks at while answering is shown as it happens.
-		Workdir: workdir, Edits: edits, Runs: runs, Web: web,
+		Workdir: workdir, Edits: edits, Runs: runs, Web: web, Outside: outside, Folders: folders,
 		OnApproval: func(ctx context.Context, a driver.Approval) bool { return c.askUser(ctx, gen, a) },
 		OnTool: func(t driver.ToolCall) {
 			if e := toolDigestEntry(t); e != "" {
@@ -706,6 +774,10 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model run commands, " +
 				"so it will not; " + rebuildRemedy})
 			params.Runs = ""
+		case errors.Is(err, driver.ErrFoldersUnsupported):
+			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot open folders beside the project, " +
+				"so the model stays inside it; " + rebuildRemedy})
+			params.Outside, params.Folders = "", nil
 		case errors.Is(err, driver.ErrWebUnsupported):
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model read web pages, " +
 				"so it will not; " + rebuildRemedy})
@@ -716,7 +788,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		}
 		// ui_edit asks through the same channel, but on the client's side; it needs
 		// no approval from the core, so OnApproval stays for it.
-		if params.Edits == "" && params.Runs == "" && params.Web == "" && params.OnClientTool == nil {
+		if params.Edits == "" && params.Runs == "" && params.Web == "" && params.Outside == "" && params.OnClientTool == nil {
 			params.OnApproval = nil
 		}
 		res, err = core.SubmitChatSend(ctx, params)

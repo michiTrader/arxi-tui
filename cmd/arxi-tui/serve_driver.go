@@ -274,6 +274,7 @@ func (d *serveDriver) SetMode(name string) {
 		d.chat.setEdits(m.policy(classEdit))
 		d.chat.setRuns(m.policy(classRun))
 		d.chat.setWeb(m.policy(classWeb))
+		d.chat.setOutside(m.policy(classFolder))
 	}
 }
 

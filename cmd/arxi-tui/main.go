@@ -2449,6 +2449,15 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								sceneNotice = ""
 							}
 							input, caret, slashSel = "", 0, 0
+						} else if args, isFolder := folderLine(input, slashSel, slashCat); isFolder && ev.Key.Type == term.KeyEnter {
+							// `/folder` lists, opens and closes the folders beside the
+							// project that the model may use (folders.go).
+							if fm, ok := drv.(folderManager); !ok {
+								sceneNotice = "/folder: this session has no tools to give folders to"
+							} else {
+								sceneNotice = runFolderCommand(args, fm, cwd)
+							}
+							input, caret, slashSel = "", 0, 0
 						} else if ev.Key.Type == term.KeyEnter && clearCommand(input, slashSel, slashCat) {
 							// `/clear` starts a new session: the transcript, the
 							// chat history the driver sends along, any run being

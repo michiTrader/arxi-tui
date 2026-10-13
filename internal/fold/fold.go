@@ -1720,6 +1720,7 @@ var Commands = []SlashMatch{
 	// /clear is a host command: it ends the conversation and starts a new one.
 	{"clear", "Session", "Start a new session"},
 	{"compact", "Session", "Summarise the earlier conversation to free context (optionally: what to keep)"},
+	{"folder", "General", "Folders beside the project the model may use: list, add <path>, remove <path|all>"},
 	{"settings", "General", "Host settings: autocompact on/off and at what share of the context window"},
 	{"copy", "Session", "Copy an answer, or the whole conversation, to the clipboard"},
 	// The provider/model management commands (K2). They are host-intercepted
