@@ -126,6 +126,9 @@ type chatSession struct {
 	// turn numbers the turns; cancel is the live turn's way to stop (nil when idle).
 	turn   int64
 	cancel context.CancelFunc
+	// compacting is true while /compact runs: the session is busy, and a cancel of that
+	// work must not leave a question and an "it was cancelled" answer in the history.
+	compacting bool
 	// retry is the wait the core announced before asking the provider again, so the
 	// Thinking line can count it down. Zero value = not waiting.
 	retry retryWait
@@ -431,8 +434,11 @@ func (c *chatSession) cancelTurn() bool {
 	cancel, gen := c.cancel, c.gen
 	c.cancel = nil
 	c.busy = false
-	c.history = append(c.history, driver.ChatTurn{Role: "user", Text: c.turnText},
-		driver.ChatTurn{Role: "assistant", Text: unansweredText(whyCancelled, c.turnTools)})
+	if !c.compacting {
+		c.history = append(c.history, driver.ChatTurn{Role: "user", Text: c.turnText},
+			driver.ChatTurn{Role: "assistant", Text: unansweredText(whyCancelled, c.turnTools)})
+	}
+	c.compacting = false
 	c.mu.Unlock()
 	cancel()
 	c.post(context.Background(), gen, "chat.cancelled", nil)
@@ -451,6 +457,7 @@ func (c *chatSession) reset() {
 	c.uiMode = false
 	c.guideSent = false
 	c.busy = false
+	c.compacting = false
 	cancel := c.cancel
 	c.cancel = nil
 	c.mu.Unlock()

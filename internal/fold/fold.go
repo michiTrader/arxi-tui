@@ -651,6 +651,7 @@ var handled = map[string]bool{
 	"chat.error":      true,
 	"chat.warn":       true,
 	"chat.note":       true,
+	"chat.compacted":  true,
 	"chat.thinking":   true,
 	"chat.tool":       true,
 	"chat.approval":   true,
@@ -957,6 +958,18 @@ func (s *State) apply(e Event) {
 		// breaks. It is never sent to the model: the host appends it to its own log.
 		if text, _ := e.Payload["text"].(string); text != "" {
 			s.History = append(s.History, ChatLine{Role: "note", Text: text})
+		}
+
+	case "chat.compacted":
+		// The host replaced the older part of the conversation with a summary. What the
+		// model holds now is the summary and the messages kept, so the figure the status
+		// bar calls ctx is that estimate until the next answer reports a real one. The
+		// lines of the conversation on screen are left alone: compacting is memory, not
+		// the transcript.
+		s.AgentWorking = false
+		s.ThinkingText = ""
+		if c, ok := e.Payload["context_tokens"].(float64); ok && c >= 0 {
+			s.LastContext = uint64(c)
 		}
 
 	case "chat.cancelled":
@@ -1706,6 +1719,7 @@ var Commands = []SlashMatch{
 	{"package", "General", "See, approve or withdraw the packages that add commands and rules"},
 	// /clear is a host command: it ends the conversation and starts a new one.
 	{"clear", "Session", "Start a new session"},
+	{"compact", "Session", "Summarise the earlier conversation to free context (optionally: what to keep)"},
 	{"copy", "Session", "Copy an answer, or the whole conversation, to the clipboard"},
 	// The provider/model management commands (K2). They are host-intercepted
 	// round-trips over the serve protocol, not patch verbs, so they are NOT held
