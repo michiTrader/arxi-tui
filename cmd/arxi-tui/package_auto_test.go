@@ -379,9 +379,7 @@ func TestRevokingAPackageStopsItsService(t *testing.T) {
 	set := loadAllPackages(r.cwd, behaviour{})
 	r.a.reload(set, newPackageRunner(set))
 	waitUntil(t, "the service to stop", func() bool { return r.a.runningServices() == 0 })
-	if !strings.Contains(r.notes(), "was stopped") {
-		t.Errorf("the user was not told: %q", r.notes())
-	}
+	waitUntil(t, "the user to be told", func() bool { return strings.Contains(r.notes(), "was stopped") })
 }
 
 func TestServiceNamesAreResolvedStrictly(t *testing.T) {
