@@ -25,8 +25,14 @@
 
 - Factory commands as packages: decided NOT now (they stay Go code; see DESIGN-EXTENSIBILITY.md). Reopen only with a design for what may never be removed (`/package`, `/ui reset`).
 - Rate-limit pacing: the free model allows 5 requests/min; a long turn of tool rounds waits minutes (the round limit itself is now 40, `ARXI_MAX_TOOL_ROUNDS`).
-- CI (GitHub Actions, ubuntu + windows) runs only on pushes to `master` and on pull requests, so
-  commits pushed to this branch without a PR are not tested there. Last green run on both OSes:
-  `8e29592` (includes the Windows `onVolume` fix and the Windows shell code). Everything after it
-  (package events/panels/services, scrollbar tests, tool-round limit, act-don't-announce hint) has
-  only run on Linux locally, plus `GOOS=windows go vet`. Opening a PR (even a draft) would run it.
+- CI (GitHub Actions, ubuntu + windows) runs on pushes to `master` and on pull requests. PR #260 is green
+  on both OSes at `b3d5e97`, so the Windows shell code (`cmd.exe`, `CREATE_NO_WINDOW`, `taskkill /T`, exit
+  code) has now run for real, through `shells_windows_test.go`. Still NOT run on Windows: the
+  events/panels/services host (its tests need `sh`, `//go:build !windows`).
+- The core module `core/` (own `go.mod`) is NOT tested by CI: `go test ./...` at the root skips nested modules.
+  The ready job is in `docs/ci-core-job.yml`; adding it to `.github/workflows/ci.yml` needs a token with the
+  `workflows` permission (this environment's push was refused for exactly that). Action for the owner:
+  paste that job into `ci.yml`.
+- Blocked on the `arxi` core / product decisions, not on this repo: NEXT.md K1 core wiring and K3 (need a live
+  agent and a coordinated core surface bump), K4 wasm (deferred on purpose), M3; DECISIONS-DEFERRED D1
+  (`{row.<field>}` in drawn text: a format change) and D2 (product repo, `install.ps1`, version handshake).
