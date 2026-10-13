@@ -284,7 +284,7 @@ func (a *packageAuto) refreshPanels(pick func(*autoPanel) bool) {
 	for _, j := range jobs {
 		j := j
 		var line string
-		a.goJob("panel:"+j.key, func(ctx context.Context) (err error) {
+		a.goJob("panel:"+j.key+"@"+j.p.Hash, func(ctx context.Context) (err error) {
 			line, err = r.RunPanel(ctx, j.p.Package, j.pn)
 			return err
 		}, func(err error) {

@@ -443,3 +443,27 @@ func TestServiceLineParsing(t *testing.T) {
 		t.Error("a line without the slash is not a command")
 	}
 }
+
+// An answer that was still on its way when the package changed belongs to the old
+// package; it must not overwrite what the new one says.
+func TestAStalePanelAnswerIsDiscardedAfterAReload(t *testing.T) {
+	r := newAutoRig(t, panelPkg("sleep 0.5; printf 'old'"), []string{"pn"})
+	time.Sleep(100 * time.Millisecond) // the old job is now running
+	script := filepath.Join(os.Getenv(configDirEnv), packagesDirName, "pn", "p.sh")
+	write(t, script, "#!/bin/sh\nprintf 'new'\n", 0o755)
+	set := loadAllPackages(r.cwd, behaviour{})
+	p, ok := set.find("pn")
+	if !ok {
+		t.Fatal("the changed package did not load")
+	}
+	if err := grantPackage(p, r.cwd); err != nil {
+		t.Fatal(err)
+	}
+	set = loadAllPackages(r.cwd, behaviour{})
+	r.a.reload(set, newPackageRunner(set))
+	waitUntil(t, "the new line", func() bool { return r.a.panelsLine() == "Clock: new" })
+	time.Sleep(700 * time.Millisecond) // the old answer lands in the meantime
+	if got := r.a.panelsLine(); got != "Clock: new" {
+		t.Errorf("the old package's answer replaced the new one: %q", got)
+	}
+}
