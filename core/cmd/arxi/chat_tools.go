@@ -399,7 +399,7 @@ func runOneTool(ctx context.Context, tb *chatToolbox, call *turn.ToolCall) (*tur
 	if tb.clientTool(call.Name) {
 		return runClientTool(tb, call, n, out, fail)
 	}
-	if false {
+	if chattools.FileTool(call.Name) {
 		if res, err := openFolderFor(tb, call, fail); res != nil || err != nil {
 			return res, err
 		}
