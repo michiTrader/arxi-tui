@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -270,5 +271,91 @@ func TestLoopSlashMenuKeepsItsArrows(t *testing.T) {
 		if s == "old" {
 			t.Fatalf("an arrow in the open slash menu recalled history: %q", got)
 		}
+	}
+}
+
+// seedHistory writes the history file a previous run would have left.
+func seedHistory(t *testing.T, lines ...string) {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv(historyEnv, dir)
+	var b strings.Builder
+	for _, l := range lines {
+		enc, _ := json.Marshal(l)
+		b.Write(enc)
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(dir, "history"), []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func upKeys(n int) []scheduledEvent {
+	var out []scheduledEvent
+	for i := 0; i < n; i++ {
+		out = append(out, scheduledEvent{15 * time.Millisecond, arrowEvent(term.KeyUp)})
+	}
+	return out
+}
+
+// The reported bug: a line like "/model vy" in the history made the arrows stop walking it
+// and start moving that menu's highlight, so nothing older could be reached.
+func TestLoopArrowsKeepWalkingPastARecalledSlashLine(t *testing.T) {
+	for _, slash := range []string{"/model vy", "/mode full", "/effort high", "/style x"} {
+		seedHistory(t, "older question", slash, "newest question")
+		script := append(upKeys(3), scheduledEvent{15 * time.Millisecond, enterEvent()})
+		script = append(script, exitKeys()...)
+		got := runLoopKeys(t, script)
+		if want := []string{"older question"}; !reflect.DeepEqual(got, want) {
+			t.Errorf("%q in the history: three Ups then Enter sent %q, want %q", slash, got, want)
+		}
+	}
+}
+
+// And back down again through the same line.
+func TestLoopDownAlsoWalksBackThroughARecalledSlashLine(t *testing.T) {
+	seedHistory(t, "older question", "/model vy", "newest question")
+	script := append(upKeys(3),
+		scheduledEvent{15 * time.Millisecond, arrowEvent(term.KeyDown)},
+		scheduledEvent{15 * time.Millisecond, arrowEvent(term.KeyDown)},
+		scheduledEvent{15 * time.Millisecond, enterEvent()})
+	script = append(script, exitKeys()...)
+	got := runLoopKeys(t, script)
+	if want := []string{"newest question"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("sent %q, want %q", got, want)
+	}
+}
+
+// Once the user edits the recalled line it is theirs: the menu gets its arrows again.
+func TestLoopAnEditedRecalledSlashLineGivesTheMenuItsArrowsBack(t *testing.T) {
+	seedHistory(t, "older question", "/model vy")
+	script := append(upKeys(1), scheduledEvent{15 * time.Millisecond, keyEvent('x')})
+	script = append(script, upKeys(2)...)
+	script = append(script, scheduledEvent{15 * time.Millisecond, enterEvent()})
+	script = append(script, exitKeys()...)
+	got := runLoopKeys(t, script)
+	for _, s := range got {
+		if s == "older question" {
+			t.Errorf("an edited line is the menu's again, but history was walked: %q", got)
+		}
+	}
+}
+
+func TestRecalledOnlyWhileTheLineIsTheOneTheWalkIsOn(t *testing.T) {
+	h := &inputHistory{lines: []string{"a", "/model vy"}}
+	h.idx = len(h.lines)
+	if h.Recalled("/model vy") {
+		t.Error("a line typed fresh is not a recalled one")
+	}
+	h.Older("")
+	if !h.Recalled("/model vy") {
+		t.Error("the line the walk put on screen is recalled")
+	}
+	if h.Recalled("/model vyx") {
+		t.Error("an edited line is not recalled any more")
+	}
+	h.Newer()
+	if h.Recalled("/model vy") {
+		t.Error("after the walk ended nothing is recalled")
 	}
 }

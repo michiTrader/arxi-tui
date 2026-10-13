@@ -25,6 +25,7 @@ type ChatLook struct {
 	ToolSep      string            // " - " between the call and an inline result
 	ToolTitles   map[string]string // tool name -> the name a person reads
 	ExpandHint   string            // " (ctrl+o to expand)"
+	ArgRows      int               // rows of a tool call's own text (the command) shown before it is cut with "…)"
 	OutputRows   int               // rows of a command's output shown before counting the rest
 	DiffRows     int               // rows of a change shown
 	ApprovalRows int               // rows of a change shown while it waits for an answer
@@ -60,6 +61,7 @@ func DefaultChatLook() ChatLook {
 		ToolInline:   true,
 		ToolSep:      " - ",
 		ExpandHint:   expandHint,
+		ArgRows:      maxArgRows,
 		OutputRows:   maxOutputRows,
 		DiffRows:     maxDiffRows,
 		ApprovalRows: maxApprovalRows,
@@ -115,6 +117,9 @@ func (l ChatLook) resolved() ChatLook {
 	l.NoteMarker = pick(l.NoteMarker, d.NoteMarker)
 	l.UsageFormat = pick(l.UsageFormat, d.UsageFormat)
 	l.UsageTokens = pick(l.UsageTokens, d.UsageTokens)
+	if l.ArgRows < 1 {
+		l.ArgRows = d.ArgRows
+	}
 	if l.OutputRows < 1 {
 		l.OutputRows = d.OutputRows
 	}

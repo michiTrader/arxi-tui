@@ -386,3 +386,150 @@ func TestToolDotFollowsTheOutcome(t *testing.T) {
 		t.Errorf("a call that failed lacks the fail dot:\n%s", got)
 	}
 }
+
+// ---- the call itself is cut in the compact view ----------------------------------
+
+// The command the user saw taking the whole screen: 50 line numbers in one PowerShell call.
+func userCommand() string {
+	var nums []string
+	for i := 410; i <= 460; i++ {
+		nums = append(nums, fmt.Sprint(i))
+	}
+	return `cd D:\projects\tradetropy\src && powershell -NoProfile -Command "Get-Content tradetropy/plotting/render/_tools.py | Select-Object -Index ` + strings.Join(nums, ",") + `"`
+}
+
+func runCallEv(arg string) fold.Event {
+	return fold.Event{Type: "chat.tool", Seq: 1, Payload: map[string]any{
+		"name": "run", "arg": arg, "ok": true, "summary": "Exit 0 in 400ms", "output": "exit code 0\nx"}}
+}
+
+func TestACommandOfFiftyNumbersTakesTwoRowsInTheCompactView(t *testing.T) {
+	rows := tallRows(t, []fold.Event{runCallEv(userCommand())})
+	text := strings.Join(rows, "\n")
+	head := 0
+	for _, r := range rows {
+		if strings.Contains(r, "Exit 0") {
+			break
+		}
+		if strings.TrimSpace(r) != "" {
+			head++
+		}
+	}
+	if head != 2 {
+		t.Errorf("the call took %d rows, want 2:\n%s", head, text)
+	}
+	if !strings.Contains(text, "…)") {
+		t.Errorf("a cut call must say it was cut:\n%s", text)
+	}
+	r, _ := chatDoc(t)
+	for _, row := range rows {
+		if w := ansi.StringWidth(row); w > r.Width {
+			t.Errorf("the mark pushed a row past the frame (%d > %d): %q", w, r.Width, row)
+		}
+	}
+	if strings.Contains(text, "460") {
+		t.Errorf("the tail of the command should be behind ctrl+o:\n%s", text)
+	}
+	if !strings.Contains(text, `cd D:\projects\tradetropy`) {
+		t.Errorf("the start of the command must stay:\n%s", text)
+	}
+}
+
+func TestCtrlOShowsTheWholeCommand(t *testing.T) {
+	text := tallRowsExpanded(t, []fold.Event{runCallEv(userCommand())})
+	flat := strings.Join(strings.Fields(text), "")
+	if !strings.Contains(flat, "457,458,459,460\")") {
+		t.Errorf("expanded view lost the end of the command:\n%s", text)
+	}
+	if strings.Contains(text, "…)") {
+		t.Errorf("an expanded call is not cut:\n%s", text)
+	}
+}
+
+func TestAMultilineCommandIsOneLineOfWordsWhenCompact(t *testing.T) {
+	script := "python -c \"\nimport os\nfor i in range(10):\n    print(i)\nprint('done')\n\""
+	rows := tallRows(t, []fold.Event{runCallEv(script)})
+	text := strings.Join(rows, "\n")
+	if strings.Contains(text, "\nimport os") || strings.Contains(text, "    print(i)") {
+		t.Errorf("the lines of a script must not each take a row:\n%s", text)
+	}
+	if flat := strings.Join(strings.Fields(strings.ReplaceAll(text, "\n", "")), ""); !strings.Contains(flat, "●Run(python-c\"importosfori") {
+		t.Errorf("the script should read as one line:\n%s", text)
+	}
+	// Expanded, the breaks come back.
+	if ex := tallRowsExpanded(t, []fold.Event{runCallEv(script)}); !strings.Contains(ex, "import os") || !strings.Contains(ex, "    print(i)") {
+		t.Errorf("expanded view should show the script as typed:\n%s", ex)
+	}
+}
+
+func TestAShortCommandIsNotTouched(t *testing.T) {
+	rows := tallRows(t, []fold.Event{runCallEv("go test ./...")})
+	if rows[0] != "● Run(go test ./...) - Exit 0 in 400ms" && !strings.HasPrefix(rows[0], "● Run(go test ./...)") {
+		t.Errorf("row = %q", rows[0])
+	}
+	if strings.Contains(strings.Join(rows, "\n"), "…)") {
+		t.Error("a short command was cut")
+	}
+}
+
+// What waits for the user's answer is shown whole, up to the room of a change: an approval
+// from a summary is not an approval.
+func TestACommandWaitingForTheUserIsNotCutToTwoRows(t *testing.T) {
+	ev := fold.Event{Type: "chat.approval", Seq: 1, Payload: map[string]any{"name": "run", "arg": userCommand(), "summary": "in /proj"}}
+	text := strings.Join(tallRows(t, []fold.Event{ev}), "\n")
+	flat := strings.Join(strings.Fields(text), "")
+	if !strings.Contains(flat, "459,460\")") {
+		t.Errorf("the question must show the whole command:\n%s", text)
+	}
+}
+
+func TestToolArgRowsIsASettingAndNeverZeroRows(t *testing.T) {
+	r, js := chatDoc(t)
+	r.Height = 80
+	lk := DefaultChatLook()
+	lk.ArgRows = 4
+	r.Look = &lk
+	rows := strings.Split(r.RenderFrame(mustDoc(t, js), fold.Fold([]fold.Event{runCallEv(userCommand())})).Plain(), "\n")
+	head := 0
+	for _, row := range rows {
+		if strings.Contains(row, "Exit 0") {
+			break
+		}
+		if strings.TrimSpace(row) != "" {
+			head++
+		}
+	}
+	if head != 4 {
+		t.Errorf("ArgRows=4 gave %d rows:\n%s", head, strings.Join(rows, "\n"))
+	}
+	if got := (ChatLook{}).resolved().ArgRows; got != maxArgRows {
+		t.Errorf("an unset ArgRows must be the default, got %d", got)
+	}
+}
+
+func TestBlankRowsBeforeAnOutputAreNotDrawnButIndentationIs(t *testing.T) {
+	ev := fold.Event{Type: "chat.tool", Seq: 1, Payload: map[string]any{
+		"name": "run", "arg": "x", "ok": true, "summary": "Exit 0 in 1ms",
+		"output": "exit code 0\n\n\n    def f():\n        pass"}}
+	rows := tallRows(t, []fold.Event{ev})
+	var body []string
+	for _, r := range rows {
+		if strings.Contains(r, "def f") || strings.Contains(r, "pass") {
+			body = append(body, r)
+		}
+	}
+	if len(body) != 2 {
+		t.Fatalf("rows:\n%s", strings.Join(rows, "\n"))
+	}
+	// the row right under the outcome is the first real line, not an empty one
+	for i, r := range rows {
+		if strings.Contains(r, "Exit 0") {
+			if !strings.Contains(rows[i+1], "def f") {
+				t.Errorf("blank rows were drawn under the outcome:\n%s", strings.Join(rows, "\n"))
+			}
+		}
+	}
+	if !strings.Contains(body[0], "    def f") || !strings.Contains(body[1], "        pass") {
+		t.Errorf("indentation of the output was lost: %q", body)
+	}
+}

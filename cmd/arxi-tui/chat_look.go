@@ -32,6 +32,7 @@ func chatLookKeys(add func(key, def, role string, paragraph bool)) {
 		add("tool.title."+t, chatToolTitle(t), "chat: the name shown for the "+t+" tool", false)
 	}
 	add("tool.expand_hint", d.ExpandHint, "chat: the hint at the end of a cut block (ctrl+o is what opens it)", false)
+	add("tool.arg_rows", strconv.Itoa(d.ArgRows), "chat: rows the call itself (the command line) takes before it is cut with \"…)\"", false)
 	add("tool.output_rows", strconv.Itoa(d.OutputRows), "chat: rows of a command's output shown before \"… +N lines\"", false)
 	add("tool.diff_rows", strconv.Itoa(d.DiffRows), "chat: rows of a change (diff) shown in the conversation", false)
 	add("tool.approval_rows", strconv.Itoa(d.ApprovalRows), "chat: rows of a change shown while it waits for your answer", false)
@@ -93,6 +94,7 @@ func chatLook() *engine.ChatLook {
 		NoteMarker:      uiText("chat.note.marker"),
 		UsageFormat:     uiText("chat.usage.format"),
 		UsageTokens:     uiText("chat.usage.tokens"),
+		ArgRows:         n(uiText("tool.arg_rows"), d.ArgRows),
 		OutputRows:      n(uiText("tool.output_rows"), d.OutputRows),
 		DiffRows:        n(uiText("tool.diff_rows"), d.DiffRows),
 		ApprovalRows:    n(uiText("tool.approval_rows"), d.ApprovalRows),
@@ -117,7 +119,7 @@ func isNo(s string) bool {
 
 // chatLookNumbers are the keys that hold a whole number, with the most each may be.
 var chatLookNumbers = map[string]int{
-	"tool.output_rows": 1000, "tool.diff_rows": 1000, "tool.approval_rows": 1000,
+	"tool.arg_rows": 1000, "tool.output_rows": 1000, "tool.diff_rows": 1000, "tool.approval_rows": 1000,
 	"chat.user.max_lines": 1000, "chat.answer.indent": 40, "chat.turn_gap": 5, "chat.usage_gap": 5,
 }
 
