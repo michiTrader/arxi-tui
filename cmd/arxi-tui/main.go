@@ -266,8 +266,9 @@ func run(scenePath string) error {
 	// into arrow keys behind our back; plain up/down scroll the chat instead (phoneArrows).
 	termux := term.IsTermux()
 	if wantMouse(termux, mouseOverride) {
-		fmt.Fprint(tty, "\033[?1000h\033[?1006h")
-		defer fmt.Fprint(tty, "\033[?1006l\033[?1000l")
+		// 1002 is 1000 plus motion while a button is held: the scrollbar's thumb is dragged.
+		fmt.Fprint(tty, "\033[?1002h\033[?1006h")
+		defer fmt.Fprint(tty, "\033[?1006l\033[?1002l")
 	} else {
 		fmt.Fprint(tty, "\033[?1007l")
 		defer fmt.Fprint(tty, "\033[?1007h")
@@ -884,6 +885,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// sets one with /effort. mode is how much the agent may do unasked (/mode).
 	cwd, _ := os.Getwd()
 	var branches branchCache
+	// chatBar is where the last frame drew the chat's scrollbar and barDrag whether its thumb is
+	// held: a press on the bar starts it, motion with the button down moves the chat, release ends.
+	var chatBar engine.ChatBar
+	var barDrag bool
+	barGrabAt := 0
 	effort := ""
 	// effortPicks is what the user chose for each model, kept across runs (effort_store.go);
 	// adoptEffort puts the level a model starts with in force once the core names it.
@@ -1579,6 +1585,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		r.AnimTicks = clock.ticks()
 		r.AnimPhase = clock.phases()
 		r.ChatScroll = chatScroll
+		r.Scrollbar = wantMouse(term.IsTermux(), mouseOverride)
 		r.ExpandTools = expandTools
 		r.PromptStyle = promptStyle
 		r.Look = chatLook()
@@ -1641,6 +1648,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// wheel-down would have to unwind first.
 		if chatScroll > r.ChatScrollMax {
 			chatScroll = r.ChatScrollMax
+		}
+		chatBar = r.ChatBar
+		if chatBar.Height == 0 {
+			barDrag = false
 		}
 		clock.reconcile(active)
 		// The caret's blink is host-driven off the wall clock (see emitFrame): the
@@ -2729,6 +2740,24 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					pasteBefore := inputState{input, caret}
 					input, caret = insertText(input, caret, cleanPaste(ev.Text))
 					undo.note(pasteBefore, inputState{input, caret}, editOther, "")
+				case term.EventMouse:
+					m := ev.Mouse
+					if m.Button != term.MouseLeft {
+						break
+					}
+					switch m.Action {
+					case term.MousePress:
+						if g, ok := barGrab(chatBar, m.Col, m.Row); ok {
+							barDrag, barGrabAt = true, g
+							chatScroll = barScroll(chatBar, m.Row, g)
+						}
+					case term.MouseDrag:
+						if barDrag {
+							chatScroll = barScroll(chatBar, m.Row, barGrabAt)
+						}
+					case term.MouseRelease:
+						barDrag = false
+					}
 				case term.EventResize:
 					// A resize only needs a fresh frame at the new size, delivered
 					// by the batch repaint below like every other event in the run.
