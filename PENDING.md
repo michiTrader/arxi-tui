@@ -46,5 +46,4 @@ It was being done from `D:\projects\pitlane-strategies` with `apinex/free/mimo-v
 - Decide whether factory commands become packages (not decided).
 - Tell the model not to announce an action without doing it ("let me check...").
 - Re-run mutation checks on the scrollbar tests; `host.shells` bar mutation (`barvis`) survives.
-- Tradetropy plotting investigation (outside this repo).
-- Rate-limit pacing: the free model allows 5 requests/min; a turn of ~13 tool rounds waits several minutes.
+- Rate-limit pacing: the free model allows 5 requests/min; a long turn of tool rounds waits minutes (the round limit itself is now 40, `ARXI_MAX_TOOL_ROUNDS`).

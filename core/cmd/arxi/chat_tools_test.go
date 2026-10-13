@@ -100,14 +100,14 @@ func TestToolFailureIsReadByTheModelNotFatal(t *testing.T) {
 
 func TestToolLoopCutsOffAModelThatNeverStops(t *testing.T) {
 	f := setUpFake(t)
-	for i := 0; i < maxToolRounds+4; i++ {
+	for i := 0; i < defaultToolRounds+4; i++ {
 		f.script = append(f.script, scripted{name: "list", args: `{"path":"."}`})
 	}
 	ctx, got := collect(t, projectDir(t))
 	if _, err := chatSendEffort(ctx, "loop", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.tools) != maxToolRounds+1 || len(*got) != maxToolRounds {
+	if len(f.tools) != defaultToolRounds+1 || len(*got) != defaultToolRounds {
 		t.Fatalf("asks = %d, tool calls = %d", len(f.tools), len(*got))
 	}
 	if len(f.tools[len(f.tools)-1]) != 0 {
@@ -361,7 +361,7 @@ func TestANamelessToolCallIsAskedAgainAndTheTurnGoesOn(t *testing.T) {
 // unfinished, so it looked like the model "stopped suddenly".
 func TestACutTurnSaysItWasCutAndAFinishedOneDoesNot(t *testing.T) {
 	f := setUpFake(t)
-	for i := 0; i < maxToolRounds+4; i++ {
+	for i := 0; i < defaultToolRounds+4; i++ {
 		f.script = append(f.script, scripted{name: "list", args: `{"path":"."}`})
 	}
 	ctx, _ := collect(t, projectDir(t))
@@ -369,7 +369,7 @@ func TestACutTurnSaysItWasCutAndAFinishedOneDoesNot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(res.Text, "limit of 16 tool rounds") || !strings.Contains(res.Text, "continue") {
+	if !strings.Contains(res.Text, "limit of 40 tool rounds") || !strings.Contains(res.Text, "continue") {
 		t.Errorf("a cut turn does not say so: %q", res.Text)
 	}
 
@@ -379,5 +379,49 @@ func TestACutTurnSaysItWasCutAndAFinishedOneDoesNot(t *testing.T) {
 	res2, err := chatSendEffort(ctx2, "ok", "", "", "", "")
 	if err != nil || strings.Contains(res2.Text, "tool rounds") {
 		t.Errorf("a finished turn must not carry the note: %q %v", res2.Text, err)
+	}
+}
+
+func TestToolRoundsDefaultAndEnv(t *testing.T) {
+	if n, err := toolRounds(""); err != nil || n != defaultToolRounds {
+		t.Fatalf("default = %d, %v", n, err)
+	}
+	if n, err := toolRounds(" 7 "); err != nil || n != 7 {
+		t.Fatalf("7 = %d, %v", n, err)
+	}
+	for _, bad := range []string{"0", "-3", "abc", "2.5", "201", "99999"} {
+		if _, err := toolRounds(bad); err == nil {
+			t.Errorf("%q was accepted; a limit nobody chose must be refused", bad)
+		}
+	}
+}
+
+// The environment variable really moves the cut-off of a turn, and the note says how.
+func TestToolRoundsEnvMovesTheCut(t *testing.T) {
+	t.Setenv(toolRoundsEnv, "3")
+	f := setUpFake(t)
+	for i := 0; i < 8; i++ {
+		f.script = append(f.script, scripted{name: "list", args: `{"path":"."}`})
+	}
+	ctx, got := collect(t, projectDir(t))
+	res, err := chatSendEffort(ctx, "loop", "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*got) != 3 || len(f.tools) != 4 {
+		t.Fatalf("tool calls = %d, asks = %d; want 3 and 4", len(*got), len(f.tools))
+	}
+	if !strings.Contains(res.Text, "limit of 3 tool rounds") || !strings.Contains(res.Text, toolRoundsEnv+" raises the limit") {
+		t.Errorf("the note does not say the limit or how to change it: %q", res.Text)
+	}
+}
+
+func TestABadToolRoundsValueFailsTheTurnInsteadOfGuessing(t *testing.T) {
+	t.Setenv(toolRoundsEnv, "lots")
+	f := setUpFake(t)
+	f.script = append(f.script, scripted{name: "list", args: `{"path":"."}`})
+	ctx, _ := collect(t, projectDir(t))
+	if _, err := chatSendEffort(ctx, "loop", "", "", "", ""); err == nil || !strings.Contains(err.Error(), toolRoundsEnv) {
+		t.Fatalf("err = %v, want one naming %s", err, toolRoundsEnv)
 	}
 }

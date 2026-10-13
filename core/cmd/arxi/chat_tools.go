@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/michiTrader/arxi/internal/chattools"
@@ -16,9 +17,14 @@ import (
 )
 
 const (
-	// maxToolRounds bounds how many times one answer may go back to the model
-	// after running tools. A model that never stops asking is cut off.
-	maxToolRounds = 16
+	// defaultToolRounds bounds how many times one answer may go back to the model
+	// after running tools. A model that never stops asking is cut off. The number is a
+	// guard against a runaway loop, not a measure of anything: toolRoundsEnv raises or
+	// lowers it.
+	defaultToolRounds = 40
+	toolRoundsEnv     = "ARXI_MAX_TOOL_ROUNDS"
+	minToolRounds     = 1
+	maxToolRoundsCeil = 200
 	// maxToolOutputEvent caps the tool output carried on a notification; the
 	// model still receives the whole (already capped) output.
 	maxToolOutputEvent = 8 << 10
@@ -331,13 +337,35 @@ func (tb *chatToolbox) definitions() []turn.ToolDefinition {
 	return append(out, tb.client...)
 }
 
-// roundCapNote is added to the answer of a turn that was cut at maxToolRounds.
-var roundCapNote = fmt.Sprintf("\n\n[This answer stopped at the limit of %d tool rounds per turn, not because the work is done. Say \"continue\" to keep going.]", maxToolRounds)
+// toolRounds is how many tool rounds one answer may take: the default, or what
+// ARXI_MAX_TOOL_ROUNDS says. A value that is not a whole number in range is an error,
+// not a guess: it would set a limit the user did not choose.
+func toolRounds(env string) (int, error) {
+	env = strings.TrimSpace(env)
+	if env == "" {
+		return defaultToolRounds, nil
+	}
+	n, err := strconv.Atoi(env)
+	if err != nil || n < minToolRounds || n > maxToolRoundsCeil {
+		return 0, fmt.Errorf("%s=%q is not a whole number from %d to %d; unset it to use %d",
+			toolRoundsEnv, env, minToolRounds, maxToolRoundsCeil, defaultToolRounds)
+	}
+	return n, nil
+}
+
+// roundCapNote is added to the answer of a turn that was cut at the round limit.
+func roundCapNote(limit int) string {
+	return fmt.Sprintf("\n\n[This answer stopped at the limit of %d tool rounds per turn, not because the work is done. Say \"continue\" to keep going; %s raises the limit.]", limit, toolRoundsEnv)
+}
 
 // runToolLoop asks the model, runs the tools it requests, and asks again until
 // it answers in plain text. complete performs one request (with its retries).
 func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 	complete func(turn.Request) (turn.Response, error)) (turn.Response, error) {
+	maxToolRounds, err := toolRounds(os.Getenv(toolRoundsEnv))
+	if err != nil {
+		return turn.Response{}, err
+	}
 	req.Tools = append(req.Tools, tb.definitions()...)
 	for round := 0; ; round++ {
 		if round >= maxToolRounds {
@@ -355,7 +383,7 @@ func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 			// The turn ends here because of the cap, not because the model was done: say
 			// so, or it looks like it stopped for no reason and the user has to guess to
 			// type "continue".
-			resp.Content = append(resp.Content, turn.ContentBlock{Type: turn.BlockText, Text: roundCapNote})
+			resp.Content = append(resp.Content, turn.ContentBlock{Type: turn.BlockText, Text: roundCapNote(maxToolRounds)})
 		}
 		// A model that cannot use the tool channel writes its call as text; run it
 		// instead of showing it as the answer (textcalls.go).
