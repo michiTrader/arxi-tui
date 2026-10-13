@@ -264,11 +264,9 @@ func (c *chatSession) compact(ctx context.Context, focus string) error {
 	old, keep, worth := splitForCompact(c.history)
 	gen := c.gen
 	if !worth {
-		n, b := len(c.history), historyBytes(c.history)
+		n, b, held := len(c.history), historyBytes(c.history), c.lastAsk
 		c.mu.Unlock()
-		c.post(ctx, gen, "chat.note", map[string]any{"text": fmt.Sprintf(
-			"nothing to compact: the history the next question carries is %d messages, ~%s tokens. "+
-				"/compact is for a long conversation; /clear starts a new one.", n, humanTokens(uint64(estimateTokens(b))))})
+		c.post(ctx, gen, "chat.note", map[string]any{"text": nothingToCompact(n, b, held)})
 		return nil
 	}
 	c.busy, c.compacting = true, true
@@ -281,6 +279,20 @@ func (c *chatSession) compact(ctx context.Context, focus string) error {
 	c.mu.Unlock()
 	go c.runCompact(turnCtx, focus, old, keep, before, toolRecordsText(recs), gen, turn)
 	return nil
+}
+
+// nothingToCompact is the answer when the history is too short to summarise. It says
+// plainly what is and is not measured: the history is the messages between questions;
+// what the model held at its last ask (reported by the core) also counts the tool calls
+// and results of a turn, which are not kept here and so cannot be summarised. A turn
+// that filled the window with tool output is a long turn, not a long history.
+func nothingToCompact(msgs, bytes, held int) string {
+	text := fmt.Sprintf("nothing to compact: the conversation kept between questions is %d messages, ~%s tokens, too short to summarise.",
+		msgs, humanTokens(uint64(estimateTokens(bytes))))
+	if held > 0 {
+		text += fmt.Sprintf(" The model held ~%s tokens at its last request; the difference is tool calls and results from inside a turn, which are not kept between questions and so are already gone from the next one.", humanTokens(uint64(held)))
+	}
+	return text + " /clear starts a new conversation."
 }
 
 func (c *chatSession) runCompact(ctx context.Context, focus string, old, keep []driver.ChatTurn, before int, tools string, gen, turn int64) {

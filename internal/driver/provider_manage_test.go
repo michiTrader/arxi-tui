@@ -739,3 +739,34 @@ func TestChatSendNamesAnOldCoreThatRefusesClientTools(t *testing.T) {
 		t.Fatalf("err = %v; the caller needs ErrClientToolsUnsupported to retry without the client tools", err)
 	}
 }
+
+// The core reports what the model held after every ask. The figures reach the client in
+// order, including when the call then fails, which is when the bar used to go stale.
+func TestChatSendHandsEachAsksContextToTheWatcherEvenWhenTheCallFails(t *testing.T) {
+	d := session(t,
+		`{"type":"chat.usage","context_tokens":1200,"input_tokens":1000,"output_tokens":200}`,
+		`{"type":"chat.tool","call_id":"c1","name":"list","arg":".","ok":true,"summary":"Listed 1 entry"}`,
+		`{"type":"chat.usage","context_tokens":5400,"input_tokens":5000,"output_tokens":400}`,
+		`{"id":"chat-send","ok":false,"error":{"code":"failed","message":"context deadline exceeded"}}`)
+	var got []int
+	_, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "go", Workdir: "/p", OnUsage: func(n int) { got = append(got, n) }})
+	if err == nil {
+		t.Fatal("the call fails")
+	}
+	if len(got) != 2 || got[0] != 1200 || got[1] != 5400 {
+		t.Fatalf("usage reports = %v, want [1200 5400]", got)
+	}
+}
+
+// A watcher that only wants the usage still gets the streaming path: without it the
+// notifications would never be read.
+func TestChatSendWithOnlyAUsageWatcherReadsTheNotifications(t *testing.T) {
+	d := session(t,
+		`{"type":"chat.usage","context_tokens":77}`,
+		`{"id":"chat-send","ok":true,"result":{"text":"ok"}}`)
+	var got []int
+	res, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "go", OnUsage: func(n int) { got = append(got, n) }})
+	if err != nil || res.Text != "ok" || len(got) != 1 || got[0] != 77 {
+		t.Fatalf("res=%+v err=%v got=%v", res, err, got)
+	}
+}

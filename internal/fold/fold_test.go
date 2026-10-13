@@ -388,3 +388,24 @@ func TestNoteIsALineOfItsOwn(t *testing.T) {
 		t.Fatalf("history = %+v, want the prompt and one note that keeps its line break", s.History)
 	}
 }
+
+// chat.usage arrives after each ask of a turn, so the context figure follows a long tool
+// loop and a turn that later fails (chat.error, no llm.response) leaves the last real
+// size on the bar instead of the size of the previous turn.
+func TestChatUsageMovesLastContextDuringAndAfterAFailedTurn(t *testing.T) {
+	u := func(seq int, n float64) Event {
+		return Event{Type: "chat.usage", Seq: int64(seq), Payload: map[string]any{"context_tokens": n}}
+	}
+	done := Event{Type: "llm.response", Seq: 1, Payload: map[string]any{"text": "x", "tokens_in": 100.0, "tokens_out": 20.0}}
+	fail := Event{Type: "chat.error", Seq: 4, Payload: map[string]any{"text": "context deadline exceeded"}}
+	s := Fold([]Event{done, u(2, 40_000), u(3, 90_000), fail})
+	if s.LastContext != 90_000 {
+		t.Errorf("LastContext after a failed turn = %d, want 90000 (the last ask that answered)", s.LastContext)
+	}
+	if s := Fold([]Event{done, u(2, 0)}); s.LastContext != 120 {
+		t.Errorf("a zero report must not wipe the figure: %d", s.LastContext)
+	}
+	if !Handles("chat.usage") {
+		t.Error("chat.usage must be a handled type")
+	}
+}

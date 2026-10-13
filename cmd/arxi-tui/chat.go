@@ -71,6 +71,10 @@ type chatSession struct {
 
 	mu      sync.Mutex
 	history []driver.ChatTurn
+	// lastAsk is how many tokens the model held at the latest ask it answered, as the
+	// core reported it (0 until one does). It is what the model actually carried,
+	// tool-loop messages included, which the history above does not hold.
+	lastAsk int
 	busy    bool
 	seq     int64
 	// gen counts sessions. A turn remembers the generation it started in and
@@ -606,6 +610,7 @@ func (c *chatSession) reset() {
 	c.mu.Lock()
 	c.gen++
 	c.history = nil
+	c.lastAsk = 0
 	c.toolLog = nil
 	// A folder was opened for the conversation; a new one starts closed.
 	c.folders = nil
@@ -770,6 +775,16 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		},
 		// A rate limit or an overload is waited out by the core itself; this only shows it.
 		OnRetry: func(r driver.Retry) { c.noteRetry(ctx, gen, r) },
+		// Each ask of the turn says how much the model holds, so the context figure
+		// follows a long tool loop and survives a turn that later fails.
+		OnUsage: func(n int) {
+			if n > 0 {
+				c.mu.Lock()
+				c.lastAsk = n
+				c.mu.Unlock()
+				c.post(ctx, gen, "chat.usage", map[string]any{"context_tokens": float64(n)})
+			}
+		},
 		// What it looks at while answering is shown as it happens.
 		Workdir: workdir, Edits: edits, Runs: runs, Web: web, Outside: outside, Folders: folders,
 		OnApproval: func(ctx context.Context, a driver.Approval) bool { return c.askUser(ctx, gen, a) },
@@ -964,8 +979,22 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 // words when it refused, a plain description otherwise.
 func chatErrorText(err error) string {
 	var r *driver.Refusal
+	text := "could not get an answer: " + err.Error()
 	if errors.As(err, &r) && r.Message != "" {
-		return r.Message
+		text = r.Message
 	}
-	return "could not get an answer: " + err.Error()
+	return text + timeoutNote(text)
+}
+
+// timeoutNote explains a deadline error. "context deadline exceeded" reads like the
+// model's context window overflowed, and it is not: it is the time limit of one call to
+// the model (the core waits a few minutes for an answer), hit by a slow or stuck
+// provider. Telling the two apart sends the user to /model or a retry instead of to
+// /compact, which cannot fix a timeout.
+func timeoutNote(text string) string {
+	low := strings.ToLower(text)
+	if !strings.Contains(low, "deadline exceeded") && !strings.Contains(low, "timed out") && !strings.Contains(low, "timeout") {
+		return ""
+	}
+	return " (the provider took longer than the time limit of one call; this is a timeout, not a full context window. Ask again, or pick another model with /model)"
 }
