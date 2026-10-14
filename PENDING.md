@@ -12,7 +12,7 @@
 - Status bar shows `ctx N%` of the real window (core > `ARXI_CONTEXT_WINDOW` > known-family table > `ctx ?`); the core sends `chat.usage` after every ask; `/compact` explains held tokens vs history; deadline errors say "timeout, not a full window"; `ARXI_CHAT_TIMEOUT` sets the per-call limit.
 - D1 `{row.<field>}` in drawn text; D2 `install.ps1`, core version stamped by `build-release.sh`, handshake mismatch message naming both programs, notice when no core is found.
 - NOT verified: nothing run against a real model or a real terminal; `install.ps1` ran only under PowerShell 7 on Linux against a local file server (not Windows PowerShell 5.1, not real Windows, not the real GitHub release); `core/` is not in CI (job ready in `docs/ci-core-job.yml`, needs `workflows` permission to push); live eval corpus for D1 not re-run; the separate product repo is not created.
-- Known separate issue: `cmd/arxi-tui/arxi-tui` (a 12 MB binary) is tracked in git and `go build ./...` overwrites it.
+- `cmd/arxi-tui/arxi-tui` (a 12 MB binary) is no longer tracked and is git-ignored; it stays in history, so a clone is still heavy until history is rewritten (owner decision).
 
 ## Done since: second status line (cwd + branch), PgUp/PgDn/End, hint only when scrolled up (03d3b44)
 

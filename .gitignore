@@ -4,6 +4,9 @@
 # noise that hides the change the commit is actually about.
 /arxi-tui
 /arxi-tui.exe
+# `go build ./cmd/arxi-tui` run from the repo root drops its output next to the package.
+/cmd/arxi-tui/arxi-tui
+/cmd/arxi-tui/arxi-tui.exe
 # The whole bin/ tree is build output, so ignore the directory rather than
 # enumerating each artifact. Enumerating them is what let bin/arxi-tui.exe~ — an
 # editor/build backup the exact-path patterns did not match — get committed as a
