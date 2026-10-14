@@ -42,6 +42,7 @@ func (c *Client) CompleteAnthropic(ctx context.Context, req anthropicRequest) (*
 		return nil, fmt.Errorf("call %s for model %s: %w", url, req.Model, err)
 	}
 	defer resp.Body.Close()
+	c.noteRateLimit(resp.Header)
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return nil, fmt.Errorf("read the reply from %s for model %s: %w", url, req.Model, err)

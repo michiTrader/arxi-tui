@@ -72,6 +72,7 @@ func (c *Client) CompleteStream(ctx context.Context, req chatRequest, onThinking
 		return nil, fmt.Errorf("call %s for model %s: %w", url, req.Model, err)
 	}
 	defer resp.Body.Close()
+	c.noteRateLimit(resp.Header)
 
 	if resp.StatusCode < 200 || resp.StatusCode > 299 ||
 		!strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {

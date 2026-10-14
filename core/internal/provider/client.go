@@ -43,6 +43,10 @@ type Client struct {
 	// credential without putting one in the process environment, where it would
 	// leak into every subprocess the test suite starts.
 	Getenv func(string) string
+
+	// OnRateLimit, when set, is told what each answer's headers say about the
+	// provider's request budget, successful answers included.
+	OnRateLimit func(RateLimit)
 }
 
 // DefaultTimeout bounds one model call.
@@ -176,6 +180,7 @@ func (c *Client) Complete(ctx context.Context, req chatRequest) (*chatResponse, 
 		return nil, fmt.Errorf("call %s for model %s: %w", url, req.Model, err)
 	}
 	defer resp.Body.Close()
+	c.noteRateLimit(resp.Header)
 
 	// The body is read with a ceiling. A provider (or something impersonating
 	// one) that streams an endless body would otherwise consume memory until the

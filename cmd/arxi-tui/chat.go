@@ -210,6 +210,11 @@ func (c *chatSession) RetryLabel(now time.Time) string {
 	if left <= 0 {
 		return ""
 	}
+	if c.retry.n == 0 {
+		// A paced wait is not a retry: nothing failed, the core is letting the
+		// provider's request window open before it asks again.
+		return fmt.Sprintf("• Waiting %s · %s ", waitText(left), c.retry.why)
+	}
 	return fmt.Sprintf("• Retrying in %s · %s (%d/%d) ", waitText(left), c.retry.why, c.retry.n, c.retry.of)
 }
 
@@ -226,6 +231,8 @@ func waitText(d time.Duration) string {
 // retryWhy names the cause in a few words for the countdown.
 func retryWhy(r driver.Retry) string {
 	switch r.Status {
+	case "pace":
+		return "request limit reached"
 	case "429":
 		return "rate limited"
 	case "408", "502", "503", "504", "529":
@@ -241,6 +248,9 @@ func retryLine(r driver.Retry) string {
 		who = r.Provider + "/" + r.Model
 	}
 	line := fmt.Sprintf("%s: %s. Retrying in %s (try %d of %d)", who, retryWhy(r), waitText(r.Wait), r.Attempt, r.Of)
+	if r.Status == "pace" {
+		line = fmt.Sprintf("%s: %s. Waiting %s for the window to open before the next request", who, retryWhy(r), waitText(r.Wait))
+	}
 	if r.Reason != "" {
 		line += " · " + r.Reason
 	}
