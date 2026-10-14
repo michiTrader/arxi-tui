@@ -252,6 +252,12 @@ func (a *packageAuto) turnDone() {
 
 func (a *packageAuto) turnFailed() { a.fire(extv2.EventTurnFailed, "") }
 
+// turnStarted is a message of the user going to the model; turnCancelled is the user
+// stopping a turn in flight; shellEnded is a background shell finishing by itself.
+func (a *packageAuto) turnStarted()   { a.fire(extv2.EventTurnStarted, "") }
+func (a *packageAuto) turnCancelled() { a.fire(extv2.EventTurnCancelled, "") }
+func (a *packageAuto) shellEnded()    { a.fire(extv2.EventShellEnded, "") }
+
 // refreshPanels runs the operation of every panel pick selects.
 func (a *packageAuto) refreshPanels(pick func(*autoPanel) bool) {
 	type job struct {

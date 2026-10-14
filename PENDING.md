@@ -1,5 +1,11 @@
 # Pending work
 
+## Done since: three more package events, and the pacing seen live
+
+- Package events were 5 (`turn.done`, `turn.failed`, `effort`, `mode`, `style`). Now also `turn.started` (a message went to the model), `turn.cancelled` (the user pressed Esc/Ctrl-C on a turn) and `shell.ended` (a background shell finished by itself). Same rules as the others: they only show a note, never send anything, never start another event. Tests drive the real loop; mutation checks for each wire.
+- Not events yet (ideas, none built): a tool being used, an approval asked, a file changed by the model, the context nearing full, a model change, a provider error, `/resume`.
+- Rate-limit pacing was seen with the real binary and a real model: apinex `free/mimo-v2.6-pro` (5 requests/min), six files read one at a time: the sixth waited the window ("Waiting 56s · request limit reached") and answered, no 429 in between. One run, one provider; VyceAI sends no such headers so it is not paced.
+
 ## Done since: hub panic, ctx after an error, ctx after /resume (branch fix/hub-window-panic)
 
 - Panic after `Set context window` -> Enter: a saved form dropped the form but left the hub on the form level; the next repaint read a nil form. `apply` now leaves the form level, and `publish` / `routeHubKey` repair that state instead of crashing.

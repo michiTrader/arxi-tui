@@ -159,19 +159,23 @@ const ToolPrefix = "pkg_"
 // part holds an underscore, so the name says unambiguously which package it belongs to.
 func (t Tool) ModelName(pkgID string) string { return ToolPrefix + pkgID + "_" + t.Name }
 
-// The events a package may react to. The first two end a turn of the chat; the others
+// The events a package may react to. The first two end a turn of the chat, the next three
+// are a turn starting, the user cancelling one, and a background shell ending by itself; the others
 // are the settings the user can change, the same ones a hook of the behaviour layer can
 // watch (the host knows each one's values).
 const (
-	EventTurnDone   = "turn.done"
-	EventTurnFailed = "turn.failed"
-	EventEffort     = "effort"
-	EventMode       = "mode"
-	EventStyle      = "style"
+	EventTurnDone      = "turn.done"
+	EventTurnFailed    = "turn.failed"
+	EventTurnStarted   = "turn.started"
+	EventTurnCancelled = "turn.cancelled"
+	EventShellEnded    = "shell.ended"
+	EventEffort        = "effort"
+	EventMode          = "mode"
+	EventStyle         = "style"
 )
 
 // EventKinds lists what Event.On may be.
-var EventKinds = []string{EventTurnDone, EventTurnFailed, EventEffort, EventMode, EventStyle}
+var EventKinds = []string{EventTurnDone, EventTurnFailed, EventTurnStarted, EventTurnCancelled, EventShellEnded, EventEffort, EventMode, EventStyle}
 
 // IsSettingEvent reports whether an event is a change of a setting, which is the only
 // kind that carries a value.

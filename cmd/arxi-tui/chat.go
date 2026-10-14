@@ -169,6 +169,10 @@ func newChatSession(core chatSender, out chan<- fold.Event) *chatSession {
 	return c
 }
 
+// shellEndedKey marks the warning line of a shell that ended by itself, so the loop can
+// also fire the packages' shell.ended event for it.
+const shellEndedKey = "shell_ended"
+
 // shellEnded tells the conversation that a background shell ended by itself (a stopped
 // one was the user's or the model's own doing and needs no word). It is a warning line:
 // something the user may want to look at, never sent to the model.
@@ -181,7 +185,8 @@ func (c *chatSession) shellEnded(i shellInfo) {
 		how = fmt.Sprintf("ended with code %d", i.Code)
 	}
 	c.post(context.Background(), gen, "chat.warn", map[string]any{
-		"text": fmt.Sprintf("shell %d %s: %s (/shell show %d)", i.ID, how, i.Command, i.ID)})
+		shellEndedKey: true, // the loop turns this into the shell.ended event of the packages
+		"text":        fmt.Sprintf("shell %d %s: %s (/shell show %d)", i.ID, how, i.Command, i.ID)})
 }
 
 // noteRetry records that the core is waiting to ask the provider again, puts a line in

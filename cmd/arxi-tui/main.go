@@ -2904,6 +2904,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					pkgAuto.turnDone()
 				case "agent.failed":
 					pkgAuto.turnFailed()
+				case "run.prompt":
+					pkgAuto.turnStarted()
+				case "chat.cancelled":
+					pkgAuto.turnCancelled()
+				case "chat.warn":
+					if ended, _ := e.Payload[shellEndedKey].(bool); ended {
+						pkgAuto.shellEnded()
+					}
 				}
 				repaint()
 			}
