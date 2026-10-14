@@ -262,6 +262,7 @@ func (h *providerHub) allItems() []hubItem {
 		}
 		out = append(out,
 			hubItem{id: "default", label: "Use for chat (make default)"},
+			hubItem{id: "window", label: "Set context window…", status: h.windowStatus(d)},
 			hubItem{id: "toggle", label: toggle + " this model"},
 			hubItem{id: "remove", label: "Remove this model"},
 		)
@@ -445,6 +446,12 @@ func (h *providerHub) detail() string {
 		}
 	case lvModelActions:
 		fmt.Fprintf(&b, "Model: %s\n", h.model)
+		if w := d.windowOf(h.model); w > 0 {
+			fmt.Fprintf(&b, "Context window: %s tokens\n", humanTokens(uint64(w)))
+		} else {
+			b.WriteString("Context window: not known. The service did not report one, so the status bar cannot say how full it is.\n" +
+				"Choose “Set context window…” and type the size (for example 270k).\n")
+		}
 		switch {
 		case h.model == d.def:
 			b.WriteString("It is the model the chat uses now.")
@@ -539,4 +546,13 @@ func (h *providerHub) writeSearchSummary(b *strings.Builder) {
 		"your permission unless the mode is full access. Brave and Exa need an API key from\n" +
 		"their site; SearXNG is a search server you run yourself and needs only its address.\n" +
 		"The key is stored on this computer, never shown, and applies from your next question.")
+}
+
+// windowStatus is the right-hand text of the "Set context window" row: the size in use,
+// or the plain fact that none is known.
+func (h *providerHub) windowStatus(d hubData) string {
+	if w := d.windowOf(h.model); w > 0 {
+		return humanTokens(uint64(w))
+	}
+	return "not set"
 }

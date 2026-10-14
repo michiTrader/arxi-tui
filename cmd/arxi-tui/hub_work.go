@@ -25,6 +25,7 @@ const (
 	opDefault                  // choose the default model
 	opToggle                   // enable / disable one model
 	opRemoveModel              // delete one model
+	opSetWindow                // set the context window of one model
 	opRemove                   // delete a provider and its models
 	opSearch                   // choose (or turn off) the web search service; local, no core
 )
@@ -60,6 +61,7 @@ type hubCore interface {
 	SubmitModelEnable(ctx context.Context, ref string, on bool) (*driver.ModelEnableResult, error)
 	SubmitModelDiscover(ctx context.Context, provider string) (*driver.ModelDiscoverResult, error)
 	SubmitModelRemove(ctx context.Context, ref string) (*driver.ModelRemoveResult, error)
+	SubmitModelUpdate(ctx context.Context, ref string, contextWindow int) (*driver.ModelUpdateResult, error)
 	SubmitModelDefault(ctx context.Context, ref string) (*driver.ModelDefaultResult, error)
 }
 
@@ -269,6 +271,14 @@ func runHubWork(ctx context.Context, core hubCore, w hubWork) hubOutcome {
 		out.nav = navModelList
 		out.notice = "✓ " + res.Model + " removed"
 
+	case opSetWindow:
+		res, err := core.SubmitModelUpdate(ctx, w.Ref, w.Window)
+		if err != nil {
+			return fail(err)
+		}
+		out.nav = navModelList
+		out.notice = "✓ " + res.Model + ": context window " + humanTokens(uint64(res.ContextWindow)) + " tokens"
+
 	case opRemove:
 		if _, err := core.SubmitProviderRemove(ctx, w.Name); err != nil {
 			return fail(err)
@@ -363,6 +373,8 @@ func (o hubOp) String() string {
 		return "updating the model"
 	case opRemoveModel:
 		return "removing the model"
+	case opSetWindow:
+		return "saving the context window"
 	case opRemove:
 		return "removing the provider"
 	case opSearch:

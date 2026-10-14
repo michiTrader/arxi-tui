@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/michiTrader/arxi/internal/surface"
@@ -126,4 +127,28 @@ func cmdChat(args []string) {
 		cliFail("chat send", err)
 	}
 	fmt.Println(strings.TrimRight(res.Text, "\n"))
+}
+
+// cmdModelUpdate implements `arxi model update <model> --context-window N`.
+func cmdModelUpdate(args []string) {
+	vals, err := parseInvocation(surface.Lookup("model", "update"), args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi model update: %v\n", err)
+		os.Exit(2)
+	}
+	raw, ok := vals["context-window"]
+	if !ok {
+		fmt.Fprintln(os.Stderr, "arxi model update: nothing to change; give --context-window N (tokens)")
+		os.Exit(2)
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "arxi model update: --context-window %q is not a whole number of tokens\n", raw)
+		os.Exit(2)
+	}
+	p, id, err := updateModel(vals["model"], n)
+	if err != nil {
+		cliFail("model update", err)
+	}
+	fmt.Printf("model %s of %s: context window is now %d tokens\n", id, p, n)
 }

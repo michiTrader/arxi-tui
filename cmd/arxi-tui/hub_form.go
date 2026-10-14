@@ -50,6 +50,7 @@ const (
 	formEdit                     // URL / key / key variable of a registered provider
 	formModels                   // model ids (and prices) added by hand
 	formSearch                   // the key or address of a web search service
+	formWindow                   // the context window of one model
 )
 
 // hubForm is the open form. It is wiped when it closes: the key must not outlive it.
@@ -247,6 +248,25 @@ func newModelsForm(prov string) *hubForm {
 	}
 }
 
+// windowFieldLabel is the label of the one field of the window form.
+const windowFieldLabel = "Context window (tokens)"
+
+func newWindowForm(ref string, current int) *hubForm {
+	f := &hubForm{
+		kind:  formWindow,
+		title: "Context window of " + ref,
+		prov:  ref,
+		help: "How many tokens this model can hold at once, as its service documents it (270k, 1M, 128000). " +
+			"The service rarely reports it, so you tell arxi: the status bar then shows how full the context is, " +
+			"like 34k/270k, and autocompact knows when to act.",
+		fields: []hubField{{label: windowFieldLabel, required: true, kind: kindWindow}},
+	}
+	if current > 0 {
+		f.fields[0].value = strconv.Itoa(current)
+	}
+	return f
+}
+
 // parseModelIDs splits "a, b c,a" into ["a","b","c"]: commas and spaces separate,
 // duplicates collapse, order is kept.
 func parseModelIDs(s string) []string {
@@ -348,6 +368,13 @@ func (f *hubForm) submit() (hubWork, string) {
 			return hubWork{}, "nothing changed"
 		}
 		return w, ""
+
+	case formWindow:
+		n, _ := parseWindow(f.get(windowFieldLabel))
+		if n == 0 {
+			return hubWork{}, windowFieldLabel + " is required (write 1000000, 1M or 270k)"
+		}
+		return hubWork{Op: opSetWindow, Ref: f.prov, Window: n}, ""
 
 	case formModels:
 		ids := parseModelIDs(f.get("Model ids"))

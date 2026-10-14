@@ -141,6 +141,26 @@ func (d *NDJSONDriver) SubmitModelRemove(ctx context.Context, ref string) (*Mode
 	return &r, nil
 }
 
+// ModelUpdateResult is the answer to model.update.
+type ModelUpdateResult struct {
+	Provider      string `json:"provider"`
+	Model         string `json:"model"`
+	ContextWindow int    `json:"context_window"`
+}
+
+// SubmitModelUpdate sets the context window (tokens) of a model that is already added.
+// Providers rarely report it, so this is how the operator tells arxi.
+func (d *NDJSONDriver) SubmitModelUpdate(ctx context.Context, ref string, contextWindow int) (*ModelUpdateResult, error) {
+	if ref == "" {
+		return nil, fmt.Errorf("ndjson: model.update needs a model ref")
+	}
+	var r ModelUpdateResult
+	if err := d.call(ctx, "model-update", "model.update", map[string]any{"model": ref, "context_window": contextWindow}, &r); err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // ModelDefaultResult is the answer to model.default. Default is "provider/id", or
 // empty when no default is chosen.
 type ModelDefaultResult struct {

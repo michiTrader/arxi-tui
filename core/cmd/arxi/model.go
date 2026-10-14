@@ -95,7 +95,7 @@ func cmdProvider(args []string) {
 
 func cmdModel(args []string) {
 	if len(args) == 0 {
-		fmt.Fprintf(os.Stderr, "usage: arxi model list | add <provider> <model> | discover <provider> | remove <model> | default [model] | enable <model> | disable <model>\n")
+		fmt.Fprintf(os.Stderr, "usage: arxi model list | add <provider> <model> | discover <provider> | remove <model> | update <model> --context-window N | default [model] | enable <model> | disable <model>\n")
 		os.Exit(2)
 	}
 	switch args[0] {
@@ -113,6 +113,8 @@ func cmdModel(args []string) {
 		cmdModelRemove(args[1:])
 	case "default":
 		cmdModelDefault(args[1:])
+	case "update":
+		cmdModelUpdate(args[1:])
 	default:
 		notImplemented(append([]string{"model"}, args...))
 	}

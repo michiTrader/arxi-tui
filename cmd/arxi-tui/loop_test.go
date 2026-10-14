@@ -787,7 +787,7 @@ func TestLoopSobriaStatusbarRenders(t *testing.T) {
 		t.Errorf("status bar not rendered correctly; output:\n%s", out)
 	}
 	// The same bar carries the conversation size and token totals.
-	if !strings.Contains(out, "ctx ? · ↑12 ↓8") {
+	if !strings.Contains(out, "ctx 20/? · ↑12 ↓8") {
 		t.Errorf("status bar lacks the usage segment; output:\n%s", out)
 	}
 }
