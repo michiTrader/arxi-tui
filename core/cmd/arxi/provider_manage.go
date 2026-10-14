@@ -533,7 +533,8 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 
 	ctx, cancel := context.WithTimeout(ctx, chatDeadline())
 	defer cancel()
-	exec := &provider.Executor{OnWire: rememberWire}
+	var pace pacer
+	exec := &provider.Executor{OnWire: rememberWire, OnRateLimit: pace.note}
 	req := turn.Request{
 		Schema: turn.Schema, Provider: res.Provider, Protocol: res.Protocol,
 		BaseURL: res.BaseURL, APIKeyEnv: res.APIKeyEnv, Model: res.Model,
@@ -547,6 +548,23 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	tries := 0
 	complete := func(req turn.Request) (turn.Response, error) {
 		for attempt := 1; ; attempt++ {
+			// The provider said its request budget is spent and when the window
+			// opens: wait for it, rather than spend a request on a refusal. A wait
+			// longer than this chat is willing to give is not served; the ask goes
+			// out and the provider's own answer decides.
+			if w := pace.due(); w > 0 && w <= chatMaxWait && waited+w <= chatRetryTotal {
+				waited += w
+				notifyRetry(ctx, chatRetryNotification{
+					Type: "chat.retry", Provider: res.Provider, Model: res.Model,
+					WaitMs: w.Milliseconds(), Status: paceStatus,
+					Reason: "the request limit for this window is used up",
+				})
+				select {
+				case <-time.After(w):
+				case <-ctx.Done():
+					return turn.Response{}, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, ctx.Err())
+				}
+			}
 			resp, err := exec.CompleteTurn(ctx, req)
 			tries = attempt
 			if err != nil {
@@ -579,6 +597,10 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 				Attempt: attempt + 1, Of: chatAttempts, WaitMs: wait.Milliseconds(),
 				Status: strings.TrimPrefix(resp.Refusal.Code, "http_"), Reason: shortReason(resp.Refusal.Message),
 			})
+			// No pacing bookkeeping here: the window the refusal's headers named is an
+			// instant, so once this wait has served it the next ask finds nothing left
+			// to wait for, and if the retry wait was shorter than the window the
+			// remainder is waited for rather than spent on a second refusal.
 			select {
 			case <-time.After(wait):
 			case <-ctx.Done():

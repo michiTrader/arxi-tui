@@ -35,15 +35,18 @@ type fakeLLM struct {
 	// failBody replaces the bare "error code: N" body; failHeader sets Retry-After.
 	failBody   string
 	failHeader string
-	calls      int      // chat requests seen
-	efforts    []string // reasoning_effort of each chat request ("" when absent)
-	thinking   []string // thinking.type of each chat request ("" when absent)
-	models     []string
-	status     int
-	streams    int      // chat requests that asked for server-sent events
-	think      []string // reasoning fragments a streamed answer sends first
-	script     []scripted
-	tools      [][]string // names of the tools offered with each chat request
+	// rate, when set, gives the rate-limit headers of each chat answer (by call
+	// number, from 1): the requests left and the reset. Empty strings send none.
+	rate     func(call int) (remaining, reset string)
+	calls    int      // chat requests seen
+	efforts  []string // reasoning_effort of each chat request ("" when absent)
+	thinking []string // thinking.type of each chat request ("" when absent)
+	models   []string
+	status   int
+	streams  int      // chat requests that asked for server-sent events
+	think    []string // reasoning fragments a streamed answer sends first
+	script   []scripted
+	tools    [][]string // names of the tools offered with each chat request
 }
 
 // scripted is one step of a tool conversation: while steps remain, the model
@@ -79,6 +82,14 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 			json.NewEncoder(w).Encode(map[string]any{"data": data})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/chat/completions"):
 			f.calls++
+			if f.rate != nil {
+				if rem, rst := f.rate(f.calls); rem != "" {
+					w.Header().Set("X-Ratelimit-Remaining", rem)
+					if rst != "" {
+						w.Header().Set("X-Ratelimit-Reset", rst)
+					}
+				}
+			}
 			if f.failAfter > 0 && f.calls > f.failAfter {
 				w.WriteHeader(400)
 				io.WriteString(w, `{"error":{"message":"bad request"}}`)

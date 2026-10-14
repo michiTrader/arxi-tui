@@ -72,3 +72,49 @@ func TestWaitTextRoundsUp(t *testing.T) {
 		}
 	}
 }
+
+// paceChat announces a paced wait (the core holding the next request back until the
+// provider's window opens) and then answers.
+type paceChat struct{ release chan struct{} }
+
+func (paceChat) Hello() *driver.Hello { return &driver.Hello{Implemented: []string{"chat.send"}} }
+func (r paceChat) SubmitChatSend(_ context.Context, p driver.ChatSendParams) (*driver.ChatSendResult, error) {
+	if p.OnRetry != nil {
+		p.OnRetry(driver.Retry{Provider: "apinex", Model: "mimo", Wait: 41 * time.Second, Status: "pace", Reason: "the request limit for this window is used up"})
+		<-r.release
+	}
+	return &driver.ChatSendResult{Text: "done", Model: "mimo", Provider: "apinex"}, nil
+}
+
+func TestPacedWaitIsNotShownAsARetry(t *testing.T) {
+	out := make(chan fold.Event, 32)
+	core := paceChat{release: make(chan struct{})}
+	c := newChatSession(core, out)
+	if err := c.send(context.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	var label string
+	for time.Now().Before(deadline) {
+		if label = c.RetryLabel(time.Now()); label != "" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !strings.Contains(label, "Waiting 41s") || !strings.Contains(label, "request limit reached") {
+		t.Fatalf("label = %q, want a wait naming the request limit", label)
+	}
+	if strings.Contains(label, "Retrying") || strings.Contains(label, "0/0") {
+		t.Fatalf("label = %q: nothing failed, so it must not read as a retry or show 0/0", label)
+	}
+	close(core.release)
+	var line string
+	for _, ev := range drain(out, "agent.turn_done", 2*time.Second) {
+		if ev.Type == "chat.warn" {
+			line, _ = ev.Payload["text"].(string)
+		}
+	}
+	if !strings.Contains(line, "apinex/mimo") || !strings.Contains(line, "Waiting 41s for the window") || strings.Contains(line, "try ") {
+		t.Errorf("the conversation line = %q", line)
+	}
+}

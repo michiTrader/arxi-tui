@@ -119,6 +119,10 @@ type Executor struct {
 	// the first wire again.
 	OnWire func(provider, modelID, protocol string)
 
+	// OnRateLimit is told what each provider answer says about its request budget
+	// (the rate-limit headers), so a caller can pace itself. Nil ignores them.
+	OnRateLimit func(RateLimit)
+
 	// mu guards ids. The runner executes independent effects in PARALLEL, so
 	// two turns can mint an id at the same moment.
 	mu  sync.Mutex
@@ -690,10 +694,16 @@ func (x *Executor) resolve(agent string) (model.Resolution, model.Price, error) 
 }
 
 func (x *Executor) newClient(res model.Resolution) *Client {
+	var c *Client
 	if x.NewClient != nil {
-		return x.NewClient(res)
+		c = x.NewClient(res)
+	} else {
+		c = &Client{BaseURL: res.BaseURL, APIKeyEnv: res.APIKeyEnv, Provider: res.Provider}
 	}
-	return &Client{BaseURL: res.BaseURL, APIKeyEnv: res.APIKeyEnv, Provider: res.Provider}
+	if c != nil && x.OnRateLimit != nil && c.OnRateLimit == nil {
+		c.OnRateLimit = x.OnRateLimit
+	}
+	return c
 }
 
 // id mints an event id.
