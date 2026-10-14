@@ -85,16 +85,22 @@ The bottom bar reads `mode · model · thinking level · directory`, for example
 once you choose one.
 
 After the first answer the bar also shows how full the conversation is and what it has
-used: `ctx 4% · ↑929k ↓13k · autocompact 80%`. `ctx` is the share of the model's context
-window that the latest request filled (what the model has to read again on every turn, so
-it grows as the chat does); `↑` and `↓` are the running totals sent and received. These
-are token counts: the provider does not report prices, so no money figure is shown.
+used: `ctx 34k/270k (12%) · ↑929k ↓13k · autocompact 80%`. `ctx` is what the latest request
+held (what the model has to read again on every turn, so it grows as the chat does) over the
+model's context window, with the share in brackets; `↑` and `↓` are the running totals sent
+and received. These are token counts: the provider does not report prices, so no money
+figure is shown.
 
 The core reports the size of every request of a turn (`chat.usage`), so the figure moves
 while a long tool loop runs and keeps its last real value when a turn fails. The window comes from the
 core when it knows it, else from `ARXI_CONTEXT_WINDOW` (tokens, e.g. `ARXI_CONTEXT_WINDOW=200000`),
 else from a built-in table of well-known model families. When none of those knows the
-window the bar says `ctx ?` rather than invent a percentage. A "context deadline exceeded"
+window the bar says `ctx 34k/?` (the held size is real, the window is not) rather than invent a
+percentage. Most services do not report windows at all (`/v1/models` lists only ids), so tell arxi
+once: `/provider` -> the provider -> its models -> the model -> **Set context window…** (type `270k`,
+`1M` or `128000`), or `arxi model update <provider/model> --context-window 270000` on the core. The
+figure is kept with the model, survives fetching the model list again, and an implausible one
+(under 1000 or over 100 million tokens) is refused. A "context deadline exceeded"
 error is the provider taking longer than the time limit of one call, not a full window; the
 error says so, and `ARXI_CHAT_TIMEOUT` (e.g. `10m`, `90s`, or plain seconds; default 3 minutes) gives a slow
 provider more time per call.

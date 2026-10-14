@@ -816,3 +816,91 @@ func TestChatDeadlineFollowsTheTimeoutSetting(t *testing.T) {
 		t.Fatalf("deadline = %v, want %v", got, want)
 	}
 }
+
+// A model found by discovery has no context window when the provider does not report one
+// (most do not), and the only remedy used to be removing the model and adding it again.
+// model.update sets it on the model that is already there, and keeps everything else.
+func TestModelUpdateSetsTheWindowOfAModelAlreadyAdded(t *testing.T) {
+	isolate(t)
+	f := newFakeLLM(t, "m1", "m2")
+	if _, err := registerProvider("fake", f.url(), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverModels(context.Background(), "fake"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handleModelUpdate(map[string]any{"model": "fake/m2", "context_window": float64(270000)}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := handleModelList(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(got)
+	var rows struct {
+		Models []struct {
+			Provider, ID  string
+			Enabled       bool
+			ContextWindow int `json:"context_window"`
+		} `json:"models"`
+	}
+	if err := json.Unmarshal(b, &rows); err != nil {
+		t.Fatal(err)
+	}
+	seen := 0
+	for _, r := range rows.Models {
+		switch r.ID {
+		case "m2": // the second one, so an update that hits "the first model" is caught
+			seen++
+			if r.ContextWindow != 270000 || !r.Enabled {
+				t.Errorf("m2 = %+v, want window 270000 and still enabled", r)
+			}
+		case "m1":
+			seen++
+			if r.ContextWindow != 0 {
+				t.Errorf("m1 got a window (%d) it was never given", r.ContextWindow)
+			}
+		}
+	}
+	if seen != 2 {
+		t.Fatalf("expected both models in the list, got %+v", rows.Models)
+	}
+}
+
+func TestModelUpdateRefusesWhatCannotBeAWindowOrAModel(t *testing.T) {
+	isolate(t)
+	f := newFakeLLM(t, "m1")
+	if _, err := registerProvider("fake", f.url(), "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverModels(context.Background(), "fake"); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		name   string
+		params map[string]any
+		want   string
+	}{
+		{"no window", map[string]any{"model": "fake/m1"}, "needs context_window"},
+		{"fraction", map[string]any{"model": "fake/m1", "context_window": 1500.5}, "whole number"},
+		{"too small", map[string]any{"model": "fake/m1", "context_window": float64(10)}, "plausible"},
+		{"too big", map[string]any{"model": "fake/m1", "context_window": float64(1e12)}, "plausible"},
+		{"negative", map[string]any{"model": "fake/m1", "context_window": float64(-5)}, "plausible"},
+		{"unknown model", map[string]any{"model": "fake/nope", "context_window": float64(200000)}, "nope"},
+	} {
+		_, err := handleModelUpdate(c.params)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want it to mention %q", c.name, err, c.want)
+		}
+	}
+	// a refused update must not have changed anything
+	p, _ := providerStore()
+	ps, _ := p.List()
+	for _, pr := range ps {
+		for _, m := range pr.Models {
+			if m.ContextWindow != 0 {
+				t.Errorf("%s/%s kept a window after only refused updates: %d", pr.Name, m.ID, m.ContextWindow)
+			}
+		}
+	}
+}

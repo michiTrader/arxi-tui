@@ -674,6 +674,53 @@ func handleModelRemove(params map[string]any) (any, error) {
 	}{p, id, true}, nil
 }
 
+// updateModel records what the operator knows about a model that is already added. Today
+// that is the context window: providers rarely report it, and a model added by discovery
+// has none, so without this the only way to set one was to remove the model and add it
+// again by hand. The window is stored exactly as typed (a positive whole number of tokens
+// within a sane range): a wrong one makes the percentage on screen a lie, so a figure no
+// model has is refused instead of kept.
+func updateModel(ref string, window int) (provider, id string, err error) {
+	if window < 1_000 || window > 100_000_000 {
+		return "", "", fmt.Errorf("context window %d is not a plausible size: give a whole number of tokens between 1000 and 100000000 (270000 for 270k)", window)
+	}
+	store, err := providerStore()
+	if err != nil {
+		return "", "", err
+	}
+	p, id, err := store.Owner(ref)
+	if err != nil {
+		return "", "", err
+	}
+	if !p.SetContextWindow(id, window) {
+		return "", "", fmt.Errorf("provider %q does not offer a model called %q", p.Name, id)
+	}
+	if err := store.Save(p); err != nil {
+		return "", "", err
+	}
+	return p.Name, id, nil
+}
+
+// handleModelUpdate is model.update over the protocol.
+func handleModelUpdate(params map[string]any) (any, error) {
+	v, ok := params["context_window"].(float64)
+	if !ok {
+		return nil, fmt.Errorf("model.update needs context_window, the size in tokens")
+	}
+	if v != float64(int(v)) {
+		return nil, fmt.Errorf("context_window %v is not a whole number of tokens", v)
+	}
+	p, id, err := updateModel(stringParam(params, "model"), int(v))
+	if err != nil {
+		return nil, err
+	}
+	return struct {
+		Provider      string `json:"provider"`
+		Model         string `json:"model"`
+		ContextWindow int    `json:"context_window"`
+	}{p, id, int(v)}, nil
+}
+
 // handleModelDefault reads the default when no model is given and sets it
 // otherwise. The result always carries the current default ("" when none).
 func handleModelDefault(params map[string]any) (any, error) {

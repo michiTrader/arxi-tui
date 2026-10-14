@@ -40,23 +40,30 @@ func usageLabel(ctx, in, out uint64) string {
 
 // statusUsage is the usage segment with what the window and autocompact add:
 //
-//	ctx 4% · ↑929k ↓13k · autocompact 80%
+//	ctx 34k/270k (13%) · ↑929k ↓13k · autocompact 80%
 //
-// ctx is the share of the model's context window that the last request held (its
-// input, cache and answer), never a raw token count: a count says nothing about how
-// close the model is to refusing. The upload total (↑) is the sum over every ask, so
-// it grows far past the window and is not the window. When the window is not known
-// the bar says "ctx ?" instead of inventing a share. The autocompact part says "off"
+// ctx is what the last request held (its input, cache and answer) against the model's
+// context window, with the share in brackets: a bare count says nothing about how close
+// the model is to refusing, a bare share hides how big the window is believed to be. The
+// upload total (↑) is the sum over every ask, so it grows far past the window and is not
+// the window. When the window is not known the bar says "ctx 34k/?" -- the held size is
+// real, the window is not, and no share is invented; the providers screen (/provider ->
+// model -> Set context window) tells arxi the window. The autocompact part says "off"
 // once there is something else on the bar, and stays quiet on a fresh screen with
 // autocompact off, so the bar starts empty.
 func statusUsage(ctx, in, out uint64, window int, ac autoCompactSetting) string {
 	var parts []string
 	if in != 0 || out != 0 || ctx != 0 {
-		share := "?"
-		if p := contextPercent(ctx, window); p > 0 {
-			share = fmt.Sprintf("%d%%", p)
+		held := humanTokens(ctx)
+		share := ""
+		size := "?"
+		if window > 0 {
+			size = humanTokens(uint64(window))
+			if p := contextPercent(ctx, window); p > 0 {
+				share = fmt.Sprintf(" (%d%%)", p)
+			}
 		}
-		parts = append(parts, fmt.Sprintf("ctx %s · ↑%s ↓%s", share, humanTokens(in), humanTokens(out)))
+		parts = append(parts, fmt.Sprintf("ctx %s/%s%s · ↑%s ↓%s", held, size, share, humanTokens(in), humanTokens(out)))
 	}
 	switch {
 	case ac.On:
