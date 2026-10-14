@@ -1609,7 +1609,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			if m, _ := drv.(uiModer); m != nil && m.UIMode() {
 				state.HostMode += " · /ui"
 			}
-			state.HostUsage = statusUsage(state.LastContext, state.UsageIn, state.UsageOut, hubWindow, autoCompact)
+			held, estimated := heldContext(state.LastContext, drv)
+			state.HostUsage = statusUsageHeld(held, estimated, state.UsageIn, state.UsageOut, hubWindow, autoCompact)
 			state.HostBranch = branches.get(cwd, time.Now())
 			state.HostScroll = scrollLabel(chatScroll)
 			state.HostShells = shellsLabel(runningShells(drv))

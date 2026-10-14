@@ -114,8 +114,9 @@ type chatSession struct {
 
 	// turnText and turnTools describe the turn in flight, so that a turn that ends
 	// without an answer (cancelled, failed) can still be put in the history.
-	turnText  string
-	turnTools []string
+	turnText   string
+	turnTools  []string
+	turnEchoes []toolEcho // the same calls with what they returned (chat_history.go)
 	// toolLog is what the answered turns of this conversation did, for the system prompt
 	// (chat_history.go). Like the history it belongs to the conversation, so reset() ends it.
 	toolLog []toolRecord
@@ -526,7 +527,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 		workdir, edits, runs, web, effort, outside, folders = "", "", "", "", "", "", nil
 		hist, withUI = nil, false
 	}
-	c.turnText, c.turnTools = text, nil
+	c.turnText, c.turnTools, c.turnEchoes = text, nil, nil
 	c.turn++
 	turn := c.turn
 	turnCtx, cancel := context.WithCancel(ctx)
@@ -593,7 +594,7 @@ func (c *chatSession) cancelTurn() bool {
 	c.busy = false
 	if !c.compacting {
 		c.history = append(c.history, driver.ChatTurn{Role: "user", Text: c.turnText},
-			driver.ChatTurn{Role: "assistant", Text: unansweredText(whyCancelled, c.turnTools)})
+			driver.ChatTurn{Role: "assistant", Text: unansweredWith(whyCancelled, c.turnEchoes)})
 	}
 	c.compacting = false
 	c.mu.Unlock()
@@ -793,6 +794,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 				c.mu.Lock()
 				if c.gen == gen && c.turn == turn {
 					c.turnTools = append(c.turnTools, e)
+					c.turnEchoes = append(c.turnEchoes, toolEcho{entry: e, output: t.Output})
 				}
 				c.mu.Unlock()
 			}
@@ -942,7 +944,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		c.mu.Lock()
 		if c.gen == gen && c.turn == turn {
 			c.history = append(c.history, driver.ChatTurn{Role: "user", Text: text},
-				driver.ChatTurn{Role: "assistant", Text: unansweredText(whyFailed, c.turnTools)})
+				driver.ChatTurn{Role: "assistant", Text: unansweredWith(whyFailed, c.turnEchoes)})
 		}
 		c.mu.Unlock()
 		c.emit(ctx, gen, "agent.failed", map[string]any{"agent": "assistant"})

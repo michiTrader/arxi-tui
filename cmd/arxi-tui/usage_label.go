@@ -52,9 +52,20 @@ func usageLabel(ctx, in, out uint64) string {
 // once there is something else on the bar, and stays quiet on a fresh screen with
 // autocompact off, so the bar starts empty.
 func statusUsage(ctx, in, out uint64, window int, ac autoCompactSetting) string {
+	return statusUsageHeld(ctx, false, in, out, window, ac)
+}
+
+// statusUsageHeld is statusUsage, with the held size optionally marked as an estimate
+// ("ctx ~3k/270k"): a conversation brought back by /resume whose log has no figure the
+// provider reported is sized from its text, and the bar says so rather than show nothing
+// or pass a guess off as a count.
+func statusUsageHeld(ctx uint64, estimated bool, in, out uint64, window int, ac autoCompactSetting) string {
 	var parts []string
 	if in != 0 || out != 0 || ctx != 0 {
 		held := humanTokens(ctx)
+		if estimated {
+			held = "~" + held
+		}
 		share := ""
 		size := "?"
 		if window > 0 {

@@ -219,6 +219,19 @@ opens a list of them, newest first, each with its first question and how long ag
 used; type to filter the list, Enter to pick one. The conversation comes back on screen
 exactly as it was, and the model carries on from where it stopped (the next question is sent
 with that history). `/clear` starts a fresh conversation without deleting the old one.
+The status bar's `ctx` comes back too: it is the size the provider reported for the last
+request, saved with the conversation. If the file has no such figure (the first request failed,
+or it was saved by an older arxi) the bar shows an estimate from the text, marked `ctx ~3k/270k`.
+
+What `ctx` measures: the tokens of the **last request the provider answered** -- the system
+prompt, the tools, the conversation sent with it, and what the model read and ran during that
+turn -- as the provider counted them (`input_tokens`, plus cached tokens on the Anthropic wire,
+plus the answer). It is the size of that one request, not a running total (that is `↑`). Only
+the messages between your questions are carried to the next turn, not the file contents and
+command output the model pulled in *during* a turn, so after a turn full of reads the next
+request legitimately starts smaller. The exception is a turn that **failed or was cancelled**:
+its tools' output is kept (the newest ~48 KB, older results are named and marked as left
+out), so "continue" does not start from nothing.
 
 What is saved is what you see: your questions, the answers, the files and pages the model
 looked at, and errors. Not saved: the model's streamed thinking, an approval that was still

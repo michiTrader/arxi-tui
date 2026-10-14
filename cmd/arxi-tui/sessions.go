@@ -46,9 +46,14 @@ const (
 var sessionIDRe = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
 
 // sessionKinds are the events a saved conversation holds.
+//
+// chat.usage and chat.compacted are in it so that /resume can say how full the model's
+// context was: an answer carries its own size, but a turn that ended in an error (a timeout
+// is the common one) has no answer, and without these the resumed bar had nothing to show.
 var sessionKinds = map[string]bool{
 	"run.prompt": true, "llm.response": true, "chat.tool": true,
 	"chat.error": true, "chat.warn": true, "chat.cancelled": true,
+	"chat.usage": true, "chat.compacted": true,
 }
 
 // sessionsDir is where conversations are kept, "" when saving is off or impossible.
@@ -70,16 +75,20 @@ type sessionLog struct {
 	size   int64
 	failed bool // a write failed; the user was told once
 	now    func() time.Time
+	// usage is the latest chat.usage of the turn in flight. A tool loop reports one per ask
+	// and only the last one matters, so it is held back and written once, when the turn
+	// ends without an answer (the answer carries its own size) or the next question starts.
+	usage *fold.Event
 }
 
 func newSessionLog(dir string) *sessionLog { return &sessionLog{dir: dir, now: time.Now} }
 
 // End closes the conversation: the next question starts a new file. /clear calls it.
-func (l *sessionLog) End() { l.id, l.size = "", 0 }
+func (l *sessionLog) End() { l.id, l.size, l.usage = "", 0, nil }
 
 // Continue makes later events append to an existing conversation (after /resume).
 func (l *sessionLog) Continue(id string) {
-	l.id, l.size = id, 0
+	l.id, l.size, l.usage = id, 0, nil
 	if st, err := os.Stat(filepath.Join(l.dir, id+".jsonl")); err == nil {
 		l.size = st.Size()
 	}
@@ -101,16 +110,38 @@ func (l *sessionLog) Record(e fold.Event) (firstFailure error) {
 		}
 		l.id = id
 	}
+	if e.Type == "chat.usage" {
+		held := e
+		l.usage = &held
+		return nil
+	}
+	if u := l.usage; u != nil {
+		l.usage = nil
+		// Only a turn with no answer needs it written: llm.response says its own size.
+		if e.Type == "chat.error" || e.Type == "chat.cancelled" || e.Type == "run.prompt" {
+			if err := l.write(*u); err != nil {
+				return l.fail(err)
+			}
+		}
+	}
+	if err := l.write(e); err != nil {
+		return l.fail(err)
+	}
+	return nil
+}
+
+// write appends one event to the conversation's file, within the file's size limit.
+func (l *sessionLog) write(e fold.Event) error {
 	line, err := json.Marshal(shrinkEvent(e))
 	if err != nil {
-		return l.fail(err)
+		return err
 	}
 	line = append(line, '\n')
 	if l.size+int64(len(line)) > sessionFileM {
 		return nil // an enormous conversation stops being saved rather than filling the disk
 	}
 	if err := appendLine(filepath.Join(l.dir, l.id+".jsonl"), line); err != nil {
-		return l.fail(err)
+		return err
 	}
 	l.size += int64(len(line))
 	return nil
@@ -308,15 +339,25 @@ func loadSession(dir, id string) ([]fold.Event, error) {
 func historyFromEvents(evs []fold.Event) []driver.ChatTurn {
 	var out []driver.ChatTurn
 	pending, have := "", false
+	var echoes []toolEcho // the tools of the question in flight, with what they returned
 	for _, e := range evs {
 		text, _ := e.Payload["text"].(string)
 		switch e.Type {
+		case "chat.tool":
+			var t driver.ToolCall
+			t.Name, _ = e.Payload["name"].(string)
+			t.Arg, _ = e.Payload["arg"].(string)
+			t.OK, _ = e.Payload["ok"].(bool)
+			t.Output, _ = e.Payload["output"].(string)
+			if d := toolDigestEntry(t); d != "" {
+				echoes = append(echoes, toolEcho{entry: d, output: t.Output})
+			}
 		case "run.prompt":
 			if have {
 				// The previous question never got an answer (see below).
-				out = append(out, driver.ChatTurn{Role: "user", Text: pending}, driver.ChatTurn{Role: "assistant", Text: unansweredText(whyFailed, nil)})
+				out = append(out, driver.ChatTurn{Role: "user", Text: pending}, driver.ChatTurn{Role: "assistant", Text: unansweredWith(whyFailed, echoes)})
 			}
-			pending, have = text, true
+			pending, have, echoes = text, true, nil
 		case "chat.compacted":
 			// The conversation was compacted here: from this point the model held the
 			// summary and the last `keep` messages, not what came before them.
@@ -335,7 +376,7 @@ func historyFromEvents(evs []fold.Event) []driver.ChatTurn {
 				if e.Type == "chat.cancelled" {
 					why = whyCancelled
 				}
-				out = append(out, driver.ChatTurn{Role: "user", Text: pending}, driver.ChatTurn{Role: "assistant", Text: unansweredText(why, nil)})
+				out = append(out, driver.ChatTurn{Role: "user", Text: pending}, driver.ChatTurn{Role: "assistant", Text: unansweredWith(why, echoes)})
 				have = false
 			}
 		case "llm.response":

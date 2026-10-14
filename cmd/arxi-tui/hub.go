@@ -491,6 +491,7 @@ func (h *providerHub) writeProviderSummary(b *strings.Builder) {
 // publish writes the hub's view onto the folded state the renderer reads. It is the
 // only thing that does, and it writes only masked text.
 func (h *providerHub) publish(st *fold.State) {
+	h.settle()
 	var rows []fold.HubRow
 	if h.level == lvForm {
 		lo, hi := window(h.form.focus, len(h.form.fields), hubPageSize)
@@ -525,6 +526,25 @@ func window(sel, n, size int) (lo, hi int) {
 		lo = n - size
 	}
 	return lo, lo + size
+}
+
+// leaveForm drops the open form, if any, and returns to the level it was opened from.
+func (h *providerHub) leaveForm() {
+	h.wipe()
+	h.settle()
+}
+
+// settle repairs the one state that cannot be drawn or typed into: the form level with
+// no form. It goes back to where the form was opened, so no path can crash the program
+// by forgetting to leave the level.
+func (h *providerHub) settle() {
+	if h.level == lvForm && h.form == nil {
+		from := h.formFrom
+		if from == lvForm {
+			from = lvProviders
+		}
+		h.setLevel(from)
+	}
 }
 
 // wipe drops any open form and every secret typed into it.

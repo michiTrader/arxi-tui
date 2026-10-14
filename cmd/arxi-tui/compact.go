@@ -367,6 +367,25 @@ type sessionCompactor interface {
 	Compact(ctx context.Context, focus string) error
 }
 
+// heldContext is the size the status bar shows. It is the figure the provider reported
+// (LastContext) whenever the log has one. When it has none -- a conversation brought back by
+// /resume whose first turn failed, or one saved before the figures were kept -- it is
+// estimated from the history the next question will carry, and marked as an estimate.
+// Nothing is shown for an empty conversation.
+func heldContext(last uint64, drv Driver) (held uint64, estimated bool) {
+	if last > 0 {
+		return last, false
+	}
+	hr, ok := drv.(historyReader)
+	if !ok {
+		return 0, false
+	}
+	if b := historyBytes(hr.ChatHistory()); b > 0 {
+		return uint64(estimateTokens(b)), true
+	}
+	return 0, false
+}
+
 // historyReader is the optional capability a Driver has when it can say what the next
 // question will carry: the autocompact decision reads it.
 type historyReader interface {
