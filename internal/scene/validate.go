@@ -487,10 +487,9 @@ func (d *Document) validateBindsScoped(n *Node, path string, scope map[string]bo
 		return err
 	}
 
-	// A {row.<field>} reference in drawn text is refused with an address: only
-	// on_press interpolates, so anywhere else the braces would be painted
-	// literally (see validateNoRowInterpolationInText).
-	if err := d.validateNoRowInterpolationInText(n, path); err != nil {
+	// A {row.<field>} reference in drawn text is substituted per row, so it is checked
+	// against the row schema like on_press is (see validateRowReferencesInText).
+	if err := d.validateRowReferencesInText(n, path, scope); err != nil {
 		return err
 	}
 
@@ -1212,35 +1211,35 @@ func drawnTextFields(n *Node) []struct{ name, value string } {
 	}
 }
 
-// validateNoRowInterpolationInText refuses a `{row.` reference in a node's drawn
-// text. The substitution exists only for on_press (ExpandRowInterpolation runs at
-// press time); a text node's `text` is painted verbatim, so `"text": "{row.turns}•"`
-// validated clean and drew the braces on screen. That is the accepted-but-not-drawn
-// class this validator exists to close, and the one outcome that reports success
-// while showing the wrong screen: a model told "valid" has nothing to repair, so the
-// eval corpus recorded a missing counter as the model's failure when the engine had
-// let the mistake through.
-//
-// It is refused here, with the file:line of the node, rather than made to work.
-// Interpolating in text is a format change -- a new signed rule, and a decision
-// about escaping a literal brace -- that was deliberately deferred; the refusal
-// names the working spelling (bind: "row.<field>") so the repair is one edit, and
-// docs/DECISIONS-DEFERRED.md records the deferred alternative so the refusal is not
-// mistaken for the final design.
-//
-// The check is a plain substring test on "{row." rather than a parse of
-// well-formed tokens: a malformed `{row.turns` is the same author intent and the
-// same silent literal on screen, and a refusal that required a closing brace would
-// let that variant through. It applies outside templates too, because outside a
-// template there is no row at all and the braces are equally dead.
-func (d *Document) validateNoRowInterpolationInText(n *Node, path string) error {
+// validateRowReferencesInText checks the {row.<field>} references in a node's drawn
+// text, title and placeholder (D1, option b: they are substituted per row, see
+// ExpandRowText). Each is held to what on_press is held to: it needs a row_template
+// around it, and its field must be in that template's row schema, so a wrong name is a
+// load-time refusal with the node's address and not braces drawn on screen. An opened and
+// never closed reference is refused too: it is the same intent and would draw literally.
+// {{row.<field>}} is the escape for the literal text and is not a reference.
+func (d *Document) validateRowReferencesInText(n *Node, path string, scope map[string]bool) error {
 	for _, f := range drawnTextFields(n) {
-		if !strings.Contains(f.value, "{row.") {
-			continue
+		tokens, unclosed := rowTextRefs(f.value)
+		if unclosed {
+			return &Error{
+				Loc: d.locOf(path),
+				Msg: fmt.Sprintf("node type %q has %q with a {row. reference that is never closed with }; close it ({row.<field>}) or, to draw the characters, double them ({{row.<field>}})", n.Type, f.name),
+			}
 		}
-		return &Error{
-			Loc: d.locOf(path),
-			Msg: fmt.Sprintf("node type %q has %q containing %q, but {row.<field>} is substituted only in on_press; in drawn text the braces would appear literally on screen. To show a row field, bind it instead: a text node with \"bind\": \"row.<field>\" inside the row_template (a decorator such as a bullet goes in a separate text node)", n.Type, f.name, "{row."),
+		for _, token := range tokens {
+			if scope == nil {
+				return &Error{
+					Loc: d.locOf(path),
+					Msg: fmt.Sprintf("node type %q has %q containing %q, but {row.<field>} is only legal inside a row_template (BINDS.md §4.7); there is no row to be relative to here. To draw the characters, write {{%s}}", n.Type, f.name, "{"+token+"}", token),
+				}
+			}
+			if !scope[token] {
+				return &Error{
+					Loc: d.locOf(path),
+					Msg: fmt.Sprintf("node type %q has %q containing %q, which is not in the row schema of the enclosing list (BINDS.md §4.7); check the field name against the list's element type", n.Type, f.name, "{"+token+"}"),
+				}
+			}
 		}
 	}
 	return nil

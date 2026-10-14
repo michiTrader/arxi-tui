@@ -360,6 +360,7 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 	if hiddenByWhenRow(n, state, r.curRow, r.PluginValues, r.PreviewMocks) {
 		return ui.Frame{Width: r.Width, Height: 0}
 	}
+	n = r.withRowText(n)
 	n = r.focusGlowed(n, state)
 	n = r.withTransition(n)
 	n = r.withShine(n)
@@ -374,6 +375,26 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 		return r.renderEnter(n, state, budget)
 	}
 	return r.renderByType(n, state, budget)
+}
+
+// withRowText substitutes the {row.<field>} references in a node's drawn text, title and
+// placeholder with the row being instantiated (D1, option b; scene.ExpandRowText). It
+// works on a copy, so the document the template came from keeps its braces for the next
+// row. With no row in scope, or nothing to substitute, it returns the node untouched,
+// which keeps every scene without references byte-identical.
+func (r *Renderer) withRowText(n *scene.Node) *scene.Node {
+	if r.curRow == nil {
+		return n
+	}
+	text := scene.ExpandRowText(n.Text, r.curRow)
+	title := scene.ExpandRowText(n.Title, r.curRow)
+	placeholder := scene.ExpandRowText(n.Placeholder, r.curRow)
+	if text == n.Text && title == n.Title && placeholder == n.Placeholder {
+		return n
+	}
+	c := *n
+	c.Text, c.Title, c.Placeholder = text, title, placeholder
+	return &c
 }
 
 // renderByType is renderNode's dispatch on the node's type, split out so enter
