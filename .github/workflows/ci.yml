@@ -65,3 +65,36 @@ jobs:
       # This is the job that proves the escape hatch on Windows.
       - name: Test
         run: go test -count=1 ./...
+
+  # The arxi core lives in core/ as its OWN Go module (its own go.mod, its own
+  # toolchain floor, no third-party dependencies). The root `go test ./...` above does
+  # not descend into it, because a nested module is excluded from the parent's
+  # patterns -- so without this job the core would be imported and never tested.
+  core:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.0"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # The core's tests run on Linux only for now: its architecture tests shell out to
+      # grep and go list, and its Windows-specific branches are covered by the vet step
+      # above (which type-checks them) until a Windows test run is proven green.
+      - name: Test
+        if: matrix.os == 'ubuntu-latest'
+        run: go test -count=1 ./...
