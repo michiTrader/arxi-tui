@@ -195,6 +195,7 @@ func main() {
 			mouseOverride = &v
 		}
 	})
+	driver.HostVersion = version
 	if *showVersion {
 		fmt.Println(version)
 		return
@@ -431,6 +432,10 @@ type modelSwitchNoter interface {
 func openDriver(ctx context.Context, doc *scene.Document) (Driver, <-chan fold.Event, error) {
 	arxiBin := prepareCore(os.Getenv("ARXI_BIN"), os.Executable, func(l string) { fmt.Fprintln(os.Stderr, "arxi: "+l) })
 	if arxiBin == "" {
+		// Say so: a missing core used to leave an offline demo that looked like a broken
+		// chat. The installers put the core beside this program; a bare `go install` does not.
+		fmt.Fprintln(os.Stderr, "arxi: no arxi core found beside this program, running the offline demo. "+
+			"To chat with a model install the matching pair (install.sh / install.ps1 fetch both), or set ARXI_BIN to the core")
 		// Phase 0: no arxi binary, use the mock driver that replays a fixed
 		// log. The mock submits prompts by appending directly to the event
 		// channel, so the fold sees them without a subprocess.

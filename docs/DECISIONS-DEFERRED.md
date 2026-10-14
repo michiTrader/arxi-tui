@@ -81,8 +81,15 @@ Proposed shape, to be confirmed with the owner:
 - This work repo keeps being the place where things are built and tested; the product repo
   only packages tagged releases of it.
 
-**Needs first:** a decision on the core's release process (`arxi` lives in its own repo),
-a Windows installer script (none exists), and a compatibility handshake test that refuses
-a mismatched core/TUI pair with a sentence naming both versions.
+**Built since (in this repo, because the separate repo cannot be created from here):**
+`install.ps1` (Windows twin of `install.sh`: both binaries of one release, `SHA256SUMS` via
+`Get-FileHash`, per-user folder, PATH, a first-run `--version` of each); `build-release.sh`
+stamps the release tag into the core as well as the TUI; the handshake refuses a core whose
+`surface_version` differs, with a message naming both programs, both versions and the remedy;
+and the TUI says plainly when it finds no core instead of silently running the demo. The TUI
+already finds the bundled core beside itself, so no `ARXI_BIN` launcher is needed.
+
+**Still needs the owner:** deciding the separate product repo itself (name, who publishes),
+a real `arxi` core release to pin, and the "no provider registered -> type /provider" first-run hint.
 
 **Revisit when:** the owner has a real `arxi` core build to bundle.

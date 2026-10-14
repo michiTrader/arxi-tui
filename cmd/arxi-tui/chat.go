@@ -996,5 +996,5 @@ func timeoutNote(text string) string {
 	if !strings.Contains(low, "deadline exceeded") && !strings.Contains(low, "timed out") && !strings.Contains(low, "timeout") {
 		return ""
 	}
-	return " (the provider took longer than the time limit of one call; this is a timeout, not a full context window. Ask again, or pick another model with /model)"
+	return " (the provider took longer than the time limit of one call; this is a timeout, not a full context window. Ask again, pick another model with /model, or give the core more time with ARXI_CHAT_TIMEOUT, e.g. 10m)"
 }

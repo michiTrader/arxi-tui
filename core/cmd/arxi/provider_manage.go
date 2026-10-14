@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -274,7 +275,34 @@ const maxChatHistory = 40
 
 // chatTimeout bounds one chat call. Long enough for a slow reasoning model,
 // short enough that a hung endpoint reports itself instead of freezing the UI.
-const chatTimeout = 3 * time.Minute
+const chatTimeoutDefault = 3 * time.Minute
+
+// chatTimeoutEnv lets a slow provider or a very long reasoning turn have more (or less)
+// time per call: a Go duration ("10m", "90s") or a plain number of seconds. Anything else,
+// or a non-positive value, is ignored and the default stays: a typo must not switch the
+// limit off.
+const chatTimeoutEnv = "ARXI_CHAT_TIMEOUT"
+
+// chatDeadline is the whole budget of one chat message: the call's own limit plus the time
+// the retries may spend waiting, so a patient retry is not cut short by the call's deadline.
+func chatDeadline() time.Duration { return chatTimeout() + chatRetryTotal }
+
+func chatTimeout() time.Duration {
+	v := strings.TrimSpace(os.Getenv(chatTimeoutEnv))
+	if v == "" {
+		return chatTimeoutDefault
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil {
+		if n, e2 := strconv.Atoi(v); e2 == nil {
+			d, err = time.Duration(n)*time.Second, nil
+		}
+	}
+	if err != nil || d <= 0 {
+		return chatTimeoutDefault
+	}
+	return d
+}
 
 // chatAttempts is how many times one chat message is tried when the provider answers
 // with a transient refusal (a rate limit, a gateway timeout, an overload). The wait
@@ -503,7 +531,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	}
 	messages = append(messages, text(turn.RoleUser, prompt))
 
-	ctx, cancel := context.WithTimeout(ctx, chatTimeout+chatRetryTotal)
+	ctx, cancel := context.WithTimeout(ctx, chatDeadline())
 	defer cancel()
 	exec := &provider.Executor{OnWire: rememberWire}
 	req := turn.Request{

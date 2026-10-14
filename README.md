@@ -84,11 +84,20 @@ The bottom bar reads `mode · model · thinking level · directory`, for example
 `ask · deepseek/deepseek-chat · high · ~/projects/app`. The thinking level appears only
 once you choose one.
 
-After the first answer the bar also shows how big the conversation is and what it has
-used: `ctx 1.2k · ↑3.4k ↓800`. `ctx` is the size of the latest request (what the model has
-to read again on every turn, so it grows as the chat does); `↑` and `↓` are the running
-totals sent and received. These are token counts: the provider does not report prices, so
-no money figure is shown.
+After the first answer the bar also shows how full the conversation is and what it has
+used: `ctx 4% · ↑929k ↓13k · autocompact 80%`. `ctx` is the share of the model's context
+window that the latest request filled (what the model has to read again on every turn, so
+it grows as the chat does); `↑` and `↓` are the running totals sent and received. These
+are token counts: the provider does not report prices, so no money figure is shown.
+
+The core reports the size of every request of a turn (`chat.usage`), so the figure moves
+while a long tool loop runs and keeps its last real value when a turn fails. The window comes from the
+core when it knows it, else from `ARXI_CONTEXT_WINDOW` (tokens, e.g. `ARXI_CONTEXT_WINDOW=200000`),
+else from a built-in table of well-known model families. When none of those knows the
+window the bar says `ctx ?` rather than invent a percentage. A "context deadline exceeded"
+error is the provider taking longer than the time limit of one call, not a full window; the
+error says so, and `ARXI_CHAT_TIMEOUT` (e.g. `10m`, `90s`, or plain seconds; default 3 minutes) gives a slow
+provider more time per call.
 
 The mode says how much the agent may do without asking. Pick it with `/mode` or cycle it
 with Shift+Tab; `/clear` keeps it.
@@ -669,8 +678,15 @@ ARXI_BIN=./arxi ./arxi-tui
 
 Installing a release (Linux, macOS, Termux): `curl -fsSL https://raw.githubusercontent.com/michiTrader/arxi-tui/master/install.sh | sh`
 puts `arxi-tui` and the `arxi` core in the same folder. The TUI looks for the core next to
-itself, so no `ARXI_BIN` is needed; setting `ARXI_BIN` still overrides it. On Windows,
-download both `.exe` files from the release page into one folder.
+itself, so no `ARXI_BIN` is needed; setting `ARXI_BIN` still overrides it. On Windows (PowerShell):
+`irm https://raw.githubusercontent.com/michiTrader/arxi-tui/master/install.ps1 | iex` does the same: downloads
+both `.exe` files of one release, verifies `SHA256SUMS`, installs them to
+`%LOCALAPPDATA%\Programs\arxi` and adds that folder to the user PATH (`ARXI_VERSION`, `ARXI_BIN_DIR`,
+`ARXI_DOWNLOAD_BASE`, `ARXI_NO_PATH=1` work as in `install.sh`).
+
+The two programs have to be a pair: at start-up the TUI checks the core's `surface_version`, and a mismatch
+stops with a sentence naming both programs, both versions and the remedy (re-run the installer, or point
+`ARXI_BIN` at a matching core). `scripts/build-release.sh` stamps the same release tag into both.
 
 The core is found without `ARXI_BIN`: next to the program, in `core/` of the checkout it
 sits in, or built on the spot from `core/` when a Go toolchain is on `PATH` (and rebuilt
