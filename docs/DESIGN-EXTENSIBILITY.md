@@ -257,7 +257,7 @@ instead of the user: same op kinds, same permissions, same guards. Differences:
 Implemented and tested in `internal/ext/v2` (strict validation, limits, consent text,
 digest coverage, runner):
 
-- `events`: `on` is `turn.done`, `turn.failed`, `effort`, `mode` or `style` (`is` only on the
+- `events`: `on` is `turn.done`, `turn.failed`, `turn.started`, `turn.cancelled`, `shell.ended`, `effort`, `mode` or `style` (`is` only on the
   settings, checked against the host's values). `Runner.RunEvent` returns text only.
 - `panels`: one line (title up to 24 characters, up to 120 runes), refreshed on `turn.done`
   or every 30..3600 s, or fed by a service. `Runner.RunPanel`, `PanelLine`.

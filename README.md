@@ -57,8 +57,9 @@ answered and leaves them running. They live in the TUI, not in the core (the cor
 
 ### What packages run by themselves: `/service`
 
-An approved package may declare `events` (react to the end of a turn or to a change of
-effort, mode or style), `panels` (a line kept on the bar) and `services` (a program that
+An approved package may declare `events` (react to a message going to the model, the end of a
+turn, the user cancelling one, a background shell ending by itself, or a change of effort, mode
+or style), `panels` (a line kept on the bar) and `services` (a program that
 keeps running). `/package show <id>` says which of these a package has before you approve it.
 Events and panels only show text. A service starts only when *you* type
 `/service start <name>` (never from a shortcut, a button or a command of your behaviour);
