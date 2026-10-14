@@ -38,7 +38,7 @@
 
 ## Extensibility phases 4-6 (events, panels, services): host wired
 
-- `cmd/arxi-tui/package_auto.go`: events (turn.done, turn.failed, effort, mode, style), panels
+- `cmd/arxi-tui/package_auto.go`: events (turn.done, turn.failed, turn.started, turn.cancelled, shell.ended, effort, mode, style), panels
   (`host.panels` bind, refresh on load / turn.done / every_s), services (`/service list|start|stop`,
   only when the user types it). `/package show|list` and the `ui_edit` guide describe them.
 - Tested on Linux with a real `sh` (unit tests, race detector, mutation checks; the stale-answer
@@ -48,7 +48,7 @@
 ## arxi-tui work not done yet
 
 - Factory commands as packages: decided NOT now (they stay Go code; see DESIGN-EXTENSIBILITY.md). Reopen only with a design for what may never be removed (`/package`, `/ui reset`).
-- Rate-limit pacing: DONE for providers that send rate-limit headers (`X-RateLimit-Remaining/Reset`, `RateLimit-*`, OpenAI's `-requests` variants). The core reads them on every answer, and when the budget is at 0 it waits for the window before the next ask of a tool loop (the TUI shows "• Waiting 41s · request limit reached"). Not covered: providers that send no such headers are still handled only reactively (429 + `Retry-After`); a window longer than `chatMaxWait` (90s) is not waited for; the wait is checked only against fakes (never against the real apinex, whose key now answers 402 "free tokens used").
+- Rate-limit pacing: DONE for providers that send rate-limit headers (`X-RateLimit-Remaining/Reset`, `RateLimit-*`, OpenAI's `-requests` variants). The core reads them on every answer, and when the budget is at 0 it waits for the window before the next ask of a tool loop (the TUI shows "• Waiting 41s · request limit reached"). Not covered: providers that send no such headers are still handled only reactively (429 + `Retry-After`); a window longer than `chatMaxWait` (90s) is not waited for; the wait was also seen once live (apinex mimo, 5 requests/min: the sixth read waited 56 s, no 429), with one provider only.
 - CI (GitHub Actions, ubuntu + windows) runs on pushes to `master` and on pull requests. PR #260 is green
   on both OSes at `b3d5e97`, so the Windows shell code (`cmd.exe`, `CREATE_NO_WINDOW`, `taskkill /T`, exit
   code) has now run for real, through `shells_windows_test.go`. Still NOT run on Windows: the
