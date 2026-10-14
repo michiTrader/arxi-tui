@@ -74,7 +74,7 @@ for t in "${TARGETS[@]}"; do
 	core_artifact="${CORE_NAME}_${VERSION}_${label}_${arch}"
 	(cd core && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" \
 		go build -trimpath \
-		-ldflags "-s -w" \
+		-ldflags "-s -w -X main.version=${VERSION}" \
 		-o "../${OUT}/${core_artifact}${ext}" "$CORE_PKG")
 	echo "  ok  ${core_artifact}${ext}"
 done

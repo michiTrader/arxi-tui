@@ -57,7 +57,9 @@ import (
 	"github.com/michiTrader/arxi/internal/surface"
 )
 
-const version = "0.0.1-spec"
+// version is stamped at release time (-ldflags "-X main.version=..."), so the core and the
+// arxi-tui it ships with name the same release; a plain build reports the spec version.
+var version = "0.0.1-spec"
 
 func main() {
 	args := os.Args[1:]
