@@ -442,6 +442,10 @@ the same shape `team.members` uses for `when: "row.busy"`. A `row.index` integer
 would be dead without an operator to compare it, so the boolean is the honest
 projection of "is this the selected row", not a convenience over one.
 
+Interpolation in drawn text (D1b): inside a `row_template`, `{row.<field>}` in a node's `text`,
+`title` or `placeholder` is replaced by that row's value; `{{row.<field>}}` draws the braces.
+The field is checked against the row schema at load, as for `on_press`.
+
 Interpolation (Q20): in an `on_press` argument, `{row.<field>}` is replaced by
 the element's field. Scene 9's row is `on_press: "cmd:/agent {row.id}"`. The
 SCENES.md prose spelling `{m.id}` (line 200) is illustrative; the signed

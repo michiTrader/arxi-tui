@@ -527,6 +527,12 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 			used.InputTokens += resp.Usage.InputTokens
 			used.OutputTokens += resp.Usage.OutputTokens
 			last = resp.Usage
+			// A refusal carries no usage: reporting it would tell the client the model
+			// held nothing and wipe the real figure of the asks that did answer.
+			if held := contextHeld(resp.Usage, res.Protocol); held > 0 {
+				notifyUsage(ctx, chatUsageNotification{Type: "chat.usage", ContextTokens: held,
+					InputTokens: resp.Usage.InputTokens, OutputTokens: resp.Usage.OutputTokens})
+			}
 			if resp.FinishReason != turn.FinishRefusal || !transientRefusal(resp.Refusal) || attempt >= chatAttempts {
 				return resp, nil
 			}
@@ -670,6 +676,7 @@ type thinkingNotification struct {
 func handleChatSendThinking(streams *connStreams, params map[string]any) (any, error) {
 	w := streams.w
 	ctx := withRetryNotice(context.Background(), func(n chatRetryNotification) { _ = w.write(n) })
+	ctx = withUsageNotice(ctx, func(n chatUsageNotification) { _ = w.write(n) })
 	if boolParam(params, "stream_thinking") {
 		ctx = provider.WithThinking(ctx, func(fragment string) {
 			_ = w.write(thinkingNotification{Type: "chat.thinking", Text: fragment})
@@ -755,6 +762,31 @@ type chatRetryNotification struct {
 }
 
 type retryNoticeKey struct{}
+
+// chatUsageNotification is written to the connection after EVERY ask of a chat call,
+// not only at the end: a tool loop asks many times, and a call that later fails or
+// times out would otherwise leave the client with the size of an older, smaller
+// conversation. ContextTokens is what the model held at that ask (see contextHeld), the
+// figure a client divides by the model's window.
+type chatUsageNotification struct {
+	Type          string `json:"type"`
+	ContextTokens int    `json:"context_tokens"`
+	InputTokens   int    `json:"input_tokens"`
+	OutputTokens  int    `json:"output_tokens"`
+}
+
+type usageNoticeKey struct{}
+
+// withUsageNotice returns a context whose chat call reports each ask's size to fn.
+func withUsageNotice(ctx context.Context, fn func(chatUsageNotification)) context.Context {
+	return context.WithValue(ctx, usageNoticeKey{}, fn)
+}
+
+func notifyUsage(ctx context.Context, n chatUsageNotification) {
+	if fn, _ := ctx.Value(usageNoticeKey{}).(func(chatUsageNotification)); fn != nil {
+		fn(n)
+	}
+}
 
 // withRetryNotice returns a context whose chat call reports each wait to fn.
 func withRetryNotice(ctx context.Context, fn func(chatRetryNotification)) context.Context {

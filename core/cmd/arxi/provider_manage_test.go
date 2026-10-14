@@ -28,7 +28,10 @@ type fakeLLM struct {
 	auth     []string
 	messages [][]map[string]any
 	failNext int // answer this many chat requests with failCode before succeeding
-	failCode int
+	// failAfter, when > 0, lets that many chat requests answer and then refuses every
+	// next one with a 400 (not retried), to model a turn that dies mid tool loop.
+	failAfter int
+	failCode  int
 	// failBody replaces the bare "error code: N" body; failHeader sets Retry-After.
 	failBody   string
 	failHeader string
@@ -76,6 +79,11 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 			json.NewEncoder(w).Encode(map[string]any{"data": data})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/chat/completions"):
 			f.calls++
+			if f.failAfter > 0 && f.calls > f.failAfter {
+				w.WriteHeader(400)
+				io.WriteString(w, `{"error":{"message":"bad request"}}`)
+				return
+			}
 			if f.failNext > 0 {
 				f.failNext--
 				if f.failHeader != "" {

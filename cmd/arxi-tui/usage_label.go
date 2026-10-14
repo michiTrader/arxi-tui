@@ -40,19 +40,23 @@ func usageLabel(ctx, in, out uint64) string {
 
 // statusUsage is the usage segment with what the window and autocompact add:
 //
-//	ctx 37k 4% · ↑929k ↓13k · autocompact 80%
+//	ctx 4% · ↑929k ↓13k · autocompact 80%
 //
-// The percentage is how much of the model's context window the conversation holds, and
-// it is left out when the window is not known: a share of an unknown size would be a
-// guess. The autocompact part says "off" once there is something else on the bar, and
-// stays quiet on a fresh screen with autocompact off, so the bar starts empty.
+// ctx is the share of the model's context window that the last request held (its
+// input, cache and answer), never a raw token count: a count says nothing about how
+// close the model is to refusing. The upload total (↑) is the sum over every ask, so
+// it grows far past the window and is not the window. When the window is not known
+// the bar says "ctx ?" instead of inventing a share. The autocompact part says "off"
+// once there is something else on the bar, and stays quiet on a fresh screen with
+// autocompact off, so the bar starts empty.
 func statusUsage(ctx, in, out uint64, window int, ac autoCompactSetting) string {
 	var parts []string
-	if base := usageLabel(ctx, in, out); base != "" {
+	if in != 0 || out != 0 || ctx != 0 {
+		share := "?"
 		if p := contextPercent(ctx, window); p > 0 {
-			base = fmt.Sprintf("ctx %s %d%% · ↑%s ↓%s", humanTokens(ctx), p, humanTokens(in), humanTokens(out))
+			share = fmt.Sprintf("%d%%", p)
 		}
-		parts = append(parts, base)
+		parts = append(parts, fmt.Sprintf("ctx %s · ↑%s ↓%s", share, humanTokens(in), humanTokens(out)))
 	}
 	switch {
 	case ac.On:

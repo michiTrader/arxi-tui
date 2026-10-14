@@ -1304,6 +1304,28 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		modeMn.loaded = false
 		settingChanged("mode", mode, fromHook)
 	}
+	// walkHistory is Up/Down (or ctrl+p/ctrl+n) on the input: on a multi-line input the
+	// caret moves between the wrapped rows first, and only at the first or last row does
+	// the key fall through to the sent lines.
+	walkHistory := func(step int) {
+		w, _ := tty.Size()
+		if moved := engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w), step); moved != caret {
+			caret = moved
+			return
+		}
+		var line string
+		var ok bool
+		if step < 0 {
+			line, ok = hist.Older(input)
+		} else {
+			line, ok = hist.Newer()
+		}
+		if ok {
+			input = line
+			caret = len([]rune(input))
+			slashSel = 0
+		}
+	}
 	setStyle := func(name string, fromHook bool) {
 		name = strings.ToLower(strings.TrimSpace(name))
 		if normalizePromptStyle(name) != name {
@@ -1851,7 +1873,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// escape hatch is never captured) and before the other
 						// handlers, so a "y" cannot reach the chat input.
 						panicGesture.Reset()
-						if allow, decided := approvalKey(ev.Key); decided {
+						if ev.Key.Type == term.KeyTab && ev.Key.Mod&term.ModShift != 0 {
+							// Shift+Tab walks the modes even while a question waits: moving
+							// to one that allows it (full access) answers it.
+							setMode(nextMode(mode), false)
+						} else if allow, decided := approvalKey(ev.Key); decided {
 							ap.Decide(allow)
 						}
 					} else if auto != nil {
@@ -2249,6 +2275,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						} else if ev.Key.Type == term.KeyTab && ev.Key.Mod&term.ModShift != 0 && !strings.HasPrefix(input, "/") {
 							// Shift+Tab walks the agent modes without opening a menu.
 							setMode(nextMode(mode), false)
+						} else if step := historyStep(ev.Key); step != 0 && hist.Recalled(input) {
+							// A line recalled from the history that happens to open a menu
+							// ("/model vy") keeps the arrows: they go on walking the history.
+							walkHistory(step)
 						} else if _, open := modelMenuOpen(input); open {
 							// The `/model ` menu owns the keys while it is open: the
 							// arrows move its highlight, typing filters it and Enter
@@ -2660,32 +2690,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if chatScroll < 0 {
 								chatScroll = 0
 							}
-						} else if step := historyStep(ev.Key); step != 0 && (!strings.HasPrefix(input, "/") || hist.Browsing() || ev.Key.Type == term.KeyRunes) {
-							// Up/Down (or ctrl+p/ctrl+n) walk the sent lines. On a
-							// multi-line input they first move the caret between
-							// the wrapped rows, and only at the first or last row
-							// fall through to the history — the editor of
-							// arxi_cli_sim does the same, so a long prompt can be
-							// edited without losing it to the arrow key. While the
-							// slash menu is open the arrows steer its highlight
-							// instead, unless the line on screen is a recalled one.
-							w, _ := tty.Size()
-							if moved := engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w), step); moved != caret {
-								caret = moved
-							} else {
-								var line string
-								var ok bool
-								if step < 0 {
-									line, ok = hist.Older(input)
-								} else {
-									line, ok = hist.Newer()
-								}
-								if ok {
-									input = line
-									caret = len([]rune(input))
-									slashSel = 0
-								}
-							}
+						} else if step := historyStep(ev.Key); step != 0 && (!strings.HasPrefix(input, "/") || ev.Key.Type == term.KeyRunes) {
+							// Up/Down (or ctrl+p/ctrl+n) walk the sent lines. While the
+							// slash menu is open the arrows steer its highlight instead;
+							// a recalled line keeps them (the branch before the menus).
+							walkHistory(step)
 						} else if strings.HasPrefix(input, "/") {
 							// The menu is open: navigation steers the highlight
 							// and never reaches the buffer. Ctrl-C never gets

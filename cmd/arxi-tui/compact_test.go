@@ -379,3 +379,102 @@ func TestTheFoldLowersTheContextFigureWhenTheConversationIsCompacted(t *testing.
 		t.Fatalf("UsageIn = %d; the running total is what was spent and compacting does not refund it", s.UsageIn)
 	}
 }
+
+// A turn of tool calls can fill the model's window while the history between questions
+// is a few short messages, which is why /compact said "nothing to compact" right after a
+// huge turn. The answer now says what the model held and why the history is small.
+func TestNothingToCompactSaysWhatTheModelHeldAndWhyTheHistoryIsSmall(t *testing.T) {
+	got := nothingToCompact(14, 4800, 148_000)
+	for _, want := range []string{"14 messages", "too short to summarise", "148k tokens at its last request", "tool calls and results", "/clear"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in %q", want, got)
+		}
+	}
+	if quiet := nothingToCompact(14, 4800, 0); strings.Contains(quiet, "last request") {
+		t.Errorf("with nothing reported there is no figure to compare: %q", quiet)
+	}
+}
+
+func TestCompactOnAShortHistoryUsesTheContextTheCoreReported(t *testing.T) {
+	c, out := chatWith(&summariser{}, longHistory(2, 20))
+	c.mu.Lock()
+	c.lastAsk = 90_000
+	c.mu.Unlock()
+	if err := c.compact(context.Background(), ""); err != nil {
+		t.Fatal(err)
+	}
+	evs := collect(out, "chat.note")
+	if len(evs) == 0 || !strings.Contains(evs[len(evs)-1].Payload["text"].(string), "90k tokens at its last request") {
+		t.Fatalf("events %v", eventTypes(evs))
+	}
+}
+
+// A deadline is a timeout, not a window overflow, and the user is told which.
+func TestADeadlineErrorIsExplainedAsATimeoutNotAFullWindow(t *testing.T) {
+	for _, err := range []error{
+		errors.New("context deadline exceeded"),
+		&driver.Refusal{Message: "apinex2/free/mimo: Post \"https://x\": context deadline exceeded"},
+	} {
+		got := chatErrorText(err)
+		if !strings.Contains(got, "timeout, not a full context window") {
+			t.Errorf("%v: %q", err, got)
+		}
+	}
+	if got := chatErrorText(&driver.Refusal{Message: "the provider is down"}); strings.Contains(got, "timeout") {
+		t.Errorf("an unrelated failure must not be called a timeout: %q", got)
+	}
+}
+
+// The size the core reports ask by ask is what /compact compares against, and /clear
+// forgets it with the rest of the conversation.
+func TestClearForgetsTheReportedContext(t *testing.T) {
+	c, _ := chatWith(&summariser{}, longHistory(2, 20))
+	c.mu.Lock()
+	c.lastAsk = 5000
+	c.mu.Unlock()
+	c.reset()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lastAsk != 0 {
+		t.Errorf("lastAsk = %d after /clear", c.lastAsk)
+	}
+}
+
+// usageThenFail reports two asks and then fails, like a turn that times out on round 3.
+type usageThenFail struct{ seenChat }
+
+func (u *usageThenFail) SubmitChatSend(ctx context.Context, p driver.ChatSendParams) (*driver.ChatSendResult, error) {
+	p.OnUsage(40_000)
+	p.OnUsage(90_000)
+	return nil, errors.New("context deadline exceeded")
+}
+
+// The whole path: a turn that dies after answering some asks leaves the bar on the last
+// real size of the conversation, and /compact knows it.
+func TestAFailedTurnLeavesTheLastReportedContextOnTheBarAndForCompact(t *testing.T) {
+	c, out := chatWith(&usageThenFail{}, nil)
+	if err := c.send(context.Background(), "do a lot"); err != nil {
+		t.Fatal(err)
+	}
+	evs := collect(out, "chat.error")
+	var log []fold.Event
+	log = append(log, evs...)
+	if st := fold.Fold(log); st.LastContext != 90_000 {
+		t.Errorf("LastContext after the failed turn = %d, want 90000; events %v", st.LastContext, eventTypes(evs))
+	}
+	var errText string
+	for _, e := range evs {
+		if e.Type == "chat.error" {
+			errText, _ = e.Payload["text"].(string)
+		}
+	}
+	if !strings.Contains(errText, "timeout, not a full context window") {
+		t.Errorf("error text = %q", errText)
+	}
+	c.mu.Lock()
+	held := c.lastAsk
+	c.mu.Unlock()
+	if held != 90_000 {
+		t.Errorf("lastAsk = %d, want 90000", held)
+	}
+}

@@ -360,6 +360,7 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 	if hiddenByWhenRow(n, state, r.curRow, r.PluginValues, r.PreviewMocks) {
 		return ui.Frame{Width: r.Width, Height: 0}
 	}
+	n = r.withRowText(n)
 	n = r.focusGlowed(n, state)
 	n = r.withTransition(n)
 	n = r.withShine(n)
@@ -374,6 +375,26 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 		return r.renderEnter(n, state, budget)
 	}
 	return r.renderByType(n, state, budget)
+}
+
+// withRowText substitutes the {row.<field>} references in a node's drawn text, title and
+// placeholder with the row being instantiated (D1, option b; scene.ExpandRowText). It
+// works on a copy, so the document the template came from keeps its braces for the next
+// row. With no row in scope, or nothing to substitute, it returns the node untouched,
+// which keeps every scene without references byte-identical.
+func (r *Renderer) withRowText(n *scene.Node) *scene.Node {
+	if r.curRow == nil {
+		return n
+	}
+	text := scene.ExpandRowText(n.Text, r.curRow)
+	title := scene.ExpandRowText(n.Title, r.curRow)
+	placeholder := scene.ExpandRowText(n.Placeholder, r.curRow)
+	if text == n.Text && title == n.Title && placeholder == n.Placeholder {
+		return n
+	}
+	c := *n
+	c.Text, c.Title, c.Placeholder = text, title, placeholder
+	return &c
 }
 
 // renderByType is renderNode's dispatch on the node's type, split out so enter
@@ -984,24 +1005,35 @@ func toolLines(h fold.ChatLine, width int, expand bool, lk ChatLook) []ui.Line {
 	hang := strings.Repeat(" ", dotW)
 	var head []ui.Line
 	cur, room := first, width-first.Width()
-	rest := h.ToolArg + ")"
-	for rest != "" {
-		if room < 1 {
+	// The call is one line of words, however many the command has: a script passed to
+	// `python -c` or a list of 50 numbers is not something to read in the transcript. It is
+	// cut to ArgRows rows and ends in "…)" (ctrl+o draws it whole, line breaks included). A
+	// command that waits for the user's answer gets the room of a change instead: what is
+	// approved is shown.
+	arg := strings.ReplaceAll(strings.ReplaceAll(h.ToolArg, "\r", ""), "\t", "    ")
+	maxArg := lk.ArgRows
+	switch {
+	case expand:
+		maxArg = 1 << 30
+	case h.Role == "approval":
+		maxArg = lk.ApprovalRows
+	default:
+		arg = strings.Join(strings.Fields(arg), " ")
+	}
+	pieces := argRowsOf(arg+")", width-first.Width(), width-dotW)
+	if len(pieces) > maxArg {
+		pieces = pieces[:maxArg]
+		pieces[maxArg-1] = cutToEnd(pieces[maxArg-1], "…)")
+	}
+	cur = first
+	for i, piece := range pieces {
+		if i > 0 {
 			head = append(head, cur)
-			cur, room = ui.Line{{Text: hang}}, width-dotW
-			if room < 1 {
-				room = 1
-			}
-		}
-		piece := ansi.Truncate(rest, room, "")
-		if piece == "" {
-			_, n := utf8.DecodeRuneInString(rest)
-			piece = rest[:n]
+			cur = ui.Line{{Text: hang}}
 		}
 		cur = append(cur, ui.Span{Text: piece, Style: toolResultToken})
-		rest = rest[len(piece):]
-		room -= ansi.StringWidth(piece)
 	}
+	_ = room
 	head = append(head, cur)
 	if h.ToolSummary == "" {
 		return head
@@ -1043,6 +1075,9 @@ func approvalLines(h fold.ChatLine, width int, expand bool, lk ChatLook) []ui.Li
 	return append(out, ui.Line{{Text: ansi.Truncate(hang+lk.ask(h.Tool)+"  "+lk.AskKeys, width, "…"), Style: askToken}})
 }
 
+// maxArgRows is how many rows the call itself (the command line) takes in the transcript.
+const maxArgRows = 2
+
 // maxOutputRows is how many rows of a command's output the conversation shows before
 // it counts the rest. A build prints hundreds of lines and the reader wants the
 // outcome, so the default is a glimpse; Ctrl+O opens the whole of it.
@@ -1068,6 +1103,15 @@ func outputLines(h fold.ChatLine, indent string, width int, expand bool, lk Chat
 		}
 	}
 	body = strings.TrimRight(strings.ReplaceAll(body, "\r", ""), "\n ")
+	// Blank rows before the first word of the output are rows nobody reads; the
+	// indentation of the first real row is kept.
+	for {
+		i := strings.IndexByte(body, '\n')
+		if i < 0 || strings.TrimSpace(body[:i]) != "" {
+			break
+		}
+		body = body[i+1:]
+	}
 	if body == "" || body == "(no output)" {
 		return nil
 	}
@@ -3870,4 +3914,44 @@ func pinnedPrompt(history []fold.ChatLine, starts []int, lines []ui.Line, top, s
 		}
 	}
 	return pin
+}
+
+// argRowsOf cuts the text of a tool call into rows: the first has firstRoom columns, the
+// others restRoom, and a line break in the text starts a row of its own. Nothing is lost:
+// every rune is in exactly one row.
+func argRowsOf(text string, firstRoom, restRoom int) []string {
+	if firstRoom < 1 {
+		firstRoom = 1
+	}
+	if restRoom < 1 {
+		restRoom = 1
+	}
+	var rows []string
+	room := firstRoom
+	for _, line := range strings.Split(text, "\n") {
+		for {
+			piece := ansi.Truncate(line, room, "")
+			if piece == "" && line != "" {
+				_, n := utf8.DecodeRuneInString(line)
+				piece = line[:n]
+			}
+			rows = append(rows, piece)
+			line = line[len(piece):]
+			room = restRoom
+			if line == "" {
+				break
+			}
+		}
+	}
+	return rows
+}
+
+// cutToEnd replaces the end of a row with mark, keeping the row no wider than it was.
+func cutToEnd(row, mark string) string {
+	w := ansi.StringWidth(row)
+	mw := ansi.StringWidth(mark)
+	if w < mw {
+		return mark
+	}
+	return ansi.Truncate(row, w-mw, "") + mark
 }

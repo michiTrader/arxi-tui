@@ -7,6 +7,14 @@ interim choice for the final design.
 
 ## D1 — `{row.<field>}` in drawn text
 
+> **Resolved: option (b) is built.** `{row.<field>}` in `text`, `title` and `placeholder` inside a
+> `row_template` is substituted per row (`scene.ExpandRowText`, applied by `Renderer.withRowText`).
+> The reference is checked at load against the row schema, like `on_press` (`{row.nope}` is
+> refused with the node address; outside a template it is refused and the message names the
+> escape). `{{row.<field>}}` draws the characters. Tests: `internal/scene/row_text_interpolation_test.go`,
+> `internal/engine/row_template_test.go`. Not done: golden scenes using it, and a re-run of the
+> live eval corpus (needs a real model). The text below is the original decision record.
+
 **Found by:** the live eval run of `subagents-turns-and-busy-dot` (Block A4). The
 model wrote `"text": "{row.turns}•"`. Only `on_press` substitutes
 `{row.<field>}`; a text node paints its `text` verbatim, so the engine accepted

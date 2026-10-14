@@ -112,3 +112,67 @@ func TestRelativeBindOutsideATemplateIsFalsy(t *testing.T) {
 			"remedy: resolveBindRow returns the placeholder for a row.* bind when the row is nil.", got, placeholderValue)
 	}
 }
+
+// D1, option b: {row.<field>} in drawn text is substituted per row. It is the case the
+// first live eval run measured, `"text": "{row.turns}•"`, drawing its value now instead
+// of the braces.
+func TestRowReferenceInTextDrawsEachRowsOwnValue(t *testing.T) {
+	list := &scene.Node{
+		Type: "list", Bind: "team.members",
+		RowTemplate: &scene.Node{Type: "text", Text: "{row.role}:{row.turns}•"},
+	}
+	got := renderToText(t, list, twoMemberState())
+	if got != "backend:3•\nfrontend:1•\n" {
+		t.Errorf("rows = %q, want each row to carry its own role and turns", got)
+	}
+	if strings.Contains(got, "{row.") {
+		t.Errorf("braces reached the screen: %q", got)
+	}
+	// Rendering must not edit the document: the second frame is the same as the first.
+	if again := renderToText(t, list, twoMemberState()); again != got {
+		t.Errorf("a second frame differs: %q vs %q (the template node was mutated)", again, got)
+	}
+	if list.RowTemplate.Text != "{row.role}:{row.turns}•" {
+		t.Errorf("the template's own text was rewritten to %q", list.RowTemplate.Text)
+	}
+}
+
+// The reference works in a title, and inside a nested node of the row.
+func TestRowReferenceInATitleAndInANestedNodeIsSubstituted(t *testing.T) {
+	list := &scene.Node{
+		Type: "list", Bind: "team.members",
+		RowTemplate: &scene.Node{Type: "box", Title: "{row.id}", BorderRaw: []byte(`"single"`), Children: []*scene.Node{
+			{Type: "text", Text: "turns {row.turns}"},
+		}},
+	}
+	got := renderToText(t, list, twoMemberState())
+	for _, want := range []string{"be", "fe", "turns 3", "turns 1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "{row.") {
+		t.Errorf("braces reached the screen:\n%s", got)
+	}
+}
+
+// The doubled brace draws the characters, and a text without references is untouched.
+func TestTheEscapeDrawsTheBracesAndPlainTextIsUntouched(t *testing.T) {
+	list := &scene.Node{
+		Type: "list", Bind: "team.members",
+		RowTemplate: &scene.Node{Type: "text", Text: "{{row.id}}={row.id} {x}"},
+	}
+	got := renderToText(t, list, twoMemberState())
+	if got != "{row.id}=be {x}\n{row.id}=fe {x}\n" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// With no row in scope the text is drawn as authored (a scene without templates must not
+// move), which is also why the validator refuses a reference there.
+func TestTextOutsideARowIsDrawnAsAuthored(t *testing.T) {
+	got := renderToText(t, &scene.Node{Type: "text", Text: "{row.id} {{row.id}}"}, twoMemberState())
+	if got != "{row.id} {{row.id}}\n" {
+		t.Errorf("got %q", got)
+	}
+}

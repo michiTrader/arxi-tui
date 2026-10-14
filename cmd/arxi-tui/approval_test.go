@@ -46,7 +46,7 @@ func (c *editChat) SubmitChatSend(ctx context.Context, p driver.ChatSendParams) 
 
 func wait(t *testing.T, cond func() bool) {
 	t.Helper()
-	for i := 0; i < 400; i++ {
+	for i := 0; i < 3000; i++ {
 		if cond() {
 			return
 		}
@@ -226,6 +226,199 @@ func TestOnlyYNAndEscAnswerAChange(t *testing.T) {
 		allow, decided := approvalKey(tc.k)
 		if allow != tc.allow || decided != tc.decide {
 			t.Errorf("key %+v: allow=%v decided=%v, want %v %v", tc.k, allow, decided, tc.allow, tc.decide)
+		}
+	}
+}
+
+// seqChat asks the user about n commands in a row inside ONE turn, as a core does when the
+// model chains several tool calls; the turn took its policy ("ask") when it began.
+type seqChat struct {
+	n       int
+	name    string
+	started chan struct{}
+	got     chan []bool
+}
+
+func (*seqChat) Hello() *driver.Hello { return &driver.Hello{Implemented: []string{"chat.send"}} }
+
+func (c *seqChat) SubmitChatSend(ctx context.Context, p driver.ChatSendParams) (*driver.ChatSendResult, error) {
+	var answers []bool
+	for i := 0; i < c.n; i++ {
+		if i == 0 {
+			close(c.started)
+		}
+		answers = append(answers, p.OnApproval(ctx, driver.Approval{CallID: "c", Name: c.name, Arg: "x", Summary: "s"}))
+	}
+	c.got <- answers
+	return &driver.ChatSendResult{Text: "done"}, nil
+}
+
+func seqRig(t *testing.T, name string, n int) (*serveDriver, *seqChat) {
+	t.Helper()
+	core := &seqChat{n: n, name: name, started: make(chan struct{}), got: make(chan []bool, 1)}
+	c := newChatSession(core, make(chan fold.Event, 64))
+	c.setWorkdir("/proj")
+	sd := &serveDriver{chat: c}
+	sd.SetMode("ask")
+	if err := c.send(context.Background(), "do several things"); err != nil {
+		t.Fatal(err)
+	}
+	<-core.started
+	return sd, core
+}
+
+// The reported bug: answer yes to the first command, switch to full access, and the
+// turn kept asking for every next one.
+func TestSwitchingToFullAccessStopsTheQuestionsOfTheTurnInProgress(t *testing.T) {
+	for _, name := range []string{"run", "edit", "write", "web_fetch", "web_search"} {
+		sd, core := seqRig(t, name, 3)
+		wait(t, sd.chat.pendingNow)
+		sd.chat.decide(true) // the user says yes to the first
+		// The second question may or may not be up yet; the mode change must settle it
+		// and every later one without a key press.
+		sd.SetMode("full access")
+		select {
+		case got := <-core.got:
+			for i, a := range got {
+				if !a {
+					t.Errorf("%s: answer %d = false, want all allowed: %v", name, i, got)
+				}
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("%s: the turn is still waiting for the user after full access", name)
+		}
+	}
+}
+
+// A question that is on screen when the mode changes is answered by the new mode.
+func TestAWaitingQuestionIsAnsweredWhenTheModeAllowsIt(t *testing.T) {
+	sd, core := seqRig(t, "run", 1)
+	wait(t, sd.chat.pendingNow)
+	sd.SetMode("full access")
+	select {
+	case got := <-core.got:
+		if len(got) != 1 || !got[0] {
+			t.Errorf("got %v, want the waiting command allowed", got)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the waiting question was not settled by the mode change")
+	}
+}
+
+// Moving to a mode that does NOT allow it (plan, auto for a command) must not answer yes.
+func TestAModeThatDoesNotAllowItLeavesTheQuestionWaiting(t *testing.T) {
+	for _, mode := range []string{"auto", "plan", "ask"} {
+		sd, core := seqRig(t, "run", 1)
+		wait(t, sd.chat.pendingNow)
+		sd.SetMode(mode)
+		time.Sleep(40 * time.Millisecond)
+		if !sd.chat.pendingNow() {
+			t.Errorf("mode %q answered a command on its own", mode)
+		}
+		sd.chat.decide(false)
+		<-core.got
+	}
+}
+
+// Auto allows edits, not commands: switching ask -> auto settles an edit but not a run.
+func TestAutoSettlesAnEditButNotACommand(t *testing.T) {
+	sd, core := seqRig(t, "edit", 1)
+	wait(t, sd.chat.pendingNow)
+	sd.SetMode("auto")
+	select {
+	case got := <-core.got:
+		if !got[0] {
+			t.Error("auto allows edits")
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("an edit under auto still waits")
+	}
+}
+
+// What a mode never decides (a change to the interface that sets what their keyboard
+// does later) is not settled by it: liveAllows only knows the four kinds.
+func TestFullAccessDoesNotAnswerWhatNoModeCovers(t *testing.T) {
+	c := newChatSession(&editChat{}, make(chan fold.Event, 4))
+	c.setEdits(policyAllow)
+	c.setRuns(policyAllow)
+	c.setWeb(policyAllow)
+	c.setOutside(policyAllow)
+	for _, name := range []string{"ui_edit", "pkg_x_run", "something_else"} {
+		if c.liveAllows(driver.Approval{Name: name}) {
+			t.Errorf("%q was allowed by a mode", name)
+		}
+	}
+	if !c.liveAllows(driver.Approval{Name: "folder"}) || !c.liveAllows(driver.Approval{Name: "run"}) {
+		t.Error("the four kinds a mode decides must follow it")
+	}
+}
+
+func TestUpgradedOnlyGoesFromAskToAllow(t *testing.T) {
+	for _, tc := range []struct{ started, live, want string }{
+		{policyAsk, policyAllow, policyAllow},
+		{policyAsk, policyAsk, policyAsk},
+		{policyAsk, policyDeny, policyAsk},
+		{policyAllow, policyAsk, policyAllow}, // never narrows what the turn started with
+		{policyDeny, policyAllow, policyDeny}, // a tool not offered at the start stays out
+	} {
+		if got := upgraded(tc.started, tc.live); got != tc.want {
+			t.Errorf("upgraded(%s,%s) = %s, want %s", tc.started, tc.live, got, tc.want)
+		}
+	}
+}
+
+// A package tool that runs a program is decided by the policy of the turn; if the user moved
+// to full access after the turn began, it must not ask any more.
+func TestAPackageToolFollowsTheModeChangedDuringTheTurn(t *testing.T) {
+	core := &seenChat{}
+	b := newPackageToolbox()
+	b.publish(packageSet{pkgs: []installedPackage{toolPkg(t, "p", true, execT("go"))}})
+	c, out := pkgToolChat(t, core, b)
+	c.setRuns(policyAsk)
+	sendAndWait(t, c, out, "arregla el banner", "agent.turn_done")
+	p := core.last()
+	if p.OnClientTool == nil {
+		t.Fatal("no client tools lent")
+	}
+	// The user is asked once before the switch ... (nobody answers: the turn would block, so
+	// answer no from a goroutine)
+	go func() {
+		wait(t, c.pendingNow)
+		c.decide(false)
+	}()
+	if res := p.OnClientTool(context.Background(), callOf("pkg_p_go", "x")); res.Summary != "You did not allow this" {
+		t.Fatalf("under ask the tool must wait for the user: %+v", res)
+	}
+	// ... and not at all after it.
+	c.setRuns(policyAllow)
+	done := make(chan driver.ClientToolResult, 1)
+	go func() { done <- p.OnClientTool(context.Background(), callOf("pkg_p_go", "x")) }()
+	select {
+	case res := <-done:
+		if res.Summary == "You did not allow this" {
+			t.Errorf("full access still asked: %+v", res)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the tool is still waiting for the user after full access")
+	}
+}
+
+// The mode changes at the very moment the core asks: the question must not be left
+// waiting. Looking at the mode and registering the question are one step, otherwise the
+// change can land between them, find no question to settle, and the turn hangs until a
+// key is pressed (this failed on the Windows CI runner, where threads interleave
+// differently). It is a race, so it is hammered.
+func TestAModeChangeRacingTheQuestionNeverLeavesItWaiting(t *testing.T) {
+	for i := 0; i < 3000; i++ {
+		sd, core := seqRig(t, "run", 1) // returns once the core is inside its first ask
+		sd.SetMode("full access")       // no wait for the question to be on screen
+		select {
+		case got := <-core.got:
+			if len(got) != 1 || !got[0] {
+				t.Fatalf("round %d: answers = %v, want allowed", i, got)
+			}
+		case <-time.After(3 * time.Second):
+			t.Fatalf("round %d: the question was left waiting after full access", i)
 		}
 	}
 }

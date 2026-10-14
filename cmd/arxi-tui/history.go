@@ -118,6 +118,14 @@ func (h *inputHistory) save(line string, rewrite bool) {
 // Browsing reports whether the line on screen came from the history walk.
 func (h *inputHistory) Browsing() bool { return h.idx < len(h.lines) }
 
+// Recalled reports whether the line on screen is exactly the one the walk is on. A recalled
+// line that starts with "/" (a "/model vy" that was sent once) looks like the beginning of a
+// menu, and the arrows must keep walking the history instead of moving that menu's highlight;
+// the moment the user edits it, it is theirs again and the menu gets its keys.
+func (h *inputHistory) Recalled(input string) bool {
+	return h.idx < len(h.lines) && input == h.lines[h.idx]
+}
+
 // Older steps back. current is the line being edited; it is stashed when the walk starts.
 // ok is false when there is nothing older.
 func (h *inputHistory) Older(current string) (string, bool) {

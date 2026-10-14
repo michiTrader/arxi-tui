@@ -73,7 +73,7 @@ func BuildUserPrompt(req PatchRequest) string {
 		for _, bind := range binds {
 			fmt.Fprintf(&b, "  row_template of a list bound to %s: %s\n", bind, strings.Join(req.RowSchemas[bind], ", "))
 		}
-		b.WriteString("A row field is read only through \"bind\" or \"when\". Text such as \"{row.role}\" inside a \"text\" value is NOT substituted; it is drawn literally.\n")
+		b.WriteString("A row field is read through \"bind\" or \"when\", or written as {row.<field>} inside a \"text\", \"title\" or \"placeholder\" value, where it is substituted per row (double the braces, {{row.role}}, to draw them literally).\n")
 		b.WriteString("\n")
 	}
 

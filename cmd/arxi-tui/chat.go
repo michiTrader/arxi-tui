@@ -71,6 +71,10 @@ type chatSession struct {
 
 	mu      sync.Mutex
 	history []driver.ChatTurn
+	// lastAsk is how many tokens the model held at the latest ask it answered, as the
+	// core reported it (0 until one does). It is what the model actually carried,
+	// tool-loop messages included, which the history above does not hold.
+	lastAsk int
 	busy    bool
 	seq     int64
 	// gen counts sessions. A turn remembers the generation it started in and
@@ -312,13 +316,72 @@ func (c *chatSession) setWeb(policy string) {
 }
 
 // pendingApproval is a change on its way to the user: the turn blocks on reply.
-type pendingApproval struct{ reply chan bool }
+type pendingApproval struct {
+	reply chan bool
+	what  driver.Approval
+}
+
+// liveAllows reports whether the mode in force NOW lets the model do what this approval
+// asks about without asking. A turn takes its policies when it starts and the core keeps
+// asking for the whole turn, so a user who answers "yes" and then switches to full access
+// would otherwise be asked again for every next step of the same turn. Only the kinds of
+// approval a mode decides are covered: what a mode never covers (a change to the
+// interface that decides what their own keyboard does) is not in this list.
+func (c *chatSession) liveAllows(a driver.Approval) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.liveAllowsLocked(a)
+}
+
+// liveAllowsLocked is liveAllows for a caller that already holds c.mu.
+func (c *chatSession) liveAllowsLocked(a driver.Approval) bool {
+	switch a.Name {
+	case "write", "edit":
+		return c.edits == policyAllow
+	case "run":
+		return c.runs == policyAllow
+	case "web_fetch", "web_search":
+		return c.web == policyAllow
+	case "folder":
+		return c.outside == policyAllow
+	}
+	return false
+}
+
+// upgraded is the policy a turn should apply to a tool it decides itself: the one it
+// started with, unless the user has since moved to a mode that allows it (ask -> allow).
+// It never goes the other way: what the core was told at the start it keeps.
+func upgraded(started, live string) string {
+	if started == policyAsk && live == policyAllow {
+		return policyAllow
+	}
+	return started
+}
+
+// modeChanged is called after the mode moved: a question that is waiting and that the new
+// mode allows is answered yes, as if the user had said it.
+func (c *chatSession) modeChanged() {
+	c.mu.Lock()
+	p := c.approval
+	c.mu.Unlock()
+	if p != nil && c.liveAllows(p.what) {
+		c.decide(true)
+	}
+}
 
 // askUser puts one change to the user and blocks the turn until they decide, or the
 // turn ends (cancelled, or /clear), which counts as a no.
 func (c *chatSession) askUser(ctx context.Context, gen int64, a driver.Approval) bool {
-	p := &pendingApproval{reply: make(chan bool, 1)}
+	p := &pendingApproval{reply: make(chan bool, 1), what: a}
+	// Looking at the live mode and registering the question are ONE step under the
+	// lock. Apart, a mode change landing between them looks for a waiting question
+	// before this one is registered, finds none, and leaves it waiting for a key nobody
+	// should have to press (seen on Windows, where threads interleave differently).
 	c.mu.Lock()
+	if c.liveAllowsLocked(a) {
+		c.mu.Unlock()
+		return true
+	}
 	c.approval = p
 	c.mu.Unlock()
 	defer func() {
@@ -547,6 +610,7 @@ func (c *chatSession) reset() {
 	c.mu.Lock()
 	c.gen++
 	c.history = nil
+	c.lastAsk = 0
 	c.toolLog = nil
 	// A folder was opened for the conversation; a new one starts closed.
 	c.folders = nil
@@ -711,6 +775,16 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		},
 		// A rate limit or an overload is waited out by the core itself; this only shows it.
 		OnRetry: func(r driver.Retry) { c.noteRetry(ctx, gen, r) },
+		// Each ask of the turn says how much the model holds, so the context figure
+		// follows a long tool loop and survives a turn that later fails.
+		OnUsage: func(n int) {
+			if n > 0 {
+				c.mu.Lock()
+				c.lastAsk = n
+				c.mu.Unlock()
+				c.post(ctx, gen, "chat.usage", map[string]any{"context_tokens": float64(n)})
+			}
+		},
 		// What it looks at while answering is shown as it happens.
 		Workdir: workdir, Edits: edits, Runs: runs, Web: web, Outside: outside, Folders: folders,
 		OnApproval: func(ctx context.Context, a driver.Approval) bool { return c.askUser(ctx, gen, a) },
@@ -781,11 +855,15 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		ui, tools, shells := c.ui, c.tools, c.shells
 		params.ClientTools = defs
 		params.OnClientTool = func(ctx context.Context, call driver.ClientToolCall) driver.ClientToolResult {
+			// The mode may have changed since the turn began (ask -> full access).
+			c.mu.Lock()
+			liveRuns, liveWeb := upgraded(runs, c.runs), upgraded(web, c.web)
+			c.mu.Unlock()
 			if isShellTool(call.Name) && shells != nil {
-				return shells.call(ctx, call, workdir, runs, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
+				return shells.call(ctx, call, workdir, liveRuns, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
 			}
 			if ownsToolName(call.Name) && tools != nil {
-				return tools.call(ctx, call, runs, web, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
+				return tools.call(ctx, call, liveRuns, liveWeb, func(a driver.Approval) bool { return c.askUser(ctx, gen, a) })
 			}
 			if ui == nil {
 				return driver.ClientToolResult{Text: call.Name + " is not a tool of this session", Summary: "Unknown tool"}
@@ -901,8 +979,22 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 // words when it refused, a plain description otherwise.
 func chatErrorText(err error) string {
 	var r *driver.Refusal
+	text := "could not get an answer: " + err.Error()
 	if errors.As(err, &r) && r.Message != "" {
-		return r.Message
+		text = r.Message
 	}
-	return "could not get an answer: " + err.Error()
+	return text + timeoutNote(text)
+}
+
+// timeoutNote explains a deadline error. "context deadline exceeded" reads like the
+// model's context window overflowed, and it is not: it is the time limit of one call to
+// the model (the core waits a few minutes for an answer), hit by a slow or stuck
+// provider. Telling the two apart sends the user to /model or a retry instead of to
+// /compact, which cannot fix a timeout.
+func timeoutNote(text string) string {
+	low := strings.ToLower(text)
+	if !strings.Contains(low, "deadline exceeded") && !strings.Contains(low, "timed out") && !strings.Contains(low, "timeout") {
+		return ""
+	}
+	return " (the provider took longer than the time limit of one call; this is a timeout, not a full context window. Ask again, or pick another model with /model)"
 }

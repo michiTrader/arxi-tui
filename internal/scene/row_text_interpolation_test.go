@@ -6,13 +6,11 @@ import (
 	"testing"
 )
 
-// The first live eval run of the row_template case measured a model writing
-// `"text": "{row.turns}•"`. Only on_press interpolates {row.<field>}, so the engine
-// accepted the document and painted the braces literally: validation was clean, so
-// the repair loop had nothing to repair and the case scored `incomplete` against the
-// model for a mistake the engine let through. These tests hold the refusal that
-// closes it, and its counterfactual halves, so the rule cannot be satisfied by
-// refusing every brace.
+// D1, option b. The first live eval run measured a model writing
+// `"text": "{row.turns}•"`. That used to be refused (the braces drew literally); it now
+// works as written: {row.<field>} in text, title and placeholder is substituted per row
+// by the renderer, and held at load to the same row schema as on_press. These tests hold
+// the validation half and the escape; the drawing half is in internal/engine.
 
 const rowTextTemplate = `{"root":{"type":"stack","children":[
   {"type":"list","bind":"team.members","row_template":{"type":"row","children":[
@@ -21,121 +19,145 @@ const rowTextTemplate = `{"root":{"type":"stack","children":[
   ]}}
 ]}}`
 
-// The core refusal: a {row.} reference in drawn text is an error with an address
-// that names the remedy.
-func TestRowInterpolationInDrawnTextIsRefusedWithAnAddress(t *testing.T) {
-	doc, err := ParseDocument([]byte(rowTextTemplate))
+func validate(t *testing.T, body string) error {
+	t.Helper()
+	doc, err := ParseDocument([]byte(body))
 	if err != nil {
 		t.Fatalf("premise broken: %v", err)
 	}
-	verr := doc.Validate()
+	return doc.Validate()
+}
+
+// The reported case now loads: a field of the row's schema inside its template.
+func TestRowReferenceInDrawnTextInsideATemplateIsAccepted(t *testing.T) {
+	if err := validate(t, rowTextTemplate); err != nil {
+		t.Fatalf("{row.turns} inside a team.members template was refused: %v", err)
+	}
+}
+
+// Title and placeholder are drawn text too.
+func TestRowReferenceInTitleAndPlaceholderIsAcceptedInATemplate(t *testing.T) {
+	for _, node := range []string{
+		`{"type":"box","title":"{row.id}"}`,
+		`{"type":"input","bind":"user.input","placeholder":"{row.id}"}`,
+	} {
+		body := `{"root":{"type":"list","bind":"team.members","row_template":` + node + `}}`
+		if err := validate(t, body); err != nil {
+			t.Errorf("%s: %v", node, err)
+		}
+	}
+}
+
+// A field the element type does not declare is a load-time refusal with an address,
+// exactly as for on_press: the typo must not become braces on screen.
+func TestAnUnknownRowFieldInTextIsRefusedWithAnAddress(t *testing.T) {
+	body := strings.Replace(rowTextTemplate, "{row.turns}", "{row.nope}", 1)
+	verr := validate(t, body)
 	if verr == nil {
-		t.Fatal("a text node containing {row.turns} validated clean; the braces would draw literally on screen and the repair loop would see no error to fix.\n" +
-			"remedy: Validate must refuse {row. in a node's drawn text (validateNoRowInterpolationInText).")
+		t.Fatal("{row.nope} validated clean; it would never resolve")
 	}
 	var se *Error
-	if !errors.As(verr, &se) {
-		t.Fatalf("the refusal is not a *scene.Error, so it carries no address: %v", verr)
+	if !errors.As(verr, &se) || se.Loc.Line != 4 {
+		t.Errorf("want a *scene.Error at line 4, got %v (%#v)", verr, se)
 	}
-	if se.Loc == (Loc{}) {
-		t.Errorf("the refusal carries no file:line, so the repair loop cannot locate the node: %v", verr)
-	}
-	// Line 4 of the document is the offending node; pointing at a neighbour would
-	// send the model to edit a node that is fine.
-	if se.Loc.Line != 4 {
-		t.Errorf("the refusal points at line %d, want 4 (the node holding {row.turns}): %v", se.Loc.Line, verr)
-	}
-	for _, want := range []string{"{row.", "on_press", `"bind": "row.<field>"`} {
+	for _, want := range []string{"{row.nope}", "row schema"} {
 		if !strings.Contains(verr.Error(), want) {
-			t.Errorf("the refusal %q does not contain %q; it must say what is wrong and the working spelling so one edit repairs it", verr.Error(), want)
+			t.Errorf("the refusal %q does not contain %q", verr.Error(), want)
 		}
 	}
 }
 
-// The same mistake outside any template is equally dead -- there is no row at all --
-// and is refused too, so the rule does not depend on where the node sits.
-func TestRowInterpolationInTextOutsideATemplateIsRefused(t *testing.T) {
-	doc, err := ParseDocument([]byte(`{"root":{"type":"text","text":"turns {row.turns}"}}`))
-	if err != nil {
-		t.Fatalf("premise broken: %v", err)
+// Outside any template there is no row, so the reference can never resolve. The refusal
+// names the escape for anyone who meant the characters.
+func TestRowReferenceInTextOutsideATemplateIsRefusedAndNamesTheEscape(t *testing.T) {
+	verr := validate(t, `{"root":{"type":"text","text":"turns {row.turns}"}}`)
+	if verr == nil {
+		t.Fatal("{row.turns} outside a template validated clean")
 	}
-	if doc.Validate() == nil {
-		t.Error("{row.turns} in the text of a node outside a template validated clean; it can never resolve")
-	}
-}
-
-// A malformed (unclosed) reference is the same intent and the same literal on
-// screen, so it must not slip past a refusal that waited for a closing brace.
-func TestAnUnclosedRowReferenceInTextIsAlsoRefused(t *testing.T) {
-	doc, err := ParseDocument([]byte(`{"root":{"type":"text","text":"{row.turns"}}`))
-	if err != nil {
-		t.Fatalf("premise broken: %v", err)
-	}
-	if doc.Validate() == nil {
-		t.Error("an unclosed {row.turns in text validated clean; it draws literally exactly like the closed form")
+	if !strings.Contains(verr.Error(), "{{row.turns}}") {
+		t.Errorf("the refusal must name the escape: %v", verr)
 	}
 }
 
-// title and placeholder are painted as authored too, so they are held to the same rule.
-func TestRowInterpolationInTitleAndPlaceholderIsRefused(t *testing.T) {
+// An unclosed reference is the same intent and would draw literally.
+func TestAnUnclosedRowReferenceInTextIsRefused(t *testing.T) {
+	body := strings.Replace(rowTextTemplate, "{row.turns}•", "{row.turns", 1)
+	if validate(t, body) == nil {
+		t.Error("an unclosed {row.turns validated clean")
+	}
+}
+
+// The escape: {{row.x}} is the characters, needs no template and no schema.
+func TestTheDoubledBraceEscapeIsAcceptedAnywhere(t *testing.T) {
 	for _, body := range []string{
-		`{"root":{"type":"box","title":"{row.id}"}}`,
-		`{"root":{"type":"input","bind":"user.input","placeholder":"{row.id}"}}`,
+		`{"root":{"type":"text","text":"write {{row.turns}} to show a field"}}`,
+		strings.Replace(rowTextTemplate, "{row.turns}•", "{{row.nope}} stays", 1),
 	} {
-		doc, err := ParseDocument([]byte(body))
-		if err != nil {
-			t.Fatalf("premise broken for %s: %v", body, err)
-		}
-		if doc.Validate() == nil {
-			t.Errorf("%s validated clean; title and placeholder draw verbatim, so the braces would show", body)
+		if err := validate(t, body); err != nil {
+			t.Errorf("the escape was refused: %v\n%s", err, body)
 		}
 	}
 }
 
-// Counterfactual: on_press interpolation is the one place {row.} works and must stay
-// accepted, or the refusal would have broken Scene 9's `cmd:/agent {row.id}` and the
-// PROVIDERS screen's enable/disable buttons.
+// on_press interpolation is untouched.
 func TestRowInterpolationInOnPressIsStillAccepted(t *testing.T) {
 	body := `{"root":{"type":"list","bind":"team.members","row_template":{"type":"row","children":[
 	  {"type":"text","bind":"row.role"},
 	  {"type":"button","text":"go","on_press":"cmd:/agent {row.id}"}
 	]}}}`
-	doc, err := ParseDocument([]byte(body))
-	if err != nil {
-		t.Fatalf("premise broken: %v", err)
-	}
-	if verr := doc.Validate(); verr != nil {
-		t.Errorf("a {row.id} interpolation in on_press was refused: %v\n"+
-			"consequence: every row button (Scene 9, PROVIDERS) stops loading.\n"+
-			"remedy: the text rule must look at text/title/placeholder only, never at on_press.", verr)
+	if err := validate(t, body); err != nil {
+		t.Errorf("a {row.id} interpolation in on_press was refused: %v", err)
 	}
 }
 
-// Counterfactual: the working spelling the refusal recommends must validate, or the
-// error would send the model to a second error.
-func TestTheBindSpellingTheRefusalRecommendsValidates(t *testing.T) {
-	body := `{"root":{"type":"list","bind":"team.members","row_template":{"type":"row","children":[
-	  {"type":"text","bind":"row.turns"},
-	  {"type":"text","text":"•"}
-	]}}}`
-	doc, err := ParseDocument([]byte(body))
-	if err != nil {
-		t.Fatalf("premise broken: %v", err)
-	}
-	if verr := doc.Validate(); verr != nil {
-		t.Errorf("the recommended bind spelling was refused: %v\n"+
-			"consequence: the refusal's own advice leads to another error and the model cannot converge.", verr)
-	}
-}
-
-// Counterfactual: ordinary braces are not row references, so text that merely
-// contains a brace (a code sample, a JSON hint) must still load.
+// Ordinary braces are not row references.
 func TestOrdinaryBracesInTextAreNotRefused(t *testing.T) {
-	doc, err := ParseDocument([]byte(`{"root":{"type":"text","text":"use {braces} freely, even {row} alone"}}`))
-	if err != nil {
-		t.Fatalf("premise broken: %v", err)
+	if err := validate(t, `{"root":{"type":"text","text":"use {braces} freely, even {row} alone, and {rows.x}"}}`); err != nil {
+		t.Errorf("text with ordinary braces was refused: %v", err)
 	}
-	if verr := doc.Validate(); verr != nil {
-		t.Errorf("text with ordinary braces was refused: %v\nremedy: only the literal prefix \"{row.\" is the refused spelling.", verr)
+}
+
+func TestRowTextRefsFindsReferencesAndSkipsTheEscape(t *testing.T) {
+	cases := []struct {
+		in       string
+		tokens   string
+		unclosed bool
+	}{
+		{"plain", "", false},
+		{"{row.id}", "row.id", false},
+		{"{row.a} and {row.b}", "row.a,row.b", false},
+		{"{{row.a}} and {row.b}", "row.b", false},
+		{"{row.a", "", true},
+		{"{{row.a", "", false},
+		{"x{row.a}y{row.", "row.a", true},
+	}
+	for _, c := range cases {
+		tokens, unclosed := rowTextRefs(c.in)
+		if got := strings.Join(tokens, ","); got != c.tokens || unclosed != c.unclosed {
+			t.Errorf("%q: tokens %q unclosed %v, want %q %v", c.in, got, unclosed, c.tokens, c.unclosed)
+		}
+	}
+}
+
+func TestExpandRowText(t *testing.T) {
+	row := map[string]string{"row.id": "7", "row.role": "dev"}
+	cases := map[string]string{
+		"{row.role}#{row.id}":      "dev#7",
+		"{{row.id}} is {row.id}":   "{row.id} is 7",
+		"no braces":                "no braces",
+		"{braces} {row} {rows.id}": "{braces} {row} {rows.id}",
+		"{row.missing} stays":      "{row.missing} stays",
+		"tail {row.id":             "tail {row.id",
+		"{{row.id":                 "{row.id",
+		"{row.id}{row.id}":         "77",
+		"•{row.role}•":             "•dev•",
+	}
+	for in, want := range cases {
+		if got := ExpandRowText(in, row); got != want {
+			t.Errorf("ExpandRowText(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := ExpandRowText("{row.id}", nil); got != "{row.id}" {
+		t.Errorf("with no row the text is left as written: %q", got)
 	}
 }

@@ -330,3 +330,77 @@ func ExpandRowInterpolation(arg string, row map[string]string) (string, error) {
 		rest = rest[close+1:]
 	}
 }
+
+// Row references in drawn text (D1, option b). A node inside a row_template may write
+// {row.<field>} in its text, title or placeholder and it is replaced, per row, by that
+// row's value, the same vocabulary and the same schema check as on_press (BINDS.md §4.7).
+//
+// To show the characters themselves, double them: {{row.id}} draws {row.id}. Only that
+// prefix is special, so ordinary braces in text are untouched.
+
+// rowTextRefs walks a drawn string and reports the {row.<field>} tokens in it (without
+// braces) and whether a reference was opened and never closed. A {{row.…}} escape is
+// not a reference.
+func rowTextRefs(s string) (tokens []string, unclosed bool) {
+	for i := 0; i < len(s); {
+		switch {
+		case strings.HasPrefix(s[i:], "{{row."):
+			// Escaped: skip to its closing "}}" if it has one, else past the prefix.
+			if end := strings.Index(s[i+2:], "}}"); end >= 0 {
+				i += 2 + end + 2
+			} else {
+				i += len("{{row.")
+			}
+		case strings.HasPrefix(s[i:], "{row."):
+			end := strings.IndexByte(s[i:], '}')
+			if end < 0 {
+				return tokens, true
+			}
+			tokens = append(tokens, s[i+1:i+end])
+			i += end + 1
+		default:
+			i++
+		}
+	}
+	return tokens, false
+}
+
+// ExpandRowText replaces each {row.<field>} in a drawn string with the row's value and
+// each {{row.<field>}} with the literal {row.<field>}. A field the row does not have is
+// left as written, visibly: the validator has already refused it at load, so reaching it
+// means the scope drifted from the schema, and a blank would hide that.
+func ExpandRowText(s string, row map[string]string) string {
+	if !strings.Contains(s, "{") {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		switch {
+		case strings.HasPrefix(s[i:], "{{row."):
+			if end := strings.Index(s[i+2:], "}}"); end >= 0 {
+				b.WriteString("{" + s[i+2:i+2+end] + "}")
+				i += 2 + end + 2
+			} else {
+				b.WriteString("{row.")
+				i += len("{{row.")
+			}
+		case strings.HasPrefix(s[i:], "{row."):
+			end := strings.IndexByte(s[i:], '}')
+			if end < 0 {
+				b.WriteString(s[i:])
+				return b.String()
+			}
+			token := s[i+1 : i+end]
+			if v, ok := row[token]; ok {
+				b.WriteString(v)
+			} else {
+				b.WriteString(s[i : i+end+1])
+			}
+			i += end + 1
+		default:
+			b.WriteByte(s[i])
+			i++
+		}
+	}
+	return b.String()
+}

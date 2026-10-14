@@ -668,6 +668,7 @@ var handled = map[string]bool{
 	"chat.warn":       true,
 	"chat.note":       true,
 	"chat.compacted":  true,
+	"chat.usage":      true,
 	"chat.thinking":   true,
 	"chat.tool":       true,
 	"chat.approval":   true,
@@ -958,6 +959,15 @@ func (s *State) apply(e Event) {
 		// (a turn is still pending) must not stop the indicator of the first.
 		if text, _ := e.Payload["text"].(string); text != "" {
 			s.History = append(s.History, ChatLine{Role: "error", Text: text})
+		}
+
+	case "chat.usage":
+		// One ask of the turn answered: this is what the model holds right now. It
+		// arrives while the turn runs (and before a failure), so the figure the bar
+		// turns into a percentage is the live size of the conversation, not the size
+		// of the last turn that happened to finish.
+		if c, ok := e.Payload["context_tokens"].(float64); ok && c > 0 {
+			s.LastContext = uint64(c)
 		}
 
 	case "chat.warn":

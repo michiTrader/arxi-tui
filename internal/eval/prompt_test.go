@@ -223,7 +223,7 @@ func TestThePromptCarriesTheRowVocabulary(t *testing.T) {
 	}
 	got := BuildUserPrompt(req)
 
-	for _, want := range []string{"team.members", "row.turns", "row.busy", "agent.todos", "row.task", "NOT substituted"} {
+	for _, want := range []string{"team.members", "row.turns", "row.busy", "agent.todos", "row.task", "substituted per row"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("prompt omits %q\n"+
 				"consequence: the model is asked to work inside a row_template without being told the relative vocabulary, so a correct order is recorded as an incomplete answer and the harness's gap reads as a model deficiency.\n"+

@@ -425,3 +425,45 @@ func TestABadToolRoundsValueFailsTheTurnInsteadOfGuessing(t *testing.T) {
 		t.Fatalf("err = %v, want one naming %s", err, toolRoundsEnv)
 	}
 }
+
+// Every ask of a turn is reported as it finishes, so a client can show how full the
+// context is DURING a long tool loop, and keeps the last figure when the turn later
+// fails (a timeout at round 20 used to leave the bar at the size of round 0).
+func TestEveryAskOfATurnReportsTheContextItHeld(t *testing.T) {
+	f := setUpFake(t)
+	f.script = []scripted{{name: "list", args: `{"path":"."}`}, {name: "list", args: `{"path":"."}`}, {text: "done"}}
+	ctx, _ := collect(t, projectDir(t))
+	var notes []chatUsageNotification
+	ctx = withUsageNotice(ctx, func(n chatUsageNotification) { notes = append(notes, n) })
+	res, err := chatSendEffort(ctx, "go", "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(notes) != 3 {
+		t.Fatalf("%d usage notices, want one per ask (3)", len(notes))
+	}
+	for i, n := range notes {
+		if n.Type != "chat.usage" || n.ContextTokens != 15 || n.InputTokens != 10 || n.OutputTokens != 5 {
+			t.Errorf("notice %d = %+v, want chat.usage with 15 held (10 in + 5 out)", i, n)
+		}
+	}
+	if res.ContextTokens != 15 {
+		t.Errorf("final context = %d", res.ContextTokens)
+	}
+}
+
+// A turn that fails after some asks has still told the client what the model held.
+func TestAFailedTurnStillReportedTheAsksThatDidAnswer(t *testing.T) {
+	f := setUpFake(t)
+	f.script = []scripted{{name: "list", args: `{"path":"."}`}}
+	f.failAfter = 1 // the second ask is refused for good
+	ctx, _ := collect(t, projectDir(t))
+	var notes []chatUsageNotification
+	ctx = withUsageNotice(ctx, func(n chatUsageNotification) { notes = append(notes, n) })
+	if _, err := chatSendEffort(ctx, "go", "", "", "", ""); err == nil {
+		t.Fatal("the second ask is refused, the turn must fail")
+	}
+	if len(notes) != 1 || notes[0].ContextTokens != 15 {
+		t.Errorf("notices = %+v, want the one ask that answered", notes)
+	}
+}
