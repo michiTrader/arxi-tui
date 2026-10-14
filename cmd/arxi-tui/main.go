@@ -195,6 +195,7 @@ func main() {
 			mouseOverride = &v
 		}
 	})
+	driver.HostVersion = version
 	if *showVersion {
 		fmt.Println(version)
 		return
