@@ -105,6 +105,58 @@ func unansweredText(why string, tools []string) string {
 	return t + " If the user asks to retry or continue, do this request.]"
 }
 
+// toolEcho is one tool call of a turn with what it returned.
+type toolEcho struct {
+	entry  string // read(main.go), as toolDigestEntry words it
+	output string // what the tool returned, as far as the core reported it
+}
+
+const (
+	// echoBudget is how much tool output a turn that got no answer leaves in the history.
+	// Without it, a turn that read a dozen files and then timed out left only their names,
+	// so "continue" started from nothing and read them all again -- often into the same
+	// timeout. About 12k tokens: enough to keep what was found, small enough that a failed
+	// turn cannot make the next request the size of the window.
+	echoBudget = 48 * 1024
+)
+
+// unansweredWith is unansweredText plus what the tools returned, newest first until the
+// budget is spent. Older results are named but not repeated, and say so.
+func unansweredWith(why string, echoes []toolEcho) string {
+	var names []string
+	for _, e := range echoes {
+		names = append(names, e.entry)
+	}
+	text := unansweredText(why, names)
+	kept := make([]bool, len(echoes))
+	left := echoBudget
+	for i := len(echoes) - 1; i >= 0; i-- {
+		n := len(echoes[i].output)
+		if n == 0 || n > left {
+			continue
+		}
+		kept[i], left = true, left-n
+	}
+	var b strings.Builder
+	dropped := 0
+	for i, e := range echoes {
+		switch {
+		case kept[i]:
+			b.WriteString("\n- " + e.entry + " returned:\n" + e.output)
+		case e.output != "":
+			dropped++
+		}
+	}
+	if b.Len() == 0 {
+		return text
+	}
+	head := "\nWhat those tools returned, kept by the app so the work need not be repeated (not part of your replies; do not copy it into them)"
+	if dropped > 0 {
+		head += "; " + plural(dropped, "older result", "older results") + " did not fit and are left out"
+	}
+	return text + head + ":" + b.String()
+}
+
 const (
 	whyCancelled = "it was cancelled"
 	whyFailed    = "the request failed"

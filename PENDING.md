@@ -1,5 +1,12 @@
 # Pending work
 
+## Done since: hub panic, ctx after an error, ctx after /resume (branch fix/hub-window-panic)
+
+- Panic after `Set context window` -> Enter: a saved form dropped the form but left the hub on the form level; the next repaint read a nil form. `apply` now leaves the form level, and `publish` / `routeHubKey` repair that state instead of crashing.
+- ctx fell from 36k to 3.5k after a timeout + "continua": only the NAMES of the tools of a failed turn were kept, not what they returned. Now the newest ~48 KB of tool output stays in the history of a failed or cancelled turn (live and after `/resume`). Answered turns are unchanged by design (tool output inside an answered turn is not carried to the next one).
+- `/resume` showed no ctx: `chat.usage` / `chat.compacted` were not saved. They are now (only the last `chat.usage` of a turn that got no answer, so the file does not grow per ask); with no figure at all the bar shows `ctx ~N` estimated from the history.
+- NOT verified: nothing run in a real terminal or Windows; the live apinex call was made with curl, not through arxi (see the PR text); whether the extra history makes a failed turn's retry slower on a slow provider is not measured.
+
 ## Done since: context bar, usage per ask, D1, D2 pieces (branch feat/urgent-fixes, PR #261)
 
 - Status bar shows `ctx N%` of the real window (core > `ARXI_CONTEXT_WINDOW` > known-family table > `ctx ?`); the core sends `chat.usage` after every ask; `/compact` explains held tokens vs history; deadline errors say "timeout, not a full window"; `ARXI_CHAT_TIMEOUT` sets the per-call limit.

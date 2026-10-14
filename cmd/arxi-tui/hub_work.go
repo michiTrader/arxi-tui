@@ -332,9 +332,9 @@ func (h *providerHub) apply(o hubOutcome) (notice string, closeHub bool) {
 		h.setData(o.data)
 	}
 	if o.ok {
-		if h.form != nil {
-			h.wipe()
-		}
+		// A form is a level of its own: dropping it must also leave that level, or the hub
+		// would sit on lvForm with no form and the next repaint dereferences nil.
+		h.leaveForm()
 		if o.closeUI {
 			return o.notice, true
 		}

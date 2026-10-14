@@ -18,6 +18,7 @@ type hubKeyResult struct {
 // never reaches the chat input: a key typed into the API-key field must not become a
 // prompt.
 func routeHubKey(h *providerHub, k term.Key) hubKeyResult {
+	h.settle()
 	switch k.Type {
 	case term.KeyEscape:
 		return h.back()
