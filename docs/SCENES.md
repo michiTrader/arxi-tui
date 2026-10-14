@@ -472,7 +472,12 @@ state, and the falsy-out-of-template rule are pinned by
 `internal/engine/row_template_test.go`. Clicking a row into its agent
 (`on_press: "cmd:/agent {row.id}"`) now validates rather than being refused
 wholesale (H8 graduated `on_press`, and `validateOnPress` checks the
-`{row.<field>}` interpolation against the row schema). What still waits is the
+`{row.<field>}` interpolation against the row schema).
+Since decision D1 the same `{row.<field>}` works in drawn text too (`text`, `title`,
+`placeholder` of any node inside a `row_template`): it is substituted per row at render, and
+the validator checks each reference against the row schema at load, like `on_press`. A
+reference outside a template, or to a field the schema does not declare, is a load error;
+write `{{row.x}}` for the literal text `{row.x}`. What still waits is the
 *dispatch* of a template row: the host focus ring and press dispatch
 (`cmd/arxi-tui/press.go`) act on top-level pressable nodes, and pressing an
 instantiated row needs the per-element `{row.field}` substitution at press

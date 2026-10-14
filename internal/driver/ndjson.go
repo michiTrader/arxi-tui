@@ -224,6 +224,34 @@ func NewNDJSON(rw io.ReadWriter) *NDJSONDriver {
 	return d
 }
 
+// HostVersion is the release version of the program that embeds this driver (arxi-tui's
+// own -version string). main sets it at start; the handshake names it beside the core's
+// when the two do not fit, so a user reads both versions and not only "mismatch".
+var HostVersion = "dev"
+
+// VersionMismatch is the handshake's refusal: the core serves a surface this host was not
+// written against. It names both programs and both surface numbers and says what to do,
+// because "surface version mismatch" alone leaves a user with two binaries and no idea
+// which one to replace.
+type VersionMismatch struct {
+	HostVersion string
+	HostSurface int
+	CoreVersion string
+	CoreSurface int
+}
+
+func (e *VersionMismatch) Error() string {
+	newer := "core"
+	if e.CoreSurface < e.HostSurface {
+		newer = "arxi-tui"
+	}
+	return fmt.Sprintf("arxi-tui %s (surface v%d) and arxi core %s (surface v%d) do not fit together: "+
+		"the core refuses parameters it does not declare, so going on would draw wrong frames instead of failing. "+
+		"The %s is the newer one; install the matching pair (re-run the install script, which fetches both "+
+		"from the same release), or point ARXI_BIN at a core of surface v%d",
+		e.HostVersion, e.HostSurface, e.CoreVersion, e.CoreSurface, newer, e.HostSurface)
+}
+
 // Handshake reads the server's hello line and validates the version.
 func (d *NDJSONDriver) Handshake(ctx context.Context) error {
 	line, err := d.readLine(ctx)
@@ -239,12 +267,10 @@ func (d *NDJSONDriver) Handshake(ctx context.Context) error {
 		return fmt.Errorf("ndjson: expected hello, got type %q", hello.Type)
 	}
 	if hello.SurfaceVersion != hostSurfaceVersion {
-		return fmt.Errorf("ndjson: surface version mismatch: the core serves "+
-			"surface v%d and this host speaks surface v%d (core binary %q). "+
-			"The surface is the request vocabulary and the event field names; "+
-			"the core refuses parameters it does not declare, so continuing "+
-			"would produce wrong frames rather than errors",
-			hello.SurfaceVersion, hostSurfaceVersion, hello.Version)
+		return &VersionMismatch{
+			HostVersion: HostVersion, HostSurface: hostSurfaceVersion,
+			CoreVersion: hello.Version, CoreSurface: hello.SurfaceVersion,
+		}
 	}
 
 	d.mu.Lock()

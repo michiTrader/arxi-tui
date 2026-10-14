@@ -3,6 +3,8 @@ package driver
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -221,3 +223,56 @@ type readWriter struct {
 
 func (rw readWriter) Read(p []byte) (int, error)  { return rw.r.Read(p) }
 func (rw readWriter) Write(p []byte) (int, error) { return rw.w.Write(p) }
+
+// D2: a core and a TUI that do not fit are refused by name. The message says which
+// program is which, both versions and both surface numbers, which side is the newer one
+// and what to do, so a user holding two binaries knows which to replace.
+func TestVersionMismatchNamesBothProgramsBothVersionsAndTheRemedy(t *testing.T) {
+	old := HostVersion
+	HostVersion = "v0.7.0"
+	defer func() { HostVersion = old }()
+
+	for _, tc := range []struct {
+		name        string
+		coreSurface int
+		newer       string
+	}{
+		{"core newer than the TUI", 2, "core is the newer"},
+		{"core older than the TUI", 0, "arxi-tui is the newer"},
+	} {
+		var hello map[string]any
+		if err := json.Unmarshal([]byte(helloLine(t)), &hello); err != nil {
+			t.Fatal(err)
+		}
+		hello["surface_version"] = tc.coreSurface
+		hello["version"] = "v0.3.1"
+		line, _ := json.Marshal(hello)
+		d := NewNDJSON(readWriter{r: strings.NewReader(string(line) + "\n"), w: io.Discard})
+		err := d.Handshake(context.Background())
+		var vm *VersionMismatch
+		if !errors.As(err, &vm) {
+			t.Fatalf("%s: err = %v, want a *VersionMismatch", tc.name, err)
+		}
+		for _, want := range []string{"arxi-tui v0.7.0", "core v0.3.1", "surface v1", fmt.Sprintf("surface v%d", tc.coreSurface), tc.newer, "install script", "ARXI_BIN"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: the refusal lacks %q:\n%v", tc.name, want, err)
+			}
+		}
+	}
+}
+
+// A matching pair is not refused, whatever the two release strings say: the gate is the
+// surface, not the version label.
+func TestAMatchingSurfaceIsAcceptedWhateverTheReleaseStringsSay(t *testing.T) {
+	old := HostVersion
+	HostVersion = "v9.0.0"
+	defer func() { HostVersion = old }()
+	var hello map[string]any
+	_ = json.Unmarshal([]byte(helloLine(t)), &hello)
+	hello["version"] = "v0.0.1"
+	line, _ := json.Marshal(hello)
+	d := NewNDJSON(readWriter{r: strings.NewReader(string(line) + "\n"), w: io.Discard})
+	if err := d.Handshake(context.Background()); err != nil {
+		t.Fatalf("a matching surface was refused: %v", err)
+	}
+}

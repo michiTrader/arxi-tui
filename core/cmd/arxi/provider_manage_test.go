@@ -784,3 +784,35 @@ func TestStreamedChatKeepsTheRetries(t *testing.T) {
 		t.Errorf("text=%q calls=%d; want the answer after one retry", res.Text, f.calls)
 	}
 }
+
+// The 3-minute limit of one call was a constant; a provider that is slow by nature needs a
+// way to say so. A typo must not switch the limit off, so a bad value keeps the default.
+func TestChatTimeoutCanBeSetByEnvAndABadValueKeepsTheDefault(t *testing.T) {
+	cases := []struct {
+		env  string
+		want time.Duration
+	}{
+		{"", chatTimeoutDefault},
+		{"10m", 10 * time.Minute},
+		{"90s", 90 * time.Second},
+		{"45", 45 * time.Second},
+		{" 2m ", 2 * time.Minute},
+		{"soon", chatTimeoutDefault},
+		{"0", chatTimeoutDefault},
+		{"-5m", chatTimeoutDefault},
+	}
+	for _, c := range cases {
+		t.Setenv(chatTimeoutEnv, c.env)
+		if got := chatTimeout(); got != c.want {
+			t.Errorf("ARXI_CHAT_TIMEOUT=%q: got %v, want %v", c.env, got, c.want)
+		}
+	}
+}
+
+// The deadline that actually bounds a message must follow the setting, not the default.
+func TestChatDeadlineFollowsTheTimeoutSetting(t *testing.T) {
+	t.Setenv(chatTimeoutEnv, "10m")
+	if got, want := chatDeadline(), 10*time.Minute+chatRetryTotal; got != want {
+		t.Fatalf("deadline = %v, want %v", got, want)
+	}
+}
