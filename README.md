@@ -51,7 +51,9 @@ separate console window: the output is read inside the conversation. `/shell` li
 `/shell show <n>` prints what shell *n* wrote last, `/shell stop <n|all>` ends them,
 `/shell start <command>` starts one by hand. The status line counts them (`2 shells`), you
 are told when one ends by itself, and `/clear` or leaving stops all of them, with their child
-processes. They live in the TUI, not in the core (the core is started per turn).
+processes. Leaving means `/clear`, double Ctrl-C, or the program being asked to end (`kill`, closing the
+terminal window, a dropped ssh session: SIGTERM and SIGHUP); only `kill -9` (or a crash) cannot be
+answered and leaves them running. They live in the TUI, not in the core (the core is started per turn).
 
 ### What packages run by themselves: `/service`
 

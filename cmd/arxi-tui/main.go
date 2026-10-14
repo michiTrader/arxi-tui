@@ -344,7 +344,7 @@ func run(scenePath string) error {
 	// NDJSON request/response protocol. Log-follow reads the run's event
 	// log file. When no arxi binary is available (Phase 0 dev, or non-interactive
 	// pipe), fall back to the mock driver.
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := shutdownContext(context.Background())
 	defer cancel()
 
 	drv, eventCh, err := openDriver(ctx, doc)

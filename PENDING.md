@@ -26,6 +26,10 @@
 - Verified only on Linux with a real `sh`. NOT verified: Windows runtime (`cmd.exe`, `taskkill`),
   a real model calling the tools, a real terminal showing the bar.
 
+## Done since: background shells die with the terminal
+
+- Before, SIGTERM and SIGHUP killed arxi-tui outright: a server started with `/shell` or by the model kept running with its port taken (found by driving the real binary in a pty). Now they end the program normally, so the shells stop. Checked with the real binary for SIGTERM/SIGHUP (stopped) and SIGKILL (cannot be caught; the server stays). NOT verified: Windows console close.
+
 ## Extensibility phases 4-6 (events, panels, services): host wired
 
 - `cmd/arxi-tui/package_auto.go`: events (turn.done, turn.failed, effort, mode, style), panels
