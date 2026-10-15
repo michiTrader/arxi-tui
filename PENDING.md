@@ -135,23 +135,26 @@ moving. Not started as a single piece of work.
   agent and a coordinated core surface bump), K4 wasm (deferred on purpose), M3; DECISIONS-DEFERRED D1
   (`{row.<field>}` in drawn text: a format change) and D2 (product repo, `install.ps1`, version handshake).
 
-## Imágenes por modelo (parcial, rama feat/model-images)
+## Imágenes por modelo (hecho en el código; falta probar con un modelo real)
 
-Hecho y probado (con mutaciones): `Model.Images` + `SetImages` + `Resolution.Images`
-(un modelo NO acepta imágenes hasta que alguien lo diga); traducción a OpenAI Chat
-Completions (`image_url` con data URL) y Anthropic Messages (`source` base64), solo en
-mensajes de usuario, solo png/jpeg/gif/webp, solo datos en línea (nunca URL).
+Hecho y probado con mutaciones: un modelo NO acepta imágenes hasta que alguien lo diga
+(menú /model, fila "Accepts images", o `arxi model update <ref> --images`, o `--images` al
+añadirlo). `chat.send` lleva `images`; el core se niega ANTES de cobrar si el modelo no las
+acepta. En la TUI: `/image <ruta>` o pegar la ruta de un archivo (arrastrarlo al terminal)
+pone un marcador `[Image #N nombre]`; las imágenes viajan solo con ese mensaje.
 
-Falta (nada de esto llega aún al usuario; hoy no se puede mandar una imagen):
-- `chat.send`: parámetro `images` (declarar en `core/internal/surface/surface.go`, leerlo en
-  `handleChatSend`/`handleChatSendThinking`, construir el bloque en `chatSendEffort`) y
-  negarse ANTES de cobrar si `Resolution.Images` es falso.
-- Tope de tamaño: la línea NDJSON tiene tope de 1 MiB (core y driver); una foto normal lo
-  pasa. Hay que decidir: subir el tope solo para `chat.send`, o reducir la imagen y avisar.
-- `model.update` con `images` (hoy `handleModelUpdate` exige `context_window`), fila
-  `images` en `model.list`, `--images` en `model add/update`.
-- Driver (`ChatSendParams.Images`, lista/alta/edición) y error propio para un core viejo.
-- TUI: campo "acepta imágenes" en los formularios, forma de adjuntar (ruta / `/image`)
-  con marcador `[Image #N]` como el de pegados grandes, mostrarla en el chat, negarse con
-  explicación si el modelo no acepta.
-- Nada se probó contra un proveedor real.
+Límites (el tope de 1 MiB de la línea NDJSON NO se subió): 4 imágenes por mensaje y ~600 KB
+ya codificadas; la TUI lo comprueba al adjuntar. El formato se lee de los bytes, no de la
+extensión. Un core viejo recibe el texto sin las imágenes y un aviso.
+
+NO verificado: ninguna imagen contra un proveedor/modelo real; pegar rutas arrastradas en
+PowerShell/Windows Terminal reales; ctrl+z tras un marcador; las imágenes no aparecen en el
+historial del chat salvo por el texto del marcador; no hay rechazo anticipado en la TUI para
+un modelo que no acepta imágenes (lo rechaza el core, antes de cobrar).
+
+## Test flaky pendiente (lista de #273)
+
+`TestBehaviourAnimationReachesTheEmittedFrames` (cmd/arxi-tui/behaviour_test.go, ~l.515)
+falló una vez en el runner de Windows por lentitud (salida fija de 2 s). Endurecer: esperar
+a ver suficientes colores/ticks en vez de un retardo fijo. SIN HACER todavía.
+
