@@ -257,8 +257,10 @@ instead of the user: same op kinds, same permissions, same guards. Differences:
 Implemented and tested in `internal/ext/v2` (strict validation, limits, consent text,
 digest coverage, runner):
 
-- `events`: `on` is `turn.done`, `turn.failed`, `turn.started`, `turn.cancelled`, `shell.ended`, `effort`, `mode` or `style` (`is` only on the
-  settings, checked against the host's values). `Runner.RunEvent` returns text only.
+- `events`: `on` is `turn.done`, `turn.failed`, `turn.started`, `turn.cancelled`, `shell.ended`, `tool.used`, `file.changed`,
+  `approval.asked`, `provider.error`, `context.high` (80% of the window, once until it drops), `model.changed`, `session.resumed`,
+  `effort`, `mode` or `style`. `is` narrows the events that carry a value (a setting, the tool of `tool.used` / `approval.asked`,
+  the model of `model.changed`); it is checked against the host's values, except a package's own `pkg_` tools. `Runner.RunEvent` returns text only.
 - `panels`: one line (title up to 24 characters, up to 120 runes), refreshed on `turn.done`
   or every 30..3600 s, or fed by a service. `Runner.RunPanel`, `PanelLine`.
 - `services`: a long-lived `exec` program the user starts with a command. `Runner.StartService`

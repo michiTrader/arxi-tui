@@ -1,9 +1,17 @@
 # Pending work
 
+## Done since: seven more package events (15 in all)
+
+- `tool.used`, `file.changed`, `approval.asked`, `provider.error`, `context.high`, `model.changed`, `session.resumed`. Same rules as the rest: they only show a note. `is` narrows `tool.used` / `approval.asked` to a tool and `model.changed` to a model (checked when the package is written; a package's own `pkg_` tools pass unchecked).
+- Decisions worth knowing: `file.changed` is only the model's own successful `edit`/`write` (a `run` that writes files cannot be told apart, so it does not count; a file the user changes is not seen at all); `context.high` is 80% of the window and fires once until it drops below (compact, /clear, resume) and climbs back; `provider.error` is only the model call failing (a core that could not be reached is not it); `model.changed` fires on a pick through `/model` that went through, not on the startup read nor on a change made in the providers screen.
+- Tests: unit (each fires only its own, `is` narrowing, validation) plus the real loop for each wire; the full root suite found one old test that expected the old wording of the refusal, adapted; 23 mutation checks, all killed in the end (the validator's own rule for `is` was first covered only through the host; it now has a test in its own package, after a mutation survived). One survived at first because it was dead code (an `if out.err == ""` that the branch already guaranteed; removed); another "survived" only because I pointed it at the wrong package and re-ran it correctly.
+- NOT verified: a real model writing a package that uses them; Windows runtime (the tests need `sh`); the 80% is fixed, not a setting.
+- Still no event for: a file changed by the user, `/clear`, a new project folder.
+- TODO (reported by the owner): 3 tests of the `core/` module fail when run on Windows locally (two assume Linux paths/timings, one behaves differently depending on the disk). The CI `core` job runs tests on Linux only, so it does not see them. Adapt those 3 tests to Windows, then run `core` tests on Windows in CI. Not done: I have no Windows here and do not know which 3 they are.
+
 ## Done since: three more package events, and the pacing seen live
 
 - Package events were 5 (`turn.done`, `turn.failed`, `effort`, `mode`, `style`). Now also `turn.started` (a message went to the model), `turn.cancelled` (the user pressed Esc/Ctrl-C on a turn) and `shell.ended` (a background shell finished by itself). Same rules as the others: they only show a note, never send anything, never start another event. Tests drive the real loop; mutation checks for each wire.
-- Not events yet (ideas, none built): a tool being used, an approval asked, a file changed by the model, the context nearing full, a model change, a provider error, `/resume`.
 - Rate-limit pacing was seen with the real binary and a real model: apinex `free/mimo-v2.6-pro` (5 requests/min), six files read one at a time: the sixth waited the window ("Waiting 56s · request limit reached") and answered, no 429 in between. One run, one provider; VyceAI sends no such headers so it is not paced.
 
 ## Done since: hub panic, ctx after an error, ctx after /resume (branch fix/hub-window-panic)
