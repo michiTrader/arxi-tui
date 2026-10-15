@@ -41,6 +41,23 @@ func newFakeTTY(width, height int, script []scheduledEvent) *fakeTTY {
 	return ft
 }
 
+// newOpenFakeTTY is newFakeTTY that does not end by itself: after the script it stays open,
+// and the test sends the last events (the quit) when what it was waiting for has happened.
+// A test that must see something the loop does on its own clock (an animation) waits for
+// that, with a generous limit, instead of guessing a delay that a slow machine overruns.
+func newOpenFakeTTY(width, height int, script []scheduledEvent) *fakeTTY {
+	ft := &fakeTTY{width: width, height: height, events: make(chan term.Event, 64)}
+	go func() {
+		for _, ev := range script {
+			if ev.delay > 0 {
+				time.Sleep(ev.delay)
+			}
+			ft.events <- ev.event
+		}
+	}()
+	return ft
+}
+
 // scheduledEvent pairs a terminal event with the delay that should precede it.
 // A delay of zero means "emit immediately after the previous event."
 type scheduledEvent struct {
