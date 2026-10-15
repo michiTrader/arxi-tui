@@ -152,9 +152,14 @@ PowerShell/Windows Terminal reales; ctrl+z tras un marcador; las imágenes no ap
 historial del chat salvo por el texto del marcador; no hay rechazo anticipado en la TUI para
 un modelo que no acepta imágenes (lo rechaza el core, antes de cobrar).
 
-## Test flaky pendiente (lista de #273)
+## Tests flaky (lista de #273)
 
-`TestBehaviourAnimationReachesTheEmittedFrames` (cmd/arxi-tui/behaviour_test.go, ~l.515)
-falló una vez en el runner de Windows por lentitud (salida fija de 2 s). Endurecer: esperar
-a ver suficientes colores/ticks en vez de un retardo fijo. SIN HACER todavía.
+- `TestBehaviourAnimationReachesTheEmittedFrames`: ENDURECIDO. Ya no espera un retardo fijo:
+  espera hasta ver un segundo color (límite 60 s) y entonces sale. Pasa en ~0,4 s. Limitación
+  conocida, comprobada por mutación: NO prueba que la animación avance entre fotogramas (con
+  el reloj de animación congelado sigue pasando; también pasaba así antes). Falta un test que
+  lo pruebe de verdad.
+- Core en Windows, vistos en una corrida local del dueño y NO tocados: `TestSpentBudgetMakesTheNextAskWaitForTheWindow`
+  (core/cmd/arxi, pacing_test.go:55, timing) y `TestRunAttachInitialJoinExcludesThenPrintsAProvisionalCompleteEventOnce`
+  (attach_cli_test.go:685, archivo bloqueado en Windows, no timing).
 

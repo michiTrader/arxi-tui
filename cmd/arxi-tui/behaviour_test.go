@@ -510,33 +510,72 @@ func TestLoopCtrlCStillLeavesWithEveryLayerSet(t *testing.T) {
 }
 
 // The animated max row in the effort menu actually moves when the user wires it up.
-// The wait for ticks is 2 s: at 30 fps 600 ms is ~18 ticks on a quiet machine but a
-// loaded Windows runner drew too few of them to see a second colour (seen in CI).
+//
+// How long the animation takes to show a second colour depends on the machine: a fixed wait
+// (600 ms, then 2 s) passed on a quiet one and failed on a loaded Windows runner more than
+// once. So the test does not guess: it waits until a second colour has been drawn, up to a
+// limit that only a broken animation reaches, and then quits.
+//
+// What it does NOT prove (checked by mutation, and true of the test before this change too):
+// that the animation ADVANCES. With the animation clock frozen the output is the same, because
+// the word is drawn once, whole, with the spread of colours across its letters. It proves the
+// animated style reaches the emitted frames, not that it moves from one frame to the next.
 func TestBehaviourAnimationReachesTheEmittedFrames(t *testing.T) {
 	seedBehaviour(t, `{"animations":{"rainbow":{"colors":["red","green","blue"],"fps":30,"spread":1}}}`)
 	drv := &effortDriver{testDriver: testDriver{evCh: make(chan fold.Event, 64)}}
 	// Put the effort word in the status bar under the animation by style_by, via the real
-	// patch surface, then pick a level and let several animation ticks pass.
+	// patch surface, then pick a level and let the animation tick.
 	line := `/ui set status_effort style_by {"high":"rainbow"}`
 	script := append(typeBeh(line), scheduledEvent{20 * time.Millisecond, enterEvent()})
 	script = append(script, typeBeh("/effort ")...)
 	script = append(script, fkey(term.KeyDown), fkey(term.KeyDown), scheduledEvent{20 * time.Millisecond, enterEvent()})
-	script = append(script, scheduledEvent{2 * time.Second, ctrlCharEvent('c')}, scheduledEvent{50 * time.Millisecond, ctrlCharEvent('c')})
-	tty := runLoop(t, drv, drv.evCh, script)
-	out := tty.output()
-	seen := map[string]bool{}
-	counts := map[string]int{}
-	for _, c := range []string{"38;5;1m", "38;5;2m", "38;5;4m", "31m", "32m", "34m"} {
-		if n := strings.Count(out, c); n > 0 {
-			seen[c] = true
-			counts[c] = n
+	tty := newOpenFakeTTY(110, 30, script)
+
+	doc := builtinDoc(t) // here, not in the goroutine: t.Fatal must run on the test's own
+	done := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done <- loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, "")
+	}()
+
+	colours := func(out string) (map[string]bool, map[string]int) {
+		seen, counts := map[string]bool{}, map[string]int{}
+		for _, c := range []string{"38;5;1m", "38;5;2m", "38;5;4m", "31m", "32m", "34m"} {
+			if n := strings.Count(out, c); n > 0 {
+				seen[c], counts[c] = true, n
+			}
 		}
+		return seen, counts
 	}
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		if seen, _ := colours(tty.output()); len(seen) >= 2 {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	tty.events <- ctrlCharEvent('c')
+	tty.events <- ctrlCharEvent('c')
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("loop: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the loop did not leave after the double Ctrl-C")
+	}
+
+	out := tty.output()
+	seen, counts := colours(out)
 	if len(seen) < 2 {
 		// The counts say whether the animation ticked at all (many frames, one colour:
 		// it did not advance) or the screen was hardly repainted (few of any).
-		t.Errorf("the effort word never changed colour across ticks; saw %v (times each appeared: %v; bytes drawn: %d; effort levels set: %v)",
-			seen, counts, len(out), drv.levels)
+		drv.mu.Lock()
+		levels := drv.levels
+		drv.mu.Unlock()
+		t.Errorf("the effort word never changed colour in 60 s; saw %v (times each appeared: %v; bytes drawn: %d; effort levels set: %v)",
+			seen, counts, len(out), levels)
 	}
 }
 
