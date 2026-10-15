@@ -1852,6 +1852,11 @@ func NextSlashCategory(typed, category string, dir int) string {
 // are worth watching go by.
 const thinkingKeep = 240
 
+// AppendThinking is appendThinking for the host: it lets a long log keep one merged
+// thinking event instead of every fragment (see the loop's addEvent), with the same text
+// the fold would have built from the fragments one by one.
+func AppendThinking(cur, frag string) string { return appendThinking(cur, frag) }
+
 // appendThinking adds a streamed fragment to the thinking shown in the marquee.
 // The marquee is a single line, so every run of whitespace (reasoning is full of
 // newlines) collapses to one space, and only the last thinkingKeep characters are

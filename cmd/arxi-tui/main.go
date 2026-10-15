@@ -2894,7 +2894,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				// terminal input (e.g. user wants to review the transcript).
 				eventCh = nil
 			} else {
-				collected = append(collected, e)
+				collected = addEvent(collected, e)
+				if logLenProbe != nil {
+					logLenProbe(len(collected))
+				}
 				if err := sessLog.Record(e); err != nil {
 					sceneNotice = err.Error()
 				}
