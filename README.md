@@ -35,6 +35,43 @@ A scrollbar sits at the right edge of the chat: drag its thumb, or click the tra
 away from the bottom the bar says so and names the key back (`End`, or `ctrl+End` from the
 middle of a line); the hint is absent while you follow the newest text.
 
+### Keyboard scroll, like arxi_cli_sim
+
+The chat also scrolls from the keyboard, so it works without a mouse (and where the terminal
+keeps the wheel for itself). A plain Up/Down still walks the input history.
+
+| key | does |
+|---|---|
+| `ctrl+↑` / `ctrl+↓` | one wheel notch up / down |
+| `alt+↑` / `alt+↓` | one row up / down |
+| `PgUp` / `PgDn` | one page up / down |
+| `ctrl+Home` | the oldest line |
+| `End` (caret at the end of the line) / `ctrl+End` | back to the latest line |
+| `shift+↑` / `shift+↓` | the previous / next message YOU wrote (it lands at the top of the chat) |
+
+None of these act while the `/` menu is open. Not verified: whether Windows Terminal or
+PowerShell hands `ctrl`/`alt`/`shift` + arrows to the program (some terminals keep them);
+if one of them does nothing for you, tell me which and I will give it another key.
+
+### Big pastes and long input
+
+A paste with more than 5 lines, or more than 1500 characters, is not poured into the input
+bar. The bar shows `[Pasted text #1 +68 lines]` (`#1 2000 chars` for one long line) and the
+info bar says `paste again to expand`. Three things to know:
+
+- What is sent is the real text, never the marker. The history keeps the real text too.
+- Paste the SAME text again and the marker opens in place, so you can read or edit it.
+- Backspace right after a marker (or Delete right before it) removes the whole marker.
+
+The limits are yours: `/ui text paste.fold_lines <n>`, `/ui text paste.fold_chars <n>`
+(`0` turns that test off; both `0` shows every paste whole) and the words in
+`paste.hint`. A paste into a `/` line is never folded.
+
+When what you type is taller than a third of the screen (at least 3 rows) the input becomes a
+window that follows the caret: `↑` / `↓` on its first / last row say there is more, and the
+window moves one row at a time at its edges, so the line you are typing is always in view.
+Move the caret with the arrows to read the rest.
+
 ### Folders beside the project: `/folder`
 
 The file tools stay inside the project, because what they read goes to a remote provider. When

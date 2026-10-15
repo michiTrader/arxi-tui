@@ -129,7 +129,10 @@ the `input` node.
       "when": "host.branch" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.scroll" },
     { "type": "text", "bind": "host.scroll", "style": {"style": "header"},
-      "when": "host.scroll" } ] },
+      "when": "host.scroll" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.paste" },
+    { "type": "text", "bind": "host.paste", "style": {"style": "header"},
+      "when": "host.paste" } ] },
 
   { "id": "panels", "type": "row", "when": "host.panels", "children": [
     { "type": "text", "bind": "host.panels", "style": {"style": "dim"} } ] }

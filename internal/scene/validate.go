@@ -239,6 +239,7 @@ var signedBinds = map[string]bool{
 	"host.usage":           true,
 	"host.branch":          true,
 	"host.scroll":          true,
+	"host.paste":           true,
 	"host.shells":          true,
 	"host.shell.list":      true,
 	"host.panels":          true,

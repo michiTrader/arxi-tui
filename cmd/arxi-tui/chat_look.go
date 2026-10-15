@@ -121,6 +121,7 @@ func isNo(s string) bool {
 var chatLookNumbers = map[string]int{
 	"tool.arg_rows": 1000, "tool.output_rows": 1000, "tool.diff_rows": 1000, "tool.approval_rows": 1000,
 	"chat.user.max_lines": 1000, "chat.answer.indent": 40, "chat.turn_gap": 5, "chat.usage_gap": 5,
+	"paste.fold_lines": 100000, "paste.fold_chars": 10000000,
 }
 
 // validChatLook refuses a value that would not mean anything to the chat, at the moment

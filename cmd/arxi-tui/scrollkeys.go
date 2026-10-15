@@ -39,6 +39,56 @@ func scrollKey(k term.Key, input string, caret, scroll, page int) (int, bool) {
 	return scroll, false
 }
 
+// scrollTop is "as far up as it goes": the renderer clamps the offset to the real top, so any
+// number larger than a conversation can be is the top.
+const scrollTop = 1 << 30
+
+// scrollArrowKey is the keyboard spelling of the wheel, the same one arxi_cli_sim has:
+// ctrl+up / ctrl+down move a notch (the wheel's step), alt+up / alt+down one row, ctrl+home
+// jumps to the oldest line and shift+up / shift+down walk the reader's own messages (stops
+// are the offsets the renderer reports, ascending). It reports the new offset and whether
+// the key was spent here; a plain arrow, which belongs to the caret and the history, never is.
+// ctrl+end (the latest line) is scrollKey's.
+func scrollArrowKey(k term.Key, scroll, notch int, stops []int) (int, bool) {
+	if notch < 1 {
+		notch = 1
+	}
+	up := func(n int) (int, bool) { return scroll + n, true }
+	down := func(n int) (int, bool) {
+		if scroll -= n; scroll < 0 {
+			scroll = 0
+		}
+		return scroll, true
+	}
+	switch {
+	case k.Type == term.KeyUp && k.Mod&term.ModCtrl != 0:
+		return up(notch)
+	case k.Type == term.KeyDown && k.Mod&term.ModCtrl != 0:
+		return down(notch)
+	case k.Type == term.KeyUp && k.Mod&term.ModAlt != 0:
+		return up(1)
+	case k.Type == term.KeyDown && k.Mod&term.ModAlt != 0:
+		return down(1)
+	case k.Type == term.KeyHome && k.Mod&term.ModCtrl != 0:
+		return scrollTop, true
+	case k.Type == term.KeyUp && k.Mod&term.ModShift != 0:
+		for _, s := range stops { // the next older message than the one at the top now
+			if s > scroll {
+				return s, true
+			}
+		}
+		return scroll, true
+	case k.Type == term.KeyDown && k.Mod&term.ModShift != 0:
+		for i := len(stops) - 1; i >= 0; i-- {
+			if stops[i] < scroll {
+				return stops[i], true
+			}
+		}
+		return 0, true
+	}
+	return scroll, false
+}
+
 // scrollPage is how many lines a PgUp/PgDn moves for a terminal h rows tall.
 func scrollPage(h int) int {
 	if p := h - 4; p > 1 {

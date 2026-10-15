@@ -239,3 +239,95 @@ func TestLoopEndInTheMiddleOfATypedLineStaysTheCaretsAndKeepsTheScroll(t *testin
 		t.Errorf("End mid-line cleared the scroll hint, but End there belongs to the caret")
 	}
 }
+
+// The keyboard's spelling of the wheel, as arxi_cli_sim has it: ctrl+up/down a notch,
+// alt+up/down one row, ctrl+home the oldest line, shift+up/down the reader's own messages.
+func TestScrollArrowKeysMoveTheChatTheWayTheWheelDoes(t *testing.T) {
+	stops := []int{4, 30, 90} // ascending distance from the tail: the newest user message first
+	k := func(typ term.KeyType, m term.Mod) term.Key { return term.Key{Type: typ, Mod: m} }
+	cases := []struct {
+		name   string
+		key    term.Key
+		scroll int
+		want   int
+	}{
+		{"ctrl+up goes up a notch", k(term.KeyUp, term.ModCtrl), 10, 13},
+		{"ctrl+down goes down a notch", k(term.KeyDown, term.ModCtrl), 10, 7},
+		{"ctrl+down never goes under the tail", k(term.KeyDown, term.ModCtrl), 1, 0},
+		{"alt+up is one row", k(term.KeyUp, term.ModAlt), 10, 11},
+		{"alt+down is one row", k(term.KeyDown, term.ModAlt), 10, 9},
+		{"alt+down never goes under the tail", k(term.KeyDown, term.ModAlt), 0, 0},
+		{"ctrl+home is the oldest line", k(term.KeyHome, term.ModCtrl), 10, scrollTop},
+		{"shift+up from the tail reaches the newest message", k(term.KeyUp, term.ModShift), 0, 4},
+		{"shift+up goes to the next older message", k(term.KeyUp, term.ModShift), 4, 30},
+		{"shift+up between two lands on the older", k(term.KeyUp, term.ModShift), 10, 30},
+		{"shift+up on the oldest stays", k(term.KeyUp, term.ModShift), 90, 90},
+		{"shift+down goes to the next newer message", k(term.KeyDown, term.ModShift), 90, 30},
+		{"shift+down between two lands on the newer", k(term.KeyDown, term.ModShift), 50, 30},
+		{"shift+down from the newest message is the tail", k(term.KeyDown, term.ModShift), 4, 0},
+	}
+	for _, c := range cases {
+		got, ok := scrollArrowKey(c.key, c.scroll, 3, stops)
+		if !ok || got != c.want {
+			t.Errorf("%s: from %d got %d,%v want %d,true", c.name, c.scroll, got, ok, c.want)
+		}
+	}
+	// The plain keys are the caret's and the history's; they must stay theirs.
+	for _, key := range []term.Key{k(term.KeyUp, 0), k(term.KeyDown, 0), k(term.KeyHome, 0), k(term.KeyLeft, term.ModCtrl)} {
+		if got, ok := scrollArrowKey(key, 7, 3, stops); ok || got != 7 {
+			t.Errorf("%+v was taken by the scroll (%d,%v)", key, got, ok)
+		}
+	}
+	if got, _ := scrollArrowKey(k(term.KeyUp, term.ModCtrl), 0, 0, nil); got != 1 {
+		t.Errorf("a notch of 0 must still move one row, got %d", got)
+	}
+}
+
+func modArrow(t term.KeyType, m term.Mod) scheduledEvent {
+	return scheduledEvent{200 * time.Millisecond, term.Event{Kind: term.EventKey, Key: term.Key{Type: t, Mod: m}}}
+}
+
+// In the real loop: ctrl+up scrolls (the hint appears), ctrl+down comes back, ctrl+home goes to
+// the oldest line and ctrl+end to the latest; a plain Up does not scroll anything.
+func TestLoopKeyboardScrollsTheChatAndComesBack(t *testing.T) {
+	run := func(keys ...scheduledEvent) []string {
+		return scrollLoop(t, append(append([]scheduledEvent{{400 * time.Millisecond, term.Event{Kind: term.EventKey, Key: term.Key{Type: term.KeyEnd}}}}, keys...), scrollQuit()...))
+	}
+	hintIn := func(frames []string) bool { return anyHint(frames[:len(frames)-1]) }
+	if !hintIn(run(modArrow(term.KeyUp, term.ModCtrl))) {
+		t.Error("ctrl+up did not scroll the chat up")
+	}
+	if !hintIn(run(modArrow(term.KeyUp, term.ModAlt))) {
+		t.Error("alt+up did not scroll the chat up")
+	}
+	if !hintIn(run(modArrow(term.KeyHome, term.ModCtrl))) {
+		t.Error("ctrl+home did not go to the oldest line")
+	}
+	if hintIn(run(modArrow(term.KeyUp, 0))) {
+		t.Error("a plain Up scrolled the chat; it belongs to the history")
+	}
+	back := run(modArrow(term.KeyHome, term.ModCtrl), modArrow(term.KeyEnd, term.ModCtrl))
+	if strings.Contains(back[len(back)-2], scrollHint) {
+		t.Error("ctrl+end did not bring the chat back to its latest line")
+	}
+	down := run(modArrow(term.KeyUp, term.ModCtrl), modArrow(term.KeyDown, term.ModCtrl))
+	if strings.Contains(down[len(down)-2], scrollHint) {
+		t.Error("ctrl+down did not undo ctrl+up")
+	}
+}
+
+// shift+up walks to the reader's own message (the one prompt of this chat is at the very top),
+// shift+down comes back to the tail: the stops the renderer reports reach the loop's keys.
+func TestLoopShiftArrowsWalkTheReadersMessages(t *testing.T) {
+	run := func(keys ...scheduledEvent) []string {
+		return scrollLoop(t, append(append([]scheduledEvent{{400 * time.Millisecond, term.Event{Kind: term.EventKey, Key: term.Key{Type: term.KeyEnd}}}}, keys...), scrollQuit()...))
+	}
+	up := run(modArrow(term.KeyUp, term.ModShift))
+	if !anyHint(up[:len(up)-1]) {
+		t.Error("shift+up did not go to the reader's message")
+	}
+	back := run(modArrow(term.KeyUp, term.ModShift), modArrow(term.KeyDown, term.ModShift))
+	if strings.Contains(back[len(back)-2], scrollHint) {
+		t.Error("shift+down from the oldest message did not come back to the tail")
+	}
+}

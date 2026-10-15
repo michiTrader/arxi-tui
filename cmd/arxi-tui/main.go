@@ -154,7 +154,10 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
       "when": "host.branch" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.scroll" },
     { "type": "text", "bind": "host.scroll", "style": {"style": "header"},
-      "when": "host.scroll" } ] },
+      "when": "host.scroll" },
+    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.paste" },
+    { "type": "text", "bind": "host.paste", "style": {"style": "header"},
+      "when": "host.paste" } ] },
 
   { "id": "panels", "type": "row", "when": "host.panels", "children": [
     { "type": "text", "bind": "host.panels", "style": {"style": "dim"} } ] }
@@ -902,6 +905,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// chatBar is where the last frame drew the chat's scrollbar and barDrag whether its thumb is
 	// held: a press on the bar starts it, motion with the button down moves the chat, release ends.
 	var chatBar engine.ChatBar
+	var pastes pasteStore // big pastes kept aside while the input shows [Pasted text #N +L lines]
+	inputScroll := 0      // first input row shown (engine.Renderer.InputTop)
+	var chatStops []int   // where the reader's own messages sit (engine.Renderer.ChatUserStops)
 	var barDrag bool
 	barGrabAt := 0
 	effort := ""
@@ -1608,6 +1614,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.HostUsage, state.HostBranch, state.HostScroll, state.HostShells = "", "", "", ""
 			state.HostShellList = ""
 			state.HostPanels = ""
+			state.HostPaste = ""
 		} else {
 			state.HostEffort, state.HostCwd, state.HostMode = effortLabel(effort), shortCwd(cwd), mode
 			if m, _ := drv.(uiModer); m != nil && m.UIMode() {
@@ -1620,11 +1627,16 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.HostShells = shellsLabel(runningShells(drv))
 			state.HostShellList = runningShellList(drv)
 			state.HostPanels = pkgAuto.panelsLine()
+			state.HostPaste = ""
+			if pastes.has(input) {
+				state.HostPaste = uiText("paste.hint")
+			}
 		}
 
 		var r engine.Renderer
 		w, h := tty.Size()
 		r.Width, r.Height = w, h
+		r.InputScroll = inputScroll
 
 		// Decode a row-target ui.focus into the (node, row) pair the engine lights
 		// an instantiated template row by (H8 row-click). A plain focused node
@@ -1721,6 +1733,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			chatScroll = r.ChatScrollMax
 		}
 		chatBar = r.ChatBar
+		chatStops = append(chatStops[:0], r.ChatUserStops...)
+		inputScroll = r.InputTop
 		if chatBar.Height == 0 {
 			barDrag = false
 		}
@@ -1818,6 +1832,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					// Remember the line this key may send: Enter that empties a
 					// non-empty buffer is a submit (or a command), and what was
 					// typed is what the history keeps.
+					// A plain Enter sends what the markers stand for, never the markers.
+					if ev.Key.Type == term.KeyEnter && !isNewlineGesture(ev.Key) && pastes.has(input) {
+						input = pastes.expand(input)
+						caret = len([]rune(input))
+					}
 					lineBefore := input
 					stateBefore := inputState{input, caret}
 					undoneNow := false
@@ -2051,6 +2070,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								chatScroll = 0
 							}
 						}
+					} else if next, spent := scrollArrowKey(ev.Key, chatScroll, phoneWheelStep(), chatStops); spent && !strings.HasPrefix(input, "/") {
+						// The keyboard's spelling of the wheel (scrollkeys.go): ctrl+up/down a
+						// notch, alt+up/down a row, ctrl+home the oldest line, shift+up/down
+						// the reader's previous/next message. Reached before the arrows are
+						// read as caret or history keys, so the plain arrows keep both jobs.
+						panicGesture.Reset()
+						chatScroll = next
 					} else if next, spent := scrollKey(ev.Key, input, caret, chatScroll, scrollPage(ttyHeight(tty))); spent && !strings.HasPrefix(input, "/") {
 						// PgUp/PgDn page the chat and End (when the caret has nowhere left to
 						// go) or ctrl+End jump to its latest line. A line starting with "/" is
@@ -2769,12 +2795,17 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								startInputPre(ctx, pkgRunner, pkgs.runnablePackages(), line, pipeDoneCh)
 								input, caret = "", 0
 							}
+						} else if next, nc, ok := pastes.dropWhole(input, caret, ev.Key); ok {
+							input, caret = next, nc
 						} else {
 							input, caret = typeKey(input, caret, ev.Key, ctx, drv)
 						}
 					}
 					if !synth && ev.Key.Type == term.KeyEnter && input == "" && strings.TrimSpace(lineBefore) != "" {
 						hist.Add(strings.TrimSpace(lineBefore))
+					}
+					if ev.Key.Type == term.KeyEnter && input == "" && strings.TrimSpace(lineBefore) != "" {
+						pastes.reset() // sent: the next big paste is #1 again
 					}
 					// What the key did to the bar is one more step for ctrl+z; a line that
 					// was sent leaves nothing to take back, so it clears the notes.
@@ -2817,7 +2848,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						break
 					}
 					pasteBefore := inputState{input, caret}
-					input, caret = insertText(input, caret, cleanPaste(ev.Text))
+					pasted := cleanPaste(ev.Text)
+					if next, nc, again := pastes.unfold(input, caret, pasted); again {
+						input, caret = next, nc // the same text again: open the marker
+					} else if shouldFold(pasted) && !strings.HasPrefix(input, "/") {
+						input, caret = insertText(input, caret, pastes.fold(pasted))
+					} else {
+						input, caret = insertText(input, caret, pasted)
+					}
 					undo.note(pasteBefore, inputState{input, caret}, editOther, "")
 				case term.EventMouse:
 					m := ev.Mouse
