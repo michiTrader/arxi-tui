@@ -161,7 +161,11 @@ func (m *Manager) provisionShared(ctx context.Context, req Request, key string) 
 		if err := verifySnapshot(ctx, root, req); err != nil {
 			return nil, err
 		}
-		return rootedSession(key, root, req), nil
+		got, err := rootedSession(key, root, req)
+		if err != nil {
+			return nil, err
+		}
+		return got, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(root), 0o700); err != nil {
 		return nil, fmt.Errorf("create shared workspace parent: %w", err)
@@ -185,7 +189,11 @@ func (m *Manager) provisionShared(ctx context.Context, req Request, key string) 
 		_ = os.Remove(m.markerPath(req))
 		return nil, fmt.Errorf("publish shared workspace: %w", err)
 	}
-	return rootedSession(key, root, req), nil
+	got, err := rootedSession(key, root, req)
+	if err != nil {
+		return nil, err
+	}
+	return got, nil
 }
 
 func (m *Manager) provisionCopy(ctx context.Context, req Request, key string) (Session, error) {
@@ -197,7 +205,11 @@ func (m *Manager) provisionCopy(ctx context.Context, req Request, key string) (S
 		if err := verifySnapshot(ctx, root, req); err != nil {
 			return nil, err
 		}
-		return rootedSession(key, root, req), nil
+		got, err := rootedSession(key, root, req)
+		if err != nil {
+			return nil, err
+		}
+		return got, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(root), 0o700); err != nil {
 		return nil, fmt.Errorf("create workspace parent: %w", err)
@@ -227,15 +239,23 @@ func (m *Manager) provisionCopy(ctx context.Context, req Request, key string) (S
 				if snapshotErr := verifySnapshot(ctx, root, req); snapshotErr != nil {
 					return nil, snapshotErr
 				}
+				got, err := rootedSession(key, root, req)
+				if err != nil {
+					return nil, err
+				}
 				ok = true
-				return rootedSession(key, root, req), nil
+				return got, nil
 			}
 		}
 		_ = os.Remove(m.markerPath(req))
 		return nil, fmt.Errorf("publish copy workspace: %w", err)
 	}
 	ok = true
-	return rootedSession(key, root, req), nil
+	got, err := rootedSession(key, root, req)
+	if err != nil {
+		return nil, err
+	}
+	return got, nil
 }
 
 func (m *Manager) provisionWorktree(ctx context.Context, req Request, key string) (Session, error) {
@@ -247,7 +267,11 @@ func (m *Manager) provisionWorktree(ctx context.Context, req Request, key string
 		if err := verifyWorktree(ctx, root, req); err != nil {
 			return nil, err
 		}
-		return rootedSession(key, root, req), nil
+		got, err := rootedSession(key, root, req)
+		if err != nil {
+			return nil, err
+		}
+		return got, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(root), 0o700); err != nil {
 		return nil, fmt.Errorf("create worktree parent: %w", err)
@@ -272,15 +296,29 @@ func (m *Manager) provisionWorktree(ctx context.Context, req Request, key string
 	if err := m.writeMarker(req); err != nil {
 		return nil, fmt.Errorf("record worktree ownership: %w", err)
 	}
-	return rootedSession(key, root, req), nil
+	got, err := rootedSession(key, root, req)
+	if err != nil {
+		return nil, err
+	}
+	return got, nil
 }
 
 // rootedSession stamps the frozen request, including its file access, onto a
 // verified root. Every provision path funnels through here so no layout can
 // forget the access half of the contract: a session that lost it would refuse
 // all writes silently and one that defaulted it to write would undo ADR-0017.
-func rootedSession(key, root string, req Request) Session {
-	return session{id: key, root: root, hasRoot: true, command: req.Command, access: req.FileAccess, hasFileAccess: true}
+//
+// The reported root is the resolved location, not the spelling Provision was
+// reached through: git prints resolved paths from inside the workspace, and a
+// session rooted at an alias (8.3 short name, junction, symlink) would
+// disagree with every one of them. This matches OpenLocalSession, which has
+// always reported the canonical root.
+func rootedSession(key, root string, req Request) (Session, error) {
+	resolved, err := canonical(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve workspace root: %w", err)
+	}
+	return session{id: key, root: resolved, hasRoot: true, command: req.Command, access: req.FileAccess, hasFileAccess: true}, nil
 }
 
 func (m *Manager) Release(ctx context.Context, req Request, got Session) error {
@@ -456,12 +494,23 @@ func (m *Manager) verifyMarker(req Request) error {
 }
 
 func verifyWorktree(ctx context.Context, root string, req Request) error {
+	// Both sides of this comparison must be locations, not spellings: git
+	// registers and prints worktrees by the resolved path (junctions and
+	// symlinks collapsed, 8.3 short names expanded -- the Windows CI temp
+	// directory lives under C:\Users\RUNNER~1), while the managed root can be
+	// reached through an alias. A raw-versus-resolved comparison rejects every
+	// legitimate workspace provisioned through an alias; comparing resolved
+	// locations on both sides rejects only genuinely foreign trees.
+	resolvedRoot, err := canonical(root)
+	if err != nil {
+		return fmt.Errorf("resolve managed workspace path: %w", err)
+	}
 	observedRoot, err := gitOutput(ctx, root, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return fmt.Errorf("workspace is not a registered Git worktree: %w", err)
 	}
 	canonicalRoot, err := canonical(strings.TrimSpace(observedRoot))
-	if err != nil || canonicalRoot != root {
+	if err != nil || canonicalRoot != resolvedRoot {
 		return fmt.Errorf("Git worktree root does not match managed workspace path")
 	}
 	common, err := gitOutput(ctx, root, "rev-parse", "--git-common-dir")
