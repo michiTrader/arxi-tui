@@ -92,9 +92,8 @@ jobs:
       - name: Vet
         run: go vet ./...
 
-      # The core's tests run on Linux only for now: its architecture tests shell out to
-      # grep and go list, and its Windows-specific branches are covered by the vet step
-      # above (which type-checks them) until a Windows test run is proven green.
+      # The core's tests now run on Windows too: the ones that assumed Linux (the size of
+      # the standing prompt, the root of a drive) were adapted. If this step is red on
+      # Windows only, a test still assumes Linux; do not turn the Windows run off.
       - name: Test
-        if: matrix.os == 'ubuntu-latest'
         run: go test -count=1 ./...

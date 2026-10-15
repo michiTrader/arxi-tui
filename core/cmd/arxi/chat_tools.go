@@ -254,6 +254,11 @@ func toolsHint(root, edits string) string {
 	return h
 }
 
+// windowsShellHint is the part of envHint that only exists on Windows. It is a constant so
+// the size budget of the standing prompt can account for it by name.
+const windowsShellHint = " Use dir, ren, copy, type, not ls, mv, cat; grep and head do not exist there, so search with the grep tool, " +
+	"and for PowerShell run powershell -NoProfile -Command."
+
 // envHint tells the model where it is running: the operating system, the full path of
 // the project and the user's home. A model that is not told assumes Linux, writes ls and
 // $HOME for a Windows user, and then says the Desktop is out of reach (the defect that
@@ -272,8 +277,7 @@ func envHint(root, runs string) string {
 	if runs == editsAsk || runs == editsAllow {
 		h += " run uses " + chattools.ShellName() + " and may name any path (the user approves it); the other tools stay inside the project."
 		if runtime.GOOS == "windows" {
-			h += " Use dir, ren, copy, type, not ls, mv, cat; grep and head do not exist there, so search with the grep tool, " +
-				"and for PowerShell run powershell -NoProfile -Command."
+			h += windowsShellHint
 		}
 	}
 	return h
