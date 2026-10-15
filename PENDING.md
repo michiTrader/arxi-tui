@@ -1,5 +1,18 @@
 # Pending work
 
+## Done since: browser opened twice, Windows tests that failed for speed (PRs #272, #273)
+
+- `run` reported a command that opened a browser as "could not be started" (the browser keeps the output pipe; Go answers `WaitDelay expired`), so the model ran it again and the page opened twice. Now it is Exit 0 with a note not to repeat it (core; the core must be rebuilt). 2 tests, 5 mutations killed.
+- Three Windows tests failed on the CI runner for speed, never for the code (a temp folder still locked after `taskkill`, a 20 s wait for powershell, too few animation ticks). They waited too little; now they wait more. The animation test, if it fails again, prints how often each colour was drawn, which tells "did not tick" from "hardly repainted". It failed once more with 2 s of waiting before the last run passed, so it is NOT proven stable.
+
+## Still open from the owner's list (round of the lag report)
+
+- NOT reproduced: the tool record of a browser-opening call not showing in the chat. The core sends one `chat.tool` per call and the screen draws every one, so I do not know why one is missing; I need which tool the model used (the line that did show, or `run`).
+- Right-edge glitch ("arxi-tui" -> "arxi-ti" while narrowing): the frame drawn at widths 133-140, run through a terminal emulator, showed no overwritten character. The row with the folder path was not in my probe, so this did NOT reproduce it; it may be the Windows terminal's own handling of the last column.
+- Not started: a line of active shells above the info bar (configurable); per-model modalities; chat copy without the scrollbar column.
+- How images reach the model TODAY: they do not. The core has a content-block type for images (`turn.BlockImage`, `MediaSource`) but nothing builds or sends one, the turn validator refuses any block that is not text, no provider code mentions images, the chat tools only read text files, and a model in the store has an id, an on/off flag, a price, a wire and a context window, with no notion of what it accepts. So there is nothing to select per model yet: it is a feature to build (model field, form fields in add/edit, a way to attach an image, the wire encoding for each provider, and refusing an image for a model that cannot take it).
+- The chat is still redrawn whole on every frame: the cost per key grows with the length of the conversation (about 5 ms at 10 turns, 24 ms at 40). A cache of the lines already drawn is the next step.
+
 ## Done since: lag in a long conversation (branch fix/long-conversation-lag)
 
 - Symptom: typing/deleting in the input bar got slow in a developed conversation, only in that window, and `/resume` cured it. Cause (found by profiling, not guessed): every streamed fragment of the model's thinking was kept as its own event in the in-memory log, and the whole log is folded again on every key. After 40 turns with ~200 fragments each, a key cost ~125 ms. `/resume` rebuilt the log from the saved file, which never kept thinking events, hence the cure.
