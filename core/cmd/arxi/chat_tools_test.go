@@ -303,6 +303,9 @@ func TestTheHintMentionsEditingOnlyWhenItIsOffered(t *testing.T) {
 // tool schemas. It is a cost on every turn of every session, so it has a budget; a
 // change that grows it past that has to say so here, on purpose.
 func TestStandingPromptStaysWithinItsBudget(t *testing.T) {
+	// The hint names the user's home folder; a real one can be any length, so the test fixes it.
+	t.Setenv("HOME", "/h")
+	t.Setenv("USERPROFILE", "/h")
 	hints := toolsHint("/p/project", editsAsk) + " " + envHint("/p/project", editsAsk) + " " + runsHint(editsAsk) + " " + webHint(editsAsk)
 	defs := append(append(chattools.Definitions(), chattools.EditDefinitions()...), chattools.RunDefinitions()...)
 	raw, err := json.Marshal(defs)
@@ -313,7 +316,14 @@ func TestStandingPromptStaysWithinItsBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const maxHintBytes, maxDefBytes = 950, 1650 + 520
+	const maxDefBytes = 1650 + 520
+	// 950 bytes on Linux. Windows adds one sentence of its own (the cmd.exe commands) and
+	// longer names (windows/amd64, cmd.exe, a drive letter), which is measured here rather
+	// than hidden in a bigger number: the budget for everything else is the same.
+	maxHintBytes := 950
+	if runtime.GOOS == "windows" {
+		maxHintBytes += len(windowsShellHint) + 20
+	}
 	raw = append(raw, web...)
 	if len(hints) > maxHintBytes {
 		t.Errorf("the hints are %d bytes, budget %d:\n%s", len(hints), maxHintBytes, hints)

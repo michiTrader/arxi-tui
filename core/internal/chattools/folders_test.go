@@ -157,8 +157,11 @@ func TestSuggestFolderIsTheNearestProjectAndNeverADriveOrHome(t *testing.T) {
 		t.Errorf("suggest in a plain folder = %q, %v; want %s", got, err, real)
 	}
 	// A root and the home folder are refused.
-	if _, err := tb.SuggestFolder(string(filepath.Separator)); err == nil {
-		t.Error("the filesystem root was suggested")
+	// The root of the volume the project is on. "\\" alone is not an absolute path on
+	// Windows (no drive), so it would be read as a place under the project, not the root.
+	fsRoot := filepath.VolumeName(tb.Root()) + string(filepath.Separator)
+	if _, err := tb.SuggestFolder(fsRoot); err == nil {
+		t.Errorf("the filesystem root %s was suggested", fsRoot)
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		if _, err := tb.WithDir(home); err == nil {
