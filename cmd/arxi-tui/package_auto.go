@@ -198,8 +198,8 @@ func (a *packageAuto) goJob(key string, fn func(ctx context.Context) error, done
 	}()
 }
 
-// fire runs the events that react to on (and to value, for a setting). value is ignored
-// for turn events.
+// fire runs the events that react to on (and to value, for the events that carry one:
+// a setting, a tool name, a model). value is ignored for the others.
 func (a *packageAuto) fire(on, value string) {
 	type job struct {
 		p installedPackage
@@ -216,7 +216,7 @@ func (a *packageAuto) fire(on, value string) {
 			if e.Disabled || e.On != on {
 				continue
 			}
-			if extv2.IsSettingEvent(on) && e.Is != "" && e.Is != value {
+			if extv2.TakesValue(on) && e.Is != "" && e.Is != value {
 				continue
 			}
 			jobs = append(jobs, job{p, e})
@@ -574,4 +574,42 @@ func runServiceCommand(args string, a *packageAuto, synth bool) string {
 		return a.stopService(strings.Join(f[1:], " "))
 	}
 	return "/service: use /service, /service start <name> or /service stop <name|all>"
+}
+
+// What happened during a turn, and around it. Each only shows a note, like the rest.
+func (a *packageAuto) toolUsed(name string)      { a.fire(extv2.EventToolUsed, name) }
+func (a *packageAuto) providerError()            { a.fire(extv2.EventProviderError, "") }
+func (a *packageAuto) approvalAsked(name string) { a.fire(extv2.EventApprovalAsked, name) }
+func (a *packageAuto) contextHigh()              { a.fire(extv2.EventContextHigh, "") }
+func (a *packageAuto) modelChanged(ref string)   { a.fire(extv2.EventModelChanged, ref) }
+func (a *packageAuto) fileChanged()              { a.fire(extv2.EventFileChanged, "") }
+func (a *packageAuto) sessionResumed()           { a.fire(extv2.EventSessionResume, "") }
+
+// contextHighPercent is how full the window must be for the context.high event.
+const contextHighPercent = 80
+
+// contextHighCrossed says whether the window is high now and whether that is news: the
+// event fires once when the window climbs to contextHighPercent, and again only after it
+// dropped below (a compaction, /clear, a resume) and climbed back.
+func contextHighCrossed(wasHigh bool, percent int) (high, fire bool) {
+	high = percent >= contextHighPercent
+	return high, high && !wasHigh
+}
+
+// changedFile reports whether a tool call changed a file: the model's own edit or write,
+// when it went through. A command that writes files (run) cannot be told from one that
+// does not, so it does not count.
+func changedFile(tool string, ok bool) bool {
+	return ok && (tool == "edit" || tool == "write")
+}
+
+// eventValues lists what the "is" of an event may be: the settings' values, and for
+// tool.used and approval.asked the tools the chat offers (a package's own pkg_ tools are
+// accepted by the validator without being listed).
+func eventValues(on string) ([]string, bool) {
+	switch on {
+	case extv2.EventToolUsed, extv2.EventApprovalAsked:
+		return append(append([]string(nil), chatToolNames...), "folder"), true
+	}
+	return hookValues(on)
 }

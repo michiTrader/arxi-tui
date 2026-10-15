@@ -160,27 +160,47 @@ const ToolPrefix = "pkg_"
 func (t Tool) ModelName(pkgID string) string { return ToolPrefix + pkgID + "_" + t.Name }
 
 // The events a package may react to. The first two end a turn of the chat, the next three
-// are a turn starting, the user cancelling one, and a background shell ending by itself; the others
-// are the settings the user can change, the same ones a hook of the behaviour layer can
-// watch (the host knows each one's values).
+// are a turn starting, the user cancelling one, and a background shell ending by itself;
+// then come what happened during a turn (a tool used, the provider failing, an approval
+// asked, a file changed by the model), the context window nearly full, the model switched
+// and a conversation resumed; the last three are the settings the user can change, the
+// same ones a hook of the behaviour layer can watch (the host knows each one's values).
 const (
 	EventTurnDone      = "turn.done"
 	EventTurnFailed    = "turn.failed"
 	EventTurnStarted   = "turn.started"
 	EventTurnCancelled = "turn.cancelled"
 	EventShellEnded    = "shell.ended"
+	EventToolUsed      = "tool.used"
+	EventProviderError = "provider.error"
+	EventApprovalAsked = "approval.asked"
+	EventContextHigh   = "context.high"
+	EventModelChanged  = "model.changed"
+	EventFileChanged   = "file.changed"
+	EventSessionResume = "session.resumed"
 	EventEffort        = "effort"
 	EventMode          = "mode"
 	EventStyle         = "style"
 )
 
 // EventKinds lists what Event.On may be.
-var EventKinds = []string{EventTurnDone, EventTurnFailed, EventTurnStarted, EventTurnCancelled, EventShellEnded, EventEffort, EventMode, EventStyle}
+var EventKinds = []string{EventTurnDone, EventTurnFailed, EventTurnStarted, EventTurnCancelled, EventShellEnded,
+	EventToolUsed, EventProviderError, EventApprovalAsked, EventContextHigh, EventModelChanged, EventFileChanged, EventSessionResume,
+	EventEffort, EventMode, EventStyle}
 
-// IsSettingEvent reports whether an event is a change of a setting, which is the only
-// kind that carries a value.
+// IsSettingEvent reports whether an event is a change of a setting (effort, mode, style).
 func IsSettingEvent(on string) bool {
 	return on == EventEffort || on == EventMode || on == EventStyle
+}
+
+// TakesValue reports whether an event carries a value its "is" may narrow to: a setting's
+// new value, the name of the tool that was used or asked about, or the model switched to.
+func TakesValue(on string) bool {
+	switch on {
+	case EventToolUsed, EventApprovalAsked, EventModelChanged:
+		return true
+	}
+	return IsSettingEvent(on)
 }
 
 // Event is a reaction to something that happened in the interface. It runs one

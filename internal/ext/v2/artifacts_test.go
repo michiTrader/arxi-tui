@@ -35,7 +35,7 @@ func TestAnEventNamesWhatItReactsToAndIsRefusedOtherwise(t *testing.T) {
 		{"unknown event", `{"id":"a","on":"run.started","op":` + sayOp + `}`, []string{"not something a package can react to", "turn.done"}},
 		{"no event", `{"id":"a","op":` + sayOp + `}`, []string{"not something a package can react to"}},
 		{"bad id", `{"id":"A b","on":"turn.done","op":` + sayOp + `}`, []string{"not usable"}},
-		{"is on a turn", `{"id":"a","on":"turn.done","is":"x","op":` + sayOp + `}`, []string{"not a setting", "remove"}},
+		{"is on a turn", `{"id":"a","on":"turn.done","is":"x","op":` + sayOp + `}`, []string{"turn.done carries none", "remove"}},
 		{"placeholder", `{"id":"a","on":"turn.done","op":{"kind":"exec","argv":["echo","${args}"]}}`, []string{"nothing to fill it", "by itself"}},
 		{"input placeholder", `{"id":"a","on":"turn.done","op":{"kind":"http","url":"https://api.example.com/${input}"}}`, []string{"nothing to fill it"}},
 		{"send result", `{"id":"a","on":"turn.done","op":{"kind":"exec","argv":["echo"],"result":"send"}}`, []string{"not available here", "say"}},
@@ -443,5 +443,35 @@ func TestTheTokenBucketRefillsWithTime(t *testing.T) {
 	}
 	if b.take() {
 		t.Fatal("a long rest never stores more than the burst")
+	}
+}
+
+// The events that carry a value take "is"; the others refuse it. This is the validator's
+// own rule, so it is pinned here and not only through the host.
+func TestIsIsAcceptedOnlyOnTheEventsThatCarryAValue(t *testing.T) {
+	doc := func(on string) string {
+		return autoDoc("", `"events":[{"id":"a","on":"`+on+`","is":"x","op":`+sayOp+`}]`)
+	}
+	for _, on := range []string{EventToolUsed, EventApprovalAsked, EventModelChanged, EventEffort, EventMode, EventStyle} {
+		accepted(t, doc(on), Options{})
+	}
+	for _, on := range []string{EventTurnDone, EventTurnFailed, EventTurnStarted, EventTurnCancelled, EventShellEnded,
+		EventProviderError, EventContextHigh, EventFileChanged, EventSessionResume} {
+		refused(t, doc(on), Options{}, on+" carries none")
+	}
+	// A package's own tool is accepted even when the host lists the others.
+	host := Options{EventValues: func(string) ([]string, bool) { return []string{"read"}, true }}
+	accepted(t, autoDoc("", `"events":[{"id":"a","on":"tool.used","is":"pkg_weather_now","op":`+sayOp+`}]`), host)
+	refused(t, autoDoc("", `"events":[{"id":"a","on":"tool.used","is":"raed","op":`+sayOp+`}]`), host, "raed")
+	// Every event kind is listed once, and is the one the constants name.
+	seen := map[string]bool{}
+	for _, k := range EventKinds {
+		if seen[k] {
+			t.Errorf("%s is listed twice", k)
+		}
+		seen[k] = true
+	}
+	if len(EventKinds) != 15 {
+		t.Errorf("%d event kinds, want 15", len(EventKinds))
 	}
 }

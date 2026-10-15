@@ -871,6 +871,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// asks for it is emitted a moment before the session frees itself, so the first
 	// try can meet "busy" (autoCompactTry).
 	autoCompactCh := make(chan int, 1)
+	// ctxHigh is whether the window was already past contextHighPercent at the last
+	// answer, so the package event fires when it gets there and not at every answer after.
+	ctxHigh := false
 	autoCompactTry := func(attempt int) {
 		hr, ok1 := drv.(historyReader)
 		c, ok2 := drv.(sessionCompactor)
@@ -2373,6 +2376,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 									}
 									collected = evs
 									sessLog.Continue(id)
+									ctxHigh = false
+									pkgAuto.sessionResumed()
 									chatScroll = 0
 									slashSel = 0
 									sceneNotice = ""
@@ -2912,6 +2917,27 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					if ended, _ := e.Payload[shellEndedKey].(bool); ended {
 						pkgAuto.shellEnded()
 					}
+				case "chat.tool":
+					name, _ := e.Payload["name"].(string)
+					ok, _ := e.Payload["ok"].(bool)
+					pkgAuto.toolUsed(name)
+					if changedFile(name, ok) {
+						pkgAuto.fileChanged()
+					}
+				case "chat.approval":
+					name, _ := e.Payload["name"].(string)
+					pkgAuto.approvalAsked(name)
+				case "chat.error":
+					if failed, _ := e.Payload[providerErrorKey].(bool); failed {
+						pkgAuto.providerError()
+					}
+				}
+				if e.Type == "agent.turn_done" {
+					var fire bool
+					ctxHigh, fire = contextHighCrossed(ctxHigh, contextPercent(fold.Fold(collected).LastContext, hubWindow))
+					if fire {
+						pkgAuto.contextHigh()
+					}
 				}
 				repaint()
 			}
@@ -3104,6 +3130,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					if n, ok := drv.(modelSwitchNoter); ok && out.err == "" {
 						n.NoteModelSwitch(ctx, out.picked)
 					}
+					// (this is the branch where the pick went through)
+					pkgAuto.modelChanged(out.picked)
 				}
 			}
 			repaint()

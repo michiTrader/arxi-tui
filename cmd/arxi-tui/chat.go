@@ -173,6 +173,9 @@ func newChatSession(core chatSender, out chan<- fold.Event) *chatSession {
 // also fire the packages' shell.ended event for it.
 const shellEndedKey = "shell_ended"
 
+// providerErrorKey marks the error line of a model call that failed.
+const providerErrorKey = "provider_error"
+
 // shellEnded tells the conversation that a background shell ended by itself (a stopped
 // one was the user's or the model's own doing and needs no word). It is a warning line:
 // something the user may want to look at, never sent to the model.
@@ -963,7 +966,9 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		}
 		c.mu.Unlock()
 		c.emit(ctx, gen, "agent.failed", map[string]any{"agent": "assistant"})
-		c.fail(ctx, gen, chatErrorText(err))
+		// Marked, so the loop can fire the packages' provider.error event: this is the
+		// model call failing, unlike the other chat.error lines (a core that never started).
+		c.post(ctx, gen, "chat.error", map[string]any{"text": chatErrorText(err), providerErrorKey: true})
 		return
 	}
 	c.mu.Lock()

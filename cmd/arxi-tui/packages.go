@@ -95,7 +95,7 @@ type packageNamespace struct {
 }
 
 func (ns packageNamespace) options() extv2.Options {
-	return extv2.Options{ReservedCommands: ns.taken, Builtins: ns.builtins, EventValues: hookValues}
+	return extv2.Options{ReservedCommands: ns.taken, Builtins: ns.builtins, EventValues: eventValues}
 }
 
 func userPackagesDir() string {

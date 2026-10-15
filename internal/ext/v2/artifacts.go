@@ -76,12 +76,15 @@ func (p *Package) validateEvent(i int, e Event, opt Options) error {
 		return fmt.Errorf("%s: on %q is not something a package can react to, so it would never run; the events are %s", who, e.On, strings.Join(EventKinds, ", "))
 	}
 	if e.Is != "" {
-		if !IsSettingEvent(e.On) {
-			return fmt.Errorf("%s: \"is\" narrows a setting to one value, and %s is not a setting, so it would never match; remove \"is\"", who, e.On)
+		if !TakesValue(e.On) {
+			return fmt.Errorf("%s: \"is\" narrows an event that carries a value (a setting, tool.used, approval.asked or model.changed), and %s carries none, so it would never match; remove \"is\"", who, e.On)
 		}
 		if opt.EventValues != nil {
 			vals, ok := opt.EventValues(e.On)
-			if ok && !contains(vals, e.Is) {
+			// A tool a package lends the model is named pkg_<id>_<name>; the host cannot
+			// list those here, so any such name passes.
+			pkgTool := (e.On == EventToolUsed || e.On == EventApprovalAsked) && strings.HasPrefix(e.Is, ToolPrefix)
+			if ok && !pkgTool && !contains(vals, e.Is) {
 				return fmt.Errorf("%s: %s is never %q, so the event would never run; its values are %s (leave \"is\" out to react to any)", who, e.On, e.Is, strings.Join(vals, ", "))
 			}
 		}
