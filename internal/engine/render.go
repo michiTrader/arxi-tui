@@ -242,6 +242,23 @@ type Renderer struct {
 	// count and the budget. Zero when the chat fits and there is nothing to scroll.
 	ChatScrollMax int
 
+	// ChatUserStops are the scroll offsets (distance from the tail, ascending) at which one of
+	// the reader's own messages sits at the top of the chat window. The host steps through them
+	// for "previous / next message" (shift+up, shift+down): a long conversation is searched by
+	// what the reader asked, not by tool calls. Empty while the chat fits.
+	ChatUserStops []int
+
+	// InputScroll is the first input row the last frame showed (the host hands back what
+	// InputTop reported), InputMaxRows the most rows the input may take (0: a third of the
+	// screen, at least 3) and InputTop the first row THIS frame shows. A typed or pasted text
+	// taller than that is drawn as a window that follows the caret, one row at a time at its
+	// edges, with an arrow in the first/last row when there is more above/below. Without it a
+	// tall input pushed the line being typed off the screen.
+	InputScroll  int
+	InputMaxRows int
+	InputTop     int
+	inputOut     *int
+
 	// Scrollbar asks the chat pane to keep its last column for a scrollbar and to draw one
 	// there while there is more transcript than window. Off (the default, and every golden)
 	// the pane uses the full width and draws nothing. The host turns it on only when it
@@ -319,6 +336,9 @@ func (r *Renderer) child(width, height int) Renderer {
 		AnimTicks:     r.AnimTicks,
 		AnimPhase:     r.AnimPhase,
 		active:        r.active,
+		InputScroll:   r.InputScroll,
+		InputMaxRows:  r.InputMaxRows,
+		inputOut:      r.inputOut,
 	}
 }
 
@@ -342,6 +362,8 @@ func (r *Renderer) RenderFrameActive(doc *scene.Document, state fold.State) (ui.
 	}
 	var collected []AnimActivity
 	r.active = &collected
+	r.InputTop = 0
+	r.inputOut = &r.InputTop
 	frame := r.renderNode(doc.Root, state, r.Height)
 	return frame, collected
 }
@@ -1277,6 +1299,7 @@ func (r *Renderer) renderChatPane(n *scene.Node, state fold.State, budget int) u
 		sub.Scrollbar = false
 		f := sub.renderMarkdown(n, state, budget)
 		r.ChatScrollMax = sub.ChatScrollMax
+		r.ChatUserStops = sub.ChatUserStops
 		return r.withScrollbar(f, sub.ChatScrollMax, sub.ChatScroll)
 	}
 	return r.renderMarkdown(n, state, budget)
@@ -1465,6 +1488,17 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 				s = max
 			}
 			r.ChatScrollMax = max
+			r.ChatUserStops = r.ChatUserStops[:0]
+			for i := len(state.History) - 1; i >= 0; i-- {
+				if state.History[i].Role != "user" || i >= len(starts) {
+					continue
+				}
+				if off := max - starts[i]; off >= 0 && off <= max {
+					if n := len(r.ChatUserStops); n == 0 || r.ChatUserStops[n-1] != off {
+						r.ChatUserStops = append(r.ChatUserStops, off)
+					}
+				}
+			}
 			start := max - s
 			if pin := pinnedPrompt(state.History, starts, lines, start, s, budget, r.Width, r.PromptStyle); len(pin) > 0 {
 				// The pinned rows are spent out of the window's foot, not its head: the
@@ -1617,23 +1651,88 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 	}
 	rowsText := inputVisualRows(value, room)
 
-	live := make([]ui.Line, 0, len(rowsText))
-	for _, rt := range rowsText {
-		var cells ui.Line
-		if prefix != "" {
-			cells = append(cells, ui.Span{Text: prefix, Style: "input"})
+	row, col := inputCaretRowCol(value, caret, room)
+
+	// A text taller than the input may be is shown as a window of rows that follows the caret.
+	top, shown := 0, len(rowsText)
+	if allowed := r.inputRowsAllowed(); len(rowsText) > allowed {
+		shown = allowed
+		top = r.InputScroll
+		if top > row { // the caret went above the window: bring it back in, one row at the edge
+			top = row
 		}
-		cells = append(cells, ui.Span{Text: rt, Style: inputStyle})
-		live = append(live, cells)
+		if top+shown-1 < row {
+			top = row - shown + 1
+		}
+		if top > len(rowsText)-shown {
+			top = len(rowsText) - shown
+		}
+		if top < 0 {
+			top = 0
+		}
+	}
+	if r.inputOut != nil {
+		*r.inputOut = top
 	}
 
-	row, col := inputCaretRowCol(value, caret, room)
+	live := make([]ui.Line, 0, shown)
+	for i := top; i < top+shown; i++ {
+		pre := prefix
+		if shown < len(rowsText) && pre != "" {
+			if i == top && top > 0 {
+				pre = replaceFirstGlyph(pre, "↑")
+			} else if i == top+shown-1 && top+shown < len(rowsText) {
+				pre = replaceFirstGlyph(pre, "↓")
+			}
+		}
+		var cells ui.Line
+		if pre != "" {
+			cells = append(cells, ui.Span{Text: pre, Style: "input"})
+		}
+		cells = append(cells, ui.Span{Text: rowsText[i], Style: inputStyle})
+		live = append(live, cells)
+	}
+	row -= top
 	return ui.Frame{
 		Live:   live,
 		Width:  r.Width,
 		Height: len(live),
 		Cursor: ui.Cursor{Line: row, Col: prefixW + col},
 	}
+}
+
+// inputRowsAllowed is the most rows the input may take before it becomes a window.
+func (r *Renderer) inputRowsAllowed() int {
+	n := r.InputMaxRows
+	if n <= 0 {
+		n = r.Height / 3
+	}
+	if n < 3 {
+		n = 3
+	}
+	return n
+}
+
+// replaceFirstGlyph swaps the first visible glyph of a prefix (which may carry style escapes)
+// for g, keeping the rest, so the "┃ " bar becomes "↑ " or "↓ " without changing the width.
+func replaceFirstGlyph(prefix, g string) string {
+	rs := []rune(prefix)
+	inEsc := false
+	for i, c := range rs {
+		switch {
+		case inEsc:
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+				inEsc = false
+			}
+		case c == 0x1b:
+			inEsc = true
+		case c == ' ':
+			continue
+		default:
+			return string(rs[:i]) + g + string(rs[i+1:])
+		}
+	}
+	return prefix
 }
 
 // inputVisualRows splits the typed text into visual rows: it breaks on an
@@ -3172,6 +3271,8 @@ func resolveBind(bind string, state fold.State) string {
 		return state.HostBranch
 	case "host.scroll":
 		return state.HostScroll
+	case "host.paste":
+		return state.HostPaste
 	case "host.shells":
 		return state.HostShells
 	case "host.shell.list":

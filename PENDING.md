@@ -1,5 +1,23 @@
 # Pending work
 
+## The owner's definition of "finished" (recorded on purpose)
+
+**The product is not finished until the owner can edit the TUI from inside the TUI, however he
+wants, and define the default style and behaviour once and for all.** Every look and behaviour
+item below is a step toward that, not the end of it. Concretely still missing: a way to see and
+change, from inside the TUI, each setting that today needs a `/ui` command or a scene file (the
+paste limits, scroll steps, the input window height are text keys or constants now), and a
+decision, taken by the owner, of what the factory style and keys are, after which they stop
+moving. Not started as a single piece of work.
+
+## Done since: keyboard scroll, big pastes folded, long input scrolls (branch feat/paste-input-scroll)
+
+- Chat scroll from the keyboard like `arxi_cli_sim`: ctrl+↑/↓ (a notch), alt+↑/↓ (a row), ctrl+Home (oldest), shift+↑/↓ (previous/next message you wrote; the renderer reports where they sit). PgUp/PgDn/End/ctrl+End already existed.
+- A paste over 5 lines / 1500 characters shows `[Pasted text #1 +68 lines]` in the input and `paste again to expand` in the info bar (new bind `host.paste`, in the default scene). Enter sends the real text; the same paste again opens the marker; Backspace/Delete take a marker whole; the numbers restart after a send. Limits and words are text keys (`paste.fold_lines`, `paste.fold_chars`, `paste.hint`).
+- A tall input becomes a window that follows the caret (max a third of the screen, at least 3 rows), with `↑`/`↓` markers.
+- Tests: 14+ for the paste store, 6 through the real loop, 6 for the input window in the engine, plus the keyboard scroll ones. Mutation checks: paste store 14/14 killed, loop wiring 8/8 killed, keyboard scroll 7/7; input window 15 mutations: the real gaps (box child renderer, edges) were found and closed; 3 survive and are equivalent by reasoning (`top > row` written as `>= row+1` or `>= row`, and `>` vs `>=` on the window limit give the same result for whole numbers / when the text exactly fits).
+- NOT verified: in a real PowerShell / Windows Terminal (modified arrows, bracketed paste delivery); ctrl+z after a marker was opened (not tested); the input window with real keystrokes through the loop (tested in the engine only).
+
 ## Done since: row of active shells above the info bar (branch feat/shells-line)
 
 - A row of its own above the info bar names the shells that run: `shell 1 · shell 2` (the numbers `/shell show <n>` and the model's `shell_read` use; an ended one drops out, numbers are not reused). New bind `host.shell.list`; the default scene gets a node `shells`, so it is configurable like everything else: `/ui hide shells`, move, restyle, or a scene of your own.
@@ -15,8 +33,8 @@
 ## Still open from the owner's list (round of the lag report)
 
 - NOT reproduced: the tool record of a browser-opening call not showing in the chat. The core sends one `chat.tool` per call and the screen draws every one, so I do not know why one is missing; I need which tool the model used (the line that did show, or `run`).
-- Right-edge glitch ("arxi-tui" -> "arxi-ti" while narrowing): the frame drawn at widths 133-140, run through a terminal emulator, showed no overwritten character. The row with the folder path was not in my probe, so this did NOT reproduce it; it may be the Windows terminal's own handling of the last column.
-- Not started: per-model modalities; chat copy without the scrollbar column.
+- Right-edge glitch ("arxi-tui" -> "arxi-ti" while narrowing): the frame drawn at widths 133-140, run through a terminal emulator, showed no overwritten character. The row with the folder path was not in my probe, so this did NOT reproduce it; it may be the Windows terminal's own handling of the last column. The owner uses PowerShell; still not reproduced. Useful test: run with `-mouse=false` (no scrollbar) and see if it still happens.
+- Not started: per-model modalities; chat copy without the scrollbar column (investigated: the column and the space padding are real characters on screen, so a native selection takes them; it cannot exclude a column).
 - How images reach the model TODAY: they do not. The core has a content-block type for images (`turn.BlockImage`, `MediaSource`) but nothing builds or sends one, the turn validator refuses any block that is not text, no provider code mentions images, the chat tools only read text files, and a model in the store has an id, an on/off flag, a price, a wire and a context window, with no notion of what it accepts. So there is nothing to select per model yet: it is a feature to build (model field, form fields in add/edit, a way to attach an image, the wire encoding for each provider, and refusing an image for a model that cannot take it).
 - The chat is still redrawn whole on every frame: the cost per key grows with the length of the conversation (about 5 ms at 10 turns, 24 ms at 40). A cache of the lines already drawn is the next step.
 

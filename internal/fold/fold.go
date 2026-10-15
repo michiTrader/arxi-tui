@@ -357,6 +357,10 @@ type State struct {
 	HostBranch string `json:"host.branch"`
 	HostScroll string `json:"host.scroll"`
 
+	// HostPaste is the info-bar hint shown while the input holds a folded paste ("paste again
+	// to expand"); empty otherwise. Host view state like HostScroll.
+	HostPaste string `json:"host.paste"`
+
 	// HostShells is how many background shells run ("1 shell", "3 shells"), empty when none.
 	// Host view state like HostBranch: the shells live in the host, so the loop counts them
 	// each frame.
