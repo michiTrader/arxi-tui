@@ -72,6 +72,16 @@ func anthropicTurnMessage(msg turn.Message) (anthropicMessage, error) {
 				return wire, fmt.Errorf("tool message contains text outside a tool result")
 			}
 			wire.Content = append(wire.Content, anthropicContentBlock{Type: "text", Text: block.Text})
+		case turn.BlockImage:
+			if msg.Role != turn.RoleUser {
+				return wire, fmt.Errorf("image block is only valid in user messages")
+			}
+			mt, data, err := imageData(block)
+			if err != nil {
+				return wire, err
+			}
+			wire.Content = append(wire.Content, anthropicContentBlock{Type: "image",
+				Source: map[string]string{"type": "base64", "media_type": mt, "data": data}})
 		case turn.BlockToolCall:
 			if msg.Role != turn.RoleAssistant || block.ToolCall == nil {
 				return wire, fmt.Errorf("tool_call block is only valid in assistant messages")

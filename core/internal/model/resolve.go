@@ -25,6 +25,9 @@ type Resolution struct {
 
 	// ContextWindow is the model's window in tokens, 0 when not known.
 	ContextWindow int
+
+	// Images is whether the model takes images (see Model.Images).
+	Images bool
 }
 
 // Ref is how a model is named on a command line or in a blueprint: either a
@@ -133,6 +136,7 @@ func Resolve(ps []Provider, ref string) (Resolution, error) {
 		Price:     h.m.Price,
 
 		ContextWindow: h.m.ContextWindow,
+		Images:        h.m.Images,
 	}, nil
 }
 
