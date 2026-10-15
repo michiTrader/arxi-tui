@@ -134,3 +134,24 @@ moving. Not started as a single piece of work.
 - Blocked on the `arxi` core / product decisions, not on this repo: NEXT.md K1 core wiring and K3 (need a live
   agent and a coordinated core surface bump), K4 wasm (deferred on purpose), M3; DECISIONS-DEFERRED D1
   (`{row.<field>}` in drawn text: a format change) and D2 (product repo, `install.ps1`, version handshake).
+
+## Imágenes por modelo (parcial, rama feat/model-images)
+
+Hecho y probado (con mutaciones): `Model.Images` + `SetImages` + `Resolution.Images`
+(un modelo NO acepta imágenes hasta que alguien lo diga); traducción a OpenAI Chat
+Completions (`image_url` con data URL) y Anthropic Messages (`source` base64), solo en
+mensajes de usuario, solo png/jpeg/gif/webp, solo datos en línea (nunca URL).
+
+Falta (nada de esto llega aún al usuario; hoy no se puede mandar una imagen):
+- `chat.send`: parámetro `images` (declarar en `core/internal/surface/surface.go`, leerlo en
+  `handleChatSend`/`handleChatSendThinking`, construir el bloque en `chatSendEffort`) y
+  negarse ANTES de cobrar si `Resolution.Images` es falso.
+- Tope de tamaño: la línea NDJSON tiene tope de 1 MiB (core y driver); una foto normal lo
+  pasa. Hay que decidir: subir el tope solo para `chat.send`, o reducir la imagen y avisar.
+- `model.update` con `images` (hoy `handleModelUpdate` exige `context_window`), fila
+  `images` en `model.list`, `--images` en `model add/update`.
+- Driver (`ChatSendParams.Images`, lista/alta/edición) y error propio para un core viejo.
+- TUI: campo "acepta imágenes" en los formularios, forma de adjuntar (ruta / `/image`)
+  con marcador `[Image #N]` como el de pegados grandes, mostrarla en el chat, negarse con
+  explicación si el modelo no acepta.
+- Nada se probó contra un proveedor real.

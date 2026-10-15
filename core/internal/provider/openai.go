@@ -45,7 +45,20 @@ func openAIRequest(req turn.Request) (chatRequest, error) {
 
 func openAIMessage(msg turn.Message) ([]chatMessage, error) {
 	switch msg.Role {
-	case turn.RoleSystem, turn.RoleUser:
+	case turn.RoleUser:
+		if hasImage(msg.Content) {
+			parts, err := openAIParts(msg.Content)
+			if err != nil {
+				return nil, err
+			}
+			return []chatMessage{{Role: "user", Content: parts}}, nil
+		}
+		text, err := textContent(msg.Content)
+		if err != nil {
+			return nil, err
+		}
+		return []chatMessage{{Role: "user", Content: text}}, nil
+	case turn.RoleSystem:
 		text, err := textContent(msg.Content)
 		if err != nil {
 			return nil, err
@@ -98,6 +111,37 @@ func openAIMessage(msg turn.Message) ([]chatMessage, error) {
 	default:
 		return nil, fmt.Errorf("unsupported turn role %q", msg.Role)
 	}
+}
+
+func hasImage(blocks []turn.ContentBlock) bool {
+	for _, b := range blocks {
+		if b.Type == turn.BlockImage {
+			return true
+		}
+	}
+	return false
+}
+
+// openAIParts turns a user message that carries pictures into the content
+// array form: text parts and image_url parts, in the order they were sent.
+func openAIParts(blocks []turn.ContentBlock) ([]map[string]any, error) {
+	parts := make([]map[string]any, 0, len(blocks))
+	for _, b := range blocks {
+		switch b.Type {
+		case turn.BlockText:
+			parts = append(parts, map[string]any{"type": "text", "text": b.Text})
+		case turn.BlockImage:
+			mt, data, err := imageData(b)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, map[string]any{"type": "image_url",
+				"image_url": map[string]string{"url": "data:" + mt + ";base64," + data}})
+		default:
+			return nil, fmt.Errorf("content type %q is not supported by OpenAI Chat Completions", b.Type)
+		}
+	}
+	return parts, nil
 }
 
 func textContent(blocks []turn.ContentBlock) (string, error) {

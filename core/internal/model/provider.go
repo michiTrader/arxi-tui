@@ -95,6 +95,13 @@ type Model struct {
 	// It is only ever stored when the provider reported it or the operator typed it,
 	// never guessed: a wrong window would make a percentage on screen a lie.
 	ContextWindow int `json:"context_window,omitempty"`
+
+	// Images is whether the model takes images in a message. False is "not said", and an
+	// image is then refused before anything is billed: sending one to a model that cannot read
+	// it costs the tokens and answers about nothing. It is true only when the operator said so
+	// or the provider's own listing reported an image input, never because of a guess from the
+	// model's name.
+	Images bool `json:"images,omitempty"`
 }
 
 const (
@@ -571,6 +578,19 @@ func (p *Provider) SetContextWindow(id string, tokens int) bool {
 			p.Models[i].ContextWindow = tokens
 		}
 		return true
+	}
+	return false
+}
+
+// SetImages records whether a model already in the provider takes images. Unlike the window
+// it can be turned off again: the operator may have been wrong. It reports whether the model
+// exists.
+func (p *Provider) SetImages(id string, on bool) bool {
+	for i := range p.Models {
+		if p.Models[i].ID == id {
+			p.Models[i].Images = on
+			return true
+		}
 	}
 	return false
 }
