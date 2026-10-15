@@ -525,13 +525,18 @@ func TestBehaviourAnimationReachesTheEmittedFrames(t *testing.T) {
 	tty := runLoop(t, drv, drv.evCh, script)
 	out := tty.output()
 	seen := map[string]bool{}
+	counts := map[string]int{}
 	for _, c := range []string{"38;5;1m", "38;5;2m", "38;5;4m", "31m", "32m", "34m"} {
-		if strings.Contains(out, c) {
+		if n := strings.Count(out, c); n > 0 {
 			seen[c] = true
+			counts[c] = n
 		}
 	}
 	if len(seen) < 2 {
-		t.Errorf("the effort word never changed colour across ticks; saw %v", seen)
+		// The counts say whether the animation ticked at all (many frames, one colour:
+		// it did not advance) or the screen was hardly repainted (few of any).
+		t.Errorf("the effort word never changed colour across ticks; saw %v (times each appeared: %v; bytes drawn: %d; effort levels set: %v)",
+			seen, counts, len(out), drv.levels)
 	}
 }
 
