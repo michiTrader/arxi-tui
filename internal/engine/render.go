@@ -151,6 +151,11 @@ type Renderer struct {
 	// can be changed with /ui and ui_edit; see ChatLook.
 	Look *ChatLook
 
+	// ChatCache keeps the chat rows already laid out between frames (see ChatRowCache). The
+	// host owns it and hands the same one to every frame's Renderer; nil lays everything out
+	// each time, with the same result.
+	ChatCache *ChatRowCache
+
 	// PluginValues is the host-owned plugin bind snapshot, fed in per repaint the
 	// way AnimTicks and ChatScroll are: the loop reads a snapshot of the
 	// ext.PluginStore once per frame and hands it here (I3, ADR-0007 §I-D). It maps
@@ -339,6 +344,7 @@ func (r *Renderer) child(width, height int) Renderer {
 		InputScroll:   r.InputScroll,
 		InputMaxRows:  r.InputMaxRows,
 		inputOut:      r.inputOut,
+		ChatCache:     r.ChatCache,
 	}
 }
 
@@ -1287,6 +1293,110 @@ func (r *Renderer) cutUserTurn(rows []ui.Line, lk ChatLook) []ui.Line {
 	return append(out, last)
 }
 
+// chatItemRows lays out ONE history item as rows: what the item says, with no gap after it.
+// It depends only on the item, the width, the look and the few Renderer settings read below,
+// which is what lets chatRowCache keep its result between frames.
+func (r *Renderer) chatItemRows(h fold.ChatLine, token string, lk ChatLook) []ui.Line {
+	// Blank rows at the edges of what was said are not part of it: a reply that
+	// opens with a line break or ends with two would otherwise be drawn as that
+	// many empty rows between the turns.
+	text := trimBlankText(h.Text)
+	turnToken := token
+	var cont ui.Line
+	if h.Role == "user" {
+		// Mark the user's own turns so the transcript does not read as a
+		// single voice. Without a marker a reader cannot tell what they
+		// asked from what the agent answered — the differentiation the
+		// chat was missing. The marker is prepended to the text before
+		// wrapping so it rides the first row of the turn, and passed as
+		// the continuation prefix so every wrapped or newline-broken row
+		// carries it too; agent turns stay unmarked, which is the default
+		// voice of the pane. The turn is wrapped under userTurnToken so it
+		// also carries the user's colour, while an agent turn keeps the
+		// pane's own token.
+		turnToken = userTurnToken
+		if r.PromptStyle != PromptPlain {
+			text = lk.UserMarker + text
+			cont = ui.Line{{Text: lk.UserMarker, Style: userTurnToken}}
+		}
+	} else if h.Role == "error" {
+		// A failed request is a line of the conversation, not a banner: it is
+		// drawn in the flow under its own token, with a marker that keeps it
+		// from being mistaken for an answer.
+		text = lk.ErrorMarker + text
+		turnToken = errorTurnToken
+		cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(lk.ErrorMarker)), Style: errorTurnToken}}
+	}
+	if h.Role == "approval" {
+		return approvalLines(h, r.Width, r.ExpandTools, lk)
+	}
+	if h.Role == "tool" {
+		return toolLines(h, r.Width, r.ExpandTools, lk)
+	}
+	if h.Role == "warn" {
+		text = lk.WarnMarker + text
+		turnToken = warnTurnToken
+		cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(lk.WarnMarker)), Style: warnTurnToken}}
+	}
+	if h.Role == "note" {
+		text = lk.NoteMarker + text
+		turnToken = noteTurnToken
+		cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(lk.NoteMarker)), Style: noteTurnToken}}
+	}
+	if h.Role == "assistant" {
+		// The agent's answer is Markdown: headings, lists, tables, fenced code and
+		// inline emphasis are laid out, not shown as raw punctuation. The user's own
+		// words and a failure stay literal, because what a person typed is not markup.
+		// It is drawn AssistantIndent columns in, to sit opposite the user's marker.
+		w := r.Width - lk.AssistantIndent
+		if w < 1 {
+			w = r.Width
+		}
+		body := trimBlankRows(ui.RenderMarkdown(text, w, turnToken))
+		if w != r.Width {
+			body = indentLines(body, lk.AssistantIndent)
+		}
+		u := usageLine(h, lk)
+		// Nothing to say (a turn that was only tool calls) is no rows at all, and the
+		// caller then adds no gap, or the transcript would show an empty answer.
+		rows := body
+		if u != "" {
+			if len(body) > 0 {
+				for k := 0; k < lk.UsageGap; k++ {
+					rows = append(rows, ui.Line{})
+				}
+			}
+			rows = append(rows, ui.WrapText(strings.Repeat(" ", lk.AssistantIndent)+u, usageTurnToken, r.Width, nil)...)
+		}
+		return rows
+	}
+	{
+		var wrapped []ui.Line
+		if h.Role == "user" && h.Command != "" {
+			// "/ui make the border red": the command is drawn apart from the
+			// words, in its own token, so it is plain what addressed the app.
+			spans := []ui.Span{}
+			if r.PromptStyle != PromptPlain {
+				spans = append(spans, ui.Span{Text: lk.UserMarker, Style: userTurnToken})
+			}
+			spans = append(spans, ui.Span{Text: h.Command, Style: commandTurnToken})
+			if t := trimBlankText(h.Text); t != "" {
+				spans = append(spans, ui.Span{Text: " " + t, Style: turnToken})
+			}
+			wrapped = ui.WrapSpans(spans, r.Width, cont)
+		} else {
+			wrapped = ui.WrapText(text, turnToken, r.Width, cont)
+		}
+		if h.Role == "user" {
+			wrapped = r.cutUserTurn(wrapped, lk)
+		}
+		if h.Role == "user" && r.PromptStyle == PromptBand {
+			wrapped = bandLines(wrapped, r.Width, promptBandToken)
+		}
+		return wrapped
+	}
+}
+
 // renderChatPane draws a markdown node and, for the chat pane when the host asked for a
 // scrollbar, keeps its last column for the bar. Anything else is renderMarkdown untouched.
 func (r *Renderer) renderChatPane(n *scene.Node, state fold.State, budget int) ui.Frame {
@@ -1333,45 +1443,16 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 				lines = append(lines, ui.Line{})
 			}
 		}
+		if c := r.ChatCache; c != nil {
+			c.begin(chatCacheCtx{width: r.Width, promptStyle: r.PromptStyle, expand: r.ExpandTools, token: token, look: lookKey(lk)})
+			defer c.end()
+		}
 		for i, h := range state.History {
 			starts[i] = len(lines)
-			// Blank rows at the edges of what was said are not part of it: a reply that
-			// opens with a line break or ends with two would otherwise be drawn as that
-			// many empty rows between the turns.
-			text := trimBlankText(h.Text)
-			turnToken := token
-			var cont ui.Line
-			if h.Role == "user" {
-				// Mark the user's own turns so the transcript does not read as a
-				// single voice. Without a marker a reader cannot tell what they
-				// asked from what the agent answered — the differentiation the
-				// chat was missing. The marker is prepended to the text before
-				// wrapping so it rides the first row of the turn, and passed as
-				// the continuation prefix so every wrapped or newline-broken row
-				// carries it too; agent turns stay unmarked, which is the default
-				// voice of the pane. The turn is wrapped under userTurnToken so it
-				// also carries the user's colour, while an agent turn keeps the
-				// pane's own token.
-				turnToken = userTurnToken
-				if r.PromptStyle != PromptPlain {
-					text = lk.UserMarker + text
-					cont = ui.Line{{Text: lk.UserMarker, Style: userTurnToken}}
-				}
-			} else if h.Role == "error" {
-				// A failed request is a line of the conversation, not a banner: it is
-				// drawn in the flow under its own token, with a marker that keeps it
-				// from being mistaken for an answer.
-				text = lk.ErrorMarker + text
-				turnToken = errorTurnToken
-				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(lk.ErrorMarker)), Style: errorTurnToken}}
-			}
-			if h.Role == "approval" {
-				lines = append(lines, approvalLines(h, r.Width, r.ExpandTools, lk)...)
-				gap()
-				continue
-			}
-			if h.Role == "tool" {
-				lines = append(lines, toolLines(h, r.Width, r.ExpandTools, lk)...)
+			rows := r.cachedChatItemRows(h, token, lk)
+			lines = append(lines, rows...)
+			switch {
+			case h.Role == "tool":
 				// Calls of one answer stack; the gap comes after the last one.
 				// An answer with nothing in it (a turn that only called tools) draws as
 				// nothing, so it does not end the stack either.
@@ -1382,72 +1463,11 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 				if next >= len(state.History) || state.History[next].Role != "tool" {
 					gap()
 				}
-				continue
+			case h.Role == "assistant" && len(rows) == 0:
+				// An empty answer draws no rows and no gap.
+			default:
+				gap()
 			}
-			if h.Role == "warn" {
-				text = lk.WarnMarker + text
-				turnToken = warnTurnToken
-				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(lk.WarnMarker)), Style: warnTurnToken}}
-			}
-			if h.Role == "note" {
-				text = lk.NoteMarker + text
-				turnToken = noteTurnToken
-				cont = ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(lk.NoteMarker)), Style: noteTurnToken}}
-			}
-			if h.Role == "assistant" {
-				// The agent's answer is Markdown: headings, lists, tables, fenced code and
-				// inline emphasis are laid out, not shown as raw punctuation. The user's own
-				// words and a failure stay literal, because what a person typed is not markup.
-				// It is drawn AssistantIndent columns in, to sit opposite the user's marker.
-				w := r.Width - lk.AssistantIndent
-				if w < 1 {
-					w = r.Width
-				}
-				body := trimBlankRows(ui.RenderMarkdown(text, w, turnToken))
-				if w != r.Width {
-					body = indentLines(body, lk.AssistantIndent)
-				}
-				u := usageLine(h, lk)
-				if len(body) == 0 && u == "" {
-					// Nothing to say (a turn that was only tool calls): no rows and no
-					// gap, or the transcript would show an empty answer.
-					continue
-				}
-				lines = append(lines, body...)
-				if u != "" {
-					if len(body) > 0 {
-						for k := 0; k < lk.UsageGap; k++ {
-							lines = append(lines, ui.Line{})
-						}
-					}
-					lines = append(lines, ui.WrapText(strings.Repeat(" ", lk.AssistantIndent)+u, usageTurnToken, r.Width, nil)...)
-				}
-			} else {
-				var wrapped []ui.Line
-				if h.Role == "user" && h.Command != "" {
-					// "/ui make the border red": the command is drawn apart from the
-					// words, in its own token, so it is plain what addressed the app.
-					spans := []ui.Span{}
-					if r.PromptStyle != PromptPlain {
-						spans = append(spans, ui.Span{Text: lk.UserMarker, Style: userTurnToken})
-					}
-					spans = append(spans, ui.Span{Text: h.Command, Style: commandTurnToken})
-					if t := trimBlankText(h.Text); t != "" {
-						spans = append(spans, ui.Span{Text: " " + t, Style: turnToken})
-					}
-					wrapped = ui.WrapSpans(spans, r.Width, cont)
-				} else {
-					wrapped = ui.WrapText(text, turnToken, r.Width, cont)
-				}
-				if h.Role == "user" {
-					wrapped = r.cutUserTurn(wrapped, lk)
-				}
-				if h.Role == "user" && r.PromptStyle == PromptBand {
-					wrapped = bandLines(wrapped, r.Width, promptBandToken)
-				}
-				lines = append(lines, wrapped...)
-			}
-			gap()
 		}
 		for len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
 			lines = lines[:len(lines)-1]
@@ -1511,6 +1531,11 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 		} else {
 			lines = lines[len(lines)-budget:]
 		}
+	}
+	if n.Bind == "chat.history" && r.ChatCache != nil {
+		// Rows kept in the cache are shared between frames; what leaves the pane is a copy,
+		// so whoever draws or edits the frame cannot change what the next one reuses.
+		lines = cloneRows(lines)
 	}
 	return ui.Frame{Live: lines, Width: r.Width}
 }
