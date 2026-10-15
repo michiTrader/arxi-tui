@@ -1517,8 +1517,8 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 
 // withScrollbar adds the bar's column to a chat window f that was laid out one column short
 // of the pane. Every row is padded to that width and gets one cell: a track, with a thumb
-// where the window sits in the transcript. With nothing to scroll the cell is a blank, so
-// the layout holds still.
+// where the window sits in the transcript. With nothing to scroll the rows are left as they
+// are (no padding, no cell): the text was already laid out one column short, so it holds still.
 func (r *Renderer) withScrollbar(f ui.Frame, max, scroll int) ui.Frame {
 	rows := len(f.Live)
 	f.Width = r.Width
@@ -1541,6 +1541,12 @@ func (r *Renderer) withScrollbar(f ui.Frame, max, scroll int) ui.Frame {
 		if rows > thumbLen {
 			thumbTop = (max - scroll) * (rows - thumbLen) / max
 		}
+	}
+	if thumbLen == 0 {
+		// Nothing to scroll: no bar, and so no reason to pad the rows out to the bar's column.
+		// A row padded with spaces is copied with them; the text keeps the width it was laid
+		// out in (one column short), so nothing moves.
+		return f
 	}
 	out := make([]ui.Line, rows)
 	for i, l := range f.Live {

@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/michiTrader/arxi_tui/internal/defaultscene"
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
 	"github.com/michiTrader/arxi_tui/internal/term"
@@ -152,6 +153,12 @@ func TestBranchCacheReusesTheAnswerForTwoSeconds(t *testing.T) {
 func scrollLoop(t *testing.T, keys []scheduledEvent) []string {
 	t.Helper()
 	t.Setenv(configDirEnv, t.TempDir())
+	return scrollLoopKeepingConfig(t, keys)
+}
+
+// scrollLoopKeepingConfig is scrollLoop on the config folder the test already set up.
+func scrollLoopKeepingConfig(t *testing.T, keys []scheduledEvent) []string {
+	t.Helper()
 	drv := newCompactDriver(1_000_000, 2)
 	var long string
 	for i := 0; i < 60; i++ {
@@ -166,7 +173,9 @@ func scrollLoop(t *testing.T, keys []scheduledEvent) []string {
 		e.Seq = int64(3000 + i)
 		drv.evCh <- e
 	}
-	doc, err := scene.ParseDocument([]byte(factorySobria))
+	// Named like the built-in scene: only that one reads the user's saved texts, and a test
+	// about a setting must go through the door the setting uses.
+	doc, err := scene.ParseNamed(defaultscene.Name, defaultscene.JSON)
 	if err != nil {
 		t.Fatal(err)
 	}

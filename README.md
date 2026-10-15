@@ -35,6 +35,13 @@ A scrollbar sits at the right edge of the chat: drag its thumb, or click the tra
 away from the bottom the bar says so and names the key back (`End`, or `ctrl+End` from the
 middle of a line); the hint is absent while you follow the newest text.
 
+**Copying with the mouse.** A drag-select in the terminal copies what is ON the screen, cell by
+cell, and a program cannot tell the terminal to skip one column. So while the scrollbar is drawn,
+its column (`│`/`┃`) is copied at the end of every row, and the row is padded with spaces to
+reach it. Two things were changed for that: when the chat fits (no bar) rows are no longer padded
+at all, and `/ui text chat.scrollbar no` (or `-mouse=false`) takes the bar away completely, so a
+selection is just the text. `/copy` (see below) never includes the bar either way.
+
 ### Keyboard scroll, like arxi_cli_sim
 
 The chat also scrolls from the keyboard, so it works without a mouse (and where the terminal
