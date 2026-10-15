@@ -340,12 +340,30 @@ func TestSobriaStatusShowsEffortAndCwd(t *testing.T) {
 	if got := r.RenderFrame(doc, st).Plain(); !strings.Contains(got, "~/proj · main · scrolled up · End: latest") {
 		t.Errorf("scroll hint missing:\n%s", got)
 	}
-	// Running shells are counted on the status line, and only when there are any.
-	st.HostUsage, st.HostShells = "ctx 1k", "2 shells"
-	if got := r.RenderFrame(doc, st).Plain(); !strings.Contains(got, "ctx 1k · 2 shells") {
-		t.Errorf("shell count missing from the status line:\n%s", got)
+	// Running shells are listed on a row of their own above the status line, and only when
+	// there are any; the status line no longer carries a count.
+	st.HostUsage, st.HostShellList = "ctx 1k", "shell 1 · shell 3"
+	withShells := r.RenderFrame(doc, st).Plain()
+	if !strings.Contains(withShells, "shell 1 · shell 3") {
+		t.Errorf("shell list missing:\n%s", withShells)
 	}
-	st.HostShells = ""
+	rows := strings.Split(withShells, "\n")
+	shellRow, statusRow := -1, -1
+	for i, l := range rows {
+		if strings.Contains(l, "shell 1 · shell 3") {
+			shellRow = i
+		}
+		if strings.Contains(l, "ctx 1k") {
+			statusRow = i
+		}
+	}
+	if shellRow < 0 || statusRow < 0 || shellRow != statusRow-1 {
+		t.Errorf("the shell row must sit right above the status row (shells %d, status %d):\n%s", shellRow, statusRow, withShells)
+	}
+	if strings.Contains(rows[statusRow], "shell") {
+		t.Errorf("the status line must not repeat the shells: %q", rows[statusRow])
+	}
+	st.HostShellList = ""
 	if got := r.RenderFrame(doc, st).Plain(); strings.Contains(got, "shell") || strings.Contains(got, "ctx 1k ·") {
 		t.Errorf("no shells must leave neither the word nor a separator:\n%s", got)
 	}

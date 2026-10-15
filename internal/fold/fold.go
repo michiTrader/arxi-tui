@@ -362,6 +362,11 @@ type State struct {
 	// each frame.
 	HostShells string `json:"host.shells"`
 
+	// HostShellList names the shells that run, "shell 1 · shell 2", empty when none. Host view
+	// state like HostShells; the default scene shows it on a row of its own above the status
+	// bar, a node the user can hide, move or restyle like any other.
+	HostShellList string `json:"host.shell.list"`
+
 	// HostPanels is the one line each approved package keeps on screen, "Title: text" joined
 	// with " · ", empty when no package has one. Host view state like HostBranch.
 	HostPanels string `json:"host.panels"`

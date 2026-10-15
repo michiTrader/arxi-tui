@@ -104,6 +104,9 @@ the `input` node.
     "children": [
       { "id": "models", "type": "list", "bind": "model.matches" } ] },
 
+  { "id": "shells", "type": "row", "when": "host.shell.list", "children": [
+    { "type": "text", "bind": "host.shell.list", "style": {"style": "dim"} } ] },
+
   { "id": "status", "type": "row", "children": [
     { "type": "text", "bind": "slash.hint", "style": {"style": "menu.hint"},
       "when": "slash.hint" },
@@ -117,10 +120,7 @@ the `input` node.
       "when": "host.effort" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.usage" },
     { "type": "text", "bind": "host.usage", "style": {"style": "dim"},
-      "when": "host.usage" },
-    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.shells" },
-    { "type": "text", "bind": "host.shells", "style": {"style": "dim"},
-      "when": "host.shells" } ] },
+      "when": "host.usage" } ] },
 
   { "id": "where", "type": "row", "when": "host.cwd", "children": [
     { "type": "text", "bind": "host.cwd", "style": {"style": "dim"} },

@@ -153,8 +153,9 @@ type shellTestDriver struct {
 
 func (d *shellTestDriver) Shells() *shellRegistry { return d.reg }
 
-// A shell started by hand is counted on the real status line.
-func TestLoopARunningShellIsCountedOnTheBar(t *testing.T) {
+// A shell started by hand is named on the real screen (the row above the info bar; it used
+// to be counted inside the info bar as "1 shell").
+func TestLoopARunningShellIsNamedAboveTheBar(t *testing.T) {
 	t.Setenv(configDirEnv, t.TempDir())
 	t.Setenv(historyEnv, t.TempDir())
 	t.Setenv(sessionsEnv, "")
@@ -173,7 +174,7 @@ func TestLoopARunningShellIsCountedOnTheBar(t *testing.T) {
 	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
 		t.Fatalf("loop: %v", err)
 	}
-	if s := screen(tty.output()); !strings.Contains(s, "1 shell") {
-		t.Errorf("the running shell is not counted on the bar; last frame:\n%s", lastFrame(tty.output()))
+	if s := screen(tty.output()); !strings.Contains(s, "shell 1 ask") || strings.Contains(s, "1 shell") {
+		t.Errorf("the running shell must be named right above the info bar, not counted in it; last frame:\n%s", lastFrame(tty.output()))
 	}
 }

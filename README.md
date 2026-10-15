@@ -49,7 +49,8 @@ For a dev server or a watcher the model has `shell_start`, `shell_read` and `she
 (offered only where `run` may run commands, under the same policy as `run`). Nothing opens a
 separate console window: the output is read inside the conversation. `/shell` lists them,
 `/shell show <n>` prints what shell *n* wrote last, `/shell stop <n|all>` ends them,
-`/shell start <command>` starts one by hand. The status line counts them (`2 shells`), you
+`/shell start <command>` starts one by hand. A row above the info bar names the ones that run (`shell 1 · shell 2`, the same numbers
+`/shell show` takes; `/ui hide shells` hides it, like any other part of the screen), you
 are told when one ends by itself, and `/clear` or leaving stops all of them, with their child
 processes. Leaving means `/clear`, double Ctrl-C, or the program being asked to end (`kill`, closing the
 terminal window, a dropped ssh session: SIGTERM and SIGHUP); only `kill -9` (or a crash) cannot be

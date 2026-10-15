@@ -1,5 +1,12 @@
 # Pending work
 
+## Done since: row of active shells above the info bar (branch feat/shells-line)
+
+- A row of its own above the info bar names the shells that run: `shell 1 · shell 2` (the numbers `/shell show <n>` and the model's `shell_read` use; an ended one drops out, numbers are not reused). New bind `host.shell.list`; the default scene gets a node `shells`, so it is configurable like everything else: `/ui hide shells`, move, restyle, or a scene of your own.
+- Changed on purpose: the info bar no longer carries the count (`2 shells`); the row replaces it. `host.shells` still exists for scenes that want a count.
+- Tests: the list itself, the real loop (two shells named right above the info bar; one after stopping the other; stepping aside for the slash menu; `/ui hide shells` really hides it and does not stop the shell). 14 mutation checks (two survived at first: the menu case and the hide case were not covered; both now are). One old test expected the count in the bar and was adapted.
+- NOT verified: in a real terminal; with more shells than fit the width (the row is one line, it is cut at the edge like the rest); Windows runtime of the new tests (they need `sh`).
+
 ## Done since: browser opened twice, Windows tests that failed for speed (PRs #272, #273)
 
 - `run` reported a command that opened a browser as "could not be started" (the browser keeps the output pipe; Go answers `WaitDelay expired`), so the model ran it again and the page opened twice. Now it is Exit 0 with a note not to repeat it (core; the core must be rebuilt). 2 tests, 5 mutations killed.
@@ -9,7 +16,7 @@
 
 - NOT reproduced: the tool record of a browser-opening call not showing in the chat. The core sends one `chat.tool` per call and the screen draws every one, so I do not know why one is missing; I need which tool the model used (the line that did show, or `run`).
 - Right-edge glitch ("arxi-tui" -> "arxi-ti" while narrowing): the frame drawn at widths 133-140, run through a terminal emulator, showed no overwritten character. The row with the folder path was not in my probe, so this did NOT reproduce it; it may be the Windows terminal's own handling of the last column.
-- Not started: a line of active shells above the info bar (configurable); per-model modalities; chat copy without the scrollbar column.
+- Not started: per-model modalities; chat copy without the scrollbar column.
 - How images reach the model TODAY: they do not. The core has a content-block type for images (`turn.BlockImage`, `MediaSource`) but nothing builds or sends one, the turn validator refuses any block that is not text, no provider code mentions images, the chat tools only read text files, and a model in the store has an id, an on/off flag, a price, a wire and a context window, with no notion of what it accepts. So there is nothing to select per model yet: it is a feature to build (model field, form fields in add/edit, a way to attach an image, the wire encoding for each provider, and refusing an image for a model that cannot take it).
 - The chat is still redrawn whole on every frame: the cost per key grows with the length of the conversation (about 5 ms at 10 turns, 24 ms at 40). A cache of the lines already drawn is the next step.
 
