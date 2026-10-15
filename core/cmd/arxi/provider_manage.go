@@ -469,7 +469,8 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	if err != nil {
 		return chatResult{}, err
 	}
-	if strings.TrimSpace(prompt) == "" {
+	pics := imagesFrom(ctx)
+	if strings.TrimSpace(prompt) == "" && len(pics) == 0 {
 		return chatResult{}, badInvocation{errors.New("there is nothing to send: the message is empty")}
 	}
 	var history []chatTurn
@@ -507,6 +508,9 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	if err := checkEffort(res, level); err != nil {
 		return chatResult{}, err
 	}
+	if err := checkImages(res, len(pics)); err != nil {
+		return chatResult{}, err
+	}
 
 	if box := toolsFrom(ctx); box != nil {
 		system = strings.TrimSpace(system + " " + toolsHint(box.box.Root(), box.edits) + " " + envHint(box.box.Root(), box.runs) + " " + foldersHint(box) + " " + runsHint(box.runs) + " " + webHint(box.web))
@@ -529,7 +533,12 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 			messages = append(messages, text(turn.RoleAssistant, h.Text))
 		}
 	}
-	messages = append(messages, text(turn.RoleUser, prompt))
+	userMsg := text(turn.RoleUser, prompt)
+	if strings.TrimSpace(prompt) == "" {
+		userMsg.Content = nil
+	}
+	userMsg.Content = append(userMsg.Content, pics...)
+	messages = append(messages, userMsg)
 
 	ctx, cancel := context.WithTimeout(ctx, chatDeadline())
 	defer cancel()
@@ -696,15 +705,23 @@ func handleModelRemove(params map[string]any) (any, error) {
 	}{p, id, true}, nil
 }
 
-// updateModel records what the operator knows about a model that is already added. Today
-// that is the context window: providers rarely report it, and a model added by discovery
-// has none, so without this the only way to set one was to remove the model and add it
-// again by hand. The window is stored exactly as typed (a positive whole number of tokens
-// within a sane range): a wrong one makes the percentage on screen a lie, so a figure no
-// model has is refused instead of kept.
-func updateModel(ref string, window int) (provider, id string, err error) {
-	if window < 1_000 || window > 100_000_000 {
-		return "", "", fmt.Errorf("context window %d is not a plausible size: give a whole number of tokens between 1000 and 100000000 (270000 for 270k)", window)
+// modelChange is what model.update may change. A nil field is left as it is.
+type modelChange struct {
+	ContextWindow *int
+	Images        *bool
+}
+
+// updateModel records what the operator knows about a model that is already added: the
+// context window (providers rarely report it, and a model added by discovery has none)
+// and whether it takes images. The window is stored exactly as typed (a positive whole
+// number of tokens within a sane range): a wrong one makes the percentage on screen a
+// lie, so a figure no model has is refused instead of kept.
+func updateModel(ref string, c modelChange) (provider, id string, err error) {
+	if c.ContextWindow == nil && c.Images == nil {
+		return "", "", badInvocation{errors.New("nothing to change: give context_window and/or images")}
+	}
+	if w := c.ContextWindow; w != nil && (*w < 1_000 || *w > 100_000_000) {
+		return "", "", fmt.Errorf("context window %d is not a plausible size: give a whole number of tokens between 1000 and 100000000 (270000 for 270k)", *w)
 	}
 	store, err := providerStore()
 	if err != nil {
@@ -714,7 +731,10 @@ func updateModel(ref string, window int) (provider, id string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	if !p.SetContextWindow(id, window) {
+	if c.ContextWindow != nil && !p.SetContextWindow(id, *c.ContextWindow) {
+		return "", "", fmt.Errorf("provider %q does not offer a model called %q", p.Name, id)
+	}
+	if c.Images != nil && !p.SetImages(id, *c.Images) {
 		return "", "", fmt.Errorf("provider %q does not offer a model called %q", p.Name, id)
 	}
 	if err := store.Save(p); err != nil {
@@ -725,22 +745,42 @@ func updateModel(ref string, window int) (provider, id string, err error) {
 
 // handleModelUpdate is model.update over the protocol.
 func handleModelUpdate(params map[string]any) (any, error) {
-	v, ok := params["context_window"].(float64)
-	if !ok {
-		return nil, fmt.Errorf("model.update needs context_window, the size in tokens")
+	var c modelChange
+	if raw, given := params["context_window"]; given {
+		v, ok := raw.(float64)
+		if !ok {
+			return nil, fmt.Errorf("context_window must be a number of tokens")
+		}
+		if v != float64(int(v)) {
+			return nil, fmt.Errorf("context_window %v is not a whole number of tokens", v)
+		}
+		n := int(v)
+		c.ContextWindow = &n
 	}
-	if v != float64(int(v)) {
-		return nil, fmt.Errorf("context_window %v is not a whole number of tokens", v)
+	if raw, given := params["images"]; given {
+		b, ok := raw.(bool)
+		if !ok {
+			return nil, fmt.Errorf("images must be true or false")
+		}
+		c.Images = &b
 	}
-	p, id, err := updateModel(stringParam(params, "model"), int(v))
+	if c.ContextWindow == nil && c.Images == nil {
+		return nil, fmt.Errorf("model.update needs context_window (tokens) and/or images (true or false)")
+	}
+	p, id, err := updateModel(stringParam(params, "model"), c)
 	if err != nil {
 		return nil, err
 	}
-	return struct {
+	out := struct {
 		Provider      string `json:"provider"`
 		Model         string `json:"model"`
-		ContextWindow int    `json:"context_window"`
-	}{p, id, int(v)}, nil
+		ContextWindow int    `json:"context_window,omitempty"`
+		Images        *bool  `json:"images,omitempty"`
+	}{Provider: p, Model: id, Images: c.Images}
+	if c.ContextWindow != nil {
+		out.ContextWindow = *c.ContextWindow
+	}
+	return out, nil
 }
 
 // handleModelDefault reads the default when no model is given and sets it
@@ -772,7 +812,11 @@ type thinkingNotification struct {
 // fragment is written to the connection as it arrives.
 func handleChatSendThinking(streams *connStreams, params map[string]any) (any, error) {
 	w := streams.w
-	ctx := withRetryNotice(context.Background(), func(n chatRetryNotification) { _ = w.write(n) })
+	base, err := withImages(context.Background(), stringParam(params, "images"))
+	if err != nil {
+		return nil, err
+	}
+	ctx := withRetryNotice(base, func(n chatRetryNotification) { _ = w.write(n) })
 	ctx = withUsageNotice(ctx, func(n chatUsageNotification) { _ = w.write(n) })
 	if boolParam(params, "stream_thinking") {
 		ctx = provider.WithThinking(ctx, func(fragment string) {
@@ -815,7 +859,11 @@ func handleChatSend(params map[string]any) (any, error) {
 	if stringParam(params, "workdir") != "" || stringParam(params, "edits") != "" || stringParam(params, "runs") != "" || stringParam(params, "web") != "" || stringParam(params, "client_tools") != "" || stringParam(params, "folders") != "" || stringParam(params, "outside") != "" {
 		return nil, badInvocation{errors.New("workdir, edits, runs, web, folders, outside and client_tools need a live connection to report the tool calls on")}
 	}
-	return chatSendEffort(context.Background(), stringParam(params, "prompt"), stringParam(params, "history"),
+	ctx, err := withImages(context.Background(), stringParam(params, "images"))
+	if err != nil {
+		return nil, err
+	}
+	return chatSendEffort(ctx, stringParam(params, "prompt"), stringParam(params, "history"),
 		stringParam(params, "system"), stringParam(params, "model"), stringParam(params, "effort"))
 }
 

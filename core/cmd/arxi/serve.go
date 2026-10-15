@@ -893,6 +893,13 @@ func handleModelAdd(params map[string]any) (any, error) {
 		}
 		x.ContextWindow = int(v)
 	}
+	if raw, given := params["images"]; given {
+		b, ok := raw.(bool)
+		if !ok {
+			return nil, fmt.Errorf("images must be true or false")
+		}
+		x.Images = b
+	}
 	p, err := addModelWith(stringParam(params, "provider"), stringParam(params, "model"), in, out, x)
 	if err != nil {
 		return nil, err
@@ -930,13 +937,17 @@ func handleModelList(map[string]any) (any, error) {
 		Efforts  []string `json:"efforts"`
 		// ContextWindow is the model's window in tokens, 0 when not known.
 		ContextWindow int `json:"context_window,omitempty"`
+		// Images is whether the model was set to take pictures with a message.
+		Images bool `json:"images"`
 	}
 	protocol := map[string]string{}
 	window := map[string]int{}
+	images := map[string]bool{}
 	for _, p := range ps {
 		protocol[p.Name] = p.EffectiveProtocol()
 		for _, m := range p.Models {
 			window[p.Name+"/"+m.ID] = m.ContextWindow
+			images[p.Name+"/"+m.ID] = m.Images
 		}
 	}
 	rows := model.Rows(ps)
@@ -946,7 +957,7 @@ func handleModelList(map[string]any) (any, error) {
 		if levels == nil {
 			levels = []string{}
 		}
-		out = append(out, row{Provider: r.Provider, ID: r.Name, Enabled: r.Enabled, Efforts: levels, ContextWindow: window[r.Provider+"/"+r.Name]})
+		out = append(out, row{Provider: r.Provider, ID: r.Name, Enabled: r.Enabled, Efforts: levels, ContextWindow: window[r.Provider+"/"+r.Name], Images: images[r.Provider+"/"+r.Name]})
 	}
 	return struct {
 		Models []row `json:"models"`

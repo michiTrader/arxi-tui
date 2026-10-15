@@ -136,19 +136,39 @@ func cmdModelUpdate(args []string) {
 		fmt.Fprintf(os.Stderr, "arxi model update: %v\n", err)
 		os.Exit(2)
 	}
-	raw, ok := vals["context-window"]
-	if !ok {
-		fmt.Fprintln(os.Stderr, "arxi model update: nothing to change; give --context-window N (tokens)")
+	var c modelChange
+	if raw, ok := vals["context-window"]; ok {
+		n, err := strconv.Atoi(raw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "arxi model update: --context-window %q is not a whole number of tokens\n", raw)
+			os.Exit(2)
+		}
+		c.ContextWindow = &n
+	}
+	if raw, ok := vals["images"]; ok {
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "arxi model update: --images %q is not true or false\n", raw)
+			os.Exit(2)
+		}
+		c.Images = &b
+	}
+	if c.ContextWindow == nil && c.Images == nil {
+		fmt.Fprintln(os.Stderr, "arxi model update: nothing to change; give --context-window N (tokens) and/or --images true|false")
 		os.Exit(2)
 	}
-	n, err := strconv.Atoi(raw)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "arxi model update: --context-window %q is not a whole number of tokens\n", raw)
-		os.Exit(2)
-	}
-	p, id, err := updateModel(vals["model"], n)
+	p, id, err := updateModel(vals["model"], c)
 	if err != nil {
 		cliFail("model update", err)
 	}
-	fmt.Printf("model %s of %s: context window is now %d tokens\n", id, p, n)
+	if c.ContextWindow != nil {
+		fmt.Printf("model %s of %s: context window is now %d tokens\n", id, p, *c.ContextWindow)
+	}
+	if c.Images != nil {
+		if *c.Images {
+			fmt.Printf("model %s of %s: now takes images\n", id, p)
+		} else {
+			fmt.Printf("model %s of %s: no longer takes images\n", id, p)
+		}
+	}
 }

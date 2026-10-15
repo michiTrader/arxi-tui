@@ -373,6 +373,13 @@ func cmdModelAdd(args []string) {
 				}
 				x.ContextWindow = int(*win)
 			}
+			if raw, given := vals["images"]; given {
+				b, perr := strconv.ParseBool(raw)
+				if perr != nil {
+					err = fmt.Errorf("--images %q is not true or false", raw)
+				}
+				x.Images = b
+			}
 			if err == nil {
 				_, err = addModelWith(vals["provider"], vals["model"], in, out, x)
 			}
