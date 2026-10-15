@@ -209,6 +209,7 @@ func addModel(providerName, modelID string, in, out *float64) (model.Provider, e
 type modelExtras struct {
 	CacheRead, CacheWrite *float64
 	ContextWindow         int
+	Images                bool
 }
 
 // addModelWith is addModel with the cache prices and the context window.
@@ -246,6 +247,9 @@ func addModelWith(providerName, modelID string, in, out *float64, x modelExtras)
 		return model.Provider{}, err
 	}
 	p.SetContextWindow(strings.TrimSpace(modelID), x.ContextWindow)
+	if x.Images {
+		p.SetImages(strings.TrimSpace(modelID), true)
+	}
 	if err := store.Save(p); err != nil {
 		return model.Provider{}, err
 	}

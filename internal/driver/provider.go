@@ -139,6 +139,9 @@ type ModelRow struct {
 	// ContextWindow is the model's window in tokens; 0 when the core does not know it
 	// (the provider did not report one and the operator did not type one).
 	ContextWindow int `json:"context_window,omitempty"`
+	// Images is whether the model was set to take pictures with a message. False for a
+	// model nobody said so about, and for a core too old to know the field.
+	Images bool `json:"images"`
 }
 
 // ModelListResult wraps the rows model.list returns. An empty slice is a valid
@@ -338,6 +341,8 @@ type ModelAddParams struct {
 	CacheRead, CacheWrite *float64
 	// ContextWindow is the window in tokens, 0 to leave it to what the provider reports.
 	ContextWindow int
+	// Images declares that the model takes pictures with a message.
+	Images bool
 }
 
 // SubmitModelAdd adds a model by hand to a registered provider.
@@ -365,6 +370,9 @@ func (d *NDJSONDriver) SubmitModelAdd(ctx context.Context, p ModelAddParams) (*P
 	}
 	if p.ContextWindow > 0 {
 		params["context_window"] = p.ContextWindow
+	}
+	if p.Images {
+		params["images"] = true
 	}
 	req := protoRequest{ID: "model-add", Type: "model.add", Params: params}
 

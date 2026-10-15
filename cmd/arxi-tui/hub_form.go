@@ -27,6 +27,7 @@ const (
 	kindModels           // model ids, comma separated
 	kindPrice            // a price, USD per million tokens
 	kindWindow           // a context window in tokens: 1000000, 1M or 200k
+	kindYesNo            // yes or no (empty is no)
 )
 
 // hubField is one input of a form.
@@ -152,6 +153,21 @@ func cleanFilterText(s string) string {
 	}, s)
 }
 
+// imagesFieldLabel is the label of the field that says a model takes pictures.
+const imagesFieldLabel = "Accepts images (yes/no)"
+
+// parseYesNo reads a yes/no field. Empty is no: a model takes no images until somebody
+// says it does.
+func parseYesNo(s string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "n", "no", "false", "0", "off":
+		return false, nil
+	case "y", "yes", "true", "1", "on", "s", "si", "sí":
+		return true, nil
+	}
+	return false, fmt.Errorf("must be yes or no")
+}
+
 // parseWindow reads a context window the way a person writes it: 1000000, 1M, 1.5M, 200k
 // (underscores and commas are ignored). Empty is "not given" (0, no error). Anything
 // else must be a whole number of tokens between a thousand and a hundred million.
@@ -243,8 +259,10 @@ func newModelsForm(prov string) *hubForm {
 		prov:  prov,
 		help: "Type one or more model ids separated by commas, exactly as the service names them. " +
 			"Prices are optional (USD per million tokens) and apply to every id you list; give in and out together. " +
-			"Cache prices go beside them. The context window (e.g. 1M) is optional: left empty, arxi uses what the service reports when it reports one.",
-		fields: append([]hubField{{label: "Model ids", required: true, kind: kindModels}}, priceFields()...),
+			"Cache prices go beside them. The context window (e.g. 1M) is optional: left empty, arxi uses what the service reports when it reports one. " +
+			"Say yes to \"Accepts images\" only if these models take pictures; the service does not report it, so until you say so arxi refuses to send one.",
+		fields: append(append([]hubField{{label: "Model ids", required: true, kind: kindModels}}, priceFields()...),
+			hubField{label: imagesFieldLabel, kind: kindYesNo}),
 	}
 }
 
@@ -328,6 +346,10 @@ func (f *hubForm) submit() (hubWork, string) {
 			if _, err := parseWindow(v); err != nil {
 				return hubWork{}, fl.label + " " + err.Error() + " (write 1000000, 1M or 200k)"
 			}
+		case kindYesNo:
+			if _, err := parseYesNo(v); err != nil {
+				return hubWork{}, fl.label + " " + err.Error()
+			}
 		case kindPrice:
 			if v != "" {
 				if n, err := strconv.ParseFloat(v, 64); err != nil || n < 0 {
@@ -404,6 +426,7 @@ func (f *hubForm) submit() (hubWork, string) {
 			w.CacheWrite = &v
 		}
 		w.Window, _ = parseWindow(f.get("Context window (tokens)"))
+		w.Images, _ = parseYesNo(f.get(imagesFieldLabel))
 		return w, ""
 	}
 	return hubWork{}, "unknown form"

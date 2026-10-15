@@ -195,6 +195,10 @@ func (c *modelCore) SubmitModelUpdate(context.Context, string, int) (*driver.Mod
 	return nil, errors.New("not used")
 }
 
+func (c *modelCore) SubmitModelImages(context.Context, string, bool) (*driver.ModelUpdateResult, error) {
+	return nil, errors.New("not used")
+}
+
 func (c *modelCore) SubmitModelDefault(_ context.Context, ref string) (*driver.ModelDefaultResult, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()

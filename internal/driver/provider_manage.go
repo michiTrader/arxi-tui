@@ -161,6 +161,28 @@ func (d *NDJSONDriver) SubmitModelUpdate(ctx context.Context, ref string, contex
 	return &r, nil
 }
 
+// ErrImagesUnsupported is returned when the core is too old to take pictures with a
+// message, or to record that a model takes them.
+var ErrImagesUnsupported = errors.New("this arxi core cannot take images (it does not know images); update the arxi core")
+
+// SubmitModelImages says whether a model that is already added takes pictures. A model
+// takes none until somebody says so; a provider does not report it.
+func (d *NDJSONDriver) SubmitModelImages(ctx context.Context, ref string, takes bool) (*ModelUpdateResult, error) {
+	if ref == "" {
+		return nil, fmt.Errorf("ndjson: model.update needs a model ref")
+	}
+	var r ModelUpdateResult
+	err := d.call(ctx, "model-update", "model.update", map[string]any{"model": ref, "images": takes}, &r)
+	var ref2 *Refusal
+	if errors.As(err, &ref2) && ref2.Code == "bad_params" && strings.Contains(refusedPart(ref2.Message), "images") {
+		return nil, fmt.Errorf("%w: %s", ErrImagesUnsupported, ref2.Message)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // ModelDefaultResult is the answer to model.default. Default is "provider/id", or
 // empty when no default is chosen.
 type ModelDefaultResult struct {
@@ -188,6 +210,13 @@ type ChatTurn struct {
 	Text string `json:"text"`
 }
 
+// ChatImage is one picture sent with a message: its format (image/png, image/jpeg,
+// image/gif or image/webp) and its bytes in base64.
+type ChatImage struct {
+	MediaType string `json:"media_type"`
+	Data      string `json:"data"`
+}
+
 // ChatSendParams are the wire parameters of chat.send. Model may be empty: the core
 // then uses the default model, or the only usable one.
 type ChatSendParams struct {
@@ -195,6 +224,10 @@ type ChatSendParams struct {
 	Model   string
 	System  string
 	History []ChatTurn
+	// Images are pictures sent with the prompt. The core refuses them, before any
+	// billing, for a model not set to take images; a core too old to know the
+	// parameter makes the call fail with ErrImagesUnsupported.
+	Images []ChatImage
 	// Effort is the thinking level: "minimal", "low", "medium" or "high". Empty
 	// sends nothing, and the model decides.
 	Effort string
@@ -354,10 +387,17 @@ type ChatSendResult struct {
 // SubmitChatSend sends one prompt to a model and waits for the whole answer. The
 // history rides as a JSON string, the shape the core's string-only params accept.
 func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*ChatSendResult, error) {
-	if p.Prompt == "" {
+	if p.Prompt == "" && len(p.Images) == 0 {
 		return nil, fmt.Errorf("ndjson: chat.send needs a prompt")
 	}
 	params := map[string]any{"prompt": p.Prompt}
+	if len(p.Images) > 0 {
+		b, err := json.Marshal(p.Images)
+		if err != nil {
+			return nil, fmt.Errorf("ndjson: encode images: %w", err)
+		}
+		params["images"] = string(b)
+	}
 	if p.Model != "" {
 		params["model"] = p.Model
 	}
@@ -406,7 +446,7 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 	var r ChatSendResult
 	if p.OnThinking == nil && p.Workdir == "" && p.OnRetry == nil && p.OnUsage == nil {
 		if err := d.call(ctx, "chat-send", "chat.send", params, &r); err != nil {
-			return nil, err
+			return nil, imagesRefusal(err)
 		}
 		return &r, nil
 	}
@@ -420,6 +460,8 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 		// everything the core does take, which would match every parameter below.
 		refused := refusedPart(ref.Message)
 		switch {
+		case strings.Contains(refused, "images"):
+			return nil, fmt.Errorf("%w: %s", ErrImagesUnsupported, ref.Message)
 		// Checked first: "client_tools" is the one name that contains none of the
 		// others, but a later one might, and the newest parameter is the likeliest
 		// to be the one an older core refuses.
@@ -450,6 +492,16 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 		return nil, err
 	}
 	return &r, nil
+}
+
+// imagesRefusal turns the refusal of an older core that does not know `images` into
+// ErrImagesUnsupported, and leaves any other error as it is.
+func imagesRefusal(err error) error {
+	var ref *Refusal
+	if errors.As(err, &ref) && ref.Code == "bad_params" && strings.Contains(refusedPart(ref.Message), "images") {
+		return fmt.Errorf("%w: %s", ErrImagesUnsupported, ref.Message)
+	}
+	return err
 }
 
 // refusedPart is the start of a bad_params message, before the list of what the core

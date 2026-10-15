@@ -1751,6 +1751,8 @@ var Commands = []SlashMatch{
 	// /send is the one way to hand the model a line that starts with "/": the
 	// text after the verb goes out as typed, and is never read as a command.
 	{"send", "General", "Send the text after it to the model, even if it starts with /"},
+	// /image <path> attaches a picture to the line being typed (also: paste the path).
+	{"image", "General", "Attach a picture (png, jpeg, gif, webp) to your next message: /image followed by the file path"},
 	{"package", "General", "See, approve or withdraw the packages that add commands and rules"},
 	// /clear is a host command: it ends the conversation and starts a new one.
 	{"clear", "Session", "Start a new session"},

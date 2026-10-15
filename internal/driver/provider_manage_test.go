@@ -770,3 +770,101 @@ func TestChatSendWithOnlyAUsageWatcherReadsTheNotifications(t *testing.T) {
 		t.Fatalf("res=%+v err=%v got=%v", res, err, got)
 	}
 }
+
+// Pictures ride as one JSON string, like history and the lent tools, because the core's
+// chat.send takes only strings and bools.
+func TestChatSendCarriesPicturesAsAJSONString(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent, `{"id":"chat-send","ok":true,"result":{"text":"hi"}}`)
+	_, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "what is this?",
+		Images: []ChatImage{{MediaType: "image/png", Data: "QUJD"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sent.String(), `"images":"[{\"media_type\":\"image/png\",\"data\":\"QUJD\"}]"`) {
+		t.Fatalf("request = %s", sent.String())
+	}
+}
+
+func TestChatSendWithoutPicturesCarriesNoImagesParam(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent, `{"id":"chat-send","ok":true,"result":{"text":"hi"}}`)
+	if _, err := d.SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sent.String(), "images") {
+		t.Fatalf("an older core would refuse the request: %s", sent.String())
+	}
+}
+
+func TestAPictureAloneIsAMessage(t *testing.T) {
+	d := session(t, `{"id":"chat-send","ok":true,"result":{"text":"hi"}}`)
+	if _, err := d.SubmitChatSend(context.Background(), ChatSendParams{Images: []ChatImage{{MediaType: "image/png", Data: "QUJD"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.SubmitChatSend(context.Background(), ChatSendParams{}); err == nil {
+		t.Fatal("an empty message with no picture was sent")
+	}
+}
+
+// An old core names the parameter it does not know, in both ways a chat is sent (the
+// plain call and the one that watches).
+func TestChatSendNamesAnOldCoreThatRefusesImages(t *testing.T) {
+	refusal := `{"id":"chat-send","ok":false,"error":{"code":"bad_params","message":"chat.send does not take images. It takes: edits, effort, history, model, prompt, runs, stream_thinking, system, web, workdir"}}`
+	for name, p := range map[string]ChatSendParams{
+		"plain":    {Prompt: "p"},
+		"watching": {Prompt: "p", Workdir: "/proj"},
+	} {
+		p.Images = []ChatImage{{MediaType: "image/png", Data: "QUJD"}}
+		_, err := session(t, refusal).SubmitChatSend(context.Background(), p)
+		if !errors.Is(err, ErrImagesUnsupported) {
+			t.Errorf("%s: err = %v; want ErrImagesUnsupported", name, err)
+		}
+	}
+	// a refusal about another parameter, whose list of what is taken names images, is not that
+	other := `{"id":"chat-send","ok":false,"error":{"code":"bad_params","message":"chat.send does not take web. It takes: images, prompt"}}`
+	_, err := session(t, other).SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Workdir: "/proj", Web: "ask"})
+	if errors.Is(err, ErrImagesUnsupported) {
+		t.Fatal("a core that takes images was reported as lacking them")
+	}
+	// the same on the plain call
+	plain := `{"id":"chat-send","ok":false,"error":{"code":"bad_params","message":"chat.send does not take effort. It takes: images, prompt"}}`
+	_, err = session(t, plain).SubmitChatSend(context.Background(), ChatSendParams{Prompt: "p", Effort: "high"})
+	if errors.Is(err, ErrImagesUnsupported) {
+		t.Fatal("a plain call refused for effort was reported as lacking images")
+	}
+}
+
+func TestSubmitModelImagesSendsTheFlagAndNamesAnOldCore(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent, `{"id":"model-update","ok":true,"result":{"provider":"p","model":"m","images":true}}`)
+	if _, err := d.SubmitModelImages(context.Background(), "p/m", true); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sent.String(), `"images":true`) || strings.Contains(sent.String(), "context_window") {
+		t.Fatalf("request = %s", sent.String())
+	}
+	old := session(t, `{"id":"model-update","ok":false,"error":{"code":"bad_params","message":"model.update does not take images. It takes: context_window, model"}}`)
+	if _, err := old.SubmitModelImages(context.Background(), "p/m", true); !errors.Is(err, ErrImagesUnsupported) {
+		t.Fatalf("err = %v; want ErrImagesUnsupported", err)
+	}
+}
+
+func TestModelAddCarriesImagesOnlyWhenDeclared(t *testing.T) {
+	var sent bytes.Buffer
+	d := sessionWithWriter(t, &sent, `{"id":"model-add","ok":true,"result":{"name":"p"}}`)
+	if _, err := d.SubmitModelAdd(context.Background(), ModelAddParams{Provider: "p", Model: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(sent.String(), "images") {
+		t.Fatalf("request = %s", sent.String())
+	}
+	sent.Reset()
+	d = sessionWithWriter(t, &sent, `{"id":"model-add","ok":true,"result":{"name":"p"}}`)
+	if _, err := d.SubmitModelAdd(context.Background(), ModelAddParams{Provider: "p", Model: "m", Images: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(sent.String(), `"images":true`) {
+		t.Fatalf("request = %s", sent.String())
+	}
+}

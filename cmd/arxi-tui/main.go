@@ -907,6 +907,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	var chatBar engine.ChatBar
 	chatCache := &engine.ChatRowCache{} // rows of the chat already laid out, kept between frames
 	var pastes pasteStore               // big pastes kept aside while the input shows [Pasted text #N +L lines]
+	var images imageStore               // pictures behind the [Image #N name] markers of the line being typed
 	inputScroll := 0                    // first input row shown (engine.Renderer.InputTop)
 	var chatStops []int                 // where the reader's own messages sit (engine.Renderer.ChatUserStops)
 	var barDrag bool
@@ -1839,6 +1840,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						input = pastes.expand(input)
 						caret = len([]rune(input))
 					}
+					if ev.Key.Type == term.KeyEnter && !isNewlineGesture(ev.Key) && strings.TrimSpace(input) != "" && classifySlash(strings.TrimSpace(input), nil).Kind == slashNone {
+						// The pictures of this line ride with its message, and only with it.
+						// Set on every plain Enter, so what an earlier line left is cleared.
+						if warn := attachPictures(drv, images.used(input)); warn != "" {
+							collected = appendLocalWarning(collected, warn)
+						}
+					}
 					lineBefore := input
 					stateBefore := inputState{input, caret}
 					undoneNow := false
@@ -2707,6 +2715,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								_ = drv.SubmitPrompt(ctx, sendText)
 								input, caret, slashSel = "", 0, 0
 							}
+						} else if path, isImage := parseImageCmd(input); ev.Key.Type == term.KeyEnter && isImage {
+							// `/image <path>` attaches a picture to the line being typed: the
+							// marker takes the place of the command, and the pictures travel
+							// with the message that line becomes.
+							if path == "" {
+								collected = appendLocalWarning(collected, imageUsage)
+								input, caret, slashSel = "", 0, 0
+							} else if mark, err := images.attach("", path); err != nil {
+								collected = appendLocalWarning(collected, err.Error())
+							} else {
+								input, caret, slashSel = mark+" ", len([]rune(mark))+1, 0
+							}
 						} else if pane, matched, perr := parseMax(input); ev.Key.Type == term.KeyEnter && matched {
 							// `/max <pane>` writes the host ui.max cursor, Scene 10's
 							// write half, intercepted here before the slash menu for the
@@ -2799,6 +2819,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							}
 						} else if next, nc, ok := pastes.dropWhole(input, caret, ev.Key); ok {
 							input, caret = next, nc
+						} else if next, nc, ok := images.dropWhole(input, caret, ev.Key); ok {
+							input, caret = next, nc
 						} else {
 							input, caret = typeKey(input, caret, ev.Key, ctx, drv)
 						}
@@ -2808,6 +2830,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					}
 					if ev.Key.Type == term.KeyEnter && input == "" && strings.TrimSpace(lineBefore) != "" {
 						pastes.reset() // sent: the next big paste is #1 again
+						images.reset()
+					} else if ev.Key.Type == term.KeyEnter && input != "" && len(images.used(input)) > 0 {
+						// Enter did not send the line (something else took the key): the
+						// pictures set for it must not wait for an unrelated message.
+						attachPictures(drv, nil)
 					}
 					// What the key did to the bar is one more step for ctrl+z; a line that
 					// was sent leaves nothing to take back, so it clears the notes.
@@ -2851,7 +2878,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					}
 					pasteBefore := inputState{input, caret}
 					pasted := cleanPaste(ev.Text)
-					if next, nc, again := pastes.unfold(input, caret, pasted); again {
+					if path, isPic := imagePathOf(pasted); isPic && !strings.HasPrefix(input, "/") {
+						// A file dropped on the terminal pastes its path: a picture is attached.
+						if mark, err := images.attach(input, path); err != nil {
+							collected = appendLocalWarning(collected, err.Error())
+						} else {
+							input, caret = insertText(input, caret, mark+" ")
+						}
+					} else if next, nc, again := pastes.unfold(input, caret, pasted); again {
 						input, caret = next, nc // the same text again: open the marker
 					} else if shouldFold(pasted) && !strings.HasPrefix(input, "/") {
 						input, caret = insertText(input, caret, pastes.fold(pasted))
@@ -3273,12 +3307,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			switch {
 			case res.Blocked:
+				attachPictures(drv, nil) // nothing was sent: the pictures must not wait for another message
 				collected = appendLocalWarning(collected, "Held back by a rule: "+res.Reason+". Nothing was sent.")
 				if input == "" {
 					input, caret = out.original, len([]rune(out.original))
 				}
 			case res.Handled:
 				// A rule took the line and answered it; nothing goes to the model.
+				attachPictures(drv, nil)
 			default:
 				_ = drv.SubmitPrompt(ctx, res.Line)
 			}
@@ -3896,6 +3932,10 @@ func slashMenuKey(input string, caret int, k term.Key, sel int, cat string) (str
 		// instead of running with nothing to send.
 		if name == "send" {
 			return "/send ", len("/send "), 0, fold.SlashAll, ""
+		}
+		// /image needs the path it will attach, the same way.
+		if name == "image" {
+			return "/image ", len("/image "), 0, fold.SlashAll, ""
 		}
 		// The same for a package command that needs words: it would only answer
 		// "needs more", so the line is left open for them.
