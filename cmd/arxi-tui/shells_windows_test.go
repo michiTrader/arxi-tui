@@ -18,7 +18,9 @@ import (
 
 func winWaitFor(t *testing.T, what string, ok func() bool) {
 	t.Helper()
-	for i := 0; i < 1000; i++ {
+	// 60 s: powershell can take 20+ s to start on a loaded CI runner, and a wait that
+	// ends early fails the test for the machine's speed, not for the code's behaviour.
+	for i := 0; i < 3000; i++ {
 		if ok() {
 			return
 		}
@@ -27,13 +29,38 @@ func winWaitFor(t *testing.T, what string, ok func() bool) {
 	t.Fatalf("timed out waiting for %s", what)
 }
 
+// winTempDir is t.TempDir for a test that starts a process in it. After taskkill, Windows
+// takes a moment to let go of the dead process's working directory, and t.TempDir's own
+// cleanup fails the test with "being used by another process" although everything the
+// test checks has passed. This one is removed after the shells are stopped (cleanups run
+// in reverse, so it is registered first) and tries again for a few seconds; a folder that
+// is still locked after that is only logged, because it says nothing about the shells.
+func winTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "arxi-shell-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		var last error
+		for i := 0; i < 100; i++ {
+			if last = os.RemoveAll(dir); last == nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		t.Logf("temporary folder left behind (still locked): %v", last)
+	})
+	return dir
+}
+
 func winAlive(pid int) bool {
 	out, err := exec.Command("tasklist", "/FI", "PID eq "+strconv.Itoa(pid), "/NH").Output()
 	return err == nil && strings.Contains(string(out), strconv.Itoa(pid))
 }
 
 func TestWindowsAShellRunsInTheBackgroundAndItsOutputIsKept(t *testing.T) {
-	dir := t.TempDir() // made first: cleanups run in reverse, and a live process locks its directory
+	dir := winTempDir(t) // made first: cleanups run in reverse, and a live process locks its directory
 	r := newShellRegistry(nil)
 	t.Cleanup(func() { r.stopAll() })
 	t0 := time.Now()
@@ -59,7 +86,7 @@ func TestWindowsAShellRunsInTheBackgroundAndItsOutputIsKept(t *testing.T) {
 
 // Stopping the shell must end what it started too, or a dev server would outlive /shell stop.
 func TestWindowsStopEndsTheWholeProcessTree(t *testing.T) {
-	dir := t.TempDir()
+	dir := winTempDir(t)
 	r := newShellRegistry(nil)
 	t.Cleanup(func() { r.stopAll() })
 	pidFile := filepath.Join(dir, "child.pid")
@@ -91,7 +118,7 @@ func TestWindowsStopEndsTheWholeProcessTree(t *testing.T) {
 }
 
 func TestWindowsAShellThatExitsOnItsOwnIsReportedWithItsCode(t *testing.T) {
-	dir := t.TempDir()
+	dir := winTempDir(t)
 	got := make(chan shellInfo, 1)
 	r := newShellRegistry(func(i shellInfo) { got <- i })
 	t.Cleanup(func() { r.stopAll() })

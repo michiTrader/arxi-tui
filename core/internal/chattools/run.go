@@ -110,6 +110,16 @@ func (t *Toolbox) runCommand(rawArgs []byte) (Result, error) {
 	took := time.Since(started).Round(100 * time.Millisecond)
 
 	body := trimOutput(out.buf.Bytes(), out.dropped)
+	// A command that starts a program and leaves it running (a browser opened on a
+	// page, a server) finishes, but that program keeps the output pipe open, and Go
+	// reports "WaitDelay expired" although the command itself worked. Read as a
+	// failure, the model is told its command "could not be started", which it did,
+	// and tries again: the browser opens twice. The command ended; say so, and say
+	// what was left running.
+	leftRunning := errors.Is(err, exec.ErrWaitDelay)
+	if leftRunning {
+		err = nil
+	}
 	switch {
 	case ctx.Err() == context.DeadlineExceeded:
 		res.Failed = true
@@ -118,6 +128,10 @@ func (t *Toolbox) runCommand(rawArgs []byte) (Result, error) {
 	case err == nil:
 		res.Summary = "Exit 0 in " + took.String()
 		res.Text = withBody("exit code 0", body)
+		if leftRunning {
+			res.Summary = "Exit 0, left a program running"
+			res.Text += "\n(the command finished and left a program running in the background, such as a browser or a server; it did what it was asked, do not run it again)"
+		}
 	default:
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) {

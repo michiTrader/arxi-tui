@@ -510,6 +510,8 @@ func TestLoopCtrlCStillLeavesWithEveryLayerSet(t *testing.T) {
 }
 
 // The animated max row in the effort menu actually moves when the user wires it up.
+// The wait for ticks is 2 s: at 30 fps 600 ms is ~18 ticks on a quiet machine but a
+// loaded Windows runner drew too few of them to see a second colour (seen in CI).
 func TestBehaviourAnimationReachesTheEmittedFrames(t *testing.T) {
 	seedBehaviour(t, `{"animations":{"rainbow":{"colors":["red","green","blue"],"fps":30,"spread":1}}}`)
 	drv := &effortDriver{testDriver: testDriver{evCh: make(chan fold.Event, 64)}}
@@ -519,17 +521,22 @@ func TestBehaviourAnimationReachesTheEmittedFrames(t *testing.T) {
 	script := append(typeBeh(line), scheduledEvent{20 * time.Millisecond, enterEvent()})
 	script = append(script, typeBeh("/effort ")...)
 	script = append(script, fkey(term.KeyDown), fkey(term.KeyDown), scheduledEvent{20 * time.Millisecond, enterEvent()})
-	script = append(script, scheduledEvent{600 * time.Millisecond, ctrlCharEvent('c')}, scheduledEvent{50 * time.Millisecond, ctrlCharEvent('c')})
+	script = append(script, scheduledEvent{2 * time.Second, ctrlCharEvent('c')}, scheduledEvent{50 * time.Millisecond, ctrlCharEvent('c')})
 	tty := runLoop(t, drv, drv.evCh, script)
 	out := tty.output()
 	seen := map[string]bool{}
+	counts := map[string]int{}
 	for _, c := range []string{"38;5;1m", "38;5;2m", "38;5;4m", "31m", "32m", "34m"} {
-		if strings.Contains(out, c) {
+		if n := strings.Count(out, c); n > 0 {
 			seen[c] = true
+			counts[c] = n
 		}
 	}
 	if len(seen) < 2 {
-		t.Errorf("the effort word never changed colour across ticks; saw %v", seen)
+		// The counts say whether the animation ticked at all (many frames, one colour:
+		// it did not advance) or the screen was hardly repainted (few of any).
+		t.Errorf("the effort word never changed colour across ticks; saw %v (times each appeared: %v; bytes drawn: %d; effort levels set: %v)",
+			seen, counts, len(out), drv.levels)
 	}
 }
 
