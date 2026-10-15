@@ -348,6 +348,26 @@ func shellsLabel(n int) string {
 	return strconv.Itoa(n) + " shells"
 }
 
+// shellNames is host.shell.list: "shell 1 · shell 2", the numbers `/shell` and the model use,
+// only for the shells still running; nothing when none does.
+func shellNames(infos []shellInfo) string {
+	var names []string
+	for _, i := range infos {
+		if i.State == shellRunning {
+			names = append(names, "shell "+strconv.Itoa(i.ID))
+		}
+	}
+	return strings.Join(names, " · ")
+}
+
+// runningShellList lists the running shells of a driver that has a registry.
+func runningShellList(drv any) string {
+	if h, ok := drv.(shellHost); ok {
+		return shellNames(h.Shells().list())
+	}
+	return ""
+}
+
 // ---- what the user sees --------------------------------------------------------
 
 // shellLine reports whether Enter on this line is `/shell`, with what follows it.

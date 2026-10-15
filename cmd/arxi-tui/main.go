@@ -129,6 +129,9 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
     "children": [
       { "id": "models", "type": "list", "bind": "model.matches" } ] },
 
+  { "id": "shells", "type": "row", "when": "host.shell.list", "children": [
+    { "type": "text", "bind": "host.shell.list", "style": {"style": "dim"} } ] },
+
   { "id": "status", "type": "row", "children": [
     { "type": "text", "bind": "slash.hint", "style": {"style": "menu.hint"},
       "when": "slash.hint" },
@@ -142,10 +145,7 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
       "when": "host.effort" },
     { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.usage" },
     { "type": "text", "bind": "host.usage", "style": {"style": "dim"},
-      "when": "host.usage" },
-    { "type": "text", "text": " · ", "style": {"style": "dim"}, "when": "host.shells" },
-    { "type": "text", "bind": "host.shells", "style": {"style": "dim"},
-      "when": "host.shells" } ] },
+      "when": "host.usage" } ] },
 
   { "id": "where", "type": "row", "when": "host.cwd", "children": [
     { "type": "text", "bind": "host.cwd", "style": {"style": "dim"} },
@@ -1606,6 +1606,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		if state.SlashActive {
 			state.HostEffort, state.HostCwd, state.HostMode, state.ModelName = "", "", "", ""
 			state.HostUsage, state.HostBranch, state.HostScroll, state.HostShells = "", "", "", ""
+			state.HostShellList = ""
 			state.HostPanels = ""
 		} else {
 			state.HostEffort, state.HostCwd, state.HostMode = effortLabel(effort), shortCwd(cwd), mode
@@ -1617,6 +1618,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.HostBranch = branches.get(cwd, time.Now())
 			state.HostScroll = scrollLabel(chatScroll)
 			state.HostShells = shellsLabel(runningShells(drv))
+			state.HostShellList = runningShellList(drv)
 			state.HostPanels = pkgAuto.panelsLine()
 		}
 

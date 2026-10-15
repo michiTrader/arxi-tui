@@ -3174,6 +3174,8 @@ func resolveBind(bind string, state fold.State) string {
 		return state.HostScroll
 	case "host.shells":
 		return state.HostShells
+	case "host.shell.list":
+		return state.HostShellList
 	case "host.panels":
 		return state.HostPanels
 	case "host.run.actor":

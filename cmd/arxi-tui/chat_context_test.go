@@ -50,6 +50,12 @@ func sendAndWait(t *testing.T, c *chatSession, out chan fold.Event, text, until 
 		t.Fatal(err)
 	}
 	drain(out, until, 2*time.Second)
+	// The turn announces its end (agent.failed, agent.turn_done) a moment BEFORE it frees
+	// the session, so a test that sends again at once can meet a session still busy; on a
+	// slow runner (Windows CI) it did. Wait for the session to be idle, as a person would.
+	for i := 0; i < 500 && c.busyNow(); i++ {
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // "ping" carries nothing: no tools, no history, no thinking, no project rules. Counter-
