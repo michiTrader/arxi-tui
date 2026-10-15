@@ -39,6 +39,7 @@ func runPackageLoopIn(t *testing.T, script []scheduledEvent) (string, []string) 
 	}
 	tty := newFakeTTY(100, 30, script)
 	drv := &testDriver{evCh: make(chan fold.Event, 64), seq: 1000}
+	lastPackageDriver = drv
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
@@ -91,6 +92,7 @@ func runPackageWithBehaviour(t *testing.T, beh string, docs, folders map[string]
 	}
 	tty := newFakeTTY(100, 30, script)
 	drv := &testDriver{evCh: make(chan fold.Event, 64), seq: 1000}
+	lastPackageDriver = drv
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
@@ -98,6 +100,10 @@ func runPackageWithBehaviour(t *testing.T, beh string, docs, folders map[string]
 	}
 	return tty.output(), drv.submitted
 }
+
+// lastPackageDriver is the driver of the loop runPackageWithBehaviour ran last, for a test
+// that needs more than what was submitted.
+var lastPackageDriver *testDriver
 
 // screen is the last frame with runs of spaces folded, so a sentence the layout wrapped
 // still reads as one.
@@ -309,5 +315,26 @@ func TestLoopSecondPackageCommandWhileOneRunsIsRefusedWithAWarning(t *testing.T)
 	out, _ := runPackageFolders(t, nil, folders, []string{"slow"}, script)
 	if frameWith(out, "another package command is still running") == "" {
 		t.Errorf("the second command was not refused; last frame:\n%s", lastFrame(out))
+	}
+}
+
+// A rule that holds the line back: nothing is sent, so the pictures set for it on Enter must
+// be taken back, or they would ride with the next unrelated message.
+func TestLoopRuleThatHoldsALineTakesItsPicturesBack(t *testing.T) {
+	folders := rulePackage(`printf '{"verdict":"block","reason":"no"}'`)
+	pic := writePic(t, "held.png", pngBytes(t))
+	script := append(typed("see "), at(10, pasteEvent(pic)))
+	script = append(script, at(100, enterEvent()))
+	script = append(script, exitKeys()...)
+	_, sent := runPackageLoop2(t, folders, script)
+	if len(sent) != 0 {
+		t.Fatalf("sent %q", sent)
+	}
+	d := lastPackageDriver
+	if len(d.attached) < 2 || len(d.attached[0]) != 1 {
+		t.Fatalf("attached = %+v; want the picture set on Enter, then taken back", d.attached)
+	}
+	if last := d.attached[len(d.attached)-1]; len(last) != 0 {
+		t.Errorf("a held line left %d picture(s) waiting for the next message", len(last))
 	}
 }

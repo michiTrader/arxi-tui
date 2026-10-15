@@ -11,6 +11,7 @@ import (
 
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/michiTrader/arxi_tui/internal/driver"
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
 	"github.com/michiTrader/arxi_tui/internal/term"
@@ -29,6 +30,8 @@ type testDriver struct {
 	// how many submissions happened — the paste path must submit a multi-line
 	// block once, not once per line.
 	submitted []string
+	// attached records every AttachImages call, in order.
+	attached [][]driver.ChatImage
 }
 
 func (d *testDriver) SubmitPrompt(ctx context.Context, text string) error {
@@ -48,6 +51,13 @@ func (d *testDriver) SubmitPrompt(ctx context.Context, text string) error {
 }
 
 func (d *testDriver) Close() error { return nil }
+
+// AttachImages records every set of pictures the loop handed over, so a test can see what
+// went with which line (the loop sets them on each plain Enter, an empty set when none).
+func (d *testDriver) AttachImages(imgs []driver.ChatImage) bool {
+	d.attached = append(d.attached, imgs)
+	return true
+}
 
 // TestLoopInputSubmitTranscriptExit drives the full event loop through a fake
 // TTY with a scripted key sequence: type "test", press Enter, then double

@@ -155,6 +155,15 @@ func (d *serveDriver) submitPrompt(ctx context.Context, text string) error {
 	return d.attach(ctx, logPath, actorLabel)
 }
 
+// AttachImages hands pictures to the chat for its next message. A session with no chat
+// (one that starts runs) cannot carry them and says so.
+func (d *serveDriver) AttachImages(imgs []driver.ChatImage) bool {
+	if d.chat == nil {
+		return len(imgs) == 0
+	}
+	return d.chat.AttachImages(imgs)
+}
+
 // FollowRun makes the run whose event log is at logPath the one the screen draws:
 // the same switch a new prompt makes, for a run that something else started (the
 // team launcher). The previous run stops being relayed.

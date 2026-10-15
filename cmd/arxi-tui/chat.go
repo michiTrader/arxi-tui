@@ -114,9 +114,12 @@ type chatSession struct {
 
 	// turnText and turnTools describe the turn in flight, so that a turn that ends
 	// without an answer (cancelled, failed) can still be put in the history.
-	turnText   string
-	turnTools  []string
-	turnEchoes []toolEcho // the same calls with what they returned (chat_history.go)
+	turnText  string
+	turnTools []string
+	// pendingImages are the pictures that go with the next send, set by the loop just
+	// before Enter and taken (and cleared) by send.
+	pendingImages []driver.ChatImage
+	turnEchoes    []toolEcho // the same calls with what they returned (chat_history.go)
 	// toolLog is what the answered turns of this conversation did, for the system prompt
 	// (chat_history.go). Like the history it belongs to the conversation, so reset() ends it.
 	toolLog []toolRecord
@@ -490,11 +493,25 @@ func (c *chatSession) decide(allow bool) bool {
 	return true
 }
 
+// AttachImages sets the pictures that go with the next message (nil clears them).
+func (c *chatSession) AttachImages(imgs []driver.ChatImage) bool {
+	c.mu.Lock()
+	c.pendingImages = imgs
+	c.mu.Unlock()
+	return true
+}
+
 // send starts one turn. It returns an error immediately for anything that can be
 // decided up front (old core, a turn already running); everything that happens on
 // the network is reported in the chat as a chat.error event.
 func (c *chatSession) send(ctx context.Context, text string) error {
 	text = strings.TrimSpace(text)
+	// The pictures belong to this call alone: taken now, whatever happens next, so a refused
+	// or busy send cannot leave them waiting for an unrelated message.
+	c.mu.Lock()
+	images := c.pendingImages
+	c.pendingImages = nil
+	c.mu.Unlock()
 	if text == "" {
 		return nil
 	}
@@ -551,7 +568,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	turnCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.mu.Unlock()
-	go c.run(turnCtx, text, command, withUI, hist, gen, effort, workdir, edits, runs, web, outside, folders, turn)
+	go c.run(turnCtx, text, command, withUI, hist, gen, effort, workdir, edits, runs, web, outside, folders, turn, images)
 	return nil
 }
 
@@ -734,7 +751,7 @@ func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload m
 	}
 }
 
-func (c *chatSession) run(ctx context.Context, text, command string, withUI bool, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs, web, outside string, folders []string, turn int64) {
+func (c *chatSession) run(ctx context.Context, text, command string, withUI bool, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs, web, outside string, folders []string, turn int64, images []driver.ChatImage) {
 	defer func() {
 		c.mu.Lock()
 		// Only the turn that is still current frees the session: a cancelled turn
@@ -787,7 +804,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		}
 	}
 	params := driver.ChatSendParams{
-		Prompt: text, System: system, History: hist, Effort: effort,
+		Prompt: text, System: system, History: hist, Effort: effort, Images: images,
 		// The model's thinking is shown live in the Thinking line.
 		OnThinking: func(fragment string) {
 			c.post(ctx, gen, "chat.thinking", map[string]any{"text": fragment})
@@ -931,6 +948,11 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot let the model read web pages, " +
 				"so it will not; " + rebuildRemedy})
 			params.Web = ""
+		case errors.Is(err, driver.ErrImagesUnsupported):
+			// A core that does not know pictures: the words still go, the pictures do not.
+			c.post(ctx, gen, "chat.warn", map[string]any{"text": "this arxi core cannot take pictures, " +
+				"so the message went without them; " + rebuildRemedy})
+			params.Images = nil
 		default:
 			i = 4
 			continue
@@ -1004,6 +1026,11 @@ func chatErrorText(err error) string {
 	text := "could not get an answer: " + err.Error()
 	if errors.As(err, &r) && r.Message != "" {
 		text = r.Message
+	}
+	if i := strings.Index(text, " is not set to take images"); i >= 0 {
+		// The core's wording names a command line; here the same switch is in the menu.
+		text = text[:i] + " is not set to take images, so nothing was sent. If it does, open /model, " +
+			"choose it and turn on \"Accepts images\""
 	}
 	return text + timeoutNote(text)
 }
