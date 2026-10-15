@@ -26,6 +26,7 @@ const (
 	opToggle                   // enable / disable one model
 	opRemoveModel              // delete one model
 	opSetWindow                // set the context window of one model
+	opSetImages                // say whether one model takes images
 	opRemove                   // delete a provider and its models
 	opSearch                   // choose (or turn off) the web search service; local, no core
 )
@@ -44,8 +45,11 @@ type hubWork struct {
 	// is the context window in tokens, 0 to leave it to what the service reports.
 	CacheRead, CacheWrite *float64
 	Window                int
-	On                    bool // opToggle: the state to set
-	Close                 bool // leave the hub when this succeeds
+	// Images says the models added by hand take pictures (opAddModels); for opSetImages
+	// the state to set is On.
+	Images bool
+	On     bool // opToggle / opSetImages: the state to set
+	Close  bool // leave the hub when this succeeds
 }
 
 // hubCore is everything the hub needs from the core. *driver.NDJSONDriver satisfies
@@ -62,6 +66,7 @@ type hubCore interface {
 	SubmitModelDiscover(ctx context.Context, provider string) (*driver.ModelDiscoverResult, error)
 	SubmitModelRemove(ctx context.Context, ref string) (*driver.ModelRemoveResult, error)
 	SubmitModelUpdate(ctx context.Context, ref string, contextWindow int) (*driver.ModelUpdateResult, error)
+	SubmitModelImages(ctx context.Context, ref string, takes bool) (*driver.ModelUpdateResult, error)
 	SubmitModelDefault(ctx context.Context, ref string) (*driver.ModelDefaultResult, error)
 }
 
@@ -279,6 +284,17 @@ func runHubWork(ctx context.Context, core hubCore, w hubWork) hubOutcome {
 		out.nav = navModelList
 		out.notice = "✓ " + res.Model + ": context window " + humanTokens(uint64(res.ContextWindow)) + " tokens"
 
+	case opSetImages:
+		if _, err := core.SubmitModelImages(ctx, w.Ref, w.On); err != nil {
+			return fail(err)
+		}
+		out.nav = navModelList
+		if w.On {
+			out.notice = "✓ " + w.Ref + " now takes images"
+		} else {
+			out.notice = "✓ " + w.Ref + " no longer takes images"
+		}
+
 	case opRemove:
 		if _, err := core.SubmitProviderRemove(ctx, w.Name); err != nil {
 			return fail(err)
@@ -316,7 +332,7 @@ func addModels(ctx context.Context, core hubCore, w hubWork) (int, []string) {
 	added := 0
 	var errs []string
 	for _, id := range w.Models {
-		if _, err := core.SubmitModelAdd(ctx, driver.ModelAddParams{Provider: w.Name, Model: id, In: w.In, Out: w.Out, CacheRead: w.CacheRead, CacheWrite: w.CacheWrite, ContextWindow: w.Window}); err != nil {
+		if _, err := core.SubmitModelAdd(ctx, driver.ModelAddParams{Provider: w.Name, Model: id, In: w.In, Out: w.Out, CacheRead: w.CacheRead, CacheWrite: w.CacheWrite, ContextWindow: w.Window, Images: w.Images}); err != nil {
 			errs = append(errs, id+": "+err.Error())
 			continue
 		}
@@ -375,6 +391,8 @@ func (o hubOp) String() string {
 		return "removing the model"
 	case opSetWindow:
 		return "saving the context window"
+	case opSetImages:
+		return "saving whether the model takes images"
 	case opRemove:
 		return "removing the provider"
 	case opSearch:

@@ -236,6 +236,8 @@ func (h *providerHub) enter() hubKeyResult {
 			return hubKeyResult{work: &hubWork{Op: opToggle, Ref: h.model, On: !h.modelEnabled(h.model)}}
 		case "window":
 			h.openForm(newWindowForm(h.model, h.data.windowOf(h.model)))
+		case "images":
+			return hubKeyResult{work: &hubWork{Op: opSetImages, Ref: h.model, On: !h.data.imagesOf(h.model)}}
 		case "remove":
 			return hubKeyResult{work: &hubWork{Op: opRemoveModel, Ref: h.model}}
 		}

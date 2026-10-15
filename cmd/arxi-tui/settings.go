@@ -160,6 +160,17 @@ func (d hubData) windowOf(ref string) int {
 	return knownWindow(ref)
 }
 
+// imagesOf says whether the model a reference names ("provider/id") was set to take
+// pictures. Nothing but the core's own record says yes.
+func (d hubData) imagesOf(ref string) bool {
+	for _, m := range d.models {
+		if modelRef(m) == ref {
+			return m.Images
+		}
+	}
+	return false
+}
+
 // envWindow reads ARXI_CONTEXT_WINDOW: a plain token count, or one with a k/m suffix
 // ("200k", "1m"). Anything else, or a figure outside what a model can have, is ignored.
 func envWindow() int {

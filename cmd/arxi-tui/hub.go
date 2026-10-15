@@ -263,6 +263,7 @@ func (h *providerHub) allItems() []hubItem {
 		out = append(out,
 			hubItem{id: "default", label: "Use for chat (make default)"},
 			hubItem{id: "window", label: "Set context window…", status: h.windowStatus(d)},
+			hubItem{id: "images", label: "Accepts images", status: h.imagesStatus(d)},
 			hubItem{id: "toggle", label: toggle + " this model"},
 			hubItem{id: "remove", label: "Remove this model"},
 		)
@@ -566,6 +567,15 @@ func (h *providerHub) writeSearchSummary(b *strings.Builder) {
 		"your permission unless the mode is full access. Brave and Exa need an API key from\n" +
 		"their site; SearXNG is a search server you run yourself and needs only its address.\n" +
 		"The key is stored on this computer, never shown, and applies from your next question.")
+}
+
+// imagesStatus is the right-hand text of the "Accepts images" row. A model takes none
+// until somebody says so, and Enter on the row flips it.
+func (h *providerHub) imagesStatus(d hubData) string {
+	if d.imagesOf(h.model) {
+		return "yes · Enter to turn off"
+	}
+	return "no · Enter to turn on"
 }
 
 // windowStatus is the right-hand text of the "Set context window" row: the size in use,
