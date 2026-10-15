@@ -1,5 +1,11 @@
 # Pending work
 
+## Done since: copying the chat without the scrollbar column (branch feat/copy-clean)
+
+- The bar's column and the spaces that pad each row out to it are real characters on the screen, so a mouse selection took them. Changed: no bar (the chat fits) means no padding and no bar cell; `/ui text chat.scrollbar no` removes the bar altogether (validated yes/no). With the bar showing, the `│` and the padding are STILL copied: a program cannot make a terminal selection skip a column. `/copy` is the clean way.
+- Tests: no trailing spaces and the same text as the narrower layout when the chat fits; a real bar still aligns every row; the text key turns the bar off through the real loop (found on the way: the loop reads the user's texts only for the built-in scene by name, so the helper now uses that name); the key refuses a value that is not yes/no. Mutations: 4 killed; one survivor is old code (`wantMouse` inside the loop, not covered by any test) and was not touched.
+- NOT verified: in a real terminal (that a drag-select without the bar really copies no trailing spaces; in Windows Terminal/PowerShell the selection may also trim them by itself); the bar-on case still copies `│`.
+
 ## The owner's definition of "finished" (recorded on purpose)
 
 **The product is not finished until the owner can edit the TUI from inside the TUI, however he
@@ -34,7 +40,7 @@ moving. Not started as a single piece of work.
 
 - NOT reproduced: the tool record of a browser-opening call not showing in the chat. The core sends one `chat.tool` per call and the screen draws every one, so I do not know why one is missing; I need which tool the model used (the line that did show, or `run`).
 - Right-edge glitch ("arxi-tui" -> "arxi-ti" while narrowing): the frame drawn at widths 133-140, run through a terminal emulator, showed no overwritten character. The row with the folder path was not in my probe, so this did NOT reproduce it; it may be the Windows terminal's own handling of the last column. The owner uses PowerShell; still not reproduced. Useful test: run with `-mouse=false` (no scrollbar) and see if it still happens.
-- Not started: per-model modalities; chat copy without the scrollbar column (investigated: the column and the space padding are real characters on screen, so a native selection takes them; it cannot exclude a column).
+- Not started: per-model modalities; (chat copy without the scrollbar column: done, see above).
 - How images reach the model TODAY: they do not. The core has a content-block type for images (`turn.BlockImage`, `MediaSource`) but nothing builds or sends one, the turn validator refuses any block that is not text, no provider code mentions images, the chat tools only read text files, and a model in the store has an id, an on/off flag, a price, a wire and a context window, with no notion of what it accepts. So there is nothing to select per model yet: it is a feature to build (model field, form fields in add/edit, a way to attach an image, the wire encoding for each provider, and refusing an image for a model that cannot take it).
 - The chat is still redrawn whole on every frame: the cost per key grows with the length of the conversation (about 5 ms at 10 turns, 24 ms at 40). A cache of the lines already drawn is the next step.
 

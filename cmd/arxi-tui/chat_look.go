@@ -144,7 +144,7 @@ func validChatLook(key, val string) error {
 			return fmt.Errorf("text %q is a thinking level (on, minimal, low, medium, high, xhigh, max) or none; %q is not", key, val)
 		}
 	}
-	if key == "tool.inline" || key == "chat.light" {
+	if key == "tool.inline" || key == "chat.light" || key == "chat.scrollbar" {
 		switch strings.ToLower(strings.TrimSpace(val)) {
 		case "yes", "no", "true", "false", "on", "off":
 		default:

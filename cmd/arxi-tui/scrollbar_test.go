@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -150,5 +152,42 @@ func TestPressOutsideTheBarDoesNothing(t *testing.T) {
 	keys := []scheduledEvent{{400 * time.Millisecond, mouseEvent(term.MousePress, 10, 5)}}
 	if anyHint(scrollLoop(t, append(keys, scrollQuit()...))) {
 		t.Fatal("a click in the text scrolled the chat")
+	}
+}
+
+// chat.scrollbar is the user's switch: "no" leaves the full width to the text and draws no bar,
+// "yes" (the factory value) draws it while there is more transcript than window.
+func TestTheScrollbarCanBeTurnedOffWithAText(t *testing.T) {
+	barCells := func(frames []string) bool {
+		for _, f := range frames {
+			if strings.Contains(f, "│") { // the track; ┃ is also the input prefix
+				return true
+			}
+		}
+		return false
+	}
+	if !barCells(scrollLoop(t, scrollQuit())) {
+		t.Fatal("the factory setting must draw the bar on a long chat")
+	}
+	// scrollLoop points the config at a fresh folder; the loop reads texts.json from it, so the
+	// setting is written where the user's would be.
+	t.Setenv(configDirEnv, t.TempDir())
+	if err := os.WriteFile(filepath.Join(os.Getenv(configDirEnv), "texts.json"), []byte(`{"chat.scrollbar":"no"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if barCells(scrollLoopKeepingConfig(t, scrollQuit())) {
+		t.Error("chat.scrollbar no still drew a bar")
+	}
+}
+
+// A value that is neither yes nor no is refused when written, not silently read as "yes".
+func TestTheScrollbarTextAcceptsOnlyYesOrNo(t *testing.T) {
+	for _, ok := range []string{"yes", "no", "off", "On"} {
+		if err := validChatLook("chat.scrollbar", ok); err != nil {
+			t.Errorf("%q refused: %v", ok, err)
+		}
+	}
+	if validChatLook("chat.scrollbar", "maybe") == nil {
+		t.Error("\"maybe\" must be refused")
 	}
 }

@@ -1668,7 +1668,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		r.AnimTicks = clock.ticks()
 		r.AnimPhase = clock.phases()
 		r.ChatScroll = chatScroll
-		r.Scrollbar = wantMouse(term.IsTermux(), mouseOverride)
+		r.Scrollbar = wantMouse(term.IsTermux(), mouseOverride) && !isNo(uiText("chat.scrollbar"))
 		r.ExpandTools = expandTools
 		r.PromptStyle = promptStyle
 		r.Look = chatLook()

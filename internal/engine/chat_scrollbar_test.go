@@ -302,3 +302,47 @@ func TestHostPasteBindShowsTheHintOnlyWhileSet(t *testing.T) {
 		t.Errorf("an empty hint must draw nothing: %q", rows)
 	}
 }
+
+// ---- copying: what a selection takes is what is on the screen ----
+
+// With nothing to scroll the bar has no cell, and rows are not padded out to its column: a
+// padded row is copied with its trailing spaces. The text keeps the width it was laid out in.
+func TestNoBarMeansNoPaddingToCopy(t *testing.T) {
+	st := barHistory(2)
+	r := Renderer{Width: 40, Scrollbar: true}
+	f := r.renderChatPane(&scene.Node{Bind: "chat.history"}, st, 10)
+	if r.ChatBar.Height != 0 {
+		t.Fatalf("two rows must not need a bar: %+v", r.ChatBar)
+	}
+	for i, l := range f.Live {
+		if txt := l.Text(); txt != strings.TrimRight(txt, " ") {
+			t.Errorf("row %d carries trailing spaces to be copied: %q", i, txt)
+		}
+	}
+	// the same text, laid out the same, as with the bar column held back
+	plain := Renderer{Width: 39}
+	g := plain.renderChatPane(&scene.Node{Bind: "chat.history"}, st, 10)
+	if len(f.Live) != len(g.Live) {
+		t.Fatalf("rows differ: %d vs %d", len(f.Live), len(g.Live))
+	}
+	for i := range f.Live {
+		if f.Live[i].Text() != g.Live[i].Text() {
+			t.Errorf("row %d moved: %q vs %q", i, f.Live[i].Text(), g.Live[i].Text())
+		}
+	}
+}
+
+// When there IS a bar every row still reaches the bar's column, so the thumb sits in a straight
+// line (this is what the padding is for, and the only place it stays).
+func TestARealBarStillAlignsEveryRow(t *testing.T) {
+	r := Renderer{Width: 40, Scrollbar: true}
+	f := r.renderChatPane(&scene.Node{Bind: "chat.history"}, barHistory(30), 10)
+	if r.ChatBar.Height == 0 {
+		t.Fatal("30 rows must need a bar")
+	}
+	for i, l := range f.Live {
+		if w := l.Width(); w != 40 {
+			t.Errorf("row %d is %d wide, want 40", i, w)
+		}
+	}
+}
