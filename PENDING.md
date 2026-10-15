@@ -1,5 +1,12 @@
 # Pending work
 
+## Done since: lag in a long conversation (branch fix/long-conversation-lag)
+
+- Symptom: typing/deleting in the input bar got slow in a developed conversation, only in that window, and `/resume` cured it. Cause (found by profiling, not guessed): every streamed fragment of the model's thinking was kept as its own event in the in-memory log, and the whole log is folded again on every key. After 40 turns with ~200 fragments each, a key cost ~125 ms. `/resume` rebuilt the log from the saved file, which never kept thinking events, hence the cure.
+- Fix: consecutive `chat.thinking` events are merged into one using the fold's own function, so the marquee text is exactly the same (random property test). Same conversation: ~34 ms a key (a quiet one: ~30 ms).
+- Tests: log stays flat; merged text equals what the fragments would show; only consecutive thinking is merged; timing (thoughtful <= quiet*2+5 ms, skipped with -short); the real loop keeps one event per thought. 5 mutation checks, all killed (two tests had to be reinforced first).
+- NOT fixed / NOT verified: the cost still grows with the length of the visible history even with no thinking (about 5 ms at 10 turns, 24 ms at 40) because the whole chat is re-rendered on each frame. That is a second, smaller cause; a render cache is the next step. Not measured in the owner's real terminal nor on Windows.
+
 ## Done since: seven more package events (15 in all)
 
 - `tool.used`, `file.changed`, `approval.asked`, `provider.error`, `context.high`, `model.changed`, `session.resumed`. Same rules as the rest: they only show a note. `is` narrows `tool.used` / `approval.asked` to a tool and `model.changed` to a model (checked when the package is written; a package's own `pkg_` tools pass unchecked).
