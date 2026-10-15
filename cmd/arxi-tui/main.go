@@ -905,9 +905,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// chatBar is where the last frame drew the chat's scrollbar and barDrag whether its thumb is
 	// held: a press on the bar starts it, motion with the button down moves the chat, release ends.
 	var chatBar engine.ChatBar
-	var pastes pasteStore // big pastes kept aside while the input shows [Pasted text #N +L lines]
-	inputScroll := 0      // first input row shown (engine.Renderer.InputTop)
-	var chatStops []int   // where the reader's own messages sit (engine.Renderer.ChatUserStops)
+	chatCache := &engine.ChatRowCache{} // rows of the chat already laid out, kept between frames
+	var pastes pasteStore               // big pastes kept aside while the input shows [Pasted text #N +L lines]
+	inputScroll := 0                    // first input row shown (engine.Renderer.InputTop)
+	var chatStops []int                 // where the reader's own messages sit (engine.Renderer.ChatUserStops)
 	var barDrag bool
 	barGrabAt := 0
 	effort := ""
@@ -1636,6 +1637,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		var r engine.Renderer
 		w, h := tty.Size()
 		r.Width, r.Height = w, h
+		r.ChatCache = chatCache
 		r.InputScroll = inputScroll
 
 		// Decode a row-target ui.focus into the (node, row) pair the engine lights
