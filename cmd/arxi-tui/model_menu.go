@@ -204,6 +204,31 @@ func startModelPick(ctx context.Context, core hubCore, ref string, done chan<- m
 	}()
 }
 
+// modelSetter is the optional capability a Driver has when its chat turns can name the
+// model (serveDriver). The mock has no model to ask.
+type modelSetter interface {
+	SetModel(ref string)
+}
+
+// adoptModel decides which model THIS instance chats with after the core has answered.
+// The core's default is one file shared by every arxi on the machine, so it is only the
+// STARTING model: once this instance has a model it keeps it, whatever another instance
+// picks meanwhile. picked is a choice made here just now and always wins. A model that
+// was removed or disabled meanwhile falls back to the core's default.
+func adoptModel(current string, d hubData, picked string) string {
+	if picked != "" {
+		return picked
+	}
+	if current != "" {
+		for _, m := range d.enabledModels() {
+			if modelRef(m) == current {
+				return current
+			}
+		}
+	}
+	return d.def
+}
+
 // modelRead is a worker's answer.
 type modelRead struct {
 	data    hubData

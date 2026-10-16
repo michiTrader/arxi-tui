@@ -84,6 +84,12 @@ type chatSession struct {
 	// effort is the thinking level sent with each turn ("" = the model decides).
 	// It is a setting, not conversation: reset() leaves it alone.
 	effort string
+	// model is the "provider/id" this conversation asks ("" = let the core pick its
+	// default). It is per instance on purpose: the core keeps ONE default model for
+	// the whole machine, so leaving the choice to the core made a /model pick in one
+	// arxi change every other arxi running in the same folder. Like effort it is a
+	// setting: reset() leaves it alone.
+	model string
 	// workdir is the folder the model may look into with read-only tools ("" =
 	// none). Like effort it is a setting: reset() leaves it alone.
 	workdir string
@@ -286,6 +292,14 @@ func chatRequires(h *driver.Hello) error {
 func (c *chatSession) setEffort(level string) {
 	c.mu.Lock()
 	c.effort = level
+	c.mu.Unlock()
+}
+
+// setModel chooses the model the turns that start from now on ask for; "" leaves the
+// choice to the core's default. A turn already in flight keeps the one it began with.
+func (c *chatSession) setModel(ref string) {
+	c.mu.Lock()
+	c.model = ref
 	c.mu.Unlock()
 }
 
@@ -526,6 +540,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	c.busy = true
 	gen := c.gen
 	effort := c.effort
+	model := c.model
 	workdir := c.workdir
 	edits, runs, web := c.edits, c.runs, c.web
 	outside, folders := c.outside, append([]string(nil), c.folders...)
@@ -568,7 +583,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	turnCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.mu.Unlock()
-	go c.run(turnCtx, text, command, withUI, hist, gen, effort, workdir, edits, runs, web, outside, folders, turn, images)
+	go c.run(turnCtx, text, command, withUI, hist, gen, model, effort, workdir, edits, runs, web, outside, folders, turn, images)
 	return nil
 }
 
@@ -751,7 +766,7 @@ func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload m
 	}
 }
 
-func (c *chatSession) run(ctx context.Context, text, command string, withUI bool, hist []driver.ChatTurn, gen int64, effort, workdir, edits, runs, web, outside string, folders []string, turn int64, images []driver.ChatImage) {
+func (c *chatSession) run(ctx context.Context, text, command string, withUI bool, hist []driver.ChatTurn, gen int64, askModel, effort, workdir, edits, runs, web, outside string, folders []string, turn int64, images []driver.ChatImage) {
 	defer func() {
 		c.mu.Lock()
 		// Only the turn that is still current frees the session: a cancelled turn
@@ -804,7 +819,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		}
 	}
 	params := driver.ChatSendParams{
-		Prompt: text, System: system, History: hist, Effort: effort, Images: images,
+		Prompt: text, Model: askModel, System: system, History: hist, Effort: effort, Images: images,
 		// The model's thinking is shown live in the Thinking line.
 		OnThinking: func(fragment string) {
 			c.post(ctx, gen, "chat.thinking", map[string]any{"text": fragment})

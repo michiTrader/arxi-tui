@@ -313,7 +313,10 @@ func (c *chatSession) runCompact(ctx context.Context, focus string, old, keep []
 	}
 	summary, viaModel := "", false
 	reqCtx, stop := context.WithTimeout(ctx, compactTimeout)
-	res, err := core.SubmitChatSend(reqCtx, driver.ChatSendParams{Prompt: compactPrompt(old, focus), System: compactSystem})
+	c.mu.Lock()
+	model := c.model
+	c.mu.Unlock()
+	res, err := core.SubmitChatSend(reqCtx, driver.ChatSendParams{Prompt: compactPrompt(old, focus), Model: model, System: compactSystem})
 	stop()
 	if ctx.Err() != nil {
 		return // cancelled: cancelTurn already told the conversation and left the history alone
