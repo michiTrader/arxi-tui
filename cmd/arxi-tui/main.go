@@ -914,6 +914,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// held: a press on the bar starts it, motion with the button down moves the chat, release ends.
 	var chatBar engine.ChatBar
 	chatCache := &engine.ChatRowCache{} // rows of the chat already laid out, kept between frames
+	var sentPastes sentPaste            // the line just sent, as the bar showed it, for the chat to draw
 	var pastes pasteStore               // big pastes kept aside while the input shows [Pasted text #N +L lines]
 	var images imageStore               // pictures behind the [Image #N name] markers of the line being typed
 	inputScroll := 0                    // first input row shown (engine.Renderer.InputTop)
@@ -1863,8 +1864,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					// typed is what the history keeps.
 					// A plain Enter sends what the markers stand for, never the markers.
 					if ev.Key.Type == term.KeyEnter && !isNewlineGesture(ev.Key) && pastes.has(input) {
+						shown := input
 						input = pastes.expand(input)
 						caret = len([]rune(input))
+						sentPastes.remember(shown, input)
 					}
 					if ev.Key.Type == term.KeyEnter && !isNewlineGesture(ev.Key) && strings.TrimSpace(input) != "" && classifySlash(strings.TrimSpace(input), nil).Kind == slashNone {
 						// The pictures of this line ride with its message, and only with it.
@@ -3002,7 +3005,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				// terminal input (e.g. user wants to review the transcript).
 				eventCh = nil
 			} else {
-				collected = addEvent(collected, e)
+				collected = addEvent(collected, sentPastes.forChat(e))
 				if logLenProbe != nil {
 					logLenProbe(len(collected))
 				}

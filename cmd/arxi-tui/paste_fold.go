@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/term"
 )
 
@@ -174,4 +175,44 @@ func runeIndex(s, sub []rune) int {
 		}
 	}
 	return -1
+}
+
+// sentPaste remembers, for the one line that was just sent, what the bar showed (markers
+// and all) and what was really sent. The chat draws the first, so a long paste reads in
+// the conversation the way it read in the bar; the model, the history and the session
+// file keep the second. Pasting the same text twice had unfolded the marker in the bar
+// before Enter, so then the two are equal and nothing is replaced: the chat always equals
+// what the bar showed.
+type sentPaste struct{ shown, real string }
+
+// remember is called when Enter is about to send: shown is the line as the bar holds it,
+// real the same line with every marker swapped for its text (equal when there was nothing
+// to hide, and then drawing "shown" changes nothing).
+func (s *sentPaste) remember(shown, real string) {
+	*s = sentPaste{shown: strings.TrimSpace(shown), real: strings.TrimSpace(real)}
+}
+
+// forChat returns the event the chat should draw. Only the run.prompt that carries exactly
+// the remembered real text is changed (on a copy: the original goes on to the session
+// file untouched). The memory is spent by the first prompt that comes, whichever it is.
+func (s *sentPaste) forChat(e fold.Event) fold.Event {
+	if s.real == "" || e.Type != "run.prompt" {
+		return e
+	}
+	text, _ := e.Payload["text"].(string)
+	mine := strings.TrimSpace(text) == s.real
+	shown := s.shown
+	// The memory is for the very next line the chat shows. Spent either way, so it can
+	// never rewrite a later line that happens to hold the same words.
+	*s = sentPaste{}
+	if !mine {
+		return e
+	}
+	payload := make(map[string]any, len(e.Payload))
+	for k, v := range e.Payload {
+		payload[k] = v
+	}
+	payload["text"] = shown
+	e.Payload = payload
+	return e
 }
