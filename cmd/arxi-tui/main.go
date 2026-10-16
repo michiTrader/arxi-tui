@@ -945,6 +945,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	var copyMn copyMenu
 	promptStyle := loadPromptStyle(stylePath())
 	sessLog := newSessionLog(sessionsDir())
+	sessLog.cwd = cwd
 	hubDoc, hubDocErr := loadHubScene()
 	// openHub is the one door a typed command and a slash-menu pick both take. It
 	// reads the core's state on a worker first so a hung core never freezes the loop.
@@ -1526,7 +1527,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		} else if filter, open := resumeMenuOpen(input); open && hub == nil {
 			// `/resume ` borrows the same overlay; it is read from disk each time it opens.
 			if !resumeMn.loaded {
-				resumeMn.setRows(resumeMenuData(sessionsDir(), time.Now()))
+				resumeMn.setRows(resumeMenuData(sessionsDir(), time.Now(), cwd, resumeScope()))
 			}
 			state.ModelActive = true
 			state.ModelMatches, state.ModelSelected = resumeMn.view(filter)

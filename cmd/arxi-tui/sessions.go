@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -71,6 +72,7 @@ func sessionsDir() string {
 // sessionLog writes the conversation on screen to disk as it happens.
 type sessionLog struct {
 	dir    string
+	cwd    string // the folder the conversation was started in; /resume lists by it
 	id     string // "" until the first question of a conversation
 	size   int64
 	failed bool // a write failed; the user was told once
@@ -165,7 +167,11 @@ func (l *sessionLog) begin() (string, error) {
 		return "", err
 	}
 	id := l.now().Format("20060102-150405") + "-" + hex.EncodeToString(rnd[:])
-	head, _ := json.Marshal(map[string]any{sessionMagic: 1, "started": l.now().UTC().Format(time.RFC3339)})
+	header := map[string]any{sessionMagic: 1, "started": l.now().UTC().Format(time.RFC3339)}
+	if l.cwd != "" {
+		header["cwd"] = l.cwd
+	}
+	head, _ := json.Marshal(header)
 	if err := appendLine(filepath.Join(l.dir, id+".jsonl"), append(head, '\n')); err != nil {
 		return "", err
 	}
@@ -237,6 +243,7 @@ type sessionInfo struct {
 	ID      string
 	Title   string // the first question
 	Updated time.Time
+	Cwd     string // the folder it was started in; "" for one saved before this was kept
 }
 
 // listSessions reads the saved conversations, newest first. It reads each file only as
@@ -264,7 +271,7 @@ func listSessions(dir string) []sessionInfo {
 		if !ok {
 			continue // a header with no question is not worth offering
 		}
-		out = append(out, sessionInfo{ID: id, Title: title, Updated: info.ModTime()})
+		out = append(out, sessionInfo{ID: id, Title: title, Updated: info.ModTime(), Cwd: sessionFolder(filepath.Join(dir, name))})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if !out[i].Updated.Equal(out[j].Updated) {
@@ -273,6 +280,65 @@ func listSessions(dir string) []sessionInfo {
 		return out[i].ID > out[j].ID
 	})
 	return out
+}
+
+// sessionFolder is the folder a conversation was started in, read from its header line;
+// "" when the header does not say (a conversation saved before the folder was kept).
+func sessionFolder(path string) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 0, 64*1024), 2*sessionFieldM+4096)
+	if !sc.Scan() {
+		return ""
+	}
+	var head map[string]any
+	if json.Unmarshal(sc.Bytes(), &head) != nil {
+		return ""
+	}
+	if _, ok := head[sessionMagic]; !ok {
+		return ""
+	}
+	cwd, _ := head["cwd"].(string)
+	return cwd
+}
+
+// sessionInFolder reports whether a conversation's folder is the folder the TUI runs in:
+// links resolved (a symlinked checkout is one folder) and, on Windows, without regard to
+// case, where C:\Proj and c:\proj are one folder.
+func sessionInFolder(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	if ra, err := filepath.EvalSymlinks(a); err == nil {
+		a = ra
+	}
+	if rb, err := filepath.EvalSymlinks(b); err == nil {
+		b = rb
+	}
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+// The values of the resume.scope text: which conversations /resume lists.
+const (
+	resumeFolder = "folder" // only those started in the folder the TUI runs in (the factory choice)
+	resumeAll    = "all"    // every saved conversation
+)
+
+// resumeScope is the user's choice for /resume. Anything but "all" is the factory "folder":
+// the value is checked when written, so reading never fails.
+func resumeScope() string {
+	if strings.ToLower(strings.TrimSpace(uiText("resume.scope"))) == resumeAll {
+		return resumeAll
+	}
+	return resumeFolder
 }
 
 // firstQuestion is the text of the first run.prompt in a file, cut for the list.
@@ -455,13 +521,27 @@ func resumeCommand(input string, sel int, cat string) bool {
 	return menuCommand("resume", input, sel, cat)
 }
 
-// resumeMenuData builds the rows, newest first.
-func resumeMenuData(dir string, now time.Time) []fold.ModelMatch {
+// resumeMenuData builds the rows, newest first. In the "folder" scope only the
+// conversations started in cwd are listed; when others exist elsewhere the empty menu
+// says so and says how to see them, so a missing conversation is never a mystery.
+func resumeMenuData(dir string, now time.Time, cwd, scope string) []fold.ModelMatch {
 	if dir == "" {
 		return []fold.ModelMatch{{Name: "saving is off", Provider: "unset " + sessionsEnv + " to keep conversations"}}
 	}
-	list := listSessions(dir)
+	all := listSessions(dir)
+	list := all
+	if scope != resumeAll {
+		list = nil
+		for _, s := range all {
+			if sessionInFolder(s.Cwd, cwd) {
+				list = append(list, s)
+			}
+		}
+	}
 	if len(list) == 0 {
+		if len(all) > 0 {
+			return []fold.ModelMatch{{Name: "no saved conversations in this folder", Provider: "/ui text resume.scope all lists every folder"}}
+		}
 		return []fold.ModelMatch{{Name: "no saved conversations yet"}}
 	}
 	out := make([]fold.ModelMatch, 0, len(list))
