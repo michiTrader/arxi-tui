@@ -5,6 +5,7 @@ go 1.25.0
 require (
 	github.com/charmbracelet/x/ansi v0.11.8
 	github.com/charmbracelet/x/term v0.2.2
+	golang.org/x/sys v0.36.0
 )
 
 require (
@@ -13,5 +14,4 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/michiTrader/arxi v0.0.0-20261001124451-633d6d152ff7 // indirect
-	golang.org/x/sys v0.36.0 // indirect
 )
