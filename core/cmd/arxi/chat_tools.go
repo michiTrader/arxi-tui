@@ -247,7 +247,9 @@ type chatToolNotification struct {
 func toolsHint(root, edits string) string {
 	h := "You can use tools on the user's project (root: " + filepath.Base(root) + "; paths are relative to it). " +
 		"Look before you answer about the code; never guess file contents. " +
-		"Read a file whole in one call unless it is huge, and do not read the same part twice."
+		"Read a file whole in one call unless it is huge, and do not read the same part twice. " +
+		"Never ask leave to look: call the tool (the user is asked for you, or has already allowed it). " +
+		"If a path is not found, list \".\" before saying the project is empty."
 	if edits != editsDeny {
 		h += " Read a file before you edit it. If the user declines a change, do not retry it: say what you would do and ask."
 	}
@@ -304,7 +306,7 @@ func runsHint(runs string) string {
 		return ""
 	}
 	return "run really executes commands here: when the user asks you to run, launch or test something, do it with run " +
-		"and never say you cannot execute things. Nothing interactive or endless. " +
+		"and never say you cannot execute things. Do not say you are running something unless you call run in that same reply. Nothing interactive or endless. " +
 		"If the user declines a command, do not retry it: ask."
 }
 
