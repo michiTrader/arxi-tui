@@ -181,20 +181,6 @@ NO verificado (solo el dueño puede, necesita sus claves o su terminal):
     (`removeWhenReleased`, igual que `logstore.removePendingFile` en el producto), con su propio
     test. Mutaciones muertas. Si vuelve a fallar en CI, el mensaje dirá el plazo agotado.
 
-## Solo el dueño puede hacerlo (no bloquea nada de lo anterior)
-
-Cerrado por el dueño: el borde derecho en PowerShell real (OK, #285); la herramienta de navegador
-(no existe, el modelo usa `run` + `start`); las imágenes con un proveedor real (Gemini OK; el
-fallo con GLM era el proveedor, que no admite visión).
-
-Abierto, menor:
-1. Pegar rutas arrastradas (imágenes) en PowerShell / Windows Terminal reales.
-2. Si se quiere, probar las imágenes con otro proveedor.
-3. Vigilar la primera llamada `run` + `start` con el core recompilado y confirmar que el registro
-   se lee bien (la redacción nueva es de #272).
-4. Confirmar en una máquina Windows real (o dejar que CI lo haga) que los dos tests de core ya
-   no fallan de forma intermitente.
-
 ## Ronda actual: hecho y lo que falta (honesto)
 
 Hecho y probado con el bucle real + mutaciones:
@@ -221,6 +207,27 @@ Hecho y probado con el bucle real + mutaciones:
   proyecto estaba vacío); y tres frases nuevas en las instrucciones fijas: no pedir permiso para
   mirar, listar `.` antes de decir que el proyecto está vacío, y no decir "lo estoy ejecutando"
   sin llamar a `run` en esa misma respuesta (unos 60 tokens por turno).
+
+## Veces que hubo que explicarle al modelo lo que ya debía saber (a evitar)
+
+Contadas de las 4 conversaciones que pegó el dueño. Cada fila es un mensaje del usuario que no
+debería haber hecho falta. Esto es el criterio: menos mensajes para llegar a lo mismo.
+
+| Conversación | Mensajes de más | Qué pasó | Dónde se ataca |
+|---|---|---|---|
+| SMC (pitlane-strategies) | 5 | "no ves que estamos en un proyecto?", "estamos en la carpeta ... y tienes acceso", "estamos dentro de la ruta, busca las estrategias", "investiga a ver y ejecútala". El modelo escribió el nombre del proyecto como ruta, recibió "does not exist" y dijo que estaba vacío | #292: la ruta con el nombre del proyecto funciona; "lista `.` antes de decir que está vacío" |
+| SMC, 2.ª sesión | 3 | La misma petición larga enviada 3 veces (una cancelada, una por saldo, una tras cambiar de modelo); luego "no me llegó ninguna petición y además estamos en full access" (el modelo pidió permiso para listar) | #292: "no pidas permiso para mirar"; el saldo agotado ya se dice claro (no es del modelo) |
+| OpenCode en WSL | 4 | "no corriste nada, no usaste la herramienta run"; "es ubuntu, por favor instálalo, no quiero hacer nada"; "si hazlo tú, usa el comando wsl no?"; un "sí" suelto. El modelo decía "voy a ejecutarlo" sin llamar a `run`, y pedía confirmación para algo que ya estaba permitido | #292: "no digas que ejecutas sin llamar a `run`"; esta ronda: "no pidas permiso ni 'di sí y lo hago'" |
+| Abrir en el navegador | 1 (y el turno perdido) | "abre la estrategia en el navegador": el modelo entendió "muéstrame el archivo" y contestó que ya estaba abierto | esta ronda: la instrucción dice qué significa y qué ejecutar (`start ""` / `open` / `xdg-open`), y la de las shells dice cómo mostrar una página servida |
+
+Total: unos 13 mensajes de más en 4 conversaciones. Ninguno de los arreglos está comprobado con un
+modelo real: son frases en las instrucciones fijas (una petición al modelo, no una garantía). La
+forma honesta de saber si funcionó es volver a contar en las próximas conversaciones.
+
+Por decidir (no se tocó): una línea que EMPIEZA por una ruta (`/mnt/c/Users/...`) se rechaza como
+"Unknown command" y no se envía (pasó 2 veces en la conversación de WSL). Hoy es a propósito y hay un
+test que lo fija (`/usr/bin/ls -l` es comando desconocido). Alternativa: si el primer trozo tiene otra
+`/` dentro, tratarla como texto normal. Cambia un comportamiento probado; lo decide el dueño.
 
 NO hecho todavía (nada de esto está implementado):
 1. Superficie de ajustes (`/settings`-like): listar todos los ajustes con valor y explicación,

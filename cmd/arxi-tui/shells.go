@@ -496,7 +496,9 @@ const (
 // shellsHint is told to the model when the tools are offered.
 const shellsHint = "shell_start runs a command that keeps going (a server, a watcher, a long build) in the background " +
 	"and returns at once with an id; shell_read shows what it printed, shell_stop ends it. " +
-	"Use run for a command that finishes. The user sees how many shells run and can read or stop them with /shell."
+	"Use run for a command that finishes. To show the user a page that a program serves (a backtest report, a dev server), " +
+	"start it with shell_start, read its output for the address, then open that address in their browser with run. " +
+	"The user sees how many shells run and can read or stop them with /shell."
 
 // isShellTool reports whether name is one of the three.
 func isShellTool(name string) bool {

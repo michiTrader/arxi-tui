@@ -248,7 +248,7 @@ func toolsHint(root, edits string) string {
 	h := "You can use tools on the user's project (root: " + filepath.Base(root) + "; paths are relative to it). " +
 		"Look before you answer about the code; never guess file contents. " +
 		"Read a file whole in one call unless it is huge, and do not read the same part twice. " +
-		"Never ask leave to look: call the tool (the user is asked for you, or has already allowed it). " +
+		"Never ask leave to look or run, nor \"say yes and I will\": calling the tool is what asks the user. " +
 		"If a path is not found, list \".\" before saying the project is empty."
 	if edits != editsDeny {
 		h += " Read a file before you edit it. If the user declines a change, do not retry it: say what you would do and ask."
@@ -306,8 +306,23 @@ func runsHint(runs string) string {
 		return ""
 	}
 	return "run really executes commands here: when the user asks you to run, launch or test something, do it with run " +
-		"and never say you cannot execute things. Do not say you are running something unless you call run in that same reply. Nothing interactive or endless. " +
+		"and never say you cannot execute things. Never say you are running something without calling run in that reply. " +
+		"\"Open in the browser\" means the user's own: run " + openerHint() + " on the URL or file (serve a page first). " +
+		"Nothing interactive or endless. " +
 		"If the user declines a command, do not retry it: ask."
+}
+
+// openerHint is the command that opens a page or a file in the user's own browser or
+// default program. A model that is not told reads "open it in the browser" as "show me the
+// file" and answers that the file is already open (a user lost a turn to exactly that).
+func openerHint() string {
+	switch runtime.GOOS {
+	case "windows":
+		return `start "" <x>`
+	case "darwin":
+		return "open <x>"
+	}
+	return "xdg-open <x>"
 }
 
 // webHint tells the model what a page is, when it can read one.
