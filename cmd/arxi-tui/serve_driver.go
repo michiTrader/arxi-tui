@@ -274,6 +274,14 @@ func (d *serveDriver) SetEffort(level string) {
 	}
 }
 
+// SetModel chooses the model this instance's chat turns ask for. The core's default
+// model is shared by every arxi on the machine; this choice is not.
+func (d *serveDriver) SetModel(ref string) {
+	if d.chat != nil {
+		d.chat.setModel(ref)
+	}
+}
+
 // SetMode applies an agent mode: what the model may do to files follows it.
 func (d *serveDriver) SetMode(name string) {
 	if d.chat != nil && d.chat.ui != nil {

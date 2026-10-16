@@ -194,3 +194,20 @@ Abierto, menor:
    se lee bien (la redacción nueva es de #272).
 4. Confirmar en una máquina Windows real (o dejar que CI lo haga) que los dos tests de core ya
    no fallan de forma intermitente.
+
+## Ronda actual: hecho y lo que falta (honesto)
+
+Hecho y probado con el bucle real + mutaciones:
+- El historial de entrada conserva el borrador al pulsar Flecha abajo (#287).
+- `/resume` lista por defecto solo la carpeta actual (`resume.scope` = folder|all) (#287).
+- El modelo de chat es POR INSTANCIA: cada turno envía `Model` explícito; el archivo
+  `default-model` del core es global a la máquina y ahora solo es el modelo inicial.
+
+NO hecho todavía (pendiente para la próxima ronda, nada de esto está implementado):
+1. Pegado largo comprimido TAMBIÉN en el chat (`[Pasted text #N +M lines]`); pegar dos veces expande.
+2. Superficie de ajustes (`/settings`-like): listar todos los ajustes con valor y explicación,
+   cambiarlos con la validación de `/ui`, persistir en texts.json, y promover a claves de texto la
+   altura de la ventana de entrada y los pasos de scroll.
+3. Investigación (solo diagnóstico, sin mitigación en código): `context deadline exceeded`
+   (palanca actual: `ARXI_CHAT_TIMEOUT`), cifra `ctx` frente a `↑` acumulado, y
+   "(the model sent an empty reply)" (candidato: reintento automático).

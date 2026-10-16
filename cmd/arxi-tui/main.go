@@ -1310,6 +1310,22 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		}
 		effortMn.loaded = false
 	}
+	// adoptChatModel settles which model THIS instance chats with from a read of the
+	// core (picked is a choice made here just now). The core's default is a single file
+	// shared by every arxi on the machine, so another instance changing it must not move
+	// this one: the choice is kept here and sent with every turn. It returns the data with
+	// its default replaced by this instance's model, so the menus mark the right one.
+	adoptChatModel := func(d hubData, picked string) hubData {
+		hubDefault = adoptModel(hubDefault, d, picked)
+		d.def = hubDefault
+		hubEfforts, hubEffortsKnown = d.effortsOf(hubDefault)
+		hubWindow = d.windowOf(hubDefault)
+		hubImages = d.imagesOf(hubDefault)
+		if s, ok := drv.(modelSetter); ok {
+			s.SetModel(hubDefault)
+		}
+		return d
+	}
 	setMode := func(name string, fromHook bool) {
 		known := false
 		for _, m := range agentModes {
@@ -3152,11 +3168,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			hubBusy = false
 			sceneNotice = out.notice
 			if out.hasData {
-				hubDefault = out.data.def
+				out.data = adoptChatModel(out.data, out.picked)
 				hubDefaultKnown = true
-				hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
-				hubWindow = out.data.windowOf(out.data.def)
-				hubImages = out.data.imagesOf(out.data.def)
 				effortMn.loaded = false
 				// A default changed from the providers screen starts on its own level.
 				adoptEffort()
@@ -3189,10 +3202,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				// The startup read: it only names the model in the status bar. A
 				// failure leaves the bar saying "no model", never a notice.
 				if out.err == "" {
-					hubDefault = out.data.def
-					hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
-					hubWindow = out.data.windowOf(out.data.def)
-					hubImages = out.data.imagesOf(out.data.def)
+					out.data = adoptChatModel(out.data, "")
 					effortMn.loaded = false
 					adoptEffort()
 				}
@@ -3206,11 +3216,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				modelMn.loaded = true
 			default:
 				if out.hasData || out.picked == "" {
+					out.data = adoptChatModel(out.data, out.picked)
 					modelMn.setData(out.data)
-					hubDefault = out.data.def
-					hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
-					hubWindow = out.data.windowOf(out.data.def)
-					hubImages = out.data.imagesOf(out.data.def)
 					effortMn.loaded = false
 				}
 				// Each model starts on the level chosen for it, or on the default.

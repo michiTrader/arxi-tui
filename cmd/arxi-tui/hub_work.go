@@ -128,6 +128,7 @@ type hubOutcome struct {
 	nav     hubNav
 	prov    string
 	closeUI bool
+	picked  string // the chat model chosen by this request ("provider/id"), if it was one
 }
 
 // scrub removes the secret from a message that is about to be shown. The core is
@@ -254,6 +255,7 @@ func runHubWork(ctx context.Context, core hubCore, w hubWork) hubOutcome {
 			return fail(err)
 		}
 		out.prov, out.nav = res.Provider, navModelList
+		out.picked = res.Provider + "/" + res.Model
 		out.notice = "✓ chat model: " + res.Model + " [" + res.Provider + "]"
 
 	case opToggle:
