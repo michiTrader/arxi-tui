@@ -213,12 +213,22 @@ Hecho y probado con el bucle real + mutaciones:
   presupuesto de salida (finish=length, típico de modelos que razonan) NO reintenta y lo dice
   con otra frase.
 
+- Los bloques de código de las respuestas ya NO llevan la barra `│` delante de cada línea:
+  se marcan con un fondo (`markdown.codeblock`), así que al copiar con el ratón sale solo el
+  código (#291). La `│` entre columnas de una tabla y la `▏` de una cita siguen siendo texto.
+- Del análisis de dos sesiones reales (#292): una ruta que empieza por el nombre del proyecto
+  (`pitlane-strategies/strategies`) ya funciona (antes "does not exist" y el modelo decía que el
+  proyecto estaba vacío); y tres frases nuevas en las instrucciones fijas: no pedir permiso para
+  mirar, listar `.` antes de decir que el proyecto está vacío, y no decir "lo estoy ejecutando"
+  sin llamar a `run` en esa misma respuesta (unos 60 tokens por turno).
+
 NO hecho todavía (nada de esto está implementado):
 1. Superficie de ajustes (`/settings`-like): listar todos los ajustes con valor y explicación,
    cambiarlos con la validación de `/ui`, persistir en texts.json, y promover a claves de texto la
    altura de la ventana de entrada y los pasos de scroll.
 
-NO verificado: nada de lo anterior contra un proveedor real (vyceai/glm-5.3-flash); el reintento
+NO verificado: que un modelo OBEDEZCA las tres frases nuevas (una frase en un prompt es una
+petición, no una garantía; solo se probó que se envía). Y nada de lo anterior contra un proveedor real (vyceai/glm-5.3-flash); el reintento
 por respuesta vacía y el límite por llamada se probaron con un proveedor falso. Si la respuesta
 vacía de glm viene con finish=length, el mensaje nuevo lo dirá; entonces el remedio sería subir
 `MaxTokens` (hoy fijo en 4096), que NO se tocó.
@@ -236,20 +246,3 @@ Abierto, menor:
    se lee bien (la redacción nueva es de #272).
 4. Confirmar en una máquina Windows real (o dejar que CI lo haga) que los dos tests de core ya
    no fallan de forma intermitente.
-
-## Ronda actual: hecho y lo que falta (honesto)
-
-Hecho y probado con el bucle real + mutaciones:
-- El historial de entrada conserva el borrador al pulsar Flecha abajo (#287).
-- `/resume` lista por defecto solo la carpeta actual (`resume.scope` = folder|all) (#287).
-- El modelo de chat es POR INSTANCIA: cada turno envía `Model` explícito; el archivo
-  `default-model` del core es global a la máquina y ahora solo es el modelo inicial.
-
-NO hecho todavía (pendiente para la próxima ronda, nada de esto está implementado):
-1. Pegado largo comprimido TAMBIÉN en el chat (`[Pasted text #N +M lines]`); pegar dos veces expande.
-2. Superficie de ajustes (`/settings`-like): listar todos los ajustes con valor y explicación,
-   cambiarlos con la validación de `/ui`, persistir en texts.json, y promover a claves de texto la
-   altura de la ventana de entrada y los pasos de scroll.
-3. Investigación (solo diagnóstico, sin mitigación en código): `context deadline exceeded`
-   (palanca actual: `ARXI_CHAT_TIMEOUT`), cifra `ctx` frente a `↑` acumulado, y
-   "(the model sent an empty reply)" (candidato: reintento automático).
