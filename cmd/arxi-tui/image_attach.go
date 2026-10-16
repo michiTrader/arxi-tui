@@ -214,3 +214,15 @@ func attachPictures(drv Driver, imgs []driver.ChatImage) string {
 	}
 	return ""
 }
+
+// imageModelWarning is the early notice shown when a picture is attached while the
+// chosen model is not set to take pictures: the core would refuse the message
+// before billing, so the operator hears about it now instead of at send time. It
+// is empty when the model is not known yet (still reading, or no core) so a slow
+// read never raises a false alarm.
+func imageModelWarning(ref string, known, accepts bool) string {
+	if !known || ref == "" || accepts {
+		return ""
+	}
+	return ref + " is not set to take images, so sending this line will be refused. Open /model, pick it and turn on \"Accepts images\" (or choose another model)."
+}

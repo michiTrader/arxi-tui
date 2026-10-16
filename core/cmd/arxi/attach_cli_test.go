@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -621,6 +622,48 @@ func pendingCommitPath(dir, id string) string {
 	return filepath.Join(runDirOf(dir, id), "pending.commit")
 }
 
+// removeWhenReleased deletes a file the follower process may have open at this very moment.
+//
+// The test plays the writer that commits a batch, and a committing writer deletes pending.commit
+// while a lock-free reader may be reading it. On Windows that delete fails for as long as the
+// reader's handle is open ("The process cannot access the file because it is being used by
+// another process"), and the product's own remover (logstore removePendingFile) retries it for
+// that reason. The test did a bare os.Remove, so it failed whenever the follower's read happened
+// to overlap, which is the Windows failure seen on a loaded machine. Retry for up to budget; a
+// file that is not there is returned at once (the test expects the marker to exist).
+func removeWhenReleased(path string, budget time.Duration, remove func(string) error) error {
+	deadline := time.Now().Add(budget)
+	for {
+		err := remove(path)
+		if err == nil || errors.Is(err, os.ErrNotExist) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+func TestRemoveWhenReleasedWaitsForAHeldFileAndGivesUpOnAPermanentOne(t *testing.T) {
+	held := errors.New("sharing violation")
+	calls := 0
+	err := removeWhenReleased("x", time.Second, func(string) error {
+		calls++
+		if calls < 4 {
+			return held
+		}
+		return nil
+	})
+	if err != nil || calls != 4 {
+		t.Errorf("err = %v after %d calls; want success on the 4th, once the handle is closed", err, calls)
+	}
+	if err := removeWhenReleased("x", 30*time.Millisecond, func(string) error { return held }); !errors.Is(err, held) {
+		t.Errorf("a file that stays held returned %v; it must fail with the real error after the budget", err)
+	}
+	calls = 0
+	if err := removeWhenReleased("x", time.Second, func(string) error { calls++; return os.ErrNotExist }); !errors.Is(err, os.ErrNotExist) || calls != 1 {
+		t.Errorf("a missing file: err = %v after %d calls; want ErrNotExist at once", err, calls)
+	}
+}
+
 // TestRunAttachInitialJoinExcludesThenPrintsAProvisionalCompleteEventOnce has
 // failed intermittently under parallel package load, and has NOT been explained.
 //
@@ -681,7 +724,7 @@ func TestRunAttachInitialJoinExcludesThenPrintsAProvisionalCompleteEventOnce(t *
 
 	s := startAttach(t, dir, id)
 	s.waitForJoin()
-	if err := os.Remove(pendingCommitPath(dir, id)); err != nil {
+	if err := removeWhenReleased(pendingCommitPath(dir, id), 10*time.Second, os.Remove); err != nil {
 		t.Fatal(err)
 	}
 	appendToRunLog(t, dir, id, attachRunResult)

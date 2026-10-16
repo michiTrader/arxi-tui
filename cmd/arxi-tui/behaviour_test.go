@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -516,10 +518,9 @@ func TestLoopCtrlCStillLeavesWithEveryLayerSet(t *testing.T) {
 // once. So the test does not guess: it waits until a second colour has been drawn, up to a
 // limit that only a broken animation reaches, and then quits.
 //
-// What it does NOT prove (checked by mutation, and true of the test before this change too):
-// that the animation ADVANCES. With the animation clock frozen the output is the same, because
-// the word is drawn once, whole, with the spread of colours across its letters. It proves the
-// animated style reaches the emitted frames, not that it moves from one frame to the next.
+// What it does NOT prove is that the colour MOVES from one instant to the next: a frozen
+// clock still passes it. That is TestBehaviourAnimationMovesWithTheClock, below, which controls
+// the time the loop gives the palettes.
 func TestBehaviourAnimationReachesTheEmittedFrames(t *testing.T) {
 	seedBehaviour(t, `{"animations":{"rainbow":{"colors":["red","green","blue"],"fps":30,"spread":1}}}`)
 	drv := &effortDriver{testDriver: testDriver{evCh: make(chan fold.Event, 64)}}
@@ -576,6 +577,83 @@ func TestBehaviourAnimationReachesTheEmittedFrames(t *testing.T) {
 		drv.mu.Unlock()
 		t.Errorf("the effort word never changed colour in 60 s; saw %v (times each appeared: %v; bytes drawn: %d; effort levels set: %v)",
 			seen, counts, len(out), levels)
+	}
+}
+
+// The colour of the effort word changes when the clock moves one step, and comes back when it
+// has moved a whole turn of the palette. The test owns the time the loop hands the animated
+// palettes (cycleNow), so it needs no real waiting and cannot be fooled by a slow machine: the
+// instants are chosen so that the step is known (30 fps, three colours).
+func TestBehaviourAnimationMovesWithTheClock(t *testing.T) {
+	seedBehaviour(t, `{"animations":{"rainbow":{"colors":["red","green","blue"],"fps":30,"spread":1}}}`)
+	var nowMs atomic.Int64
+	nowMs.Store(1_000_000) // step 30000 at 30 fps: 30000 % 3 == 0
+	saved := cycleNow
+	cycleNow = func() time.Time { return time.UnixMilli(nowMs.Load()) }
+	t.Cleanup(func() { cycleNow = saved })
+
+	drv := &effortDriver{testDriver: testDriver{evCh: make(chan fold.Event, 64)}}
+	line := `/ui set status_effort style_by {"high":"rainbow"}`
+	script := append(typeBeh(line), scheduledEvent{20 * time.Millisecond, enterEvent()})
+	script = append(script, typeBeh("/effort ")...)
+	script = append(script, fkey(term.KeyDown), fkey(term.KeyDown), scheduledEvent{20 * time.Millisecond, enterEvent()})
+	tty := newOpenFakeTTY(110, 30, script)
+	doc := builtinDoc(t)
+	done := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		done <- loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, "")
+	}()
+
+	letters := regexp.MustCompile("\x1b\\[(3[0-7])m(\\pL)")
+	// paint sets the clock and returns the colours of the word as drawn by the next frames: the
+	// animation's own ticker repaints, so no key is needed. The first four coloured letters
+	// after the change are the word "high", one colour per letter (spread 1).
+	paint := func(ms int64) string {
+		t.Helper()
+		before := len(tty.output())
+		nowMs.Store(ms)
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			// Two words in a row that agree: a frame that was already being drawn with the
+			// old time when the clock was set cannot be both of them.
+			if m := letters.FindAllString(tty.output()[before:], -1); len(m) >= 8 {
+				last, prev := strings.Join(m[len(m)-4:], ""), strings.Join(m[len(m)-8:len(m)-4], "")
+				if last == prev {
+					return last
+				}
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Fatalf("no coloured letters were drawn after the clock was set to %d", ms)
+		return ""
+	}
+	// Let the word be on screen with its colours before measuring.
+	first := paint(1_000_000)
+	step1 := paint(1_000_034) // step 30001
+	step3 := paint(1_000_100) // step 30003: a whole turn of three colours after 30000
+	again := paint(1_000_000)
+
+	tty.events <- ctrlCharEvent('c')
+	tty.events <- ctrlCharEvent('c')
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("loop: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the loop did not leave after the double Ctrl-C")
+	}
+
+	if first == step1 {
+		t.Errorf("the word was painted the same one step later (%q): the colour does not move with the clock", first)
+	}
+	if first != step3 {
+		t.Errorf("after a whole turn of the palette the word is %q, want the first one %q", step3, first)
+	}
+	if first != again {
+		t.Errorf("the same instant painted %q and then %q: the colour depends on something other than the clock", first, again)
 	}
 }
 

@@ -682,6 +682,11 @@ func dialChatConn(ctx context.Context, arxiBin string) (chatSender, func(), erro
 // as the input buffer is — the fold is rebuilt every frame and carries it, but
 // no core event produces it (BINDS.md §2: `host.scene.error` is "the one bind
 // the scene may render but the core never provides").
+// cycleNow is the time the loop gives the animated palettes (theme.Cycled picks the colour of
+// each span from it). It is the wall clock; a test replaces it to play the animation one
+// known step at a time, instead of waiting for real time to pass on a machine of unknown speed.
+var cycleNow = time.Now
+
 func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.Theme, eventCh <-chan fold.Event, drv Driver, sceneNotice string) error {
 	panicGesture := &driver.PanicGesture{}
 	// caretState carries the emit path's memory of the caret across frames — its
@@ -868,6 +873,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// hubWindow is the chat model's context window in tokens, 0 when the core did not
 	// say. autoCompact is the /settings choice; settingsMn is its menu.
 	var hubWindow int
+	// hubImages is whether the chat model is set to take pictures (Accepts images in
+	// /model). Only meaningful while hubDefaultKnown and hubDefault != "".
+	var hubImages bool
 	autoCompact := loadAutoCompact(settingsPath())
 	var settingsMn modelMenu
 	// autoCompactCh wakes the loop to try the autocompact again: the turn_done that
@@ -1752,7 +1760,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// step the wall clock names, and the ticker follows the fastest cycle on
 		// screen. Only style changes -- never text or width -- so layout and
 		// goldens (which see the resting colour) are untouched.
-		frame, cycleRate := theme.Cycled(frame, time.Now())
+		frame, cycleRate := theme.Cycled(frame, cycleNow())
 		armCycle(cycleRate)
 		emitFrame(tty, frame, theme, h, caretState, caretLit(time.Now(), lastKey))
 		armTicker()
@@ -2726,6 +2734,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								collected = appendLocalWarning(collected, err.Error())
 							} else {
 								input, caret, slashSel = mark+" ", len([]rune(mark))+1, 0
+								if w := imageModelWarning(hubDefault, hubDefaultKnown, hubImages); w != "" {
+									collected = appendLocalWarning(collected, w)
+								}
 							}
 						} else if pane, matched, perr := parseMax(input); ev.Key.Type == term.KeyEnter && matched {
 							// `/max <pane>` writes the host ui.max cursor, Scene 10's
@@ -2884,6 +2895,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							collected = appendLocalWarning(collected, err.Error())
 						} else {
 							input, caret = insertText(input, caret, mark+" ")
+							if w := imageModelWarning(hubDefault, hubDefaultKnown, hubImages); w != "" {
+								collected = appendLocalWarning(collected, w)
+							}
 						}
 					} else if next, nc, again := pastes.unfold(input, caret, pasted); again {
 						input, caret = next, nc // the same text again: open the marker
@@ -3140,6 +3154,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				hubDefaultKnown = true
 				hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
 				hubWindow = out.data.windowOf(out.data.def)
+				hubImages = out.data.imagesOf(out.data.def)
 				effortMn.loaded = false
 				// A default changed from the providers screen starts on its own level.
 				adoptEffort()
@@ -3175,6 +3190,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					hubDefault = out.data.def
 					hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
 					hubWindow = out.data.windowOf(out.data.def)
+					hubImages = out.data.imagesOf(out.data.def)
 					effortMn.loaded = false
 					adoptEffort()
 				}
@@ -3192,6 +3208,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					hubDefault = out.data.def
 					hubEfforts, hubEffortsKnown = out.data.effortsOf(out.data.def)
 					hubWindow = out.data.windowOf(out.data.def)
+					hubImages = out.data.imagesOf(out.data.def)
 					effortMn.loaded = false
 				}
 				// Each model starts on the level chosen for it, or on the default.

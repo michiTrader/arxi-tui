@@ -40,8 +40,8 @@ moving. Not started as a single piece of work.
 
 - NOT reproduced: the tool record of a browser-opening call not showing in the chat. The core sends one `chat.tool` per call and the screen draws every one, so I do not know why one is missing; I need which tool the model used (the line that did show, or `run`).
 - Right-edge glitch ("arxi-tui" -> "arxi-ti" while narrowing): the frame drawn at widths 133-140, run through a terminal emulator, showed no overwritten character. The row with the folder path was not in my probe, so this did NOT reproduce it; it may be the Windows terminal's own handling of the last column. The owner uses PowerShell; still not reproduced. Useful test: run with `-mouse=false` (no scrollbar) and see if it still happens.
-- Not started: per-model modalities; (chat copy without the scrollbar column: done, see above).
-- How images reach the model TODAY: they do not. The core has a content-block type for images (`turn.BlockImage`, `MediaSource`) but nothing builds or sends one, the turn validator refuses any block that is not text, no provider code mentions images, the chat tools only read text files, and a model in the store has an id, an on/off flag, a price, a wire and a context window, with no notion of what it accepts. So there is nothing to select per model yet: it is a feature to build (model field, form fields in add/edit, a way to attach an image, the wire encoding for each provider, and refusing an image for a model that cannot take it).
+- Per-model modalities: only "takes images" exists (a switch per model); other modalities are not started. (Chat copy without the scrollbar column: done, see above.)
+- How images reach the model: DONE in the code (see "Imágenes por modelo" below). The old note that they did not is gone.
 - Per key, at 100 turns of the benchmark session, the chat costs about 0.55 ms (cached layout) plus about 1.9 ms for the fold of the log: about 2.5 ms, against about 30 ms before the cache. See "Done since: chat render cache".
 
 ## Done since: core tests on Windows (branch fix/core-tests-windows)
@@ -127,10 +127,7 @@ moving. Not started as a single piece of work.
   on both OSes at `b3d5e97`, so the Windows shell code (`cmd.exe`, `CREATE_NO_WINDOW`, `taskkill /T`, exit
   code) has now run for real, through `shells_windows_test.go`. Still NOT run on Windows: the
   events/panels/services host (its tests need `sh`, `//go:build !windows`).
-- The core module `core/` (own `go.mod`) is NOT tested by CI: `go test ./...` at the root skips nested modules.
-  The ready job is in `docs/ci-core-job.yml`; adding it to `.github/workflows/ci.yml` needs a token with the
-  `workflows` permission (this environment's push was refused for exactly that). Action for the owner:
-  paste that job into `ci.yml`.
+- The core module `core/` (own `go.mod`) IS tested by CI now: the `core` job in `.github/workflows/ci.yml` runs on ubuntu and windows (4 jobs in all with `test`). `docs/ci-core-job.yml` is the old copy and is no longer needed.
 - Blocked on the `arxi` core / product decisions, not on this repo: NEXT.md K1 core wiring and K3 (need a live
   agent and a coordinated core surface bump), K4 wasm (deferred on purpose), M3; DECISIONS-DEFERRED D1
   (`{row.<field>}` in drawn text: a format change) and D2 (product repo, `install.ps1`, version handshake).
@@ -147,19 +144,48 @@ Límites (el tope de 1 MiB de la línea NDJSON NO se subió): 4 imágenes por me
 ya codificadas; la TUI lo comprueba al adjuntar. El formato se lee de los bytes, no de la
 extensión. Un core viejo recibe el texto sin las imágenes y un aviso.
 
-NO verificado: ninguna imagen contra un proveedor/modelo real; pegar rutas arrastradas en
-PowerShell/Windows Terminal reales; ctrl+z tras un marcador; las imágenes no aparecen en el
-historial del chat salvo por el texto del marcador; no hay rechazo anticipado en la TUI para
-un modelo que no acepta imágenes (lo rechaza el core, antes de cobrar).
+Aviso temprano (hecho): al adjuntar una imagen (`/image` o ruta pegada) la TUI avisa si el
+modelo elegido no está marcado para imágenes ("<modelo> is not set to take images ... /model
+... Accepts images"). No avisa si aún no sabe cuál es el modelo (lectura en curso o sin core).
+Sigue el modelo elegido en /model y lo que se aprende al abrir /providers. El core sigue
+rechazando antes de cobrar.
+
+Ctrl+Z y marcadores (hecho): con el bucle real, ctrl+z tras pegar una imagen quita el marcador
+y la línea sale sin imagen; ctrl+y lo devuelve con su imagen; ctrl+z tras borrar el marcador
+lo devuelve con su imagen. Estaba "no verificado"; ahora hay test y no hubo bug.
+
+NO verificado (solo el dueño puede, necesita sus claves o su terminal):
+- ninguna imagen contra un proveedor/modelo real (¿el proveedor acepta el formato que enviamos?);
+- pegar rutas arrastradas en PowerShell/Windows Terminal reales;
+- las imágenes no aparecen en el historial del chat salvo por el texto del marcador (decisión
+  de diseño, no un fallo).
 
 ## Tests flaky (lista de #273)
 
-- `TestBehaviourAnimationReachesTheEmittedFrames`: ENDURECIDO. Ya no espera un retardo fijo:
-  espera hasta ver un segundo color (límite 60 s) y entonces sale. Pasa en ~0,4 s. Limitación
-  conocida, comprobada por mutación: NO prueba que la animación avance entre fotogramas (con
-  el reloj de animación congelado sigue pasando; también pasaba así antes). Falta un test que
-  lo pruebe de verdad.
-- Core en Windows, vistos en una corrida local del dueño y NO tocados: `TestSpentBudgetMakesTheNextAskWaitForTheWindow`
-  (core/cmd/arxi, pacing_test.go:55, timing) y `TestRunAttachInitialJoinExcludesThenPrintsAProvisionalCompleteEventOnce`
-  (attach_cli_test.go:685, archivo bloqueado en Windows, no timing).
+- `TestBehaviourAnimationReachesTheEmittedFrames`: endurecido en #283 (espera hasta ver un
+  segundo color, límite 60 s).
+- `TestBehaviourAnimationMovesWithTheClock`: HECHO. El color del rainbow sale de la hora
+  (`theme.Cycled(frame, now)`), no de `animClock`; se añadió la costura `cycleNow` en main.go
+  y el test la controla: mismo instante = mismas letras, un tick después = otro color, y vuelve
+  al instante inicial. Sin esperas reales. Tres mutaciones muertas (reloj congelado, reloj de
+  pared, paso desfasado).
+- Core, los dos que fallaron en Windows en la corrida local del dueño: ARREGLADOS por
+  razonamiento y probados en Linux; NO reproducidos en una máquina Windows (solo los verá CI):
+  - `TestSpentBudgetMakesTheNextAskWaitForTheWindow`: la expectativa ignoraba el tiempo gastado
+    tras la respuesta (el pacer cuenta desde que anotó la respuesta). Ahora los límites salen del
+    código y el margen es grande para que un margen perdido se vea. Mutaciones muertas.
+  - `TestRunAttachInitialJoinExcludesThenPrintsAProvisionalCompleteEventOnce`: era el bloqueo de
+    archivo de Windows sobre `pending.commit`; el test lo borra ahora reintentando
+    (`removeWhenReleased`, igual que `logstore.removePendingFile` en el producto), con su propio
+    test. Mutaciones muertas. Si vuelve a fallar en CI, el mensaje dirá el plazo agotado.
 
+## Solo el dueño puede hacerlo (no bloquea nada de lo anterior)
+
+1. El nombre de la herramienta de navegador del punto 2b (el registro `chat.tool` que falta en
+   el chat): sin saber qué herramienta usó el modelo no se puede reproducir.
+2. Probar `-mouse=false` o `/ui text chat.scrollbar no` en PowerShell real por el fallo del
+   borde derecho ("arxi-tui" -> "arxi-ti" al estrechar). En el emulador no se reproduce.
+3. Probar imágenes contra un proveedor/modelo real y pegar rutas arrastradas en PowerShell /
+   Windows Terminal reales (necesita sus claves y su terminal).
+4. Confirmar en una máquina Windows real (o dejar que CI lo haga) que los dos tests de core ya
+   no fallan de forma intermitente.

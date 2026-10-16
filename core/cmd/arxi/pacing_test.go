@@ -14,11 +14,23 @@ import (
 // client was told and how the fake was asked.
 func paceRig(t *testing.T, rate func(call int) (string, string)) (*fakeLLM, []chatRetryNotification, error) {
 	t.Helper()
+	f, notes, _, err := paceRigTimed(t, rate, nil)
+	return f, notes, err
+}
+
+// paceRigTimed is paceRig that also says when each notice was given.
+// tweak, when set, runs after the fast-retry settings and before the turn.
+func paceRigTimed(t *testing.T, rate func(call int) (string, string), tweak func()) (*fakeLLM, []chatRetryNotification, []time.Time, error) {
+	t.Helper()
 	f := setUpFake(t)
 	fastRetries(t)
+	if tweak != nil {
+		tweak()
+	}
 	f.rate = rate
 	f.script = []scripted{{name: "run", args: echoCall}}
 	var notes []chatRetryNotification
+	var at []time.Time
 	dir := projectDir(t)
 	ctx, err := withTools(context.Background(), dir, "", nil, func(chatToolNotification) {})
 	if err != nil {
@@ -27,21 +39,34 @@ func paceRig(t *testing.T, rate func(call int) (string, string)) (*fakeLLM, []ch
 	if ctx, err = withRuns(ctx, editsAllow); err != nil {
 		t.Fatal(err)
 	}
-	ctx = withRetryNotice(ctx, func(n chatRetryNotification) { notes = append(notes, n) })
+	ctx = withRetryNotice(ctx, func(n chatRetryNotification) { notes = append(notes, n); at = append(at, time.Now()) })
 	_, err = chatSendEffort(ctx, "build it", "", "", "", "")
-	return f, notes, err
+	return f, notes, at, err
 }
 
 func TestSpentBudgetMakesTheNextAskWaitForTheWindow(t *testing.T) {
 	// The first ask answers "0 left, window opens in 300ms": the tool loop's next ask
-	// must wait that long instead of being sent to be refused.
+	// must wait for that window instead of being sent to be refused.
+	//
+	// The window is counted from the moment the answer arrived, and the tool the model
+	// asked for runs before the next ask, so the wait that is left is SHORTER than
+	// the reset by however long that took (50 ms and more for a process on Windows). A
+	// test that expects "about 301 ms" is right on a quiet machine and wrong on a slow one,
+	// which is how it failed. The bounds below follow from the code, with no slack to tune:
+	//   wait <= reset + margin           (the window opens no later than that after the answer)
+	//   wait >= reset + margin - (notice - the moment the fake answered)
+	// because the answer was noted no earlier than the fake sent it.
+	// A margin far bigger than the timing slack, so that dropping it is visible.
+	const margin = 100 * time.Millisecond
 	start := time.Now()
-	f, notes, err := paceRig(t, func(call int) (string, string) {
+	var answered time.Time
+	f, notes, at, err := paceRigTimed(t, func(call int) (string, string) {
 		if call == 1 {
+			answered = time.Now()
 			return "0", "300ms"
 		}
 		return "4", "300ms"
-	})
+	}, func() { chatRetryMargin = margin }) // fastRetries restores the real one afterwards
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,8 +76,11 @@ func TestSpentBudgetMakesTheNextAskWaitForTheWindow(t *testing.T) {
 	if len(notes) != 1 || notes[0].Status != paceStatus {
 		t.Fatalf("notices = %+v, want exactly one pacing notice", notes)
 	}
-	if want := int64(300 + 1); notes[0].WaitMs < want-50 || notes[0].WaitMs > want+50 {
-		t.Errorf("wait = %dms, want about %dms (the reset plus the margin)", notes[0].WaitMs, want)
+	full := int64(300) + margin.Milliseconds()
+	spent := at[0].Sub(answered).Milliseconds()
+	if got := notes[0].WaitMs; got > full || got < full-spent-2 { // -2: WaitMs and spent are both truncated to whole ms
+		t.Errorf("wait = %dms; it must be in [%d, %d] (the reset plus the margin, less the %dms that passed after the answer)",
+			got, full-spent-2, full, spent)
 	}
 	if time.Since(start) < 300*time.Millisecond {
 		t.Errorf("the second ask went out after %v, before the window opened", time.Since(start))
