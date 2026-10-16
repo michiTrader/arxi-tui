@@ -19,6 +19,12 @@ type inputHistory struct {
 	idx   int    // len(lines) means "editing a fresh line"
 	stash string // the line being typed when the walk began
 	path  string // "" keeps the history in memory only
+	// edits holds what the user changed in a recalled line before stepping off it, by
+	// the line's index. A recalled line that was edited is the user's work like the
+	// stash is: walking away from it (an arrow pressed by mistake on the last row)
+	// must not throw the edit away, so stepping back lands on the edit, not on the
+	// original. Cleared when a line is sent.
+	edits map[int]string
 }
 
 // historyMax is how many lines are kept, in memory and on disk.
@@ -69,12 +75,25 @@ func loadHistory(path string) *inputHistory {
 // Add records a sent line. An empty line and a repeat of the last one are not recorded, and
 // either way the walk starts again from the newest end.
 func (h *inputHistory) Add(line string) {
-	h.idx, h.stash = len(h.lines), ""
+	// A draft that was being typed when an older line was recalled and sent instead
+	// is not lost with the walk: it goes into the history just before the sent line,
+	// so the up arrow still finds it.
+	draft := h.stash
+	h.idx, h.stash, h.edits = len(h.lines), "", nil
+	if strings.TrimSpace(draft) != "" {
+		h.record(draft)
+		h.idx = len(h.lines)
+	}
 	if strings.TrimSpace(line) == "" {
 		return
 	}
+	h.record(line)
+	h.idx = len(h.lines)
+}
+
+// record appends a line to the history and the file, unless it repeats the last one.
+func (h *inputHistory) record(line string) {
 	if n := len(h.lines); n > 0 && h.lines[n-1] == line {
-		h.idx = len(h.lines)
 		return
 	}
 	h.lines = append(h.lines, line)
@@ -82,8 +101,26 @@ func (h *inputHistory) Add(line string) {
 	if trimmed {
 		h.lines = h.lines[len(h.lines)-historyMax:]
 	}
-	h.idx = len(h.lines)
 	h.save(line, trimmed)
+}
+
+// keepEdit remembers the edit made to the recalled line the walk is on, when there is one.
+func (h *inputHistory) keepEdit(current string) {
+	if h.idx >= len(h.lines) {
+		return
+	}
+	if h.edits == nil {
+		h.edits = map[int]string{}
+	}
+	h.edits[h.idx] = current
+}
+
+// at is the line the walk shows at i: the user's edit of it when there is one.
+func (h *inputHistory) at(i int) string {
+	if e, ok := h.edits[i]; ok {
+		return e
+	}
+	return h.lines[i]
 }
 
 // save appends one line to the file, or rewrites it whole when the oldest lines dropped off.
@@ -134,23 +171,26 @@ func (h *inputHistory) Older(current string) (string, bool) {
 	}
 	if h.idx == len(h.lines) {
 		h.stash = current
+	} else {
+		h.keepEdit(current)
 	}
 	h.idx--
-	return h.lines[h.idx], true
+	return h.at(h.idx), true
 }
 
 // Newer steps forward, ending on the stashed line. ok is false when the walk is not on.
-func (h *inputHistory) Newer() (string, bool) {
+func (h *inputHistory) Newer(current string) (string, bool) {
 	if h.idx >= len(h.lines) {
 		return "", false
 	}
+	h.keepEdit(current)
 	h.idx++
 	if h.idx == len(h.lines) {
 		s := h.stash
 		h.stash = ""
 		return s, true
 	}
-	return h.lines[h.idx], true
+	return h.at(h.idx), true
 }
 
 // historyStep is the direction a key asks for: -1 older, +1 newer, 0 not a history key.

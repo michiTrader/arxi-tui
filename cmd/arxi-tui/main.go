@@ -1342,7 +1342,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		if step < 0 {
 			line, ok = hist.Older(input)
 		} else {
-			line, ok = hist.Newer()
+			line, ok = hist.Newer(input)
 		}
 		if ok {
 			input = line
