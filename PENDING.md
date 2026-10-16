@@ -181,6 +181,12 @@ NO verificado (solo el dueño puede, necesita sus claves o su terminal):
     (`removeWhenReleased`, igual que `logstore.removePendingFile` en el producto), con su propio
     test. Mutaciones muertas. Si vuelve a fallar en CI, el mensaje dirá el plazo agotado.
 
+Vistos fallar UNA vez en CI de Windows y pasar al relanzar, sin relación con el cambio del PR
+(ambos dependen del tiempo del runner, que anda lento: la suite raíz tarda ~250 s allí):
+- `TestAfterResumeWithNoFigureTheBarEstimatesAndSaysSo` (cmd/arxi-tui, #292).
+- `TestBehaviourAnimationMovesWithTheClock` (cmd/arxi-tui, 60 s hasta agotar, #294).
+No se arreglaron: falta reproducirlos en una máquina Windows real.
+
 ## Ronda actual: hecho y lo que falta (honesto)
 
 Hecho y probado con el bucle real + mutaciones:
