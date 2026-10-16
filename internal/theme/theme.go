@@ -442,7 +442,7 @@ func SOBRIA() *Theme {
 		"markdown.emphasis":     {Attrs: ui.AttrItalic},
 		"markdown.strong":       {Attrs: ui.AttrBold},
 		"markdown.code":         {FG: ui.Idx(ui.Cyan)},
-		"markdown.codeblock":    {},
+		"markdown.codeblock":    {BG: ui.MustHex("#2c2c31")},
 		"markdown.code.fence":   {Attrs: ui.AttrDim},
 		"markdown.code.comment": {Attrs: ui.AttrDim | ui.AttrItalic},
 		"markdown.code.keyword": {FG: ui.Idx(ui.Magenta)},
