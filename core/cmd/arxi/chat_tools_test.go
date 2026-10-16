@@ -317,13 +317,14 @@ func TestStandingPromptStaysWithinItsBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	const maxDefBytes = 1650 + 520
-	// 1060 bytes on Linux. Windows adds one sentence of its own (the cmd.exe commands) and
+	// 1160 bytes on Linux. Windows adds one sentence of its own (the cmd.exe commands) and
 	// longer names (windows/amd64, cmd.exe, a drive letter), which is measured here rather
 	// than hidden in a bigger number: the budget for everything else is the same.
-	// 1060: the three sentences added after a session in which a model asked permission
+	// 1100: the four sentences added after sessions in which a model asked permission
 	// to list a folder in full access mode, answered "I am running it" without calling
-	// run, and took one wrong path for an empty project (about 60 tokens a turn).
-	maxHintBytes := 1060
+	// run, took one wrong path for an empty project, and read "open it in the browser" as
+	// "the file is already open" and asked "say yes and I will run it" (about 90 tokens a turn).
+	maxHintBytes := 1160
 	if runtime.GOOS == "windows" {
 		maxHintBytes += len(windowsShellHint) + 20
 	}
@@ -486,12 +487,26 @@ func TestAFailedTurnStillReportedTheAsksThatDidAnswer(t *testing.T) {
 // empty because a guessed path was not there.
 func TestTheHintsStopTheModelAskingLeaveAnnouncingRunsAndDeclaringTheProjectEmpty(t *testing.T) {
 	h := toolsHint("/p/x", editsAsk)
-	for _, want := range []string{"Never ask leave to look", `list "." before saying the project is empty`} {
+	for _, want := range []string{"Never ask leave to look or run", `list "." before saying the project is empty`} {
 		if !strings.Contains(h, want) {
 			t.Errorf("the tools hint lost %q: %q", want, h)
 		}
 	}
-	if r := runsHint(editsAsk); !strings.Contains(r, "unless you call run in that same reply") {
+	if r := runsHint(editsAsk); !strings.Contains(r, "without calling run in that reply") {
 		t.Errorf("the run hint does not forbid announcing a run that was not made: %q", r)
+	}
+}
+
+// "Open it in the browser" was read as "show me the file", and the model answered that it
+// was already open. It has to be told what the user means and what to run, per system.
+func TestTheRunHintSaysOpenInTheBrowserMeansTheUsersOwnBrowser(t *testing.T) {
+	h := runsHint(editsAsk)
+	if !strings.Contains(h, "own: run ") || !strings.Contains(h, openerHint()) || !strings.Contains(h, "serve a page first") {
+		t.Errorf("the run hint does not say how to open the user's browser: %q", h)
+	}
+	for goos, want := range map[string]string{"windows": `start ""`, "darwin": "open ", "linux": "xdg-open"} {
+		if goos == runtime.GOOS && !strings.Contains(openerHint(), want) {
+			t.Errorf("on %s the opener should be %q, got %q", goos, want, openerHint())
+		}
 	}
 }

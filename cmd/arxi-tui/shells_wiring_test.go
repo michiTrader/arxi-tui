@@ -188,3 +188,14 @@ func TestTurnsWithToolsAreToldToActInsteadOfAnnouncing(t *testing.T) {
 		t.Errorf("a greeting paid for the hint: %q", p.System)
 	}
 }
+
+// "Run the strategy and open it in the browser" needs two steps the model did not take on
+// its own: start the program that serves the page, then open the address it prints. The
+// hint the model reads with the shell tools has to say so.
+func TestTheShellHintSaysHowToShowAServedPageInTheUsersBrowser(t *testing.T) {
+	for _, want := range []string{"shell_start", "address", "browser", "with run"} {
+		if !strings.Contains(shellsHint, want) {
+			t.Errorf("the shells hint lost %q: %s", want, shellsHint)
+		}
+	}
+}
