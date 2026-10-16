@@ -283,10 +283,6 @@ const chatTimeoutDefault = 3 * time.Minute
 // limit off.
 const chatTimeoutEnv = "ARXI_CHAT_TIMEOUT"
 
-// chatDeadline is the whole budget of one chat message: the call's own limit plus the time
-// the retries may spend waiting, so a patient retry is not cut short by the call's deadline.
-func chatDeadline() time.Duration { return chatTimeout() + chatRetryTotal }
-
 func chatTimeout() time.Duration {
 	v := strings.TrimSpace(os.Getenv(chatTimeoutEnv))
 	if v == "" {
@@ -323,6 +319,44 @@ var (
 	// after its window opens and not on its edge.
 	chatRetryMargin = time.Second
 )
+
+// chatEmptyRetries is how many times one ask is repeated when the model answers with
+// nothing at all (no text, no tool call, and it says it simply stopped). Some providers
+// do this now and then and a second ask gets a normal answer; the user used to have to
+// type "continue" by hand. It is a variable so tests need not sleep.
+var chatEmptyRetries = 2
+
+// emptyAnswer reports whether a response carries nothing the user or the tool loop can
+// use: no text and no tool call. A response cut at the output limit is NOT counted: asking
+// again would spend the same allowance on the same thinking (see emptyReplyText).
+func emptyAnswer(r turn.Response) bool {
+	if r.FinishReason == turn.FinishLength || r.FinishReason == turn.FinishRefusal {
+		return false
+	}
+	for _, b := range r.Content {
+		switch b.Type {
+		case turn.BlockText:
+			if strings.TrimSpace(b.Text) != "" {
+				return false
+			}
+		case turn.BlockToolCall:
+			if b.ToolCall != nil {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// emptyReplyText is what the user reads when, after the retries, there is still no text.
+// A model cut at the output limit says so (a reasoning model can spend the whole allowance
+// thinking); any other empty answer keeps the plain wording.
+func emptyReplyText(r turn.Response, maxTokens int) string {
+	if r.FinishReason == turn.FinishLength {
+		return fmt.Sprintf("(the model used up its whole output allowance of %d tokens without writing an answer; it was probably thinking. Ask again, or pick another model with /model)", maxTokens)
+	}
+	return "(the model sent an empty reply)"
+}
 
 // transientRefusal reports whether a refusal is the provider saying "not now" rather
 // than "not this": 408, 429 and the gateway errors 502, 503, 504 and 529 (overloaded).
@@ -540,8 +574,11 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	userMsg.Content = append(userMsg.Content, pics...)
 	messages = append(messages, userMsg)
 
-	ctx, cancel := context.WithTimeout(ctx, chatDeadline())
-	defer cancel()
+	// No deadline for the message as a whole: a tool loop of many rounds, or the time the
+	// user takes to answer an approval, used to eat one shared budget and end a healthy
+	// turn with "context deadline exceeded". The time limit applies to each ask of the
+	// model (chatTimeout), the waiting between retries is bounded by chatRetryTotal, the
+	// rounds by the round cap, and the user can always cancel.
 	var pace pacer
 	exec := &provider.Executor{OnWire: rememberWire, OnRateLimit: pace.note}
 	req := turn.Request{
@@ -554,7 +591,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	var used turn.Usage
 	var last turn.Usage
 	var waited time.Duration
-	tries := 0
+	tries, emptyTries := 0, 0
 	complete := func(req turn.Request) (turn.Response, error) {
 		for attempt := 1; ; attempt++ {
 			// The provider said its request budget is spent and when the window
@@ -574,7 +611,9 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 					return turn.Response{}, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, ctx.Err())
 				}
 			}
-			resp, err := exec.CompleteTurn(ctx, req)
+			askCtx, stopAsk := context.WithTimeout(ctx, chatTimeout())
+			resp, err := exec.CompleteTurn(askCtx, req)
+			stopAsk()
 			tries = attempt
 			if err != nil {
 				return resp, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, err)
@@ -587,6 +626,22 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 			if held := contextHeld(resp.Usage, res.Protocol); held > 0 {
 				notifyUsage(ctx, chatUsageNotification{Type: "chat.usage", ContextTokens: held,
 					InputTokens: resp.Usage.InputTokens, OutputTokens: resp.Usage.OutputTokens})
+			}
+			if emptyAnswer(resp) && emptyTries < chatEmptyRetries && attempt < chatAttempts {
+				// The model sent nothing. Ask again, once or twice, saying so: nothing
+				// was lost but the tokens, and the user need not type "continue".
+				emptyTries++
+				notifyRetry(ctx, chatRetryNotification{
+					Type: "chat.retry", Provider: res.Provider, Model: res.Model,
+					Attempt: attempt + 1, Of: chatAttempts, WaitMs: chatBackoff.Milliseconds(),
+					Status: emptyStatus, Reason: "the model sent an empty reply",
+				})
+				select {
+				case <-time.After(chatBackoff):
+				case <-ctx.Done():
+					return resp, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, ctx.Err())
+				}
+				continue
 			}
 			if resp.FinishReason != turn.FinishRefusal || !transientRefusal(resp.Refusal) || attempt >= chatAttempts {
 				return resp, nil
@@ -631,7 +686,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	}
 	reply := responseText(resp)
 	if strings.TrimSpace(reply) == "" {
-		reply = "(the model sent an empty reply)"
+		reply = emptyReplyText(resp, req.MaxTokens)
 	}
 	return chatResult{
 		Text: reply, Model: res.Model, Provider: res.Provider,

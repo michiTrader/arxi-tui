@@ -12,6 +12,9 @@ import (
 // would only be refused. The client words it differently from a retry.
 const paceStatus = "pace"
 
+// emptyStatus marks a chat.retry notification caused by an answer with nothing in it.
+const emptyStatus = "empty"
+
 // pacer remembers what the provider last said about its request budget, so the next
 // ask of a turn can wait for the window instead of being refused for it. A free tier
 // that allows five requests a minute answers every ask with how many are left and when
