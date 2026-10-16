@@ -4,10 +4,12 @@ package main
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/theme"
 )
@@ -131,5 +133,46 @@ func TestTheUserCanHideTheShellRow(t *testing.T) {
 	}
 	if r.c.shells.running() != 1 {
 		t.Errorf("hiding the row must not stop the shell: %d running", r.c.shells.running())
+	}
+}
+
+// On a terminal narrower than the names, the shell row wraps like the info bars: it used to
+// be cut at the last column (the README said so), and the status.narrow policy now covers it.
+func TestTheShellRowWrapsOnANarrowTerminalInsteadOfBeingCut(t *testing.T) {
+	r := shellChat(t, policyAllow)
+	for i := 0; i < 3; i++ {
+		if _, err := r.c.shells.start("sleep 30", t.TempDir()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const width = 14 // "shell 1 · shell 2 · shell 3" is 27 wide
+	tty := newFakeTTY(width, 24, append(typed("x"), exitKeys()...))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := loop(ctx, tty, builtinDoc(t), theme.SOBRIA(), make(chan fold.Event, 8), &serveDriver{chat: r.c}, ""); err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	out := tty.output()
+	f := frameWith(out, "shell 3")
+	if f == "" {
+		t.Fatalf("shell 3 was never drawn:\n%s", lastFrame(out))
+	}
+	for _, name := range []string{"shell 1", "shell 2", "shell 3"} {
+		if !strings.Contains(f, name) {
+			t.Errorf("%q missing from the shell row: %s", name, f)
+		}
+	}
+	// The fake terminal does not cut, the real one does: so what matters is that no row
+	// the loop paints is wider than the terminal.
+	cup := regexp.MustCompile("\x1b\\[\\d+;1H\x1b\\[K")
+	tty.mu.Lock()
+	defer tty.mu.Unlock()
+	for _, fr := range tty.frames {
+		for _, piece := range cup.Split(fr, -1)[1:] {
+			row := strings.TrimRight(stripANSI(piece), " \r\n")
+			if w := ansi.StringWidth(row); w > width {
+				t.Errorf("a %d-column row on a %d-column terminal (the terminal would cut it): %q", w, width, row)
+			}
+		}
 	}
 }

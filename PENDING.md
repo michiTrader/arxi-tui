@@ -22,14 +22,16 @@ moving. Not started as a single piece of work.
 - A paste over 5 lines / 1500 characters shows `[Pasted text #1 +68 lines]` in the input and `paste again to expand` in the info bar (new bind `host.paste`, in the default scene). Enter sends the real text; the same paste again opens the marker; Backspace/Delete take a marker whole; the numbers restart after a send. Limits and words are text keys (`paste.fold_lines`, `paste.fold_chars`, `paste.hint`).
 - A tall input becomes a window that follows the caret (max a third of the screen, at least 3 rows), with `↑`/`↓` markers.
 - Tests: 14+ for the paste store, 6 through the real loop, 6 for the input window in the engine, plus the keyboard scroll ones. Mutation checks: paste store 14/14 killed, loop wiring 8/8 killed, keyboard scroll 7/7; input window 15 mutations: the real gaps (box child renderer, edges) were found and closed; 3 survive and are equivalent by reasoning (`top > row` written as `>= row+1` or `>= row`, and `>` vs `>=` on the window limit give the same result for whole numbers / when the text exactly fits).
-- NOT verified: in a real PowerShell / Windows Terminal (modified arrows, bracketed paste delivery); ctrl+z after a marker was opened (not tested); the input window with real keystrokes through the loop (tested in the engine only).
+- The input window is now also tested with real keystrokes through the loop (`input_window_loop_test.go`: it shows the end where the caret is, follows the caret back up to the start, shows `↑`/`↓` only when rows are hidden on that side, stays put while the caret is inside it, never takes more than a third of the screen). 10 mutations on the window and its wiring, all killed (one survived at first: the loop remembering where the window was; the fourth test closes it).
+- NOT verified: in a real PowerShell / Windows Terminal (modified arrows, bracketed paste delivery); ctrl+z after a marker was opened (not tested).
 
 ## Done since: row of active shells above the info bar (branch feat/shells-line)
 
 - A row of its own above the info bar names the shells that run: `shell 1 · shell 2` (the numbers `/shell show <n>` and the model's `shell_read` use; an ended one drops out, numbers are not reused). New bind `host.shell.list`; the default scene gets a node `shells`, so it is configurable like everything else: `/ui hide shells`, move, restyle, or a scene of your own.
 - Changed on purpose: the info bar no longer carries the count (`2 shells`); the row replaces it. `host.shells` still exists for scenes that want a count.
 - Tests: the list itself, the real loop (two shells named right above the info bar; one after stopping the other; stepping aside for the slash menu; `/ui hide shells` really hides it and does not stop the shell). 14 mutation checks (two survived at first: the menu case and the hide case were not covered; both now are). One old test expected the count in the bar and was adapted.
-- NOT verified: in a real terminal; with more shells than fit the width (the row is one line, it is cut at the edge like the rest); Windows runtime of the new tests (they need `sh`).
+- Later: with more shells than fit the width the row now wraps onto the next row like the info bars (`status.narrow`, #285; test through the real loop, mutation killed) instead of being cut.
+- NOT verified: in a real terminal; Windows runtime of the new tests (they need `sh`).
 
 ## Done since: browser opened twice, Windows tests that failed for speed (PRs #272, #273)
 
@@ -38,8 +40,8 @@ moving. Not started as a single piece of work.
 
 ## Still open from the owner's list (round of the lag report)
 
-- NOT reproduced: the tool record of a browser-opening call not showing in the chat. The core sends one `chat.tool` per call and the screen draws every one, so I do not know why one is missing; I need which tool the model used (the line that did show, or `run`).
-- Right-edge glitch ("arxi-tui" -> "arxi-ti" while narrowing): FIXED in the code, NOT verified in a real PowerShell. Cause found (it had not reproduced before because the probe never made the terminal narrower than the info row): the folder/branch row and the mode/model/usage row were drawn as one long row, however narrow the terminal; the engine did not wrap or cut them, and the terminal (auto-wrap is off on purpose) cuts a row at the last column. Now a row too wide wraps its words onto the next row (default) or drops whole segments, chosen with `/ui text status.narrow wrap|hide`; also applied to lone one-line notices (the "press ctrl+c again" hint) and to rows inside boxes. Not covered: a row with weighted columns (the author's columns stay as written), a column that is itself several rows. If the owner still sees a cut letter, it is not this row: tell me which row.
+- CLOSED (owner): the tool record of a browser-opening call. arxi has no browser tool: the model opens pages with `run` + `start`. The owner's saved sessions (20261013-140244, 20261013-192904) show those calls recorded as "could not be started: WaitDelay expired" with the wording from before #272, which is what hid them; 20261011-194901 shows one as Exit 0. The record existed. Still to watch: the first real call with a rebuilt core, to see it reads well.
+- Right-edge glitch ("arxi-tui" -> "arxi-ti" while narrowing): FIXED (#285) and CONFIRMED by the owner in a real PowerShell, both with the default `wrap` and with `hide`. Cause found (it had not reproduced before because the probe never made the terminal narrower than the info row): the folder/branch row and the mode/model/usage row were drawn as one long row, however narrow the terminal; the engine did not wrap or cut them, and the terminal (auto-wrap is off on purpose) cuts a row at the last column. Now a row too wide wraps its words onto the next row (default) or drops whole segments, chosen with `/ui text status.narrow wrap|hide`; also applied to lone one-line notices (the "press ctrl+c again" hint) and to rows inside boxes. Not covered: a row with weighted columns (the author's columns stay as written), a column that is itself several rows. If the owner still sees a cut letter, it is not this row: tell me which row.
 - Per-model modalities: only "takes images" exists (a switch per model); other modalities are not started. (Chat copy without the scrollbar column: done, see above.)
 - How images reach the model: DONE in the code (see "Imágenes por modelo" below). The old note that they did not is gone.
 - Per key, at 100 turns of the benchmark session, the chat costs about 0.55 ms (cached layout) plus about 1.9 ms for the fold of the log: about 2.5 ms, against about 30 ms before the cache. See "Done since: chat render cache".
@@ -181,12 +183,14 @@ NO verificado (solo el dueño puede, necesita sus claves o su terminal):
 
 ## Solo el dueño puede hacerlo (no bloquea nada de lo anterior)
 
-1. El nombre de la herramienta de navegador del punto 2b (el registro `chat.tool` que falta en
-   el chat): sin saber qué herramienta usó el modelo no se puede reproducir.
-2. Estrechar la ventana en PowerShell real con la versión nueva y confirmar que "arxi-tui" ya no
-   se corta (arreglo en `status.narrow`; probado con el bucle real y un terminal falso, no con
-   PowerShell). Si aún se corta una letra, decir en qué fila.
-3. Imágenes: probadas por el dueño con Gemini (OK). Falta, si se quiere, otro proveedor y pegar
-   rutas arrastradas en PowerShell / Windows Terminal reales.
+Cerrado por el dueño: el borde derecho en PowerShell real (OK, #285); la herramienta de navegador
+(no existe, el modelo usa `run` + `start`); las imágenes con un proveedor real (Gemini OK; el
+fallo con GLM era el proveedor, que no admite visión).
+
+Abierto, menor:
+1. Pegar rutas arrastradas (imágenes) en PowerShell / Windows Terminal reales.
+2. Si se quiere, probar las imágenes con otro proveedor.
+3. Vigilar la primera llamada `run` + `start` con el core recompilado y confirmar que el registro
+   se lee bien (la redacción nueva es de #272).
 4. Confirmar en una máquina Windows real (o dejar que CI lo haga) que los dos tests de core ya
    no fallan de forma intermitente.
