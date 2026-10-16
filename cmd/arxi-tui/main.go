@@ -682,6 +682,11 @@ func dialChatConn(ctx context.Context, arxiBin string) (chatSender, func(), erro
 // as the input buffer is — the fold is rebuilt every frame and carries it, but
 // no core event produces it (BINDS.md §2: `host.scene.error` is "the one bind
 // the scene may render but the core never provides").
+// cycleNow is the time the loop gives the animated palettes (theme.Cycled picks the colour of
+// each span from it). It is the wall clock; a test replaces it to play the animation one
+// known step at a time, instead of waiting for real time to pass on a machine of unknown speed.
+var cycleNow = time.Now
+
 func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.Theme, eventCh <-chan fold.Event, drv Driver, sceneNotice string) error {
 	panicGesture := &driver.PanicGesture{}
 	// caretState carries the emit path's memory of the caret across frames — its
@@ -1752,7 +1757,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// step the wall clock names, and the ticker follows the fastest cycle on
 		// screen. Only style changes -- never text or width -- so layout and
 		// goldens (which see the resting colour) are untouched.
-		frame, cycleRate := theme.Cycled(frame, time.Now())
+		frame, cycleRate := theme.Cycled(frame, cycleNow())
 		armCycle(cycleRate)
 		emitFrame(tty, frame, theme, h, caretState, caretLit(time.Now(), lastKey))
 		armTicker()
