@@ -42,6 +42,15 @@ reach it. Two things were changed for that: when the chat fits (no bar) rows are
 at all, and `/ui text chat.scrollbar no` (or `-mouse=false`) takes the bar away completely, so a
 selection is just the text. `/copy` (see below) never includes the bar either way.
 
+**A narrow window never cuts a word.** The info rows (folder · branch · scroll hint, and mode ·
+model · effort · usage) and one-line notices used to be cut by the terminal at the last column,
+in the middle of a word (`arxi-tui` showing as `arxi-ti`), with nothing saying a letter was
+lost. Now a row wider than the terminal either carries the words that do not fit onto the next
+row, the way the chat does (`/ui text status.narrow wrap`, the factory choice: nothing is
+lost), or drops whole segments from the right until the rest fits, never leaving a dangling
+` · ` (`/ui text status.narrow hide`: a tidy single row, but what does not fit is not shown).
+A single word wider than the whole window still has to continue on the next row.
+
 ### Keyboard scroll, like arxi_cli_sim
 
 The chat also scrolls from the keyboard, so it works without a mouse (and where the terminal

@@ -80,6 +80,7 @@ func init() {
 		add("effort."+level, effortHints[level], "meaning of the \""+level+"\" level in the /effort menu", false)
 	}
 	add("chat.scrollbar", "yes", "\"yes\" draws the scrollbar at the right edge of the chat when there is more to scroll; \"no\" leaves the full width to the text (the wheel and the keys still scroll) and a mouse selection then copies no bar column", false)
+	add("status.narrow", "wrap", "what a row of side-by-side texts (the info bars, the banner) does when it is wider than the terminal: \"wrap\" carries the words that do not fit onto the next row, like the chat; \"hide\" drops whole segments from the right until the rest fits. Letters are never cut off in silence", false)
 	add("chat.light", "yes", "\"yes\" answers a greeting, a ping or \"what model are you\" with no tools, history, rules or guide (saves tokens); \"no\" treats every message the same", false)
 	add("chat.light.phrases", lightPhrasesDefault, "the whole messages chat.light answers cheaply, separated by commas; case, accents and punctuation do not matter", false)
 	add("effort.default", "medium", "the thinking level a model starts with until you choose one for it (a level word, or none); a model that lacks it gets the nearest", false)

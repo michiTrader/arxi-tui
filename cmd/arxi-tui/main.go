@@ -1681,6 +1681,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		r.ChatScroll = chatScroll
 		r.Scrollbar = wantMouse(term.IsTermux(), mouseOverride) && !isNo(uiText("chat.scrollbar"))
 		r.ExpandTools = expandTools
+		r.Narrow = narrowMode()
 		r.PromptStyle = promptStyle
 		r.Look = chatLook()
 		// While a consent screen is up it replaces the scene on display: the modal

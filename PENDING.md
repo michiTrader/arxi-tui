@@ -39,7 +39,7 @@ moving. Not started as a single piece of work.
 ## Still open from the owner's list (round of the lag report)
 
 - NOT reproduced: the tool record of a browser-opening call not showing in the chat. The core sends one `chat.tool` per call and the screen draws every one, so I do not know why one is missing; I need which tool the model used (the line that did show, or `run`).
-- Right-edge glitch ("arxi-tui" -> "arxi-ti" while narrowing): the frame drawn at widths 133-140, run through a terminal emulator, showed no overwritten character. The row with the folder path was not in my probe, so this did NOT reproduce it; it may be the Windows terminal's own handling of the last column. The owner uses PowerShell; still not reproduced. Useful test: run with `-mouse=false` (no scrollbar) and see if it still happens.
+- Right-edge glitch ("arxi-tui" -> "arxi-ti" while narrowing): FIXED in the code, NOT verified in a real PowerShell. Cause found (it had not reproduced before because the probe never made the terminal narrower than the info row): the folder/branch row and the mode/model/usage row were drawn as one long row, however narrow the terminal; the engine did not wrap or cut them, and the terminal (auto-wrap is off on purpose) cuts a row at the last column. Now a row too wide wraps its words onto the next row (default) or drops whole segments, chosen with `/ui text status.narrow wrap|hide`; also applied to lone one-line notices (the "press ctrl+c again" hint) and to rows inside boxes. Not covered: a row with weighted columns (the author's columns stay as written), a column that is itself several rows. If the owner still sees a cut letter, it is not this row: tell me which row.
 - Per-model modalities: only "takes images" exists (a switch per model); other modalities are not started. (Chat copy without the scrollbar column: done, see above.)
 - How images reach the model: DONE in the code (see "Imágenes por modelo" below). The old note that they did not is gone.
 - Per key, at 100 turns of the benchmark session, the chat costs about 0.55 ms (cached layout) plus about 1.9 ms for the fold of the log: about 2.5 ms, against about 30 ms before the cache. See "Done since: chat render cache".
@@ -155,7 +155,7 @@ y la línea sale sin imagen; ctrl+y lo devuelve con su imagen; ctrl+z tras borra
 lo devuelve con su imagen. Estaba "no verificado"; ahora hay test y no hubo bug.
 
 NO verificado (solo el dueño puede, necesita sus claves o su terminal):
-- ninguna imagen contra un proveedor/modelo real (¿el proveedor acepta el formato que enviamos?);
+- (YA PROBADO por el dueño con Gemini gemini-3.5-flash-lite: describió una foto a la primera. El fallo anterior con GLM era que ese modelo no admite visión, no un fallo de arxi-tui.) Falta solo probar otros proveedores si se quiere;
 - pegar rutas arrastradas en PowerShell/Windows Terminal reales;
 - las imágenes no aparecen en el historial del chat salvo por el texto del marcador (decisión
   de diseño, no un fallo).
@@ -183,9 +183,10 @@ NO verificado (solo el dueño puede, necesita sus claves o su terminal):
 
 1. El nombre de la herramienta de navegador del punto 2b (el registro `chat.tool` que falta en
    el chat): sin saber qué herramienta usó el modelo no se puede reproducir.
-2. Probar `-mouse=false` o `/ui text chat.scrollbar no` en PowerShell real por el fallo del
-   borde derecho ("arxi-tui" -> "arxi-ti" al estrechar). En el emulador no se reproduce.
-3. Probar imágenes contra un proveedor/modelo real y pegar rutas arrastradas en PowerShell /
-   Windows Terminal reales (necesita sus claves y su terminal).
+2. Estrechar la ventana en PowerShell real con la versión nueva y confirmar que "arxi-tui" ya no
+   se corta (arreglo en `status.narrow`; probado con el bucle real y un terminal falso, no con
+   PowerShell). Si aún se corta una letra, decir en qué fila.
+3. Imágenes: probadas por el dueño con Gemini (OK). Falta, si se quiere, otro proveedor y pegar
+   rutas arrastradas en PowerShell / Windows Terminal reales.
 4. Confirmar en una máquina Windows real (o dejar que CI lo haga) que los dos tests de core ya
    no fallan de forma intermitente.

@@ -264,6 +264,15 @@ type Renderer struct {
 	InputTop     int
 	inputOut     *int
 
+	// Narrow says what a row of side-by-side texts does when together they are wider than
+	// the terminal (the info bars, the banner): NarrowWrap carries the words that do not
+	// fit onto the next row, the way the chat does, and NarrowHide drops whole segments
+	// from the right until the rest fits. Neither ever cuts a word in half; the terminal
+	// would do that by itself, silently, and show "arxi-ti" for "arxi-tui". The zero
+	// value leaves rows alone (what the goldens and previews render); the live loop
+	// always sets one of the two, from the user's status.narrow setting.
+	Narrow string
+
 	// Scrollbar asks the chat pane to keep its last column for a scrollbar and to draw one
 	// there while there is more transcript than window. Off (the default, and every golden)
 	// the pane uses the full width and draws nothing. The host turns it on only when it
@@ -345,6 +354,7 @@ func (r *Renderer) child(width, height int) Renderer {
 		InputMaxRows:  r.InputMaxRows,
 		inputOut:      r.inputOut,
 		ChatCache:     r.ChatCache,
+		Narrow:        r.Narrow,
 	}
 }
 
@@ -602,6 +612,9 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 			growSum += grow
 		} else {
 			f := r.renderNode(c, state, budget)
+			if c.Type == "text" {
+				f = r.narrowText(f)
+			}
 			slots[i].frame = f
 			fixed += len(f.Live)
 		}
@@ -804,6 +817,29 @@ func (r *Renderer) renderHorizontal(n *scene.Node, state fold.State, budget int)
 			}
 		}
 		naturalWidths[i] = w
+	}
+
+	// A row of texts wider than the terminal is not cut at the edge: the terminal would do
+	// that on its own, in the middle of a word, with nothing saying anything was lost.
+	// Only the plain case is handled here (no weights, one line per child), which is every
+	// info bar; a weighted row already divides the width it has.
+	if r.Narrow != "" && !anyWeighted(children) && singleLines(frames) {
+		sum := 0
+		for _, w := range naturalWidths {
+			sum += w
+		}
+		if sum > totalWidth {
+			if r.Narrow == NarrowHide {
+				children, frames, naturalWidths = hideToFit(children, frames, naturalWidths, totalWidth)
+				if len(children) == 0 {
+					// Not even the first segment fits: an empty row, the same as a row
+					// whose children are all hidden, not a row that vanishes.
+					return ui.Frame{Live: []ui.Line{{ui.Span{Text: strings.Repeat(" ", totalWidth)}}}, Width: totalWidth, Height: 1}
+				}
+			} else if wrapped, ok := wrapRow(frames, totalWidth); ok {
+				return ui.Frame{Live: wrapped, Width: totalWidth, Height: len(wrapped)}
+			}
+		}
 	}
 
 	// Allocate column widths: children with explicit weight share the
@@ -4088,4 +4124,109 @@ func cutToEnd(row, mark string) string {
 		return mark
 	}
 	return ansi.Truncate(row, w-mw, "") + mark
+}
+
+// The two ways a row too wide for the terminal gives way (Renderer.Narrow).
+const (
+	NarrowWrap = "wrap"
+	NarrowHide = "hide"
+)
+
+func anyWeighted(children []*scene.Node) bool {
+	for _, c := range children {
+		if c.Weight != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// singleLines says every child drew exactly one row, so the row can be treated as one
+// line of text that may be wrapped or shortened as a whole.
+func singleLines(frames []ui.Frame) bool {
+	for _, f := range frames {
+		if len(f.Live) != 1 {
+			return false
+		}
+	}
+	return len(frames) > 0
+}
+
+// wrapRow lays the row's one-line children out as running text in width columns, breaking
+// at spaces, so the words that do not fit go on the next row instead of past the edge.
+// Every row is padded to the full width like any other row of the frame.
+func wrapRow(frames []ui.Frame, width int) ([]ui.Line, bool) {
+	var spans []ui.Span
+	for _, f := range frames {
+		spans = append(spans, f.Live[0]...)
+	}
+	lines := ui.WrapSpans(spans, width, nil)
+	if len(lines) == 0 {
+		return nil, false
+	}
+	for i := range lines {
+		for lines[i].Width() < width {
+			lines[i] = append(lines[i], ui.Span{Text: " "})
+		}
+	}
+	return lines, true
+}
+
+// hideToFit drops whole children from the right until the row fits, and then any
+// separator (" · ") left dangling at its end, so what stays is complete and in order. A
+// child that does not fit even alone disappears too: the row is then empty, which says
+// "no room" where a half word would say something false.
+func hideToFit(children []*scene.Node, frames []ui.Frame, widths []int, width int) ([]*scene.Node, []ui.Frame, []int) {
+	n := len(children)
+	sum := 0
+	for _, w := range widths {
+		sum += w
+	}
+	for n > 0 && sum > width {
+		n--
+		sum -= widths[n]
+	}
+	for n > 0 && strings.TrimSpace(frames[n-1].Live[0].Text()) == "·" {
+		n--
+		sum -= widths[n]
+	}
+	return children[:n], frames[:n], widths[:n]
+}
+
+// narrowText applies the narrow policy to a lone text of a stack (a notice, the "press
+// ctrl+c again" hint): a row wider than the terminal wraps its words onto the next row, or
+// (NarrowHide) is blanked whole. Without this the terminal cuts it at the last column, in
+// the middle of a word, and nothing says a letter was lost.
+func (r *Renderer) narrowText(f ui.Frame) ui.Frame {
+	if r.Narrow == "" || r.Width <= 0 {
+		return f
+	}
+	wide := false
+	for _, l := range f.Live {
+		if l.Width() > r.Width {
+			wide = true
+		}
+	}
+	if !wide {
+		return f
+	}
+	var out []ui.Line
+	for _, l := range f.Live {
+		if l.Width() <= r.Width {
+			out = append(out, l)
+			continue
+		}
+		if r.Narrow == NarrowHide {
+			out = append(out, ui.Line{{Text: strings.Repeat(" ", r.Width)}})
+			continue
+		}
+		for _, w := range ui.WrapSpans(l, r.Width, nil) {
+			for w.Width() < r.Width {
+				w = append(w, ui.Span{Text: " "})
+			}
+			out = append(out, w)
+		}
+	}
+	f.Live, f.Height = out, len(out)
+	return f
 }
