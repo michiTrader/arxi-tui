@@ -317,10 +317,13 @@ func TestStandingPromptStaysWithinItsBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	const maxDefBytes = 1650 + 520
-	// 950 bytes on Linux. Windows adds one sentence of its own (the cmd.exe commands) and
+	// 1060 bytes on Linux. Windows adds one sentence of its own (the cmd.exe commands) and
 	// longer names (windows/amd64, cmd.exe, a drive letter), which is measured here rather
 	// than hidden in a bigger number: the budget for everything else is the same.
-	maxHintBytes := 950
+	// 1060: the three sentences added after a session in which a model asked permission
+	// to list a folder in full access mode, answered "I am running it" without calling
+	// run, and took one wrong path for an empty project (about 60 tokens a turn).
+	maxHintBytes := 1060
 	if runtime.GOOS == "windows" {
 		maxHintBytes += len(windowsShellHint) + 20
 	}
@@ -475,5 +478,20 @@ func TestAFailedTurnStillReportedTheAsksThatDidAnswer(t *testing.T) {
 	}
 	if len(notes) != 1 || notes[0].ContextTokens != 15 {
 		t.Errorf("notices = %+v, want the one ask that answered", notes)
+	}
+}
+
+// Three failures seen in one user's sessions, each answered by one sentence the model
+// is given: asking leave to look, announcing a run it never made, and calling the project
+// empty because a guessed path was not there.
+func TestTheHintsStopTheModelAskingLeaveAnnouncingRunsAndDeclaringTheProjectEmpty(t *testing.T) {
+	h := toolsHint("/p/x", editsAsk)
+	for _, want := range []string{"Never ask leave to look", `list "." before saying the project is empty`} {
+		if !strings.Contains(h, want) {
+			t.Errorf("the tools hint lost %q: %q", want, h)
+		}
+	}
+	if r := runsHint(editsAsk); !strings.Contains(r, "unless you call run in that same reply") {
+		t.Errorf("the run hint does not forbid announcing a run that was not made: %q", r)
 	}
 }

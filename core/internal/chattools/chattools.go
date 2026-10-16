@@ -272,6 +272,7 @@ func (t *Toolbox) within(full string) (rel string, ok bool) {
 // resolve turns a model-supplied path into an absolute one inside the root.
 func (t *Toolbox) resolve(p string) (string, error) {
 	p = strings.TrimSpace(p)
+	p = t.withoutRootName(p)
 	full := t.root
 	if p != "" && p != "." {
 		if filepath.IsAbs(p) {
@@ -307,6 +308,36 @@ func (t *Toolbox) resolve(p string) (string, error) {
 		}
 	}
 	return real, nil
+}
+
+// withoutRootName drops the project folder's own name from the front of a relative path
+// that does not exist as written. The model is told the project's name (root: pitlane)
+// and often writes it as the first part of a path ("pitlane/src"), when every path
+// already starts inside that folder. Read literally it is "does not exist", the model
+// takes that for an empty or missing project and stops (a user lost a whole session to
+// it). It is only taken off when the path as written is not there and the shorter one
+// is, so a real sub-folder that happens to share the project's name is never skipped.
+func (t *Toolbox) withoutRootName(p string) string {
+	if p == "" || filepath.IsAbs(p) {
+		return p
+	}
+	name := filepath.Base(t.root)
+	norm := strings.ReplaceAll(p, "\\", "/")
+	first, rest, _ := strings.Cut(norm, "/")
+	if first == "" || first == "." || first == ".." || !strings.EqualFold(first, name) {
+		return p
+	}
+	if _, err := os.Lstat(filepath.Join(t.root, filepath.FromSlash(norm))); err == nil || !errors.Is(err, fs.ErrNotExist) {
+		return p
+	}
+	rest = strings.Trim(rest, "/")
+	if rest == "" {
+		return "."
+	}
+	if _, err := os.Lstat(filepath.Join(t.root, filepath.FromSlash(rest))); err != nil {
+		return p
+	}
+	return rest
 }
 
 func display(p string) string {
