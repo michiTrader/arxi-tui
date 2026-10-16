@@ -507,7 +507,7 @@ func TestLoopSlashMenuTabWalksCategories(t *testing.T) {
 	}
 
 	out := tty.output()
-	if !strings.Contains(out, noLiveCoreNotice) {
+	if !containsWords(out, noLiveCoreNotice) {
 		t.Errorf("tab did not walk the highlight to the next category's first row (the providers screen never opened); frames:\n%s", out)
 	}
 	if len(drv.submitted) != 0 {
@@ -666,7 +666,7 @@ func TestLoopSlashMenuWrapsUpAndDown(t *testing.T) {
 	default:
 		t.Fatalf("the last registry row is %q; teach this test what picking it does", last)
 	}
-	if !strings.Contains(out, want) {
+	if !containsWords(out, want) {
 		t.Errorf("Up did not wrap from the first row to the last (%q); expected %q; frames:\n%s", last, want, out)
 	}
 	if len(drv.submitted) != 0 {
@@ -920,4 +920,13 @@ func TestLoopPasteAloneDoesNotSubmit(t *testing.T) {
 	if len(drv.submitted) != 0 {
 		t.Errorf("a paste with no Enter submitted %d prompts, want 0; pasting is editing, not sending: %q", len(drv.submitted), drv.submitted)
 	}
+}
+
+// containsWords reports whether the words of want appear, in order, in what the screen
+// drew. A sentence wider than the terminal now wraps onto the next row (status.narrow)
+// instead of being cut at the edge, so it is compared word by word, not as one string:
+// the padding at the end of a row and the row break are not part of the sentence.
+func containsWords(screen, want string) bool {
+	flat := strings.Join(strings.Fields(stripANSI(screen)), " ")
+	return strings.Contains(flat, strings.Join(strings.Fields(want), " "))
 }

@@ -151,5 +151,21 @@ func validChatLook(key, val string) error {
 			return fmt.Errorf("text %q is yes or no; %q is not", key, val)
 		}
 	}
+	if key == "status.narrow" {
+		switch strings.ToLower(strings.TrimSpace(val)) {
+		case engine.NarrowWrap, engine.NarrowHide:
+		default:
+			return fmt.Errorf("text %q is wrap or hide; %q is not", key, val)
+		}
+	}
 	return nil
+}
+
+// narrowMode is the user's choice for a row too wide for the terminal. Anything but
+// "hide" is the factory "wrap": the value is checked when written, so reading never fails.
+func narrowMode() string {
+	if strings.ToLower(strings.TrimSpace(uiText("status.narrow"))) == engine.NarrowHide {
+		return engine.NarrowHide
+	}
+	return engine.NarrowWrap
 }
