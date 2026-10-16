@@ -44,13 +44,13 @@ func TestHistoryWalkStashesTheLineBeingTyped(t *testing.T) {
 	if _, ok := h.Older("one"); ok {
 		t.Fatalf("Older past the oldest line must report nothing")
 	}
-	if got, _ := h.Newer(); got != "two" {
+	if got, _ := h.Newer(""); got != "two" {
 		t.Fatalf("Newer = %q; want two", got)
 	}
-	if got, ok := h.Newer(); !ok || got != "draft" {
+	if got, ok := h.Newer(""); !ok || got != "draft" {
 		t.Fatalf("Newer past the newest must give the stashed draft back; got %q,%v", got, ok)
 	}
-	if _, ok := h.Newer(); ok {
+	if _, ok := h.Newer(""); ok {
 		t.Fatalf("Newer on a fresh line must report nothing")
 	}
 }
@@ -354,7 +354,7 @@ func TestRecalledOnlyWhileTheLineIsTheOneTheWalkIsOn(t *testing.T) {
 	if h.Recalled("/model vyx") {
 		t.Error("an edited line is not recalled any more")
 	}
-	h.Newer()
+	h.Newer("")
 	if h.Recalled("/model vy") {
 		t.Error("after the walk ended nothing is recalled")
 	}

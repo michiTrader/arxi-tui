@@ -151,6 +151,13 @@ func validChatLook(key, val string) error {
 			return fmt.Errorf("text %q is yes or no; %q is not", key, val)
 		}
 	}
+	if key == "resume.scope" {
+		switch strings.ToLower(strings.TrimSpace(val)) {
+		case resumeFolder, resumeAll:
+		default:
+			return fmt.Errorf("text %q is folder or all; %q is not", key, val)
+		}
+	}
 	if key == "status.narrow" {
 		switch strings.ToLower(strings.TrimSpace(val)) {
 		case engine.NarrowWrap, engine.NarrowHide:

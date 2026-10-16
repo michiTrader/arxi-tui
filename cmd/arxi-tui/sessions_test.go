@@ -209,13 +209,13 @@ func TestSessionWriteFailureIsReportedOnce(t *testing.T) {
 
 func TestResumeMenuRowsAndPick(t *testing.T) {
 	l, dir := newLog(t)
-	if rows := resumeMenuData(dir, time.Now()); len(rows) != 1 || rows[0].Ref != "" {
+	if rows := resumeMenuData(dir, time.Now(), "", resumeAll); len(rows) != 1 || rows[0].Ref != "" {
 		t.Errorf("empty = %+v", rows)
 	}
 	chat(l, "how do I write a test in Go?", "like this")
 	l.End()
 	chat(l, "summarize the news", "here")
-	rows := resumeMenuData(dir, time.Now())
+	rows := resumeMenuData(dir, time.Now(), "", resumeAll)
 	if len(rows) != 2 || rows[0].Name != "summarize the news" {
 		t.Fatalf("newest must be first: %+v", rows)
 	}
@@ -225,7 +225,7 @@ func TestResumeMenuRowsAndPick(t *testing.T) {
 	if id := resumePick(rows[1].Ref); !sessionIDRe.MatchString(id) {
 		t.Errorf("a pick must return the id: %q", id)
 	}
-	if off := resumeMenuData("", time.Now()); !strings.Contains(off[0].Name, "off") {
+	if off := resumeMenuData("", time.Now(), "", resumeAll); !strings.Contains(off[0].Name, "off") {
 		t.Errorf("off = %+v", off)
 	}
 }
