@@ -201,6 +201,48 @@ Hecho y probado con el bucle real + mutaciones:
 - El historial de entrada conserva el borrador al pulsar Flecha abajo (#287).
 - `/resume` lista por defecto solo la carpeta actual (`resume.scope` = folder|all) (#287).
 - El modelo de chat es POR INSTANCIA: cada turno envía `Model` explícito; el archivo
+  `default-model` del core es global a la máquina y ahora solo es el modelo inicial (#288).
+- Un pegado largo se dibuja en el chat con el mismo marcador que mostró la barra; pegar dos
+  veces lo abre en ambos sitios. Solo es visual: se envía y se guarda el texto real (#289).
+- `context deadline exceeded`: había un fallo real. El core daba UN presupuesto a todo el
+  mensaje (límite de una llamada + 5 min de reintentos), así que un turno con muchas rondas de
+  herramientas moría con ese error aunque cada llamada fuera sana. Ahora el límite
+  (`ARXI_CHAT_TIMEOUT`, 3 min por defecto) vale POR LLAMADA al modelo.
+- "(the model sent an empty reply)": el core ahora vuelve a preguntar hasta 2 veces (avisando
+  en la línea Thinking como "empty reply") antes de rendirse. Si el modelo se quedó sin
+  presupuesto de salida (finish=length, típico de modelos que razonan) NO reintenta y lo dice
+  con otra frase.
+
+NO hecho todavía (nada de esto está implementado):
+1. Superficie de ajustes (`/settings`-like): listar todos los ajustes con valor y explicación,
+   cambiarlos con la validación de `/ui`, persistir en texts.json, y promover a claves de texto la
+   altura de la ventana de entrada y los pasos de scroll.
+
+NO verificado: nada de lo anterior contra un proveedor real (vyceai/glm-5.3-flash); el reintento
+por respuesta vacía y el límite por llamada se probaron con un proveedor falso. Si la respuesta
+vacía de glm viene con finish=length, el mensaje nuevo lo dirá; entonces el remedio sería subir
+`MaxTokens` (hoy fijo en 4096), que NO se tocó.
+
+## Solo el dueño puede hacerlo (no bloquea nada de lo anterior)
+
+Cerrado por el dueño: el borde derecho en PowerShell real (OK, #285); la herramienta de navegador
+(no existe, el modelo usa `run` + `start`); las imágenes con un proveedor real (Gemini OK; el
+fallo con GLM era el proveedor, que no admite visión).
+
+Abierto, menor:
+1. Pegar rutas arrastradas (imágenes) en PowerShell / Windows Terminal reales.
+2. Si se quiere, probar las imágenes con otro proveedor.
+3. Vigilar la primera llamada `run` + `start` con el core recompilado y confirmar que el registro
+   se lee bien (la redacción nueva es de #272).
+4. Confirmar en una máquina Windows real (o dejar que CI lo haga) que los dos tests de core ya
+   no fallan de forma intermitente.
+
+## Ronda actual: hecho y lo que falta (honesto)
+
+Hecho y probado con el bucle real + mutaciones:
+- El historial de entrada conserva el borrador al pulsar Flecha abajo (#287).
+- `/resume` lista por defecto solo la carpeta actual (`resume.scope` = folder|all) (#287).
+- El modelo de chat es POR INSTANCIA: cada turno envía `Model` explícito; el archivo
   `default-model` del core es global a la máquina y ahora solo es el modelo inicial.
 
 NO hecho todavía (pendiente para la próxima ronda, nada de esto está implementado):

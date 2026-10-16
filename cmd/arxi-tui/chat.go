@@ -250,6 +250,8 @@ func retryWhy(r driver.Retry) string {
 	switch r.Status {
 	case "pace":
 		return "request limit reached"
+	case "empty":
+		return "empty reply"
 	case "429":
 		return "rate limited"
 	case "408", "502", "503", "504", "529":

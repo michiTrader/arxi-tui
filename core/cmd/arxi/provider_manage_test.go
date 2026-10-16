@@ -16,6 +16,7 @@ import (
 
 	"github.com/michiTrader/arxi/internal/modelstore"
 	"github.com/michiTrader/arxi/internal/provider"
+	"github.com/michiTrader/arxi/internal/turn"
 )
 
 // fakeLLM is an OpenAI-compatible endpoint on loopback. It records what it was
@@ -47,6 +48,12 @@ type fakeLLM struct {
 	think    []string // reasoning fragments a streamed answer sends first
 	script   []scripted
 	tools    [][]string // names of the tools offered with each chat request
+	// emptyNext makes the next N chat requests answer with no text at all, finishing
+	// with emptyFinish ("stop" when empty).
+	emptyNext   int
+	emptyFinish string
+	// delay is how long each chat request takes to answer.
+	delay time.Duration
 }
 
 // scripted is one step of a tool conversation: while steps remain, the model
@@ -82,6 +89,9 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 			json.NewEncoder(w).Encode(map[string]any{"data": data})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/chat/completions"):
 			f.calls++
+			if f.delay > 0 {
+				time.Sleep(f.delay)
+			}
 			if f.rate != nil {
 				if rem, rst := f.rate(f.calls); rem != "" {
 					w.Header().Set("X-Ratelimit-Remaining", rem)
@@ -106,6 +116,19 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 					body = "error code: " + strconv.Itoa(f.failCode)
 				}
 				io.WriteString(w, body)
+				return
+			}
+			if f.emptyNext > 0 {
+				f.emptyNext--
+				fin := f.emptyFinish
+				if fin == "" {
+					fin = "stop"
+				}
+				json.NewEncoder(w).Encode(map[string]any{
+					"id":      "x",
+					"choices": []any{map[string]any{"index": 0, "finish_reason": fin, "message": map[string]any{"role": "assistant", "content": ""}}},
+					"usage":   map[string]int{"prompt_tokens": 3, "completion_tokens": 0},
+				})
 				return
 			}
 			var body struct {
@@ -820,11 +843,38 @@ func TestChatTimeoutCanBeSetByEnvAndABadValueKeepsTheDefault(t *testing.T) {
 	}
 }
 
-// The deadline that actually bounds a message must follow the setting, not the default.
-func TestChatDeadlineFollowsTheTimeoutSetting(t *testing.T) {
-	t.Setenv(chatTimeoutEnv, "10m")
-	if got, want := chatDeadline(), 10*time.Minute+chatRetryTotal; got != want {
-		t.Fatalf("deadline = %v, want %v", got, want)
+// The limit is per ask of the model, not for the whole message. A turn of many tool
+// rounds used to share one budget (the limit plus the retry allowance) and could die with
+// "context deadline exceeded" while every single ask was healthy.
+func TestChatTimeoutAppliesToEachAskNotToTheWholeTurn(t *testing.T) {
+	f := chatProvider(t)
+	f.delay = 250 * time.Millisecond
+	t.Setenv(chatTimeoutEnv, "400ms") // each ask (250ms) fits; three of them (750ms) do not
+	saved := chatRetryTotal
+	chatRetryTotal = 50 * time.Millisecond // the old whole-turn budget was 400ms+50ms
+	t.Cleanup(func() { chatRetryTotal = saved })
+	f.script = []scripted{{name: "list", args: `{"path":"."}`}, {name: "list", args: `{"path":"."}`}, {text: "done"}}
+	ctx, err := withTools(context.Background(), projectDir(t), "", nil, func(chatToolNotification) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := chatSend(ctx, "look around", "", "", "")
+	if err != nil {
+		t.Fatalf("three healthy asks that together took longer than the limit failed: %v", err)
+	}
+	if res.Text != "done" || f.calls != 3 {
+		t.Errorf("text %q after %d asks", res.Text, f.calls)
+	}
+}
+
+// ...and one ask that really is too slow still ends with the time-limit error.
+func TestChatOneSlowAskStillTimesOut(t *testing.T) {
+	f := chatProvider(t)
+	f.delay = 600 * time.Millisecond
+	t.Setenv(chatTimeoutEnv, "150ms")
+	_, err := chatSend(context.Background(), "hi", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "deadline exceeded") {
+		t.Fatalf("a single ask slower than the limit must fail with the deadline: %v", err)
 	}
 }
 
@@ -912,6 +962,79 @@ func TestModelUpdateRefusesWhatCannotBeAWindowOrAModel(t *testing.T) {
 			if m.ContextWindow != 0 {
 				t.Errorf("%s/%s kept a window after only refused updates: %d", pr.Name, m.ID, m.ContextWindow)
 			}
+		}
+	}
+}
+
+// A model that sometimes answers with nothing is asked again, saying so, instead of leaving
+// the user to type "continue".
+func TestChatAsksAgainWhenTheModelSendsAnEmptyReply(t *testing.T) {
+	f := chatProvider(t)
+	f.emptyNext = 2
+	var notices []chatRetryNotification
+	ctx := context.WithValue(context.Background(), retryNoticeKey{}, func(n chatRetryNotification) { notices = append(notices, n) })
+	res, err := chatSend(ctx, "hi", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Text != "echo: hi" || f.calls != 3 {
+		t.Errorf("text %q after %d calls; want the real answer on the 3rd", res.Text, f.calls)
+	}
+	if len(notices) != 2 || notices[0].Status != emptyStatus {
+		t.Errorf("the user should be told about each new ask: %+v", notices)
+	}
+}
+
+// Still empty after the retries: the plain sentence, and no more asks than the limit.
+func TestChatGivesTheEmptyReplySentenceAfterTheRetries(t *testing.T) {
+	f := chatProvider(t)
+	f.emptyNext = 99
+	res, err := chatSend(context.Background(), "hi", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Text != "(the model sent an empty reply)" {
+		t.Errorf("text = %q", res.Text)
+	}
+	if f.calls != 1+chatEmptyRetries {
+		t.Errorf("asked %d times, want %d", f.calls, 1+chatEmptyRetries)
+	}
+}
+
+// A model cut at its output limit (a reasoning model that thought the whole allowance away)
+// is not asked again - it would do the same - and the sentence says what happened.
+func TestChatSaysWhenTheAllowanceWasSpentThinking(t *testing.T) {
+	f := chatProvider(t)
+	f.emptyNext, f.emptyFinish = 99, "length"
+	res, err := chatSend(context.Background(), "hi", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.calls != 1 {
+		t.Errorf("a response cut at the limit was asked again (%d calls)", f.calls)
+	}
+	if !strings.Contains(res.Text, "output allowance") || strings.Contains(res.Text, "empty reply") {
+		t.Errorf("text = %q", res.Text)
+	}
+}
+
+func TestEmptyAnswerOnlyCountsWhatIsReallyEmpty(t *testing.T) {
+	text := func(s string) turn.ContentBlock { return turn.ContentBlock{Type: turn.BlockText, Text: s} }
+	call := turn.ContentBlock{Type: turn.BlockToolCall, ToolCall: &turn.ToolCall{ID: "1", Name: "list"}}
+	for _, c := range []struct {
+		name string
+		r    turn.Response
+		want bool
+	}{
+		{"no content", turn.Response{FinishReason: turn.FinishStop}, true},
+		{"blank text", turn.Response{FinishReason: turn.FinishStop, Content: []turn.ContentBlock{text("  \n")}}, true},
+		{"some text", turn.Response{FinishReason: turn.FinishStop, Content: []turn.ContentBlock{text("hi")}}, false},
+		{"a tool call", turn.Response{FinishReason: turn.FinishToolCalls, Content: []turn.ContentBlock{call}}, false},
+		{"cut at the limit", turn.Response{FinishReason: turn.FinishLength}, false},
+		{"refusal", turn.Response{FinishReason: turn.FinishRefusal}, false},
+	} {
+		if got := emptyAnswer(c.r); got != c.want {
+			t.Errorf("%s: emptyAnswer = %v, want %v", c.name, got, c.want)
 		}
 	}
 }

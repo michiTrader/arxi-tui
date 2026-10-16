@@ -118,3 +118,15 @@ func TestPacedWaitIsNotShownAsARetry(t *testing.T) {
 		t.Errorf("the conversation line = %q", line)
 	}
 }
+
+// An empty reply that the core asks again is named as such on the Thinking line and in the
+// conversation, not as "provider said empty".
+func TestAnEmptyReplyRetryIsNamedAsSuch(t *testing.T) {
+	r := driver.Retry{Provider: "p", Model: "m", Attempt: 2, Of: 6, Wait: 2 * time.Second, Status: "empty", Reason: "the model sent an empty reply"}
+	if got := retryWhy(r); got != "empty reply" {
+		t.Errorf("retryWhy = %q", got)
+	}
+	if line := retryLine(r); !strings.Contains(line, "empty reply") || strings.Contains(line, "provider said") {
+		t.Errorf("retryLine = %q", line)
+	}
+}
