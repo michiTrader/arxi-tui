@@ -64,7 +64,7 @@ func TestMarkdownTableFallsBackToRecordsWhenNarrow(t *testing.T) {
 
 func TestMarkdownCodeFenceHasGutterAndHighlight(t *testing.T) {
 	lines := RenderMarkdown("```go\nfunc main() { return 42 } // done\n```", 80, "text")
-	if len(lines) != 1 || !strings.HasPrefix(lines[0].Text(), "│ func main()") {
+	if len(lines) != 1 || !strings.HasPrefix(lines[0].Text(), "func main()") {
 		t.Fatalf("fence rendering: %q", plain(lines))
 	}
 	styles := map[string]bool{}
@@ -81,7 +81,7 @@ func TestMarkdownCodeFenceHasGutterAndHighlight(t *testing.T) {
 // A document that is still arriving must draw correctly: an unclosed fence is code.
 func TestMarkdownUnclosedFenceIsStillCode(t *testing.T) {
 	got := render("text\n```\nlet x = 1", 40)
-	if got[len(got)-1] != "│ let x = 1" {
+	if got[len(got)-1] != "let x = 1" {
 		t.Fatalf("got %q", got)
 	}
 }
@@ -102,5 +102,40 @@ func TestMarkdownProseWithPipeIsNotATable(t *testing.T) {
 	got := render("use a | b to pipe", 40)
 	if len(got) != 1 || got[0] != "use a | b to pipe" {
 		t.Fatalf("got %q", got)
+	}
+}
+
+// What a user drags the mouse over must be what they paste. A block of code used to
+// carry a "│ " bar on every row, so a command copied out of an answer arrived with the
+// bars and did not run. The block is now marked by a background, which is not text.
+func TestMarkdownCodeBlockCarriesNoCharacterBesideTheCode(t *testing.T) {
+	doc := "intro\n\n```powershell\nSet-ExecutionPolicy RemoteSigned -Scope CurrentUser\niwr -useb get.scoop.sh | iex\n```\n\nafter"
+	got := render(doc, 80)
+	want := []string{"intro", "", "Set-ExecutionPolicy RemoteSigned -Scope CurrentUser", "iwr -useb get.scoop.sh | iex", "", "after"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("rows:\n%q\nwant:\n%q", got, want)
+	}
+	for _, l := range got {
+		if strings.ContainsAny(l, "│┃▏") {
+			t.Errorf("a bar glyph is in the copied text: %q", l)
+		}
+	}
+}
+
+// With no bar to tell the block from prose, the background has to be there, on every
+// span of every row, or the block would be indistinguishable from the text around it.
+func TestMarkdownCodeBlockIsMarkedByABackgroundOnEverySpan(t *testing.T) {
+	lines := RenderMarkdown("```go\nfunc main() { return 42 } // done\n```", 80, "text")
+	if len(lines) != 1 {
+		t.Fatalf("rows: %v", lines)
+	}
+	for _, sp := range lines[0] {
+		if sp.Fill != codeWash {
+			t.Errorf("span %q has no wash (fill %q)", sp.Text, sp.Fill)
+		}
+	}
+	// And the wash must not be padded out with spaces: a padded space is copied.
+	if w := lines[0].Width(); w != len("func main() { return 42 } // done") {
+		t.Errorf("row is %d wide, the code is %d", w, len("func main() { return 42 } // done"))
 	}
 }

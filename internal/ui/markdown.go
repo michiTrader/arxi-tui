@@ -6,7 +6,6 @@ import "strings"
 // user-visible table: the theme owns colour, and a shape change belongs in a release.
 const (
 	glyphBullet   = "• "
-	glyphGutter   = "│ "
 	glyphQuoteBar = "▏ "
 )
 
@@ -27,7 +26,6 @@ func RenderMarkdown(text string, width int, base string) []Line {
 	if width <= 0 {
 		return nil
 	}
-	gutter := Line{{Text: glyphGutter, Style: "markdown.code.fence"}}
 	raw := strings.Split(text, "\n")
 	if n := len(raw); n > 1 && raw[n-1] == "" {
 		raw = raw[:n-1] // a trailing newline is a terminator, not a blank line
@@ -64,16 +62,14 @@ func RenderMarkdown(text string, width int, base string) []Line {
 			}
 		case inFence:
 			body := expandTabs(trimmed, 4)
-			// Squeezed past the width of the screen the gutter gives way rather than the
-			// code, the same rule a quote's bars follow: a row of structure with no room
-			// for the text it introduces says nothing at all, and dropping the row instead
-			// loses a line of somebody's program with no sign that it was ever there.
-			gt := gutter
-			if gt.Width() >= width {
-				gt = Line{}
-			}
-			for _, w := range HardWrapSpans(Highlight(body, lang, "markdown.codeblock"), width-gt.Width()) {
-				out = append(out, join(gt, w))
+			// A block of code is marked by a wash behind it and by nothing written
+			// in front of it. It used to carry a "│ " gutter, but a gutter is text:
+			// dragging the mouse over a command copied the bars with it and the
+			// command no longer ran when pasted. A background is not a character, so
+			// what is selected is exactly the code. The wash is a Fill (not the
+			// span's own style) so every highlighted word keeps it.
+			for _, w := range HardWrapSpans(Highlight(body, lang, "markdown.codeblock"), width) {
+				out = append(out, withFill(w, codeWash))
 			}
 		case rows > 0:
 			out = append(out, renderTable(raw[i:i+rows], width, base)...)
@@ -108,6 +104,20 @@ func RenderMarkdown(text string, width int, base string) []Line {
 		default:
 			out = append(out, WrapSpans(inlineSpans(trimmed, base), width, nil)...)
 		}
+	}
+	return out
+}
+
+// codeWash is the token whose background sits behind a fenced block of code.
+const codeWash = "markdown.codeblock"
+
+// withFill lays a wash under every span of a row, and under nothing else: no padding is
+// added, because a padded space is a character a selection would copy.
+func withFill(l Line, fill string) Line {
+	out := make(Line, len(l))
+	for i, sp := range l {
+		sp.Fill = fill
+		out[i] = sp
 	}
 	return out
 }
