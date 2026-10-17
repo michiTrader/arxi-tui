@@ -53,9 +53,10 @@ var commandAliases = map[string]bool{
 // nothing else, so every path that submits a line (Enter on the input, a menu
 // pick, a pressed button) can ask the same question and get the same answer.
 //
-// A line is a slash line only when its first non-space character is "/". The
-// text after it is never interpreted here: classification says what the verb
-// is, not what to do with the arguments.
+// A line is a slash line only when its first non-space character is "/" and
+// its first word has no further "/" (a line that starts with a path is text).
+// The text after the verb is never interpreted here: classification says what
+// the verb is, not what to do with the arguments.
 func classifySlash(line string, userCommands []string) slashClass {
 	body := strings.TrimSpace(line)
 	if !strings.HasPrefix(body, "/") {
@@ -69,6 +70,9 @@ func classifySlash(line string, userCommands []string) slashClass {
 	if i := strings.IndexFunc(body, func(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }); i >= 0 {
 		name, args = body[:i], strings.TrimSpace(body[i:])
 	}
+	if isPathWord(name) {
+		return slashClass{Kind: slashNone}
+	}
 	c := slashClass{Name: name, Args: args}
 	switch {
 	case plannedCommands[name]:
@@ -79,6 +83,23 @@ func classifySlash(line string, userCommands []string) slashClass {
 		c.Kind = slashUnknown
 	}
 	return c
+}
+
+// isPathWord reports whether the first word after the leading "/" has another
+// "/" inside it: "/mnt/c/Users/x" or "/usr/bin/ls". No command name contains a
+// slash, so such a line is a path the user is talking about, not a command,
+// and it goes to the model as ordinary text. A single word ("/nonsense") stays
+// an unknown command: that is a typo the user wants to hear about.
+func isPathWord(name string) bool {
+	return strings.Contains(name, "/")
+}
+
+// slashMenuOpen reports whether the typed input is the start of a command, so
+// the slash menu owns the keys. It asks classifySlash, so the menu and the
+// submit logic cannot disagree: a line that starts with a path never opens the
+// menu, and Enter on it sends it.
+func slashMenuOpen(input string) bool {
+	return strings.HasPrefix(input, "/") && classifySlash(input, nil).Kind != slashNone
 }
 
 func isFactoryCommand(name string) bool {

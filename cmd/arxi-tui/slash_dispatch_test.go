@@ -38,7 +38,10 @@ func TestClassifySlash(t *testing.T) {
 		{"/nonsense", slashUnknown, "nonsense", ""},
 		{"/helpx", slashUnknown, "helpx", ""},
 		{"/Help", slashUnknown, "Help", ""},
-		{"/usr/bin/ls -l", slashUnknown, "usr/bin/ls", "-l"},
+		{"/usr/bin/ls -l", slashNone, "", ""},
+		{"/mnt/c/Users/x/file.txt", slashNone, "", ""},
+		{"//double", slashNone, "", ""},
+		{"/send /mnt/c/x", slashKnown, "send", "/mnt/c/x"},
 		{"/nonsense\nsecond line", slashUnknown, "nonsense", "second line"},
 		{"/nonsense\targ", slashUnknown, "nonsense", "arg"},
 	}

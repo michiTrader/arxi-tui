@@ -179,3 +179,31 @@ func TestLoopLocalWarningIsNotSavedWithTheSession(t *testing.T) {
 		t.Errorf("a local warning was saved with the conversation:\n%s", saved.String())
 	}
 }
+
+// A line that starts with a path ("/mnt/c/Users/x/notes.txt look at this") is
+// what a user pastes from a file manager. It is text for the model, not a
+// command: no "Unknown command" warning, and Enter sends it.
+func TestLoopALineThatStartsWithAPathIsSentAsText(t *testing.T) {
+	for _, line := range []string{
+		"/mnt/c/Users/x/notes.txt please read it",
+		"/usr/bin/ls -l",
+		"/home/user/webapp",
+	} {
+		out, got := runLoopKeysOutput(t, append(enterLine(line), exitKeys()...))
+		if strings.Contains(ansi.Strip(out), "Unknown command") {
+			t.Errorf("%q was treated as an unknown command:\n%s", line, lastFrame(out))
+		}
+		if len(got) != 1 || got[0] != line {
+			t.Errorf("%q: the model should get exactly this line once, got %q", line, got)
+		}
+	}
+}
+
+// The single word stays a typo the user hears about, so the path rule is not a
+// loophole for "/nonsense".
+func TestLoopASingleSlashWordIsStillAnUnknownCommand(t *testing.T) {
+	_, got := runLoopKeysOutput(t, append(enterLine("/nonsens"), exitKeys()...))
+	if len(got) != 0 {
+		t.Errorf("an unknown command reached the model: %q", got)
+	}
+}
