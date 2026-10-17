@@ -66,7 +66,7 @@ func TestNoShellToolsWithoutAProjectFolder(t *testing.T) {
 	}
 }
 
-// The three share the eight with the others; when they do not fit, none is half-lent.
+// The four share the eight with the others; when they do not fit, none is half-lent.
 func TestShellToolsNeverExceedTheBudgetOrComeInPart(t *testing.T) {
 	r := shellChat(t, policyAllow)
 	var ts []extv2.Tool
@@ -84,8 +84,8 @@ func TestShellToolsNeverExceedTheBudgetOrComeInPart(t *testing.T) {
 			n++
 		}
 	}
-	if n != 0 && n != 3 {
-		t.Errorf("%d of the 3 shell tools lent", n)
+	if n != 0 && n != len(shellDefinitions()) {
+		t.Errorf("%d of the %d shell tools lent", n, len(shellDefinitions()))
 	}
 	if n == 0 && strings.Contains(p.System, shellsHint) {
 		t.Error("the hint names tools that were not lent")
@@ -193,7 +193,7 @@ func TestTurnsWithToolsAreToldToActInsteadOfAnnouncing(t *testing.T) {
 // its own: start the program that serves the page, then open the address it prints. The
 // hint the model reads with the shell tools has to say so.
 func TestTheShellHintSaysHowToShowAServedPageInTheUsersBrowser(t *testing.T) {
-	for _, want := range []string{"shell_start", "address", "browser", "with run"} {
+	for _, want := range []string{"shell_start", "address", "browser", "open_url"} {
 		if !strings.Contains(shellsHint, want) {
 			t.Errorf("the shells hint lost %q: %s", want, shellsHint)
 		}

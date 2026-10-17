@@ -39,6 +39,7 @@ func chatLookKeys(add func(key, def, role string, paragraph bool)) {
 	add("ask.change", d.Asks[""], "chat: the question under a file change that waits for you", false)
 	add("ask.run", d.Asks["run"], "chat: the question under a command that waits for you", false)
 	add("ask.web_fetch", d.Asks["web_fetch"], "chat: the question under a page the agent wants to read", false)
+	add("ask.open_url", d.Asks["open_url"], "chat: the question under a page the agent wants to open in your browser", false)
 	add("ask.web_search", d.Asks["web_search"], "chat: the question under a web search that waits for you", false)
 	add("ask.ui_edit", d.Asks["ui_edit"], "chat: the question under a change to the interface", false)
 	add("ask.keys", d.AskKeys, "chat: the keys that answer those questions", false)
@@ -56,7 +57,7 @@ func chatLookKeys(add func(key, def, role string, paragraph bool)) {
 }
 
 // chatToolNames are the tools whose displayed name can be changed.
-var chatToolNames = []string{"list", "read", "grep", "edit", "write", "run", "web_fetch", "web_search", "ui_guide", "ui_edit", "shell_start", "shell_read", "shell_stop"}
+var chatToolNames = []string{"list", "read", "grep", "edit", "write", "run", "web_fetch", "web_search", "ui_guide", "ui_edit", "shell_start", "shell_read", "shell_stop", "open_url"}
 
 func chatToolTitle(tool string) string {
 	return engine.DefaultChatLook().Title(tool)
@@ -83,6 +84,7 @@ func chatLook() *engine.ChatLook {
 			"":           uiText("ask.change"),
 			"run":        uiText("ask.run"),
 			"web_fetch":  uiText("ask.web_fetch"),
+			"open_url":   uiText("ask.open_url"),
 			"web_search": uiText("ask.web_search"),
 			"ui_edit":    uiText("ask.ui_edit"),
 		},

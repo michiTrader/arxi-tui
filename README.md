@@ -100,7 +100,10 @@ at the project), `/folder remove <path|all>` closes them. `/clear` closes every 
 
 For a dev server or a watcher the model has `shell_start`, `shell_read` and `shell_stop`
 (offered only where `run` may run commands, under the same policy as `run`). Nothing opens a
-separate console window: the output is read inside the conversation. `/shell` lists them,
+separate console window: the output is read inside the conversation. To show you a page (a report a shell serves, a
+dev server) the model has `open_url`: it opens an http or https address in *your* browser, asks
+first like `run` does, and picks the right opener for the system (Windows, macOS, Linux, WSL).
+Nothing but a web address is accepted. `/shell` lists them,
 `/shell show <n>` prints what shell *n* wrote last, `/shell stop <n|all>` ends them,
 `/shell start <command>` starts one by hand. A row above the info bar names the ones that run (`shell 1 · shell 2`, the same numbers
 `/shell show` takes; `/ui hide shells` hides it, like any other part of the screen), you
