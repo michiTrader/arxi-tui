@@ -199,6 +199,13 @@ func canonicalOpenAIResponse(resp *chatResponse) (turn.Response, error) {
 		if rawArgs == "" {
 			rawArgs = "{}"
 		}
+		if !json.Valid([]byte(rawArgs)) {
+			// The arguments stop in the middle: the call was cut off, either by the
+			// output limit (finish "length") or by a stream that ended early. Nothing
+			// can be run from half a call, and it is not the model's mistake or the
+			// user's, so it is reported as what it is instead of "unexpected EOF".
+			return cutToolCall(out, wire.Function.Name, choice.FinishReason), nil
+		}
 		call, err := turn.NewToolCall(wire.ID, wire.Function.Name, []byte(rawArgs))
 		if err != nil {
 			return out, fmt.Errorf("provider tool call %q: %w", wire.ID, err)
@@ -224,6 +231,28 @@ func canonicalOpenAIResponse(resp *chatResponse) (turn.Response, error) {
 		out.Refusal = &turn.Refusal{Code: "unsupported_finish_reason", Message: fmt.Sprintf("the provider returned unsupported finish reason %q", choice.FinishReason)}
 	}
 	return out, nil
+}
+
+// OutputLimitCode marks the refusal of a reply that ran out of output allowance while it
+// was writing a tool call. The tool loop answers it by asking for smaller steps; a
+// stream that merely ended early is the transient http_502 and is asked again as it was.
+const OutputLimitCode = "output_limit"
+
+// cutToolCall turns a tool call whose arguments were cut off into a refusal, so the turn
+// is not lost to a decode error. Nothing in the reply is kept: a call that ran without
+// its siblings, or an answer built on a call that did not, would be worse than asking
+// again.
+func cutToolCall(out turn.Response, name, finish string) turn.Response {
+	out.Content = nil
+	out.FinishReason = turn.FinishRefusal
+	if finish == "length" {
+		out.Refusal = &turn.Refusal{Code: OutputLimitCode, Message: fmt.Sprintf(
+			"the model ran out of output allowance while writing a call to %q (a long file or edit), so nothing was run. Ask for it in smaller steps, or pick a model with a larger output limit", name)}
+		return out
+	}
+	out.Refusal = &turn.Refusal{Code: "http_502", Retryable: true, Message: fmt.Sprintf(
+		"the provider's reply ended in the middle of a call to %q (a broken stream, not an answer)", name)}
+	return out
 }
 
 func openAIFinishReason(reason string, hasTools bool) turn.FinishReason {

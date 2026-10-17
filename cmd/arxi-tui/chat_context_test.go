@@ -150,7 +150,7 @@ func TestACancelledRequestStaysInTheHistory(t *testing.T) {
 	c.cancelTurn()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.history) != 2 || c.history[0].Text != "haz algo largo" || !strings.Contains(c.history[1].Text, "cancelled") {
+	if len(c.history) != 1 || c.history[0].Role != "user" || !strings.HasPrefix(c.history[0].Text, "haz algo largo") || !strings.Contains(c.history[0].Text, "cancelled") {
 		t.Errorf("history = %+v", c.history)
 	}
 }
@@ -256,7 +256,7 @@ func TestToolRecordsAreShortOneLineEachAndBounded(t *testing.T) {
 func TestAResumedConversationKeepsItsUnansweredRequest(t *testing.T) {
 	ev := func(typ, text string) fold.Event { return fold.Event{Type: typ, Payload: map[string]any{"text": text}} }
 	h := historyFromEvents([]fold.Event{ev("run.prompt", "uno"), ev("llm.response", "a"), ev("run.prompt", "dos"), ev("chat.error", "boom"), ev("run.prompt", "reintenta")})
-	if len(h) != 4 || h[2].Text != "dos" || !strings.Contains(h[3].Text, "No reply") {
+	if len(h) != 3 || h[2].Role != "user" || !strings.HasPrefix(h[2].Text, "dos") || !strings.Contains(h[2].Text, "No reply") {
 		t.Errorf("history = %+v", h)
 	}
 }

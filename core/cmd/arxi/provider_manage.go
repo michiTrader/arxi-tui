@@ -497,6 +497,27 @@ func checkEffort(res model.Resolution, level string) error {
 	return badInvocation{fmt.Errorf("%s/%s does not take effort %q; it takes: %s", res.Provider, res.Model, level, strings.Join(have, ", "))}
 }
 
+// appendUser adds a user message, joining it to the one before when that was also the
+// user's. A request that got no answer leaves the user's message and the app's note about it
+// with no reply between them, and the user's next words follow; some providers refuse two
+// user messages in a row and none is better served by two than by one.
+func appendUser(messages []turn.Message, m turn.Message) []turn.Message {
+	if n := len(messages); n > 0 && messages[n-1].Role == turn.RoleUser && len(m.Content) > 0 {
+		prev := &messages[n-1]
+		if len(prev.Content) > 0 && prev.Content[0].Type == turn.BlockText {
+			joined := append([]turn.ContentBlock(nil), prev.Content...)
+			joined[0].Text += "\n\n" + m.Content[0].Text
+			if m.Content[0].Type == turn.BlockText {
+				prev.Content = append(joined, m.Content[1:]...)
+			} else {
+				prev.Content = append(joined, m.Content...)
+			}
+			return messages
+		}
+	}
+	return append(messages, m)
+}
+
 // chatSendEffort is chatSend with a thinking level.
 func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effort string) (chatResult, error) {
 	level, err := normalizeEffort(effort)
@@ -562,7 +583,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 		}
 		switch h.Role {
 		case "user":
-			messages = append(messages, text(turn.RoleUser, h.Text))
+			messages = appendUser(messages, text(turn.RoleUser, h.Text))
 		case "assistant":
 			messages = append(messages, text(turn.RoleAssistant, h.Text))
 		}
@@ -572,7 +593,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 		userMsg.Content = nil
 	}
 	userMsg.Content = append(userMsg.Content, pics...)
-	messages = append(messages, userMsg)
+	messages = appendUser(messages, userMsg)
 
 	// No deadline for the message as a whole: a tool loop of many rounds, or the time the
 	// user takes to answer an approval, used to eat one shared budget and end a healthy

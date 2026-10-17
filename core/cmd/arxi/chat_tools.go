@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/michiTrader/arxi/internal/chattools"
+	"github.com/michiTrader/arxi/internal/provider"
 	"github.com/michiTrader/arxi/internal/turn"
 	"github.com/michiTrader/arxi/internal/webtools"
 )
@@ -374,6 +375,13 @@ func toolRounds(env string) (int, error) {
 	return n, nil
 }
 
+// maxCutAsks is how many times one turn asks again after a tool call was cut off by the
+// output limit; cutCallNote is what the model is told.
+const (
+	maxCutAsks  = 2
+	cutCallNote = "Your last tool call was cut off because it was too long for one reply, so nothing was run. Do the same work in smaller steps: several short edits or writes instead of one long one."
+)
+
 // roundCapNote is added to the answer of a turn that was cut at the round limit.
 func roundCapNote(limit int) string {
 	return fmt.Sprintf("\n\n[This answer stopped at the limit of %d tool rounds per turn, not because the work is done. Say \"continue\" to keep going; %s raises the limit.]", limit, toolRoundsEnv)
@@ -388,6 +396,7 @@ func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 		return turn.Response{}, err
 	}
 	req.Tools = append(req.Tools, tb.definitions()...)
+	cutAsks := 0
 	for round := 0; ; round++ {
 		if round >= maxToolRounds {
 			req.Tools = nil
@@ -399,6 +408,16 @@ func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 		resp, err := complete(*req)
 		if err != nil {
 			return resp, err
+		}
+		if resp.FinishReason == turn.FinishRefusal && resp.Refusal != nil && resp.Refusal.Code == provider.OutputLimitCode && cutAsks < maxCutAsks && round < maxToolRounds {
+			// The model ran out of output allowance in the middle of a call (a whole
+			// file in one write). Asking the same again is cut at the same place, so it
+			// is told what happened and asked for smaller steps; nothing was run.
+			cutAsks++
+			req.Messages = append(req.Messages, turn.Message{Role: turn.RoleUser, Content: []turn.ContentBlock{{
+				Type: turn.BlockText, Text: cutCallNote,
+			}}})
+			continue
 		}
 		if round >= maxToolRounds && resp.FinishReason != turn.FinishRefusal {
 			// The turn ends here because of the cap, not because the model was done: say

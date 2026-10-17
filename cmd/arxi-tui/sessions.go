@@ -421,7 +421,7 @@ func historyFromEvents(evs []fold.Event) []driver.ChatTurn {
 		case "run.prompt":
 			if have {
 				// The previous question never got an answer (see below).
-				out = append(out, driver.ChatTurn{Role: "user", Text: pending}, driver.ChatTurn{Role: "assistant", Text: unansweredWith(whyFailed, echoes)})
+				out = append(out, unansweredTurn(pending, whyFailed, echoes))
 			}
 			pending, have, echoes = text, true, nil
 		case "chat.compacted":
@@ -442,7 +442,7 @@ func historyFromEvents(evs []fold.Event) []driver.ChatTurn {
 				if e.Type == "chat.cancelled" {
 					why = whyCancelled
 				}
-				out = append(out, driver.ChatTurn{Role: "user", Text: pending}, driver.ChatTurn{Role: "assistant", Text: unansweredWith(why, echoes)})
+				out = append(out, unansweredTurn(pending, why, echoes))
 				have = false
 			}
 		case "llm.response":

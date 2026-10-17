@@ -199,3 +199,17 @@ func TestTheShellHintSaysHowToShowAServedPageInTheUsersBrowser(t *testing.T) {
 		}
 	}
 }
+
+// A model that ends a clear request with "Would you like me to proceed with these
+// modifications?" leaves the user to type "si" for nothing. Same carrier as the rest of the
+// act hint: it rides only with turns that have tools.
+func TestTheActHintSaysNotToAskForPermissionOnAClearRequest(t *testing.T) {
+	for _, want := range []string{"do it", "would you like me to proceed", "cannot find out yourself"} {
+		if !strings.Contains(strings.ToLower(actHint), want) {
+			t.Errorf("the act hint lacks %q: %s", want, actHint)
+		}
+	}
+	if p := shellChat(t, policyAsk).turn(t, "arregla el banner"); !strings.Contains(p.System, "do not ask") {
+		t.Errorf("the turn did not carry it: %q", p.System)
+	}
+}

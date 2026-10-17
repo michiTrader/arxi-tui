@@ -33,7 +33,7 @@ const chatSystemPrompt = "You are a concise assistant in a terminal. Reply in th
 // me check..." and then ends its turn leaves the user to type "continue" for nothing: the
 // words are only worth anything when the tool call comes in the same turn. Light turns
 // (a greeting) carry no tools and so do not carry this either.
-const actHint = "When you say you will look, check or run something, do it in the same answer with a tool call; never end a turn with only the announcement."
+const actHint = "When you say you will look, check or run something, do it in the same answer with a tool call; never end a turn with only the announcement. When the request is clear, do it; do not ask \"would you like me to proceed?\". Ask only for something you cannot find out yourself."
 
 // chatNow is the clock behind the date line; tests replace it.
 var chatNow = time.Now
@@ -645,8 +645,7 @@ func (c *chatSession) cancelTurn() bool {
 	c.cancel = nil
 	c.busy = false
 	if !c.compacting {
-		c.history = append(c.history, driver.ChatTurn{Role: "user", Text: c.turnText},
-			driver.ChatTurn{Role: "assistant", Text: unansweredWith(whyCancelled, c.turnEchoes)})
+		c.history = append(c.history, unansweredTurn(c.turnText, whyCancelled, c.turnEchoes))
 	}
 	c.compacting = false
 	c.mu.Unlock()
@@ -1000,8 +999,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		// ("reintenta") mean it, whichever model reads them.
 		c.mu.Lock()
 		if c.gen == gen && c.turn == turn {
-			c.history = append(c.history, driver.ChatTurn{Role: "user", Text: text},
-				driver.ChatTurn{Role: "assistant", Text: unansweredWith(whyFailed, c.turnEchoes)})
+			c.history = append(c.history, unansweredTurn(text, whyFailed, c.turnEchoes))
 		}
 		c.mu.Unlock()
 		c.emit(ctx, gen, "agent.failed", map[string]any{"agent": "assistant"})

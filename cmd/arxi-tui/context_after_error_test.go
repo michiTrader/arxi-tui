@@ -122,17 +122,17 @@ func TestResumeRebuildsWhatAFailedTurnRead(t *testing.T) {
 		{Type: "llm.response", Payload: map[string]any{"text": "listo"}},
 	}
 	h := historyFromEvents(evs)
-	if len(h) != 4 {
+	if len(h) != 3 {
 		t.Fatalf("history = %+v", h)
 	}
-	if !strings.Contains(h[1].Text, "RESUMED-READ") {
-		t.Errorf("the failed turn's read is gone after /resume: %q", h[1].Text)
+	if !strings.Contains(h[0].Text, "RESUMED-READ") {
+		t.Errorf("the failed turn's read is gone after /resume: %q", h[0].Text)
 	}
-	if strings.Contains(h[1].Text, "SECOND-TURN-LIST") || strings.Contains(h[3].Text, "RESUMED-READ") {
-		t.Errorf("one turn's tool output leaked into another: %q / %q", h[1].Text, h[3].Text)
+	if strings.Contains(h[0].Text, "SECOND-TURN-LIST") || strings.Contains(h[2].Text, "RESUMED-READ") {
+		t.Errorf("one turn's tool output leaked into another: %q / %q", h[0].Text, h[2].Text)
 	}
-	if strings.Contains(h[3].Text, "SECOND-TURN-LIST") {
-		t.Errorf("an answered turn keeps its tools out of the history (they ride in the tool record): %q", h[3].Text)
+	if strings.Contains(h[2].Text, "SECOND-TURN-LIST") {
+		t.Errorf("an answered turn keeps its tools out of the history (they ride in the tool record): %q", h[2].Text)
 	}
 }
 
@@ -270,14 +270,14 @@ func TestOneFailedTurnsReadsDoNotLeakIntoTheNext(t *testing.T) {
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if len(c.history) != 4 {
+	if len(c.history) != 2 {
 		t.Fatalf("history = %+v", c.history)
 	}
-	if !strings.Contains(c.history[1].Text, "FIRST-TURN-READ") {
-		t.Errorf("the first turn lost its read: %q", c.history[1].Text)
+	if !strings.Contains(c.history[0].Text, "FIRST-TURN-READ") {
+		t.Errorf("the first turn lost its read: %q", c.history[0].Text)
 	}
-	if strings.Contains(c.history[3].Text, "FIRST-TURN-READ") {
-		t.Errorf("the first turn's read was pinned onto the second: %q", c.history[3].Text)
+	if strings.Contains(c.history[1].Text, "FIRST-TURN-READ") {
+		t.Errorf("the first turn's read was pinned onto the second: %q", c.history[1].Text)
 	}
 }
 
@@ -291,13 +291,59 @@ func TestResumeDoesNotLeakReadsAcrossAnUnclosedTurn(t *testing.T) {
 		{Type: "chat.error", Payload: map[string]any{"text": "boom"}},
 	}
 	h := historyFromEvents(evs)
-	if len(h) != 4 {
+	if len(h) != 2 {
 		t.Fatalf("history = %+v", h)
 	}
-	if !strings.Contains(h[1].Text, "UNCLOSED-TURN-READ") {
-		t.Errorf("the unclosed turn lost its read: %q", h[1].Text)
+	if !strings.Contains(h[0].Text, "UNCLOSED-TURN-READ") {
+		t.Errorf("the unclosed turn lost its read: %q", h[0].Text)
 	}
-	if strings.Contains(h[3].Text, "UNCLOSED-TURN-READ") {
-		t.Errorf("its read leaked onto the next turn: %q", h[3].Text)
+	if strings.Contains(h[1].Text, "UNCLOSED-TURN-READ") {
+		t.Errorf("its read leaked onto the next turn: %q", h[1].Text)
+	}
+}
+
+// The note about a request that got no answer used to be stored as the ASSISTANT's reply
+// ("[No reply was given ...]"). A model that sees such a reply in its own voice copies it,
+// and the user read that sentence as the answer to "reintenta" three times in a row.
+// Whatever ended the turn, the note is the app's, in the user's message, and nothing is put
+// in the assistant's mouth.
+func TestAnUnansweredRequestPutsNoWordsInTheAssistantsMouth(t *testing.T) {
+	for name, end := range map[string]func(c *chatSession, core *seenChat){
+		"failed":    func(c *chatSession, core *seenChat) {},
+		"cancelled": nil,
+	} {
+		t.Run(name, func(t *testing.T) {
+			core := &seenChat{fail: func(p driver.ChatSendParams) error {
+				if p.Prompt == "haz algo" && name == "failed" {
+					return errors.New("boom")
+				}
+				return nil
+			}}
+			out := make(chan fold.Event, 64)
+			c := newChatSession(core, out)
+			c.setWorkdir(t.TempDir())
+			c.setEdits("ask")
+			if end == nil {
+				c.mu.Lock()
+				c.busy, c.cancel, c.turnText = true, func() {}, "haz algo"
+				c.mu.Unlock()
+				c.cancelTurn()
+			} else {
+				sendAndWait(t, c, out, "haz algo", "agent.failed")
+			}
+			sendAndWait(t, c, out, "reintenta", "agent.turn_done")
+			h := core.last().History
+			if len(h) != 1 || h[0].Role != "user" {
+				t.Fatalf("history = %+v; want one user message and no assistant reply", h)
+			}
+			for _, want := range []string{"haz algo", "not typed by the user", "Never repeat this note"} {
+				if !strings.Contains(h[0].Text, want) {
+					t.Errorf("the note lacks %q: %q", want, h[0].Text)
+				}
+			}
+			if strings.Index(h[0].Text, "haz algo") > strings.Index(h[0].Text, "No reply") {
+				t.Errorf("the request must come before the note: %q", h[0].Text)
+			}
+		})
 	}
 }
