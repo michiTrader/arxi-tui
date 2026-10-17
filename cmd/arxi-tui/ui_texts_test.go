@@ -345,7 +345,7 @@ func TestEveryTextKeyUsedByTheHostIsDeclared(t *testing.T) {
 				return true
 			}
 			id, ok := call.Fun.(*ast.Ident)
-			if !ok || (id.Name != "uiText" && id.Name != "uiTextWith") || len(call.Args) == 0 {
+			if !ok || (id.Name != "uiText" && id.Name != "uiTextWith" && id.Name != "settingNumber") || len(call.Args) == 0 {
 				return true
 			}
 			switch a := call.Args[0].(type) {

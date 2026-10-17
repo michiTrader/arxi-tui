@@ -130,6 +130,9 @@ var chatLookNumbers = map[string]int{
 // it is written, so the user (and the model's repair turn) is told instead of a setting
 // that silently does nothing.
 func validChatLook(key, val string) error {
+	if err := validSettingValue(key, val); err != nil {
+		return err
+	}
 	if max, ok := chatLookNumbers[key]; ok {
 		n, err := strconv.Atoi(strings.TrimSpace(val))
 		if err != nil || n < 0 || n > max {

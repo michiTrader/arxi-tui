@@ -72,6 +72,7 @@ func init() {
 	}
 	chatLookKeys(add)
 	pasteKeys(add)
+	settingsKeysDef(add)
 	add("slash.hint", slashMenuHint, "key legend on the bottom row while the / menu is open", false)
 	for _, c := range fold.Commands {
 		add("command."+c.Name, c.Description, "description of /"+c.Name+" in the / menu", false)

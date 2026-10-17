@@ -1760,7 +1760,7 @@ var Commands = []SlashMatch{
 	{"service", "General", "Programs the approved packages keep running: list, start <name>, stop <name|all>"},
 	{"shell", "General", "Background shells: list, show <n>, stop <n|all>, start <command>"},
 	{"folder", "General", "Folders beside the project the model may use: list, add <path>, remove <path|all>"},
-	{"settings", "General", "Host settings: autocompact on/off and at what share of the context window"},
+	{"settings", "General", "Settings: /settings list shows them all; /settings <name> <value> changes one; autocompact on/off and its share of the window"},
 	{"copy", "Session", "Copy an answer, or the whole conversation, to the clipboard"},
 	// The provider/model management commands (K2). They are host-intercepted
 	// round-trips over the serve protocol, not patch verbs, so they are NOT held

@@ -256,15 +256,18 @@ Total: unos 13 mensajes de más en 4 conversaciones. Ninguno de los arreglos est
 modelo real: son frases en las instrucciones fijas (una petición al modelo, no una garantía). La
 forma honesta de saber si funcionó es volver a contar en las próximas conversaciones.
 
-Por decidir (no se tocó): una línea que EMPIEZA por una ruta (`/mnt/c/Users/...`) se rechaza como
-"Unknown command" y no se envía (pasó 2 veces en la conversación de WSL). Hoy es a propósito y hay un
-test que lo fija (`/usr/bin/ls -l` es comando desconocido). Alternativa: si el primer trozo tiene otra
-`/` dentro, tratarla como texto normal. Cambia un comportamiento probado; lo decide el dueño.
-
-NO hecho todavía (nada de esto está implementado):
-1. Superficie de ajustes (`/settings`-like): listar todos los ajustes con valor y explicación,
-   cambiarlos con la validación de `/ui`, persistir en texts.json, y promover a claves de texto la
-   altura de la ventana de entrada y los pasos de scroll.
+Hecho en esta ronda (PRs #296, #297 y el de ajustes):
+1. Línea que empieza por una ruta (`/mnt/c/Users/...`, `/usr/bin/ls -l`): ya no se rechaza ni abre el
+   menú; se envía al modelo como texto normal. Una palabra suelta mal escrita (`/nonsens`) sigue
+   avisando.
+2. Herramienta real `open_url`: el modelo abre una dirección http/https en TU navegador (pide permiso
+   según la política, como `run`). NO verificado: el abridor real (`xdg-open` / `open` / `start` /
+   `wslview`) nunca se ejecutó aquí; solo se probó con un abridor falso y la elección por sistema.
+3. Superficie de ajustes: `/settings list`, `/settings <nombre>`, `/settings <nombre> <valor>`,
+   `/settings <nombre> -` (valor de fábrica), `/settings autocompact <off|N>`. Mismas validaciones y
+   mismo `texts.json` que `/ui text`. Nuevas claves: `scroll.wheel_step`, `scroll.page_overlap`,
+   `input.max_rows`. Límite honesto: las partes ocultas (`uiHidden`) se MUESTRAN en la lista pero no se
+   guardan entre sesiones (se cambian con `/ui hide` / `/ui show`).
 
 NO verificado: que un modelo OBEDEZCA las tres frases nuevas (una frase en un prompt es una
 petición, no una garantía; solo se probó que se envía). Y nada de lo anterior contra un proveedor real (vyceai/glm-5.3-flash); el reintento

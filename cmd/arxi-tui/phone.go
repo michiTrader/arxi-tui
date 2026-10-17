@@ -57,8 +57,9 @@ func phoneScroll(k term.Key) int {
 // phoneWheelStep is the notch width: a phone swipe arrives one row at a time, so one row
 // per notch keeps the page under the finger. Anywhere else the wheel moves three.
 func phoneWheelStep() int {
+	def := 3
 	if scrollArrows {
-		return 1
+		def = 1
 	}
-	return 3
+	return settingNumber("scroll.wheel_step", def, 1, maxWheelStep)
 }
