@@ -1700,6 +1700,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		r.Scrollbar = wantMouse(term.IsTermux(), mouseOverride) && !isNo(uiText("chat.scrollbar"))
 		r.ExpandTools = expandTools
 		r.Narrow = narrowMode()
+		r.InputMaxRows = settingNumber("input.max_rows", 0, minInputRows, maxInputRows)
 		r.PromptStyle = promptStyle
 		r.Look = chatLook()
 		// While a consent screen is up it replaces the scene on display: the modal
@@ -2315,6 +2316,30 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								keepScene("/ui color: " + tok + " is now " + styleWords(theme.Resolve(tok)))
 							}
 							input, caret = "", 0
+						} else if sargs, ok := settingsSurfaceLine(input); ev.Key.Type == term.KeyEnter && ok {
+							// /settings list | <name> | <name> <value>: the settings
+							// surface (settings_surface.go). A change is the same one
+							// /ui text makes, kept in the same texts.json.
+							out := runSettingsSurface(sargs, userWords, autoCompact, uiHidden)
+							switch {
+							case out.err != "":
+								collected = appendLocalWarning(collected, out.err)
+							case out.wordsChanged:
+								userWords = out.words
+								activate()
+								keepScene(out.note)
+							case out.acChanged:
+								autoCompact = out.ac
+								note := out.note
+								if err := saveAutoCompact(settingsPath(), autoCompact); err != nil {
+									note += " (not saved: " + err.Error() + ")"
+								}
+								sceneNotice = note
+								settingsMn.loaded = false
+							default:
+								collected = appendLocalNote(collected, out.note)
+							}
+							input, caret, slashSel = "", 0, 0
 						} else if key, val, ok := uiTextCommand(input); ev.Key.Type == term.KeyEnter && ok {
 							// /ui text <key> [sentence]: the same wording change the agent
 							// proposes, typed by the user, so it is not asked about.

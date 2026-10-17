@@ -244,6 +244,16 @@ How the conversation is drawn:
 Blank rows at the start or end of a message, and the empty answer of a turn that only
 called tools, are not drawn, so the gaps between turns are one row and no more.
 
+**Every setting in one place.** `/settings list` prints each setting with its value, what it
+does, and its factory value when you changed it; `/settings <name>` explains one in full;
+`/settings <name> <value>` changes it (a bad value is refused with the reason, and nothing is
+written); `/settings <name> -` puts the factory value back; `/settings autocompact <off|N>`
+sets autocompact. A setting is one of the text keys, so the changes go to `texts.json` and
+`/ui undo` takes them back. Three numbers that used to be fixed are settings now:
+`scroll.wheel_step` (rows per wheel notch), `scroll.page_overlap` (rows PgUp/PgDn keep) and
+`input.max_rows` (how tall the input box grows). The parts of the screen you hid
+(`/ui hide`) are listed too, but they belong to the session and are not kept.
+
 **All of it is yours to change**, with the same tools as the colours: the format of the
 chat is text keys (`/ui text <key> <value>`, or ask your agent: it reads them in its guide).
 `tool.inline` (`no` puts every result under its call), `tool.separator`, `tool.dot`,

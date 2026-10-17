@@ -91,7 +91,7 @@ func scrollArrowKey(k term.Key, scroll, notch int, stops []int) (int, bool) {
 
 // scrollPage is how many lines a PgUp/PgDn moves for a terminal h rows tall.
 func scrollPage(h int) int {
-	if p := h - 4; p > 1 {
+	if p := h - settingNumber("scroll.page_overlap", 4, 0, maxPageOverlap); p > 1 {
 		return p
 	}
 	return 1
