@@ -376,7 +376,7 @@ func (c *chatSession) liveAllowsLocked(a driver.Approval) bool {
 	switch a.Name {
 	case "write", "edit":
 		return c.edits == policyAllow
-	case "run":
+	case "run", toolOpenURL:
 		return c.runs == policyAllow
 	case "web_fetch", "web_search":
 		return c.web == policyAllow

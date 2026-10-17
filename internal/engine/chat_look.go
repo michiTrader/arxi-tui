@@ -69,6 +69,7 @@ func DefaultChatLook() ChatLook {
 			"":           "Allow this change?",
 			"run":        "Allow this command?",
 			"web_fetch":  "Allow reading this page?",
+			"open_url":   "Allow opening this page in your browser?",
 			"web_search": "Allow this search?",
 			"ui_edit":    "Allow this change to the interface?",
 		},

@@ -95,12 +95,14 @@ type shellRegistry struct {
 	shells []*shell
 	// build makes the command for a line; tests replace it, so they need no real shell.
 	build func(command, dir string) *exec.Cmd
+	// open hands an address to the user's browser; tests replace it, so they open nothing.
+	open func(addr string) error
 	// onExit is told of a shell that ended on its own (not one that was stopped).
 	onExit func(shellInfo)
 }
 
 func newShellRegistry(onExit func(shellInfo)) *shellRegistry {
-	return &shellRegistry{build: shellCommand, onExit: onExit}
+	return &shellRegistry{build: shellCommand, open: openInBrowser, onExit: onExit}
 }
 
 // start runs command in dir and returns at once.
@@ -493,16 +495,21 @@ const (
 	toolShellStop  = "shell_stop"
 )
 
+// toolOpenURL (open_url.go) rides with the shell tools: both are the client's own and both
+// follow the policy of run, so they are lent together and count as one group of four.
+
 // shellsHint is told to the model when the tools are offered.
 const shellsHint = "shell_start runs a command that keeps going (a server, a watcher, a long build) in the background " +
 	"and returns at once with an id; shell_read shows what it printed, shell_stop ends it. " +
 	"Use run for a command that finishes. To show the user a page that a program serves (a backtest report, a dev server), " +
-	"start it with shell_start, read its output for the address, then open that address in their browser with run. " +
+	"start it with shell_start, read its output for the address, then open that address in their browser with open_url " +
+	"(http and https only; it asks the user and works on every system, so do not use run for a page). " +
 	"The user sees how many shells run and can read or stop them with /shell."
 
-// isShellTool reports whether name is one of the three.
+// isShellTool reports whether name is one of the tools this file runs: the three shell
+// tools and open_url.
 func isShellTool(name string) bool {
-	return name == toolShellStart || name == toolShellRead || name == toolShellStop
+	return name == toolShellStart || name == toolShellRead || name == toolShellStop || name == toolOpenURL
 }
 
 func shellDefinitions() []driver.ClientToolDef {
@@ -516,6 +523,9 @@ func shellDefinitions() []driver.ClientToolDef {
 		{Name: toolShellStop,
 			Description: "End a background shell and everything it started.",
 			Schema:      json.RawMessage(`{"type":"object","properties":{"id":{"type":"integer"}},"required":["id"]}`)},
+		{Name: toolOpenURL,
+			Description: "Open an http or https address in the user's own browser. The user approves it like run.",
+			Schema:      json.RawMessage(`{"type":"object","properties":{"url":{"type":"string"}},"required":["url"]}`)},
 	}
 }
 
@@ -527,6 +537,7 @@ func (r *shellRegistry) call(ctx context.Context, c driver.ClientToolCall, dir, 
 	}
 	var args struct {
 		Command string `json:"command"`
+		URL     string `json:"url"`
 		ID      *int   `json:"id"`
 		Wait    int    `json:"wait_seconds"`
 		All     bool   `json:"all"`
@@ -540,6 +551,21 @@ func (r *shellRegistry) call(ctx context.Context, c driver.ClientToolCall, dir, 
 		return refuse("Not available in this mode", c.Name+" is not available in the mode the user chose; say what you would have done instead.")
 	}
 	switch c.Name {
+	case toolOpenURL:
+		addr, err := checkURL(args.URL)
+		if err != nil {
+			return refuse("Bad arguments", err.Error())
+		}
+		if runs == policyAsk {
+			if ask == nil || !ask(driver.Approval{Name: toolOpenURL, Arg: addr, Summary: "Open in your browser"}) {
+				return driver.ClientToolResult{Text: "the user did not allow opening this page, so it was not opened; do not retry it, ask what they want instead", Arg: addr, Summary: "You did not allow this"}
+			}
+		}
+		if err := r.open(addr); err != nil {
+			return driver.ClientToolResult{Text: "error: " + err.Error(), Arg: addr, Summary: shortenRunes(err.Error(), 100)}
+		}
+		return driver.ClientToolResult{OK: true, Arg: addr, Summary: "Opened in your browser",
+			Text: "Asked the system to open " + addr + " in the user's browser. It cannot tell whether the page loaded; do not open it again unless the user says it did not appear."}
 	case toolShellStart:
 		command := strings.TrimSpace(args.Command)
 		if command == "" {

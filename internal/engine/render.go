@@ -1039,7 +1039,7 @@ const (
 )
 
 // toolTitles are the names a person reads; an unknown tool shows its own name.
-var toolTitles = map[string]string{"list": "List", "read": "Read", "grep": "Search", "edit": "Edit", "write": "Write", "run": "Run", "web_fetch": "Fetch", "web_search": "Search web", "ui_guide": "Read", "ui_edit": "Change", "folder": "Open folder", "shell_start": "Start shell", "shell_read": "Read shell", "shell_stop": "Stop shell"}
+var toolTitles = map[string]string{"list": "List", "read": "Read", "grep": "Search", "edit": "Edit", "write": "Write", "run": "Run", "web_fetch": "Fetch", "web_search": "Search web", "ui_guide": "Read", "ui_edit": "Change", "folder": "Open folder", "shell_start": "Start shell", "shell_read": "Read shell", "shell_stop": "Stop shell", "open_url": "Open page"}
 
 // toolLines draws one tool line: "● Read(main.go)" and what came of it. A result of a
 // single row goes on the call's own row, "● Read(main.go) - Read 12 lines"; one that
