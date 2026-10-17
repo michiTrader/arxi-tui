@@ -510,3 +510,57 @@ func TestTheRunHintSaysOpenInTheBrowserMeansTheUsersOwnBrowser(t *testing.T) {
 		}
 	}
 }
+
+// deepseek-v4.1 sent a tool call whose arguments stopped in the middle and the turn died
+// with "decode tool arguments: unexpected EOF". A stream that ended early is asked again
+// as it was, and the turn goes on.
+func TestAToolCallCutByAnEarlyEndIsAskedAgainAndTheTurnGoesOn(t *testing.T) {
+	f := setUpFake(t)
+	f.script = []scripted{{name: cutCall}, {name: "list", args: `{"path":"."}`}, {text: "all done"}}
+	ctx, got := collect(t, projectDir(t))
+	res, err := chatSendEffort(ctx, "go", "", "", "", "")
+	if err != nil {
+		t.Fatalf("a cut call must not end the turn: %v", err)
+	}
+	if res.Text != "all done" || len(*got) != 1 || f.calls != 3 {
+		t.Errorf("text %q, tool calls %d, asks %d; want the answer after one retry and one real call", res.Text, len(*got), f.calls)
+	}
+}
+
+// Cut at the output limit: not asked again as it was (it would be cut at the same place);
+// the model is told to work in smaller steps, and the turn goes on. Nothing half-written ran.
+func TestAToolCallCutByTheOutputLimitMakesTheModelWorkInSmallerSteps(t *testing.T) {
+	f := setUpFake(t)
+	f.script = []scripted{{name: cutCallLength}, {name: "list", args: `{"path":"."}`}, {text: "all done"}}
+	ctx, got := collect(t, projectDir(t))
+	res, err := chatSendEffort(ctx, "go", "", "", "", "")
+	if err != nil {
+		t.Fatalf("a call cut at the limit must not end the turn: %v", err)
+	}
+	if res.Text != "all done" || len(*got) != 1 || f.calls != 3 {
+		t.Errorf("text %q, tool calls %d, asks %d", res.Text, len(*got), f.calls)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	last := f.messages[1]
+	if c, _ := last[len(last)-1]["content"].(string); !strings.Contains(c, "smaller steps") {
+		t.Errorf("the second ask did not tell the model to work in smaller steps: %v", last[len(last)-1])
+	}
+}
+
+// A model that is cut every time does not loop for ever: after maxCutAsks the turn ends
+// with the plain sentence, not "unexpected EOF".
+func TestACallCutAtTheLimitEveryTimeEndsWithAPlainSentence(t *testing.T) {
+	f := setUpFake(t)
+	for i := 0; i < maxCutAsks+3; i++ {
+		f.script = append(f.script, scripted{name: cutCallLength})
+	}
+	ctx, got := collect(t, projectDir(t))
+	_, err := chatSendEffort(ctx, "go", "", "", "", "")
+	if err == nil || !strings.Contains(err.Error(), "output allowance") || strings.Contains(err.Error(), "EOF") {
+		t.Fatalf("want the plain output-limit sentence, got %v", err)
+	}
+	if f.calls != 1+maxCutAsks || len(*got) != 0 {
+		t.Errorf("asked %d times (want %d), ran %d tools (want 0)", f.calls, 1+maxCutAsks, len(*got))
+	}
+}

@@ -95,14 +95,27 @@ func toolRecordsText(recs []toolRecord) string {
 	return b.String()
 }
 
-// unansweredText is the assistant's history entry for a request that got no answer. The
-// words tell the next model to take the request up again when the user asks for it.
+// unansweredText is the app's note about a request that got no answer. The words tell the
+// next model to take the request up again when the user asks for it.
+//
+// It is the APP speaking, so it is never put in the assistant's mouth (see
+// unansweredTurn): a model shown its own earlier reply as "[No reply was given...]" copied
+// it, and the user read that sentence as the answer to "reintenta", three times in a row.
 func unansweredText(why string, tools []string) string {
-	t := "[No reply was given to this request: " + why + "."
+	t := "[App note, not typed by the user: No reply was given to the request above: " + why + "."
 	if d := toolDigest(tools); d != "" {
 		t += " Tools that ran before it stopped: " + d + "."
 	}
-	return t + " If the user asks to retry or continue, do this request.]"
+	return t + " If the user asks to retry or continue, do the request above. Never repeat this note in a reply.]"
+}
+
+// unansweredTurn is what the history keeps of a request that got no answer: the request
+// and, in the same USER message, the app's note about it. There is no assistant message
+// for it, because there was no reply; the core joins the user messages that follow each
+// other (mergeUserRuns in core/cmd/arxi), so the model reads one message and has no earlier "reply" of its
+// own to imitate.
+func unansweredTurn(request, why string, echoes []toolEcho) driver.ChatTurn {
+	return driver.ChatTurn{Role: "user", Text: request + "\n\n" + unansweredWith(why, echoes)}
 }
 
 // toolEcho is one tool call of a turn with what it returned.

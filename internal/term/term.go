@@ -1,6 +1,7 @@
 package term
 
 import (
+	"bytes"
 	"errors"
 	"os"
 	"sync"
@@ -28,6 +29,16 @@ const escTimeout = 50 * time.Millisecond
 // windows), and the rest is on its way. Waiting longer costs nothing, because no key
 // press looks like this.
 const csiTimeout = 400 * time.Millisecond
+
+// pasteTimeout is how long a paste that has begun (ESC [ 200 ~) waits for its end marker.
+// A long paste reaches the program in pieces and a busy window or console can leave a
+// pause between them far longer than csiTimeout. Dropping what had arrived, as every other
+// stalled sequence is, threw away the first half and typed the second: its line breaks sent
+// messages and an ESC inside it (pasted terminal output is full of them) cancelled the
+// turn in flight. So a paste waits, and only a paste whose end never comes (the terminal
+// died, the marker was lost) is given up on, delivered as what it had, not dropped.
+// A variable so a test need not wait.
+var pasteTimeout = 15 * time.Second
 
 // ErrNotATerminal is what Open returns when stdin is a pipe. Worth a named error
 // because the caller's answer is not "fail" but "run the scenario without a tty".
@@ -225,6 +236,10 @@ func flushPartial(rest []byte) ([]Event, []byte) {
 	if len(rest) == 0 || rest[0] != 0x1b {
 		return nil, rest
 	}
+	if openPaste(rest) {
+		// The end marker never came. What did arrive is the user's text: deliver it.
+		return []Event{{Kind: EventPaste, Text: pasteText(string(rest[len(pasteStart):]))}}, nil
+	}
 	if len(rest) == 1 {
 		return []Event{{Kind: EventKey, Key: Key{Type: KeyEscape}}}, nil
 	}
@@ -264,8 +279,16 @@ func partialSequence(b []byte) bool {
 
 // stallFor is how long an unfinished tail may wait before flushPartial decides.
 func stallFor(rest []byte) time.Duration {
+	if openPaste(rest) {
+		return pasteTimeout
+	}
 	if partialSequence(rest) {
 		return csiTimeout
 	}
 	return escTimeout
+}
+
+// openPaste reports whether b begins a bracketed paste whose end has not arrived.
+func openPaste(b []byte) bool {
+	return bytes.HasPrefix(b, []byte(pasteStart)) && !bytes.Contains(b, []byte(pasteEnd))
 }

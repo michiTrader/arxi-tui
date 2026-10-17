@@ -214,6 +214,32 @@ Hecho y probado con el bucle real + mutaciones:
   mirar, listar `.` antes de decir que el proyecto está vacío, y no decir "lo estoy ejecutando"
   sin llamar a `run` en esa misma respuesta (unos 60 tokens por turno).
 
+- De tres capturas del dueño ("¿es culpa nuestra o de la API?"), lo que SÍ era nuestro:
+  1. **"[No reply was given…]" como respuesta.** Tras un turno cancelado o fallido, la app guardaba
+     en el historial una respuesta FALSA del asistente con ese texto. El modelo la veía como suya y
+     la copiaba: al decir "reintenta" contestaba con esa frase, 3 veces seguidas (y se leía como
+     "cancelado sin que lo pidiera"). Ahora el aviso va dentro del mensaje del USUARIO, marcado como
+     nota de la app ("not typed by the user… Never repeat this note"), y no hay respuesta inventada.
+     El core une los mensajes de usuario seguidos en uno (algunos proveedores rechazan dos seguidos).
+  2. **Un pegado largo con una pausa en medio.** Si entre dos trozos de un pegado pasaban más de
+     400 ms, se tiraba lo ya recibido y el resto se leía como TECLAS: cada salto de línea enviaba un
+     mensaje, y una ESC dentro (la salida pegada de una terminal las trae) cancelaba el turno. Ahora
+     un pegado empezado espera su marcador de fin (hasta 15 s) y llega entero; si el fin nunca llega
+     se entrega lo recibido como pegado, no se tira. Probado con la tubería real y su temporizador.
+  3. **`decode tool arguments: unexpected EOF`.** Una llamada a herramienta con los argumentos
+     cortados mataba el turno. Ahora: si el flujo se cortó, se vuelve a preguntar (reintento
+     transitorio, como las llamadas sin nombre); si el modelo se quedó sin espacio de salida
+     (finish=length) se le dice "hazlo en pasos más pequeños" (máx. 2 veces) y, si insiste, el
+     usuario lee una frase clara. Nunca se ejecuta media llamada ni una buena que iba con una cortada.
+  4. La instrucción fija dice "si la petición es clara, hazlo; no preguntes 'would you like me to
+     proceed?'" (es una frase en el prompt: una petición, no una garantía).
+  Lo que NO era nuestro y no se tocó: `Cancelled` tras "cambiar de modelo" ocurre solo si se
+  pulsa Esc/Ctrl-C (única fuente de `chat.cancelled`); el límite de 40 rondas y el coste
+  (`↑1928710` = suma de lo enviado en cada ronda, cada ronda reenvía toda la conversación) son
+  por diseño, `ARXI_MAX_TOOL_ROUNDS` lo sube; que el proveedor corte un flujo es del proveedor.
+  NO verificado: nada de esto contra un proveedor real ni una consola de Windows real; las pruebas
+  usan un proveedor falso y una tubería. No se pudo reproducir que Esc llegue "solo" por otra vía.
+
 ## Veces que hubo que explicarle al modelo lo que ya debía saber (a evitar)
 
 Contadas de las 4 conversaciones que pegó el dueño. Cada fila es un mensaje del usuario que no
@@ -245,6 +271,11 @@ petición, no una garantía; solo se probó que se envía). Y nada de lo anterio
 por respuesta vacía y el límite por llamada se probaron con un proveedor falso. Si la respuesta
 vacía de glm viene con finish=length, el mensaje nuevo lo dirá; entonces el remedio sería subir
 `MaxTokens` (hoy fijo en 4096), que NO se tocó.
+
+Frágil sin arreglar: `TestLoopABigPasteShowsAMarkerAndSendsTheRealText` busca "paste again to expand"
+en la barra de información, que lleva carpeta + RAMA + esa frase en una línea de 80 columnas. Con un
+nombre de rama largo (más de ~35 caracteres) la frase queda recortada y el test falla aunque el código
+esté bien (pasó en una rama de nombre largo; con un nombre corto pasa). No es un fallo del producto.
 
 ## Solo el dueño puede hacerlo (no bloquea nada de lo anterior)
 

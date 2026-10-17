@@ -63,6 +63,14 @@ type scripted struct{ name, args, text string }
 // namelessCall as a scripted name makes the fake send a tool call with no function name.
 const namelessCall = "<nameless>"
 
+// cutCall and cutCallLength make the fake send a tool call whose arguments stop in the
+// middle: the stream simply ends (cutCall), or the model ran out of output allowance
+// (cutCallLength, finish "length").
+const (
+	cutCall       = "<cut>"
+	cutCallLength = "<cut-length>"
+)
+
 func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 	t.Helper()
 	f := &fakeLLM{models: models, status: 200}
@@ -224,6 +232,33 @@ func (f *fakeLLM) answerScripted(w http.ResponseWriter, st scripted, stream bool
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		io.WriteString(w, `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"chatcmpl-tool-x","type":"function","function":{"arguments":"{}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`+"\n\ndata: [DONE]\n\n")
+		return
+	}
+	if st.name == cutCall || st.name == cutCallLength {
+		finish := ""
+		if st.name == cutCallLength {
+			finish = "length"
+		}
+		const half = `{"path":"a.go","new_string":"func main() {`
+		if !stream {
+			json.NewEncoder(w).Encode(map[string]any{
+				"id": "x",
+				"choices": []any{map[string]any{"index": 0, "finish_reason": finish, "message": map[string]any{
+					"role": "assistant", "content": nil,
+					"tool_calls": []any{map[string]any{"id": "chatcmpl-tool-cut", "type": "function", "function": map[string]any{"name": "edit", "arguments": half}}},
+				}}},
+				"usage": map[string]int{"prompt_tokens": 10, "completion_tokens": 5},
+			})
+			return
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		b, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"tool_calls": []any{map[string]any{
+			"index": 0, "id": "chatcmpl-tool-cut", "type": "function", "function": map[string]any{"name": "edit", "arguments": half}}}}, "finish_reason": finish}}})
+		io.WriteString(w, "data: "+string(b)+"\n\n")
+		if finish == "" {
+			return // the connection just ends: no [DONE], no finish
+		}
+		io.WriteString(w, "data: [DONE]\n\n")
 		return
 	}
 	id := "call_" + st.name
@@ -1036,5 +1071,69 @@ func TestEmptyAnswerOnlyCountsWhatIsReallyEmpty(t *testing.T) {
 		if got := emptyAnswer(c.r); got != c.want {
 			t.Errorf("%s: emptyAnswer = %v, want %v", c.name, got, c.want)
 		}
+	}
+}
+
+// A request that got no answer is followed by the user's "reintenta" with no reply between
+// them. The provider must see ONE user message there: some refuse two in a row, and the
+// model must have no earlier reply of its own to copy.
+func TestTwoUserMessagesInARowReachTheModelAsOne(t *testing.T) {
+	f := chatProvider(t)
+	hist := `[{"role":"user","text":"first"},{"role":"assistant","text":"a1"},{"role":"user","text":"renombra el archivo\n\n[App note: no reply]"}]`
+	if _, err := chatSend(context.Background(), "reintenta", hist, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	msgs := f.messages[len(f.messages)-1]
+	var roles []string
+	for _, m := range msgs {
+		roles = append(roles, m["role"].(string))
+	}
+	if strings.Join(roles, ",") != "user,assistant,user" {
+		t.Fatalf("roles = %v; want user,assistant,user (the last two user messages joined)", roles)
+	}
+	last, _ := msgs[len(msgs)-1]["content"].(string)
+	for _, want := range []string{"renombra el archivo", "App note", "reintenta"} {
+		if !strings.Contains(last, want) {
+			t.Errorf("the joined message lost %q: %q", want, last)
+		}
+	}
+	if strings.Index(last, "App note") > strings.Index(last, "reintenta") {
+		t.Errorf("the order changed: %q", last)
+	}
+}
+
+// Counterfactual: a normal conversation is left exactly as it was.
+func TestAnOrdinaryConversationIsNotMerged(t *testing.T) {
+	f := chatProvider(t)
+	hist := `[{"role":"user","text":"u1"},{"role":"assistant","text":"a1"}]`
+	if _, err := chatSend(context.Background(), "u2", hist, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if n := len(f.messages[len(f.messages)-1]); n != 3 {
+		t.Errorf("%d messages, want 3", n)
+	}
+}
+
+// Two requests that both failed leave two user messages in the history itself, before the
+// new line is even added; they must be joined there too.
+func TestTwoFailedRequestsInTheHistoryAreJoinedToo(t *testing.T) {
+	f := chatProvider(t)
+	hist := `[{"role":"user","text":"one\n\n[App note: no reply]"},{"role":"user","text":"two\n\n[App note: no reply]"}]`
+	if _, err := chatSend(context.Background(), "continua", hist, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	msgs := f.messages[len(f.messages)-1]
+	if len(msgs) != 1 {
+		t.Fatalf("%d messages reached the model, want 1 (all three joined): %v", len(msgs), msgs)
+	}
+	c, _ := msgs[0]["content"].(string)
+	if !(strings.Index(c, "one") < strings.Index(c, "two") && strings.Index(c, "two") < strings.Index(c, "continua")) {
+		t.Errorf("order lost: %q", c)
 	}
 }
