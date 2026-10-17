@@ -1548,7 +1548,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			state.ModelActive = true
 			state.ModelMatches, state.ModelSelected = resumeMn.view(filter)
-		} else if strings.HasPrefix(input, "/") {
+		} else if slashMenuOpen(input) {
 			effortMn.loaded = false
 			settingsMn.loaded = false
 			modeMn.loaded = false
@@ -2088,7 +2088,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								}
 							}
 						}
-					} else if ev.Key.Type == term.KeyEscape && !strings.HasPrefix(input, "/") && cancelRunningTurn(drv) {
+					} else if ev.Key.Type == term.KeyEscape && !slashMenuOpen(input) && cancelRunningTurn(drv) {
 						// Esc stops the turn in flight. A line starting with "/" is a
 						// menu, and there Esc keeps its meaning of closing it, so a menu
 						// opened while an answer is pending can still be dismissed.
@@ -2109,14 +2109,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								chatScroll = 0
 							}
 						}
-					} else if next, spent := scrollArrowKey(ev.Key, chatScroll, phoneWheelStep(), chatStops); spent && !strings.HasPrefix(input, "/") {
+					} else if next, spent := scrollArrowKey(ev.Key, chatScroll, phoneWheelStep(), chatStops); spent && !slashMenuOpen(input) {
 						// The keyboard's spelling of the wheel (scrollkeys.go): ctrl+up/down a
 						// notch, alt+up/down a row, ctrl+home the oldest line, shift+up/down
 						// the reader's previous/next message. Reached before the arrows are
 						// read as caret or history keys, so the plain arrows keep both jobs.
 						panicGesture.Reset()
 						chatScroll = next
-					} else if next, spent := scrollKey(ev.Key, input, caret, chatScroll, scrollPage(ttyHeight(tty))); spent && !strings.HasPrefix(input, "/") {
+					} else if next, spent := scrollKey(ev.Key, input, caret, chatScroll, scrollPage(ttyHeight(tty))); spent && !slashMenuOpen(input) {
 						// PgUp/PgDn page the chat and End (when the caret has nowhere left to
 						// go) or ctrl+End jump to its latest line. A line starting with "/" is
 						// a menu, and there the keys stay the menu's.
@@ -2348,7 +2348,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						} else if handled, next := typedUICommand(input, ev.Key, &doc, &sceneNotice, uiHidden, pluginFetch, applyPluginTokens, keepScene); handled {
 							input = next
 							caret = clampCaret(input, caret)
-						} else if ev.Key.Type == term.KeyTab && ev.Key.Mod&term.ModShift != 0 && !strings.HasPrefix(input, "/") {
+						} else if ev.Key.Type == term.KeyTab && ev.Key.Mod&term.ModShift != 0 && !slashMenuOpen(input) {
 							// Shift+Tab walks the agent modes without opening a menu.
 							setMode(nextMode(mode), false)
 						} else if step := historyStep(ev.Key); step != 0 && hist.Recalled(input) {
@@ -2774,7 +2774,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							}
 							input = ""
 							caret = 0
-						} else if d := phoneScroll(ev.Key); d != 0 && !strings.HasPrefix(input, "/") {
+						} else if d := phoneScroll(ev.Key); d != 0 && !slashMenuOpen(input) {
 							// The phone arrangement (phone.go): with the mouse left to
 							// Termux, a swipe arrives as plain up/down, and they scroll
 							// the chat. The history is ctrl+p/ctrl+n there. An open slash
@@ -2783,12 +2783,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if chatScroll < 0 {
 								chatScroll = 0
 							}
-						} else if step := historyStep(ev.Key); step != 0 && (!strings.HasPrefix(input, "/") || ev.Key.Type == term.KeyRunes) {
+						} else if step := historyStep(ev.Key); step != 0 && (!slashMenuOpen(input) || ev.Key.Type == term.KeyRunes) {
 							// Up/Down (or ctrl+p/ctrl+n) walk the sent lines. While the
 							// slash menu is open the arrows steer its highlight instead;
 							// a recalled line keeps them (the branch before the menus).
 							walkHistory(step)
-						} else if strings.HasPrefix(input, "/") {
+						} else if slashMenuOpen(input) {
 							// The menu is open: navigation steers the highlight
 							// and never reaches the buffer. Ctrl-C never gets
 							// here, so the escape hatch stays uncapturable
