@@ -204,7 +204,9 @@ var tokenRoles = map[string]string{
 	"menu.desc":          "descriptions in the / menu and the meaning beside each row of /effort, /mode, /style and /model",
 	"menu.desc.selected": "the description of the highlighted row", "menu.tab": "category tabs and the match count of the / menu",
 	"menu.tab.selected": "the active category tab", "menu.rule": "the lines that frame the / menu",
-	"brand.1": "the Δ of the logo", "brand.2": "the r of the logo", "brand.3": "the × of the logo", "brand.4": "the i of the logo",
+	"find.bar": "the find bar at the right of the input (ctrl+f)", "find.match": "every hit of the word you look for in the chat (ctrl+f)",
+	"find.current": "the hit the finder is on",
+	"brand.1":      "the Δ of the logo", "brand.2": "the r of the logo", "brand.3": "the × of the logo", "brand.4": "the i of the logo",
 }
 
 // colorTable lists every token with what it looks like now and what it paints.

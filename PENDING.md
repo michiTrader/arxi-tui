@@ -187,6 +187,29 @@ Vistos fallar UNA vez en CI de Windows y pasar al relanzar, sin relación con el
 - `TestBehaviourAnimationMovesWithTheClock` (cmd/arxi-tui, 60 s hasta agotar, #294).
 No se arreglaron: falta reproducirlos en una máquina Windows real.
 
+## Ronda actual: Ctrl+F, buscar una palabra en el chat (rama feat/find-in-chat)
+
+Pedido del dueño: una mini barra de búsqueda en la zona de la barra de entrada, a la derecha, con otro
+color de fondo, hecha respetando el dogfooding. Se hizo así:
+
+- La barra NO es código de dibujo: es el nodo `suffix` del prompt en la escena, atado a `host.find`
+  (bind firmado, fila en `docs/BINDS.md`), con el token `find.bar`. Los aciertos se pintan con los
+  tokens `find.match` / `find.current`, y la palabra `find` es el texto `find.label`. El host solo
+  guarda el estado de vista (la palabra, qué acierto es el actual), como ya hace con el scroll y el pegado.
+- Teclas: `ctrl+f` abre/cierra; con la barra abierta, letras y borrar editan, `enter`/`↑` va al acierto
+  anterior, `↓` al siguiente, `esc` cierra. PgUp/PgDn y la rueda siguen valiendo. `ctrl+c` nunca se toca.
+  Un atajo propio del usuario en `ctrl+f` gana. Con el menú `/` abierto no actúa. Una escena cuyo prompt no
+  tiene barra deja `ctrl+f` en paz.
+- Las escenas por defecto no cambian al dibujar (barra cerrada = mismos bytes); el `SOBRIA.json` solo
+  gana el `suffix`.
+- Tests con mutaciones. Quedaron vivas 2 mutaciones que no son fallos: quitar el rótulo en el primer
+  dibujo (el repintado posterior lo corrige solo) y quitar el borrado del rótulo con el menú `/`
+  (no se puede llegar ahí: con la barra abierta, escribir `/` va a la barra).
+- NO verificado: cómo se ve en una terminal real (colores `#3a3a46`, `#5c4a00`, `#e0b000`: si no se leen
+  bien, se cambian en los tokens, sin tocar código), que Windows Terminal entregue `ctrl+f` al programa,
+  y el comportamiento con `shift+enter`.
+- Fuera de esta ronda por pedido del dueño: las mejoras de la caché de lecturas.
+
 ## Ronda actual: DeepSeek en uso real (rama fix/context-and-limits)
 
 Las cinco preguntas del dueño, con lo que se encontró y lo que se hizo:

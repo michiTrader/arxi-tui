@@ -270,8 +270,9 @@ var nestedFormReaders = map[string]map[string]string{
 	"prefix.node": {"marquee": "renderMarquee reads PrefixNode()"},
 	// prefix, string shape: read by renderInput via PrefixText().
 	"prefix.string": {"input": "renderInput reads PrefixText()"},
-	// suffix is always a node, and only the marquee composes one.
-	"suffix.node": {"marquee": "renderMarquee reads n.Suffix"},
+	// suffix is always a node: the marquee composes one after its text, and the input draws
+	// one at the right edge of its first row (the find bar) through inputSuffix.
+	"suffix.node": {"marquee": "renderMarquee reads n.Suffix", "input": "renderInput reads n.Suffix through inputSuffix"},
 	// row_template is always a node, and only the list composes one: renderList
 	// instantiates it once per element of the array its bind names (D1). Before
 	// D1 it was refused rather than read, so it had no owner here; now it does,

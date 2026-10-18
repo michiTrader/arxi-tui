@@ -361,6 +361,11 @@ type State struct {
 	// to expand"); empty otherwise. Host view state like HostScroll.
 	HostPaste string `json:"host.paste"`
 
+	// HostFind is the find bar's text while Ctrl+F is open: the word being looked for, then
+	// "  n/m" once the chat has told how many rows hold it. Empty while the finder is closed.
+	// The prompt's `suffix` binds it, so the bar is drawn by the scene, not by the host.
+	HostFind string `json:"host.find"`
+
 	// HostShells is how many background shells run ("1 shell", "3 shells"), empty when none.
 	// Host view state like HostBranch: the shells live in the host, so the loop counts them
 	// each frame.

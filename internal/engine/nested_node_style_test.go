@@ -171,6 +171,9 @@ func nestedStyleState() fold.State {
 	// helper builds one State for every shipped scene; deriveNewMilestone's own
 	// contract is pinned by animated_test.go, not here.
 	s.NewMilestone = true
+	// SOBRIA's prompt carries the find bar as its `suffix`, bound to host.find: with the
+	// finder closed (empty) the bar draws nothing and its token could not be seen.
+	s.HostFind = "find: "
 	return s
 }
 

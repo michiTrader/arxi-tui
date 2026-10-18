@@ -69,6 +69,27 @@ None of these act while the `/` menu is open. Not verified: whether Windows Term
 PowerShell hands `ctrl`/`alt`/`shift` + arrows to the program (some terminals keep them);
 if one of them does nothing for you, tell me which and I will give it another key.
 
+### Find a word in the chat (`ctrl+f`)
+
+`ctrl+f` opens a small bar on the right of the input row (a different background, so it reads as
+its own thing; it takes no extra line). Type the word: the chat jumps to its newest hit and washes
+every hit; the bar says `find 2/5: word`.
+
+| key (bar open) | does |
+|---|---|
+| letters / `backspace` | edit the word (a paste becomes the word too) |
+| `enter` / `↑` | the previous (older) hit |
+| `↓` | the next (newer) hit |
+| `esc` / `ctrl+f` | close the bar; the chat stays where it is, the word is kept for the next `ctrl+f` |
+
+`PgUp`/`PgDn`, the wheel and the other scroll keys keep working with the bar open; `ctrl+c` is
+never touched. A shortcut of your own on `ctrl+f` wins, and `ctrl+f` does nothing while the `/`
+menu is open. It is the same dogfooding as everything else: the bar is the prompt's `suffix` node
+bound to `host.find`, the colours are the tokens `find.bar`, `find.match`, `find.current`, and the
+word `find` is the text `find.label`. Only matches in the chat text on screen are searched (rows
+with raw terminal escapes are skipped). Not verified: how it looks in a real terminal, and whether
+Windows Terminal hands `ctrl+f` to the program.
+
 ### Big pastes and long input
 
 A paste with more than 5 lines, or more than 1500 characters, is not poured into the input

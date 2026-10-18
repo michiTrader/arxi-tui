@@ -109,7 +109,8 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
 
   { "id": "input_gap_top", "type": "text", "text": "" },
 
-  { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ " },
+  { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ ",
+    "suffix": { "type": "text", "bind": "host.find", "style": {"style": "find.bar"} } },
 
   { "id": "input_gap_bottom", "type": "text", "text": "", "when": "status.active" },
 
@@ -925,6 +926,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	var images imageStore               // pictures behind the [Image #N name] markers of the line being typed
 	inputScroll := 0                    // first input row shown (engine.Renderer.InputTop)
 	var chatStops []int                 // where the reader's own messages sit (engine.Renderer.ChatUserStops)
+	var find finder                     // the ctrl+f bar (find.go)
 	var barDrag bool
 	barGrabAt := 0
 	effort := ""
@@ -1357,7 +1359,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// the key fall through to the sent lines.
 	walkHistory := func(step int) {
 		w, _ := tty.Size()
-		if moved := engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w), step); moved != caret {
+		if moved := engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w, find.label()), step); moved != caret {
 			caret = moved
 			return
 		}
@@ -1649,6 +1651,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.HostShellList = ""
 			state.HostPanels = ""
 			state.HostPaste = ""
+			state.HostFind = ""
 		} else {
 			state.HostEffort, state.HostCwd, state.HostMode = effortLabel(effort), shortCwd(cwd), mode
 			if m, _ := drv.(uiModer); m != nil && m.UIMode() {
@@ -1665,6 +1668,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			if pastes.has(input) {
 				state.HostPaste = uiText("paste.hint")
 			}
+			state.HostFind = find.label()
 		}
 
 		var r engine.Renderer
@@ -1703,6 +1707,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		r.AnimTicks = clock.ticks()
 		r.AnimPhase = clock.phases()
 		r.ChatScroll = chatScroll
+		if find.open {
+			r.ChatFind, r.ChatFindBack, r.ChatFindJump, r.SuffixCaret = find.word, find.back, find.jump, true
+		}
 		r.Scrollbar = wantMouse(term.IsTermux(), mouseOverride) && !isNo(uiText("chat.scrollbar"))
 		r.ExpandTools = expandTools
 		r.Narrow = narrowMode()
@@ -1762,6 +1769,20 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			browse.publish(&state)
 		}
 		frame, active := r.RenderFrameActive(activeDoc, state)
+		if find.open {
+			// The renderer counted the hits and may have moved the chat to the current one:
+			// take both back. The bar's count is part of this frame, so when it changed the
+			// frame is drawn once more with the new count (the chat is not scrolled again).
+			find.back, find.total, find.jump = r.ChatFindBack, len(r.ChatFindStops), false
+			if r.ChatScroll != chatScroll {
+				chatScroll = r.ChatScroll
+			}
+			if label := find.label(); label != state.HostFind && !state.SlashActive {
+				state.HostFind = label
+				r.ChatScroll, r.ChatFindJump = chatScroll, false
+				frame, active = r.RenderFrameActive(activeDoc, state)
+			}
+		}
 		// Pin the scroll offset to what the renderer could actually honour: it
 		// alone knows the wrapped line count and the pane budget, so a wheel spun
 		// past the top settles here instead of banking dead scroll that a later
@@ -2095,6 +2116,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								}
 							}
 						}
+					} else if _, userBound := effBeh().boundActions(ev.Key); find.owns(ev.Key, hasFindBar(doc) && !slashMenuOpen(input) && !userBound) {
+						// ctrl+f opens the find bar in the input bar; while it is open its
+						// keys (letters, backspace, enter/up/down, esc) are the bar's and the
+						// rest of the keyboard works as usual (find.go). Before the Esc branch
+						// below so Esc closes the bar before it can stop a turn.
+						panicGesture.Reset()
+						find.key(ev.Key)
 					} else if ev.Key.Type == term.KeyEscape && !slashMenuOpen(input) && cancelRunningTurn(drv) {
 						// Esc stops the turn in flight. A line starting with "/" is a
 						// menu, and there Esc keeps its meaning of closing it, so a menu
@@ -2869,7 +2897,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if ev.Key.Type == term.KeyDown {
 								dir = 1
 							}
-							caret = engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w), dir)
+							caret = engine.InputCaretVerticalMove(input, caret, inputWrapRoom(doc, w, find.label()), dir)
 						} else if line := strings.TrimSpace(input); ev.Key.Type == term.KeyEnter && !isNewlineGesture(ev.Key) && line != "" && classifySlash(line, nil).Kind == slashNone && pkgs.hasRules() {
 							// A plain-text line headed to the model goes through the input.pre
 							// rules of the approved packages first (internal/ext/v2/pipeline.go).
@@ -2940,6 +2968,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					if flow != nil {
 						// A pasted reason goes to the rejection being typed.
 						flow.paste(ev.Text)
+						break
+					}
+					if find.open {
+						// A paste while the find bar is open is the word, not the message.
+						find.add(ev.Text)
 						break
 					}
 					pasteBefore := inputState{input, caret}
@@ -3409,15 +3442,25 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 // `r.Width - prefixW` renderInput lays the rows out at. It walks the document for
 // the node bound to user.input so the room follows the scene's own prefix rather
 // than a hard-coded guess — a downloaded scene may prompt with "> " or nothing at
-// all. A width of at least one is always returned, so a pathologically narrow
+// all. suffix is what the prompt's suffix says now ("" when none is shown). A width of at least one is always returned, so a pathologically narrow
 // terminal cannot make the caller divide by zero.
-func inputWrapRoom(doc *scene.Document, width int) int {
+func inputWrapRoom(doc *scene.Document, width int, suffix string) int {
 	prefixW := 0
 	if doc != nil {
 		if in := findUserInput(doc.Root); in != nil {
 			// Display width, not rune count, so a wide prefix glyph reserves the
 			// cells it actually occupies.
 			prefixW = ansi.StringWidth(in.PrefixText())
+		}
+	}
+	// The prompt's suffix (the find bar) takes its cells off the right of the first row,
+	// and the renderer wraps the text in what is left, so the arrow keys must too.
+	if sw := ansi.StringWidth(suffix); sw > 0 && doc != nil {
+		if in := findUserInput(doc.Root); in != nil && in.Suffix != nil {
+			if limit := width / 2; sw > limit {
+				sw = limit
+			}
+			prefixW += sw
 		}
 	}
 	room := width - prefixW
