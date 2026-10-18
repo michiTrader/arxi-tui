@@ -84,7 +84,8 @@ the `input` node.
 
   { "id": "input_gap_top", "type": "text", "text": "" },
 
-  { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ " },
+  { "id": "prompt", "type": "input", "bind": "user.input", "prefix": "┃ ",
+    "suffix": { "type": "text", "bind": "host.find", "style": {"style": "find.bar"} } },
 
   { "id": "input_gap_bottom", "type": "text", "text": "", "when": "status.active" },
 

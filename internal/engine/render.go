@@ -253,6 +253,21 @@ type Renderer struct {
 	// what the reader asked, not by tool calls. Empty while the chat fits.
 	ChatUserStops []int
 
+	// ChatFind is the word the finder (Ctrl+F) looks for in the chat; empty: no find. The
+	// renderer washes every hit with the find.match token and the current row's with
+	// find.current. ChatFindBack says which row is current: 0 the newest hit (the lowest
+	// row), 1 the one before, and so on (clamped, and handed back). ChatFindJump asks this
+	// frame to land ChatScroll on the current hit. ChatFindStops is the report back: for each
+	// row that holds the word, top to bottom, the ChatScroll that centres it.
+	ChatFind      string
+	ChatFindBack  int
+	ChatFindJump  bool
+	ChatFindStops []int
+
+	// SuffixCaret puts the terminal caret on the last cell of the input row, where an input
+	// `suffix` is drawn (the find bar is typed into there).
+	SuffixCaret bool
+
 	// InputScroll is the first input row the last frame showed (the host hands back what
 	// InputTop reported), InputMaxRows the most rows the input may take (0: a third of the
 	// screen, at least 3) and InputTop the first row THIS frame shows. A typed or pasted text
@@ -352,6 +367,7 @@ func (r *Renderer) child(width, height int) Renderer {
 		active:        r.active,
 		InputScroll:   r.InputScroll,
 		InputMaxRows:  r.InputMaxRows,
+		SuffixCaret:   r.SuffixCaret,
 		inputOut:      r.inputOut,
 		ChatCache:     r.ChatCache,
 		Narrow:        r.Narrow,
@@ -380,6 +396,7 @@ func (r *Renderer) RenderFrameActive(doc *scene.Document, state fold.State) (ui.
 	r.active = &collected
 	r.InputTop = 0
 	r.inputOut = &r.InputTop
+	r.ChatFindStops = nil
 	frame := r.renderNode(doc.Root, state, r.Height)
 	return frame, collected
 }
@@ -1446,6 +1463,9 @@ func (r *Renderer) renderChatPane(n *scene.Node, state fold.State, budget int) u
 		f := sub.renderMarkdown(n, state, budget)
 		r.ChatScrollMax = sub.ChatScrollMax
 		r.ChatUserStops = sub.ChatUserStops
+		r.ChatFindStops = sub.ChatFindStops
+		r.ChatFindBack = sub.ChatFindBack
+		r.ChatScroll = sub.ChatScroll
 		return r.withScrollbar(f, sub.ChatScrollMax, sub.ChatScroll)
 	}
 	return r.renderMarkdown(n, state, budget)
@@ -1507,6 +1527,16 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 		}
 		for len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
 			lines = lines[:len(lines)-1]
+		}
+		if r.ChatFind != "" {
+			matches := findMatchRows(lines, r.ChatFind)
+			r.ChatFindStops = findStops(matches, len(lines), budget)
+			r.ChatFindBack = clampFind(r.ChatFindBack, len(matches))
+			cur := len(matches) - 1 - r.ChatFindBack
+			if r.ChatFindJump && len(matches) > 0 {
+				r.ChatScroll = r.ChatFindStops[cur]
+			}
+			lines = highlightFind(lines, matches, r.ChatFind, cur)
 		}
 	case "thinking.text":
 		lines = append(lines, ui.WrapText(state.ThinkingText, token, r.Width, nil)...)
@@ -1655,6 +1685,8 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 	// is chrome and the human types to the right of chrome.
 	prefix := n.PrefixText()
 	prefixW := ansiStringWidth(prefix)
+	suffix := r.inputSuffix(n, state)
+	suffixW := suffix.Width()
 
 	// The line the field shows is the value of whatever bind it carries, not only
 	// user.input. user.input is the one bind the keystroke loop maintains a live
@@ -1696,10 +1728,10 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 		}
 		cells = append(cells, ui.Span{Text: n.Placeholder, Style: "input.placeholder"})
 		return ui.Frame{
-			Live:   []ui.Line{cells},
+			Live:   []ui.Line{r.withSuffix(cells, suffix)},
 			Width:  r.Width,
 			Height: 1,
-			Cursor: ui.Cursor{Line: 0, Col: prefixW},
+			Cursor: r.inputCaret(suffix, ui.Cursor{Line: 0, Col: prefixW}),
 		}
 	}
 
@@ -1712,7 +1744,7 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 	// The caret column is still prefixW+col because the repeated prefix has the
 	// same width the old indent did, so the arithmetic below is unchanged.
 	inputStyle := styleNameOr(n.Style, "input")
-	room := r.Width - prefixW
+	room := r.Width - prefixW - suffixW
 	if room < 1 {
 		room = 1
 	}
@@ -1757,6 +1789,9 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 			cells = append(cells, ui.Span{Text: pre, Style: "input"})
 		}
 		cells = append(cells, ui.Span{Text: rowsText[i], Style: inputStyle})
+		if i == top {
+			cells = r.withSuffix(cells, suffix)
+		}
 		live = append(live, cells)
 	}
 	row -= top
@@ -1764,8 +1799,65 @@ func (r *Renderer) renderInput(n *scene.Node, state fold.State) ui.Frame {
 		Live:   live,
 		Width:  r.Width,
 		Height: len(live),
-		Cursor: ui.Cursor{Line: row, Col: prefixW + col},
+		Cursor: r.inputCaret(suffix, ui.Cursor{Line: row, Col: prefixW + col}),
 	}
+}
+
+// inputSuffix is the bar a prompt may carry at the right edge of its first row (`suffix`:
+// the find bar is the one the factory scene has). It is a node with a text or a bind, an
+// optional `when` and a style; a bind that is not set resolves to nothing and the bar is not
+// drawn. Its width is taken out of the room the typed text wraps in, so the two never
+// overlap, and it is capped to half the pane so a long word can not push the prompt out.
+func (r *Renderer) inputSuffix(n *scene.Node, state fold.State) ui.Line {
+	sn := n.Suffix
+	if sn == nil || hiddenByWhenRow(sn, state, r.curRow, r.PluginValues, r.PreviewMocks) {
+		return nil
+	}
+	text := sn.Text
+	if sn.Bind != "" {
+		text = resolveBindRow(sn.Bind, state, r.curRow, r.PluginValues, r.PreviewMocks)
+		if text == placeholderValue {
+			text = ""
+		}
+	}
+	if text == "" {
+		return nil
+	}
+	if limit := r.Width / 2; ansiStringWidth(text) > limit {
+		// the end of the word is the part being typed
+		rs := []rune(text)
+		for len(rs) > 1 && ansiStringWidth(string(rs)) > limit {
+			rs = rs[1:]
+		}
+		text = string(rs)
+	}
+	return ui.Line{{Text: text, Style: styleNameOr(sn.Style, "input")}}
+}
+
+// withSuffix pads a row with spaces up to the right edge less the suffix, then adds it.
+func (r *Renderer) withSuffix(cells ui.Line, suffix ui.Line) ui.Line {
+	if len(suffix) == 0 {
+		return cells
+	}
+	gap := r.Width - cells.Width() - suffix.Width()
+	if gap < 0 {
+		cells = cutLine(cells, 0, r.Width-suffix.Width())
+		gap = r.Width - cells.Width() - suffix.Width()
+	}
+	if gap > 0 {
+		cells = append(append(ui.Line{}, cells...), ui.Span{Text: strings.Repeat(" ", gap), Style: "input"})
+	}
+	return append(append(ui.Line{}, cells...), suffix...)
+}
+
+// inputCaret is where the terminal caret goes: the one the input computed, or - while the
+// find bar is being typed into (SuffixCaret) - the last cell of the first row, where the bar's
+// word ends.
+func (r *Renderer) inputCaret(suffix ui.Line, c ui.Cursor) ui.Cursor {
+	if r.SuffixCaret && len(suffix) > 0 {
+		return ui.Cursor{Line: 0, Col: r.Width - 1}
+	}
+	return c
 }
 
 // inputRowsAllowed is the most rows the input may take before it becomes a window.
@@ -3340,6 +3432,8 @@ func resolveBind(bind string, state fold.State) string {
 		return state.HostScroll
 	case "host.paste":
 		return state.HostPaste
+	case "host.find":
+		return state.HostFind
 	case "host.shells":
 		return state.HostShells
 	case "host.shell.list":

@@ -430,10 +430,15 @@ func SOBRIA() *Theme {
 		"menu.tab.selected":  {FG: ui.MustHex("#ffffff"), Attrs: ui.AttrBold},
 		"menu.rule":          {FG: ui.MustHex("#303030")},
 		"menu.hint":          {FG: ui.MustHex("#8a8a8a")},
-		"brand.1":            {FG: ui.MustHex("#ff6b1a"), Attrs: ui.AttrBold},
-		"brand.2":            {FG: ui.MustHex("#ff9a1f"), Attrs: ui.AttrBold},
-		"brand.3":            {FG: ui.MustHex("#ffbf26"), Attrs: ui.AttrBold},
-		"brand.4":            {FG: ui.MustHex("#ffd666"), Attrs: ui.AttrBold},
+		// Ctrl+F: the find bar at the right of the input row stands out with its own background;
+		// every hit in the chat is washed, the one the finder is on brighter.
+		"find.bar":     {FG: ui.MustHex("#ffffff"), BG: ui.MustHex("#3a3a46")},
+		"find.match":   {BG: ui.MustHex("#5c4a00")},
+		"find.current": {FG: ui.MustHex("#000000"), BG: ui.MustHex("#e0b000")},
+		"brand.1":      {FG: ui.MustHex("#ff6b1a"), Attrs: ui.AttrBold},
+		"brand.2":      {FG: ui.MustHex("#ff9a1f"), Attrs: ui.AttrBold},
+		"brand.3":      {FG: ui.MustHex("#ffbf26"), Attrs: ui.AttrBold},
+		"brand.4":      {FG: ui.MustHex("#ffd666"), Attrs: ui.AttrBold},
 		// Assistant replies are Markdown (internal/ui/markdown.go). Structure is carried
 		// by weight and a restrained palette: headings bright and bold, inline code and
 		// links cyan, code blocks syntax-tinted behind a dim gutter, and every frame
