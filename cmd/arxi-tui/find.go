@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 
@@ -155,3 +156,63 @@ func hasFindBar(doc *scene.Document) bool {
 	in := findUserInput(doc.Root)
 	return in != nil && in.Suffix != nil && in.Suffix.Bind == "host.find"
 }
+
+// findBarSuffix is the prompt's find bar, as the built-in scene writes it.
+const findBarSuffix = `{"type":"text","bind":"host.find","style":{"style":"find.bar"}}`
+
+// withFindBar gives a saved interface the find bar it was saved without. A scene kept before
+// ctrl+f existed has a prompt with no suffix, so ctrl+f would do nothing at all; the bar is
+// invisible while closed, so adding it changes nothing a user could see. Only an input bound to
+// user.input that has no suffix of its own gets it: a scene that already draws something
+// there, or has no prompt, is left exactly as it is. The returned document keeps the name
+// (the saved file), so it is still saved as the user's.
+func withFindBar(doc *scene.Document) *scene.Document {
+	if doc == nil || hasFindBar(doc) {
+		return doc
+	}
+	in := findUserInput(doc.Root)
+	if in == nil || in.Suffix != nil {
+		return doc
+	}
+	var tree any
+	if json.Unmarshal(doc.Source(), &tree) != nil {
+		return doc
+	}
+	done := false
+	var walk func(v any)
+	walk = func(v any) {
+		switch t := v.(type) {
+		case map[string]any:
+			if !done && t["type"] == "input" && t["bind"] == "user.input" && t["suffix"] == nil {
+				var bar any
+				_ = json.Unmarshal([]byte(findBarSuffix), &bar)
+				t["suffix"] = bar
+				done = true
+				return
+			}
+			for _, c := range t {
+				walk(c)
+			}
+		case []any:
+			for _, c := range t {
+				walk(c)
+			}
+		}
+	}
+	walk(tree)
+	if !done {
+		return doc
+	}
+	out, err := json.Marshal(tree)
+	if err != nil {
+		return doc
+	}
+	next, err := scene.ParseNamed(doc.Name(), out)
+	if err != nil || next.Validate() != nil || !hasFindBar(next) {
+		return doc
+	}
+	return next
+}
+
+// noFindBarNotice is what ctrl+f says when the scene on display has no find bar.
+const noFindBarNotice = "ctrl+f needs the find bar, and this interface has none: /ui reset restores the built-in one, or ask the chat to add a suffix bound to host.find to the prompt"

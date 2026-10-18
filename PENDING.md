@@ -187,6 +187,17 @@ Vistos fallar UNA vez en CI de Windows y pasar al relanzar, sin relación con el
 - `TestBehaviourAnimationMovesWithTheClock` (cmd/arxi-tui, 60 s hasta agotar, #294).
 No se arreglaron: falta reproducirlos en una máquina Windows real.
 
+## Ctrl+F no hacía nada (rama fix/find-bar-saved-scene)
+
+Causa encontrada y reproducida: quien ya había cambiado algo con `/ui` tiene su interfaz guardada en
+`~/.arxi/scene.json`, y esa copia es de ANTES de la barra, así que el prompt no traía el nodo `suffix`
+y `Ctrl+F` no tenía nada que abrir (y tampoco avisaba). Arreglo: al arrancar, una interfaz guardada cuyo
+prompt no tiene `suffix` recibe la barra (invisible mientras está cerrada); si el usuario ya puso su propio
+`suffix`, no se toca. Y si una escena no tiene barra, `Ctrl+F` ahora dice por qué en la línea de avisos.
+Quedan 2 mutaciones vivas que son equivalentes (una guarda repetida, y una rama que la del buscador
+atrapa antes). NO verificado: la otra causa posible, que la terminal se quede con `Ctrl+F` antes de que
+llegue al programa; si con esto sigue sin abrirse, hay que probar otra tecla.
+
 ## Ronda actual: Ctrl+F, buscar una palabra en el chat (rama feat/find-in-chat)
 
 Pedido del dueño: una mini barra de búsqueda en la zona de la barra de entrada, a la derecha, con otro

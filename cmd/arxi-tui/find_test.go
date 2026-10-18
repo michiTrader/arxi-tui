@@ -1,13 +1,17 @@
 package main
 
 import (
+	"context"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
 	"github.com/michiTrader/arxi_tui/internal/term"
+	"github.com/michiTrader/arxi_tui/internal/theme"
 )
 
 // ---- helpers ---------------------------------------------------------------------
@@ -417,4 +421,134 @@ func TestLoopTheJumpHappensOnceNotOnEveryRepaint(t *testing.T) {
 	if strings.Contains(f, scrollHint) {
 		t.Errorf("End did not take the chat to its latest line (the finder pulled it back to the hit):\n%s", f)
 	}
+}
+
+// ---- an interface saved before the bar existed ------------------------------------
+
+// savedBeforeTheBar is the built-in scene as it was before ctrl+f: what a user who ever
+// changed anything with /ui has saved in ~/.arxi/scene.json.
+func savedBeforeTheBar(t *testing.T) string {
+	t.Helper()
+	old := strings.Replace(factorySobria, `,
+    "suffix": { "type": "text", "bind": "host.find", "style": {"style": "find.bar"} }`, "", 1)
+	if old == factorySobria || strings.Contains(old, "host.find") {
+		t.Fatal("premise: could not make the old scene")
+	}
+	if doc, err := scene.ParseDocument([]byte(old)); err != nil || hasFindBar(doc) {
+		t.Fatalf("premise: the old scene must parse and have no bar (%v)", err)
+	}
+	return old
+}
+
+func saveScene(t *testing.T, js string) {
+	t.Helper()
+	t.Setenv(configDirEnv, t.TempDir())
+	if err := os.MkdirAll(configDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(userScenePath(), []byte(js), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestASavedInterfaceWithoutTheBarGetsIt(t *testing.T) {
+	saveScene(t, savedBeforeTheBar(t))
+	doc, notice, err := resolveBootScene(builtinScene)
+	if err != nil || notice != "" {
+		t.Fatalf("boot: %v %q", err, notice)
+	}
+	if !hasFindBar(doc) {
+		t.Fatal("a scene saved before ctrl+f booted with no find bar: ctrl+f would do nothing")
+	}
+	if doc.Name() != userScenePath() || !persistsScene(doc) {
+		t.Errorf("the scene must stay the user's saved one, name=%q", doc.Name())
+	}
+}
+
+func TestASavedInterfaceThatDrawsItsOwnSuffixIsLeftAlone(t *testing.T) {
+	own := strings.Replace(savedBeforeTheBar(t), `"type": "input"`, `"type": "input", "suffix": {"type":"text","text":"mine"}`, 1)
+	doc, err := scene.ParseDocument([]byte(own))
+	if err != nil || findUserInput(doc.Root).Suffix == nil {
+		t.Fatalf("premise: %v", err)
+	}
+	saveScene(t, own)
+	got, _, err := resolveBootScene(builtinScene)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasFindBar(got) || findUserInput(got.Root).Suffix.Text != "mine" {
+		t.Error("the user's own suffix was replaced by the find bar")
+	}
+}
+
+func TestWithFindBarLeavesAScenelessOrBarredDocumentAlone(t *testing.T) {
+	if withFindBar(nil) != nil {
+		t.Error("nil stays nil")
+	}
+	doc, _ := scene.ParseDocument([]byte(factorySobria))
+	if withFindBar(doc) != doc {
+		t.Error("a scene that already has the bar must be returned as it is")
+	}
+	raw, _ := scene.ParseDocument([]byte(`{ "root": { "type": "stack", "children": [ { "type": "text", "text": "hi" } ] } }`))
+	if withFindBar(raw) != raw {
+		t.Error("a scene with no prompt has nowhere for the bar")
+	}
+}
+
+// The whole path a user walks: the old saved scene on disk, the real loop, ctrl+f.
+func TestLoopCtrlFOpensTheBarOnAnInterfaceSavedBeforeIt(t *testing.T) {
+	saveScene(t, savedBeforeTheBar(t))
+	doc, _, err := resolveBootScene(builtinScene)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames := loopFrames(t, doc, findKeysOf(findOne(findCtrlF())))
+	if _, ok := findFrameWith(frames, "find: "); !ok {
+		t.Fatalf("ctrl+f did nothing on the saved interface:\n%s", findLast(frames))
+	}
+}
+
+// A scene that has no bar at all says why, instead of nothing.
+func TestLoopCtrlFOnASceneWithoutABarSaysWhy(t *testing.T) {
+	t.Setenv(configDirEnv, t.TempDir())
+	doc, err := scene.ParseDocument([]byte(factoryRAW))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames := loopFrames(t, doc, findKeysOf(findOne(findCtrlF())))
+	if _, ok := findFrameWith(frames, "ctrl+f needs the find bar"); !ok {
+		t.Fatalf("ctrl+f on a scene with no bar was silent:\n%s", findLast(frames))
+	}
+}
+
+// loopFrames is scrollLoopKeepingConfig for a document the test chose.
+func loopFrames(t *testing.T, doc *scene.Document, keys []scheduledEvent) []string {
+	t.Helper()
+	drv := newCompactDriver(1_000_000, 2)
+	var long string
+	for i := 0; i < 60; i++ {
+		long += "line " + string(rune('A'+i%26)) + "\n\n"
+	}
+	for i, e := range []fold.Event{
+		{Type: "run.prompt", Actor: "assistant", Payload: map[string]any{"text": "go"}},
+		{Type: "llm.response", Actor: "assistant", Payload: map[string]any{"text": long, "model": "openai/gpt-4o",
+			"tokens_in": float64(10), "tokens_out": float64(5), "context_tokens": float64(15)}},
+		{Type: "agent.turn_done", Actor: "assistant"},
+	} {
+		e.Seq = int64(3000 + i)
+		drv.evCh <- e
+	}
+	tty := newFakeTTY(100, 20, keys)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	tty.mu.Lock()
+	defer tty.mu.Unlock()
+	out := make([]string, len(tty.frames))
+	for i, f := range tty.frames {
+		out[i] = stripANSI(f)
+	}
+	return out
 }

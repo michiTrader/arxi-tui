@@ -653,7 +653,7 @@ func resolveBootScene(path string) (*scene.Document, string, error) {
 	}
 	doc, notice, err := loadScene(user, factoryRAW)
 	if err == nil && doc.Name() == user && findUserInput(doc.Root) != nil {
-		return doc, notice, nil
+		return withFindBar(doc), notice, nil
 	}
 	if err == nil && notice == "" {
 		notice = "it has no input bound to user.input"
