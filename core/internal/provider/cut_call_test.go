@@ -78,3 +78,21 @@ func TestAWholeCallBesideACutOneDoesNotRunAlone(t *testing.T) {
 		t.Errorf("calls=%v text=%v finish=%v; want nothing kept and a refusal", callsIn(resp), hasText(resp.Content), resp.FinishReason)
 	}
 }
+
+// Arguments that are valid JSON but not an object (a list, a bare number) cannot be a
+// call either: the turn is asked again instead of failing with "decode tool arguments".
+func TestArgumentsThatAreNotAnObjectAreAskedAgainNotFatal(t *testing.T) {
+	for _, args := range []string{`[]`, `1`, `"x"`, `null`} {
+		resp, err := canonicalOpenAIResponse(cutReply("tool_calls", args))
+		if err != nil {
+			t.Errorf("args %q: must not fail the turn: %v", args, err)
+			continue
+		}
+		if resp.FinishReason != turn.FinishRefusal || resp.Refusal == nil || resp.Refusal.Code != "http_502" || !resp.Refusal.Retryable {
+			t.Errorf("args %q: want a retryable refusal, got finish=%v refusal=%+v", args, resp.FinishReason, resp.Refusal)
+		}
+		if len(callsIn(resp)) != 0 {
+			t.Errorf("args %q: nothing may be run: %v", args, callsIn(resp))
+		}
+	}
+}

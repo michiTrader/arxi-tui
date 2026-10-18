@@ -605,7 +605,7 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	req := turn.Request{
 		Schema: turn.Schema, Provider: res.Provider, Protocol: res.Protocol,
 		BaseURL: res.BaseURL, APIKeyEnv: res.APIKeyEnv, Model: res.Model,
-		MaxTokens: 4096, Messages: messages, Effort: level,
+		MaxTokens: chatMaxOutput(), Messages: messages, Effort: level,
 	}
 	// complete asks the model once, retrying a transient refusal. Tokens are
 	// added up over every ask of the turn, so a tool loop reports its true cost.
@@ -613,8 +613,14 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 	var last turn.Usage
 	var waited time.Duration
 	tries, emptyTries := 0, 0
+	// learnedMax is the reply ceiling a provider named when it refused ours as too
+	// high; every later ask of the turn stays under it.
+	learnedMax := 0
 	complete := func(req turn.Request) (turn.Response, error) {
 		for attempt := 1; ; attempt++ {
+			if learnedMax > 0 && req.MaxTokens > learnedMax {
+				req.MaxTokens = learnedMax
+			}
 			// The provider said its request budget is spent and when the window
 			// opens: wait for it, rather than spend a request on a refusal. A wait
 			// longer than this chat is willing to give is not served; the ask goes
@@ -662,6 +668,12 @@ func chatSendEffort(ctx context.Context, prompt, historyJSON, system, ref, effor
 				case <-ctx.Done():
 					return resp, fmt.Errorf("%s/%s: %w", res.Provider, res.Model, ctx.Err())
 				}
+				continue
+			}
+			if lim, ok := outputLimitFrom(resp.Refusal); ok && lim < req.MaxTokens && attempt < chatAttempts {
+				// This model takes fewer reply tokens than we asked for. The provider
+				// said how many: ask again with that, once, instead of failing the turn.
+				learnedMax = lim
 				continue
 			}
 			if resp.FinishReason != turn.FinishRefusal || !transientRefusal(resp.Refusal) || attempt >= chatAttempts {

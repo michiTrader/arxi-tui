@@ -368,6 +368,13 @@ func (d *serveDriver) ResumeToolLog(r []toolRecord) {
 	}
 }
 
+// ResumeMemory gives the resumed conversation what its earlier turns read.
+func (d *serveDriver) ResumeMemory(m []toolEcho) {
+	if d.chat != nil {
+		d.chat.setMemory(m)
+	}
+}
+
 // NoteModelSwitch puts the model change on the conversation's record and tells the
 // model on its next turn.
 func (d *serveDriver) NoteModelSwitch(ctx context.Context, to string) {

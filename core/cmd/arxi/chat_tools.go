@@ -18,17 +18,18 @@ import (
 )
 
 const (
-	// defaultToolRounds bounds how many times one answer may go back to the model
-	// after running tools. A model that never stops asking is cut off. The number is a
-	// guard against a runaway loop, not a measure of anything: toolRoundsEnv raises or
-	// lowers it.
-	defaultToolRounds = 40
+	// defaultToolRounds is how many times one answer may go back to the model after
+	// running tools. 0 means no limit: a long task (read a project, change ten files,
+	// run the tests) legitimately takes many rounds, and a cut in the middle of it only
+	// costs the user a "continue". toolRoundsEnv sets a limit for whoever wants one, as
+	// a guard against a model that never stops asking.
+	defaultToolRounds = 0
 	toolRoundsEnv     = "ARXI_MAX_TOOL_ROUNDS"
 	minToolRounds     = 1
-	maxToolRoundsCeil = 200
+	maxToolRoundsCeil = 1000
 	// maxToolOutputEvent caps the tool output carried on a notification; the
 	// model still receives the whole (already capped) output.
-	maxToolOutputEvent = 8 << 10
+	maxToolOutputEvent = 32 << 10
 )
 
 type toolsKey struct{}
@@ -359,18 +360,20 @@ func (tb *chatToolbox) definitions() []turn.ToolDefinition {
 	return append(out, tb.client...)
 }
 
-// toolRounds is how many tool rounds one answer may take: the default, or what
-// ARXI_MAX_TOOL_ROUNDS says. A value that is not a whole number in range is an error,
-// not a guess: it would set a limit the user did not choose.
+// toolRounds is how many tool rounds one answer may take: 0 for no limit (the default),
+// or what ARXI_MAX_TOOL_ROUNDS says. A value that is not a whole number in range, nor one
+// of the words that mean "no limit", is an error, not a guess: it would set a limit the
+// user did not choose.
 func toolRounds(env string) (int, error) {
-	env = strings.TrimSpace(env)
-	if env == "" {
+	env = strings.ToLower(strings.TrimSpace(env))
+	switch env {
+	case "", "0", "off", "unlimited", "none":
 		return defaultToolRounds, nil
 	}
 	n, err := strconv.Atoi(env)
 	if err != nil || n < minToolRounds || n > maxToolRoundsCeil {
-		return 0, fmt.Errorf("%s=%q is not a whole number from %d to %d; unset it to use %d",
-			toolRoundsEnv, env, minToolRounds, maxToolRoundsCeil, defaultToolRounds)
+		return 0, fmt.Errorf("%s=%q is not a whole number from %d to %d (or \"off\" for no limit); unset it for no limit",
+			toolRoundsEnv, env, minToolRounds, maxToolRoundsCeil)
 	}
 	return n, nil
 }
@@ -397,8 +400,10 @@ func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 	}
 	req.Tools = append(req.Tools, tb.definitions()...)
 	cutAsks := 0
+	limited := maxToolRounds > 0
+	repeats := map[string]string{}
 	for round := 0; ; round++ {
-		if round >= maxToolRounds {
+		if limited && round >= maxToolRounds {
 			req.Tools = nil
 			req.Messages = append(req.Messages, turn.Message{Role: turn.RoleUser, Content: []turn.ContentBlock{{
 				Type: turn.BlockText,
@@ -409,7 +414,7 @@ func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 		if err != nil {
 			return resp, err
 		}
-		if resp.FinishReason == turn.FinishRefusal && resp.Refusal != nil && resp.Refusal.Code == provider.OutputLimitCode && cutAsks < maxCutAsks && round < maxToolRounds {
+		if resp.FinishReason == turn.FinishRefusal && resp.Refusal != nil && resp.Refusal.Code == provider.OutputLimitCode && cutAsks < maxCutAsks && (!limited || round < maxToolRounds) {
 			// The model ran out of output allowance in the middle of a call (a whole
 			// file in one write). Asking the same again is cut at the same place, so it
 			// is told what happened and asked for smaller steps; nothing was run.
@@ -419,7 +424,7 @@ func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 			}}})
 			continue
 		}
-		if round >= maxToolRounds && resp.FinishReason != turn.FinishRefusal {
+		if limited && round >= maxToolRounds && resp.FinishReason != turn.FinishRefusal {
 			// The turn ends here because of the cap, not because the model was done: say
 			// so, or it looks like it stopped for no reason and the user has to guess to
 			// type "continue".
@@ -450,10 +455,46 @@ func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 				// The user could not be asked (the connection is gone): the turn is over.
 				return resp, err
 			}
+			collapseRepeat(repeats, call, res)
 			results = append(results, turn.ContentBlock{Type: turn.BlockToolResult, ToolResult: res})
 		}
 		req.Messages = append(req.Messages, turn.Message{Role: turn.RoleTool, Content: results})
 	}
+}
+
+// minRepeatBytes and repeatNote: a result at least this long that is exactly what the
+// same call returned earlier in the answer is not sent to the model a second time. Every
+// round re-sends the whole conversation, so a file read three times is paid for three
+// times in every round that follows.
+const (
+	minRepeatBytes = 400
+	repeatNote     = "(this is exactly what the same call returned earlier in this answer; it is unchanged, so it is not repeated: use the result above)"
+)
+
+// collapseRepeat replaces the text of a read, list or grep result with repeatNote when the
+// same call already returned the very same text in this answer. Only an identical text is
+// collapsed: a file that changed in between (an edit, a command) returns different text
+// and is sent whole, so the model is never told "unchanged" about something that changed.
+// Errors, short results and every other tool are left alone.
+func collapseRepeat(seen map[string]string, call *turn.ToolCall, res *turn.ToolResult) {
+	switch call.Name {
+	case "read", "list", "grep":
+	default:
+		return
+	}
+	if res == nil || res.IsError || len(res.Content) != 1 || res.Content[0].Type != turn.BlockText {
+		return
+	}
+	text := res.Content[0].Text
+	if len(text) < minRepeatBytes {
+		return
+	}
+	key := call.Name + "\x00" + string(call.Arguments)
+	if prev, ok := seen[key]; ok && prev == text {
+		res.Content[0].Text = repeatNote
+		return
+	}
+	seen[key] = text
 }
 
 // runOneTool runs a single call. A failure is not fatal: the model reads it as the

@@ -129,6 +129,9 @@ type chatSession struct {
 	// toolLog is what the answered turns of this conversation did, for the system prompt
 	// (chat_history.go). Like the history it belongs to the conversation, so reset() ends it.
 	toolLog []toolRecord
+	// memory is what the reading tools returned in earlier answered turns, for the
+	// system prompt of the next ones (chat_memory.go).
+	memory []toolEcho
 	// uiMode is the interface conversation: once the user has said /ui, the guide and the
 	// tools ride with every message after it, so they can go on talking about the
 	// interface without repeating the switch. It belongs to the conversation, so
@@ -646,6 +649,7 @@ func (c *chatSession) cancelTurn() bool {
 	c.busy = false
 	if !c.compacting {
 		c.history = append(c.history, unansweredTurn(c.turnText, whyCancelled, c.turnEchoes))
+		c.memory = invalidate(c.memory, c.turnEchoes)
 	}
 	c.compacting = false
 	c.mu.Unlock()
@@ -664,6 +668,7 @@ func (c *chatSession) reset() {
 	c.history = nil
 	c.lastAsk = 0
 	c.toolLog = nil
+	c.memory = nil
 	// A folder was opened for the conversation; a new one starts closed.
 	c.folders = nil
 	c.uiMode = false
@@ -707,6 +712,14 @@ func (c *chatSession) setHistory(h []driver.ChatTurn) {
 func (c *chatSession) setToolLog(r []toolRecord) {
 	c.mu.Lock()
 	c.toolLog = append([]toolRecord(nil), r...)
+	c.mu.Unlock()
+}
+
+// setMemory replaces what the reading tools returned in earlier turns, for a resumed
+// conversation.
+func (c *chatSession) setMemory(m []toolEcho) {
+	c.mu.Lock()
+	c.memory = append([]toolEcho(nil), m...)
 	c.mu.Unlock()
 }
 
@@ -803,8 +816,12 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 	if len(hist) > 0 {
 		c.mu.Lock()
 		recs := append([]toolRecord(nil), c.toolLog...)
+		mem := append([]toolEcho(nil), c.memory...)
 		c.mu.Unlock()
 		if t := toolRecordsText(recs); t != "" {
+			system += "\n\n" + t
+		}
+		if t := toolMemoryText(mem); t != "" {
 			system += "\n\n" + t
 		}
 	}
@@ -845,7 +862,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 				c.mu.Lock()
 				if c.gen == gen && c.turn == turn {
 					c.turnTools = append(c.turnTools, e)
-					c.turnEchoes = append(c.turnEchoes, toolEcho{entry: e, output: t.Output})
+					c.turnEchoes = append(c.turnEchoes, echoOf(t, e))
 				}
 				c.mu.Unlock()
 			}
@@ -1000,6 +1017,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		c.mu.Lock()
 		if c.gen == gen && c.turn == turn {
 			c.history = append(c.history, unansweredTurn(text, whyFailed, c.turnEchoes))
+			c.memory = invalidate(c.memory, c.turnEchoes)
 		}
 		c.mu.Unlock()
 		c.emit(ctx, gen, "agent.failed", map[string]any{"agent": "assistant"})
@@ -1014,6 +1032,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		return
 	}
 	c.history = append(c.history, driver.ChatTurn{Role: "user", Text: text}, driver.ChatTurn{Role: "assistant", Text: res.Text})
+	c.memory = remember(c.memory, c.turnEchoes)
 	if rec, ok := newToolRecord(text, c.turnTools); ok {
 		c.toolLog = append(c.toolLog, rec)
 		if len(c.toolLog) > toolRecordsMax {

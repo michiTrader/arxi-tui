@@ -64,9 +64,13 @@ it — `--budget` or `ARXI_BUDGET` moves it, and an `ARXI_BUDGET` that is not a
 number of dollars is refused before the run directory exists, rather than falling
 back to the default it was written to replace.
 
-A chat turn that uses tools stops after 40 tool rounds (a guard against a model that
-never stops asking, not a quality limit). The answer says so when it was cut.
-`ARXI_MAX_TOOL_ROUNDS=<1..200>` moves it; anything else is refused instead of guessed.
+A chat turn that uses tools has no limit on tool rounds by default. `ARXI_MAX_TOOL_ROUNDS=<1..1000>`
+sets one (a guard against a model that never stops asking); the answer says so when it was cut.
+`off`, `0` or unset means no limit; anything else is refused instead of guessed.
+One reply may use up to 16384 output tokens (`ARXI_MAX_OUTPUT_TOKENS` changes it); a provider that
+names a smaller maximum in a 400 is asked again with that. Inside one turn, a `read`/`list`/`grep`
+that returns exactly what the same call returned earlier (400 bytes or more) is sent to the model as a
+one-line note, not again.
 
 ## The core
 

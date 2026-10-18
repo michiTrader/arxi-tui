@@ -187,7 +187,42 @@ Vistos fallar UNA vez en CI de Windows y pasar al relanzar, sin relación con el
 - `TestBehaviourAnimationMovesWithTheClock` (cmd/arxi-tui, 60 s hasta agotar, #294).
 No se arreglaron: falta reproducirlos en una máquina Windows real.
 
-## Ronda actual: hecho y lo que falta (honesto)
+## Ronda actual: DeepSeek en uso real (rama fix/context-and-limits)
+
+Las cinco preguntas del dueño, con lo que se encontró y lo que se hizo:
+
+1. **`decode tool arguments: unexpected EOF`** (y "con continua funciona"). Es un flujo cortado a medias
+   por el proveedor/pasarela: la llamada llega con los argumentos incompletos. Ya se trataba desde #295
+   (se vuelve a preguntar solo); lo que faltaba era el caso de un JSON completo pero que no es un objeto
+   (`[]`, `1`...): ahora también es un reintento y no mata el turno. Si el dueño sigue viendo el texto
+   exacto `decode tool arguments`, su binario del core es anterior a #295: reconstruirlo.
+   NO se pudo reproducir un corte real aquí (solo con un proveedor falso).
+2. **"used up its whole output allowance of 4096 tokens"**. Era nuestro: el core pedía siempre
+   `max_tokens=4096` y un modelo que razona gasta parte en pensar. Ahora 16384 por defecto, `ARXI_MAX_OUTPUT_TOKENS`
+   lo cambia, y si un proveedor contesta 400 diciendo su máximo, se vuelve a pedir con ese número.
+3. **Límite de 40 rondas**: desactivado por defecto. `ARXI_MAX_TOOL_ROUNDS=<1..1000>` pone uno; `off`/`0` = sin límite.
+4. **El % de contexto baja de golpe** (8% → 2%). Es normal, no es la API ni una compactación: la barra muestra lo
+   que el modelo tenía en la ÚLTIMA llamada del turno; entre preguntas el historial solo guarda tu texto y la respuesta
+   final, así que la siguiente empieza más pequeña. No hacían falta logs. Lo que sí tenía arreglo (punto 5) es que
+   por eso el modelo se olvidaba de lo leído.
+5. **Muchos `Read` del mismo archivo**. Es normal en este diseño por dos causas, y las dos se atacaron:
+   (a) dentro de un turno repetía el mismo `read`: ahora un resultado idéntico (>= 400 bytes) de `read`/`list`/`grep`
+   se manda una sola vez y la repetición va como una línea; (b) entre preguntas se olvidaba lo leído: ahora la app
+   guarda lo que devolvieron `read`/`list`/`grep` (32 KB, lo más nuevo primero, máx. 40) y lo pone en las instrucciones
+   del siguiente turno como texto de la app. Se olvida al hacer `write`/`edit` de ese archivo o cualquier `run`, con `/clear` y
+   al compactar; un resultado cortado (archivo largo en páginas) nunca se guarda; `/resume` lo reconstruye.
+   Coste: hasta ~8k tokens más en cada pregunta siguiente, a cambio de no releer el archivo entero.
+
+Mutaciones: todas las del código nuevo muertas, salvo una EQUIVALENTE (poner `run` dentro de `remembers`: `run` se
+atiende antes en `foldCalls`, nunca llega ahí).
+
+NO verificado: nada de esto de punta a punta con arxi-tui y DeepSeek real. Con la clave del dueño solo se hicieron
+llamadas sueltas a la API para ver el rango de `max_tokens` (1..393216), el contexto (1.048.576) y que las herramientas
+funcionan con y sin `reasoning_content`; la clave no se guardó en ningún archivo y conviene ROTARLA. Que el modelo
+REALMENTE deje de releer con el texto de memoria es una petición en el prompt, no una garantía: contar `Read` repetidos en
+las próximas sesiones. Efecto que no se midió: cuánto sube el coste por pregunta por llevar esa memoria.
+
+## Ronda anterior: hecho y lo que falta (honesto)
 
 Hecho y probado con el bucle real + mutaciones:
 - El historial de entrada conserva el borrador al pulsar Flecha abajo (#287).
@@ -236,7 +271,7 @@ Hecho y probado con el bucle real + mutaciones:
   Lo que NO era nuestro y no se tocó: `Cancelled` tras "cambiar de modelo" ocurre solo si se
   pulsa Esc/Ctrl-C (única fuente de `chat.cancelled`); el límite de 40 rondas y el coste
   (`↑1928710` = suma de lo enviado en cada ronda, cada ronda reenvía toda la conversación) son
-  por diseño, `ARXI_MAX_TOOL_ROUNDS` lo sube; que el proveedor corte un flujo es del proveedor.
+  por diseño [desde fix/context-and-limits sin límite por defecto]; que el proveedor corte un flujo es del proveedor.
   NO verificado: nada de esto contra un proveedor real ni una consola de Windows real; las pruebas
   usan un proveedor falso y una tubería. No se pudo reproducir que Esc llegue "solo" por otra vía.
 
@@ -273,7 +308,7 @@ NO verificado: que un modelo OBEDEZCA las tres frases nuevas (una frase en un pr
 petición, no una garantía; solo se probó que se envía). Y nada de lo anterior contra un proveedor real (vyceai/glm-5.3-flash); el reintento
 por respuesta vacía y el límite por llamada se probaron con un proveedor falso. Si la respuesta
 vacía de glm viene con finish=length, el mensaje nuevo lo dirá; entonces el remedio sería subir
-`MaxTokens` (hoy fijo en 4096), que NO se tocó.
+`MaxTokens` (hoy fijo en 4096), que NO se tocó. [Hecho después: ahora 16384, ver arriba.]
 
 Frágil sin arreglar: `TestLoopABigPasteShowsAMarkerAndSendsTheRealText` busca "paste again to expand"
 en la barra de información, que lleva carpeta + RAMA + esa frase en una línea de 80 columnas. Con un
