@@ -753,3 +753,32 @@ func TestARepeatIsJudgedPerCallNotPerTool(t *testing.T) {
 		t.Errorf("a.txt read again must be the note, got %q", got[2])
 	}
 }
+
+// The app keeps what the model read to spare it reading again, and it cannot keep a file
+// it only got half of: a file of ordinary size reaches it whole, a huge one says it was cut.
+func TestAToolResultOfOrdinarySizeReachesTheClientWhole(t *testing.T) {
+	dir := projectDir(t)
+	body := strings.Repeat("x := 1 // a line of code\n", 800) // about 20 KB
+	if err := os.WriteFile(filepath.Join(dir, "big.go"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	huge := strings.Repeat(strings.Repeat("y", 99)+"\n", maxToolOutputEvent/100+60)
+	if err := os.WriteFile(filepath.Join(dir, "huge.txt"), []byte(huge), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := setUpFake(t)
+	f.script = []scripted{{name: "read", args: `{"path":"big.go"}`}, {name: "read", args: `{"path":"huge.txt"}`}, {text: "ok"}}
+	ctx, got := collect(t, dir)
+	if _, err := chatSendEffort(ctx, "go", "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if len(*got) != 2 {
+		t.Fatalf("notifications = %d", len(*got))
+	}
+	if !strings.Contains((*got)[0].Output, "x := 1") || strings.HasSuffix((*got)[0].Output, "[output cut]") || len((*got)[0].Output) < 20000 {
+		t.Errorf("a 20 KB file must reach the client whole, got %d bytes", len((*got)[0].Output))
+	}
+	if !strings.HasSuffix((*got)[1].Output, "[output cut]") {
+		t.Errorf("a result over the event cap must say it was cut; got %d bytes ending %q", len((*got)[1].Output), (*got)[1].Output[max(0, len((*got)[1].Output)-60):])
+	}
+}

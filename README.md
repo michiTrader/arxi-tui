@@ -125,10 +125,41 @@ stops its services. See `docs/DESIGN-EXTENSIBILITY.md`.
 
 ### Tool rounds per answer
 
-When the model uses tools, one answer may go back to it at most 40 times. That is a guard
-against a model that never stops asking, not a quality limit: when it is hit the answer says
-so and you can type `continue`. `ARXI_MAX_TOOL_ROUNDS=<1..200>` (set in the environment you start
-arxi-tui from; the core it launches each turn inherits it) changes it; a value that is not a number in range is refused rather than guessed.
+There is **no limit** on how many times one answer may go back to the model after running
+tools: a long task (read a project, change ten files, run the tests) takes as many rounds as it
+takes. If you want a guard against a model that never stops asking, set
+`ARXI_MAX_TOOL_ROUNDS=<1..1000>` in the environment you start arxi-tui from (the core it launches
+each turn inherits it); the answer then says so when it is cut and you can type `continue`.
+`ARXI_MAX_TOOL_ROUNDS=off` (or unset, or `0`) means no limit. A value that is not a number in
+range is refused rather than guessed. Esc always stops a turn.
+
+### How long one reply can be
+
+One reply of the model may use up to 16384 tokens (it used to be 4096). A model that thinks
+before it answers spends part of that on thinking, and with 4096 the thinking alone could use it all:
+that was the "used up its whole output allowance ... without writing an answer" message.
+It is a ceiling, not a cost: you pay for what the model writes. `ARXI_MAX_OUTPUT_TOKENS=<256..1048576>`
+changes it. If a provider says it accepts fewer (a 400 that names its maximum), the core asks
+again with that number on its own.
+
+### Why the context % can fall, and why the model re-reads files
+
+The figure in the status bar is what the model held in the **last ask** of the last answer, not a
+running total. During a long answer it climbs (every round re-sends the conversation and every tool
+result). Between two questions the history keeps only your text and the model's final answer, so the
+next question starts smaller: the % falls although nothing was compacted. That is expected, not an
+API problem. (Compaction is separate: it happens only when you run `/compact` or the autocompact
+threshold is reached, and it says so.)
+
+Two things keep this from costing you extra API calls:
+- Inside one answer, if the model asks for exactly the same `read`/`list`/`grep` again and the result is
+  byte-for-byte the same (and at least 400 bytes), the second copy is replaced by a one-line note instead
+  of sending the file again. A file that changed in between is sent whole.
+- Between questions, the app keeps what the `read`, `list` and `grep` tools returned (up to 32 KB, newest
+  first, at most 40 results) and puts it in the system prompt of the next turns, marked as app-kept text, so the
+  model does not need to open the same file again. It is forgotten when something could have changed it
+  (`write`/`edit` of that file, any `run`), by `/clear` and by a compaction; a result that arrived cut
+  (a long file shown in pages) is never kept; `/resume` rebuilds it from the saved conversation.
 
 ### How your messages look: `/style`
 

@@ -408,6 +408,12 @@ type toolLogResumer interface {
 	ResumeToolLog(recs []toolRecord)
 }
 
+// memoryResumer carries what earlier turns read (chat_memory.go) into a resumed
+// conversation.
+type memoryResumer interface {
+	ResumeMemory(m []toolEcho)
+}
+
 // turnCanceller is the optional capability a Driver has when it can stop the turn in
 // flight (serveDriver). CancelTurn reports whether there was a turn to stop, which is
 // how Esc and Ctrl-C know whether "cancel" is what the key means right now.
@@ -2458,6 +2464,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 									}
 									if r, ok := drv.(toolLogResumer); ok {
 										r.ResumeToolLog(toolLogFromEvents(evs))
+									}
+									if r, ok := drv.(memoryResumer); ok {
+										r.ResumeMemory(memoryFromEvents(evs))
 									}
 									for drained := false; !drained; {
 										select {

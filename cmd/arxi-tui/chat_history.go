@@ -122,6 +122,10 @@ func unansweredTurn(request, why string, echoes []toolEcho) driver.ChatTurn {
 type toolEcho struct {
 	entry  string // read(main.go), as toolDigestEntry words it
 	output string // what the tool returned, as far as the core reported it
+	// name, arg and ok are the call itself; the memory of earlier turns (chat_memory.go)
+	// needs them to tell a read from a command and one file from another.
+	name, arg string
+	ok        bool
 }
 
 const (

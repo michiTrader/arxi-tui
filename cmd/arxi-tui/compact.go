@@ -336,6 +336,9 @@ func (c *chatSession) runCompact(ctx context.Context, focus string, old, keep []
 		return
 	}
 	c.history = next
+	// The point of a compaction is a smaller context: what was read is let go with the
+	// rest, and read again if it is needed.
+	c.memory = nil
 	c.mu.Unlock()
 	after := historyBytes(next)
 	report := compactReport(before, after, len(old), viaModel)

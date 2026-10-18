@@ -29,7 +29,7 @@ const (
 	maxToolRoundsCeil = 1000
 	// maxToolOutputEvent caps the tool output carried on a notification; the
 	// model still receives the whole (already capped) output.
-	maxToolOutputEvent = 8 << 10
+	maxToolOutputEvent = 32 << 10
 )
 
 type toolsKey struct{}
