@@ -7,11 +7,13 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/michiTrader/arxi/internal/chattools"
 	"github.com/michiTrader/arxi/internal/provider"
+	"github.com/michiTrader/arxi/internal/turn"
 	"github.com/michiTrader/arxi/internal/webtools"
 )
 
@@ -98,16 +100,18 @@ func TestToolFailureIsReadByTheModelNotFatal(t *testing.T) {
 	}
 }
 
-func TestToolLoopCutsOffAModelThatNeverStops(t *testing.T) {
+func TestToolLoopCutsOffAModelThatNeverStopsWhenALimitIsSet(t *testing.T) {
+	const limit = 12
+	t.Setenv(toolRoundsEnv, strconv.Itoa(limit))
 	f := setUpFake(t)
-	for i := 0; i < defaultToolRounds+4; i++ {
+	for i := 0; i < limit+4; i++ {
 		f.script = append(f.script, scripted{name: "list", args: `{"path":"."}`})
 	}
 	ctx, got := collect(t, projectDir(t))
 	if _, err := chatSendEffort(ctx, "loop", "", "", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.tools) != defaultToolRounds+1 || len(*got) != defaultToolRounds {
+	if len(f.tools) != limit+1 || len(*got) != limit {
 		t.Fatalf("asks = %d, tool calls = %d", len(f.tools), len(*got))
 	}
 	if len(f.tools[len(f.tools)-1]) != 0 {
@@ -374,8 +378,9 @@ func TestANamelessToolCallIsAskedAgainAndTheTurnGoesOn(t *testing.T) {
 // A turn cut at the round cap used to end like any other: no sign that the work was
 // unfinished, so it looked like the model "stopped suddenly".
 func TestACutTurnSaysItWasCutAndAFinishedOneDoesNot(t *testing.T) {
+	t.Setenv(toolRoundsEnv, "40")
 	f := setUpFake(t)
-	for i := 0; i < defaultToolRounds+4; i++ {
+	for i := 0; i < 44; i++ {
 		f.script = append(f.script, scripted{name: "list", args: `{"path":"."}`})
 	}
 	ctx, _ := collect(t, projectDir(t))
@@ -403,7 +408,7 @@ func TestToolRoundsDefaultAndEnv(t *testing.T) {
 	if n, err := toolRounds(" 7 "); err != nil || n != 7 {
 		t.Fatalf("7 = %d, %v", n, err)
 	}
-	for _, bad := range []string{"0", "-3", "abc", "2.5", "201", "99999"} {
+	for _, bad := range []string{"-3", "abc", "2.5", "1001", "99999"} {
 		if _, err := toolRounds(bad); err == nil {
 			t.Errorf("%q was accepted; a limit nobody chose must be refused", bad)
 		}
@@ -562,5 +567,189 @@ func TestACallCutAtTheLimitEveryTimeEndsWithAPlainSentence(t *testing.T) {
 	}
 	if f.calls != 1+maxCutAsks || len(*got) != 0 {
 		t.Errorf("asked %d times (want %d), ran %d tools (want 0)", f.calls, 1+maxCutAsks, len(*got))
+	}
+}
+
+// There is no round limit unless one is asked for: a long task is not cut in the middle.
+func TestThereIsNoRoundLimitByDefault(t *testing.T) {
+	if defaultToolRounds != 0 {
+		t.Fatalf("defaultToolRounds = %d, want 0 (no limit)", defaultToolRounds)
+	}
+	const many = 60 // more than the old limit of 40
+	f := setUpFake(t)
+	for i := 0; i < many; i++ {
+		f.script = append(f.script, scripted{name: "list", args: `{"path":"."}`})
+	}
+	f.script = append(f.script, scripted{text: "all done"})
+	ctx, got := collect(t, projectDir(t))
+	res, err := chatSendEffort(ctx, "loop", "", "", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(*got) != many || res.Text != "all done" {
+		t.Fatalf("tool calls = %d, text = %q; want %d calls and the model's own answer", len(*got), res.Text, many)
+	}
+	for i, offered := range f.tools {
+		if len(offered) == 0 {
+			t.Fatalf("ask %d offered no tools: the loop was cut", i)
+		}
+	}
+	if strings.Contains(res.Text, "tool rounds") {
+		t.Errorf("an unlimited turn must not carry the cut note: %q", res.Text)
+	}
+}
+
+// The words that mean "no limit" are accepted; so is an explicit number.
+func TestTheWordsForNoRoundLimitAreAccepted(t *testing.T) {
+	for _, w := range []string{"", "0", "off", "OFF", " unlimited ", "none"} {
+		if n, err := toolRounds(w); err != nil || n != 0 {
+			t.Errorf("%q = %d, %v; want 0 and no error", w, n, err)
+		}
+	}
+	if n, err := toolRounds("1000"); err != nil || n != 1000 {
+		t.Errorf("1000 = %d, %v", n, err)
+	}
+}
+
+func readResultsOf(f *fakeLLM, ask int) []string {
+	var out []string
+	for _, m := range f.messages[ask] {
+		if m["role"] == "tool" {
+			s, _ := m["content"].(string)
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// Reading the same file again, with the file unchanged, costs the model the whole file
+// again in every later ask. The second copy is replaced by a short note.
+func TestAnIdenticalRepeatedReadIsNotSentTwice(t *testing.T) {
+	dir := projectDir(t)
+	body := strings.Repeat("line of a long file\n", 60)
+	if err := os.WriteFile(filepath.Join(dir, "big.txt"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := setUpFake(t)
+	f.script = []scripted{
+		{name: "read", args: `{"path":"big.txt"}`},
+		{name: "read", args: `{"path":"big.txt"}`},
+		{text: "ok"},
+	}
+	ctx, _ := collect(t, dir)
+	if _, err := chatSendEffort(ctx, "go", "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	got := readResultsOf(f, 2)
+	if len(got) != 2 {
+		t.Fatalf("tool results in the last ask = %d, want 2: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], "line of a long file") {
+		t.Errorf("the first read must be whole: %q", got[0])
+	}
+	if got[1] != repeatNote {
+		t.Errorf("the identical second read must be the note, got %q", got[1])
+	}
+}
+
+// A file that changed between two reads is sent whole the second time: the model is
+// never told "unchanged" about something that changed.
+func TestACollapsedReadNeverHidesAFileThatChanged(t *testing.T) {
+	dir := projectDir(t)
+	path := filepath.Join(dir, "big.txt")
+	one := strings.Repeat("old line of a long file\n", 60)
+	two := strings.Repeat("new line of a long file\n", 60)
+	if err := os.WriteFile(path, []byte(one), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f := setUpFake(t)
+	f.script = []scripted{
+		{name: "read", args: `{"path":"big.txt"}`},
+		{name: "write", args: `{"path":"big.txt","content":` + strconv.Quote(two) + `}`},
+		{name: "read", args: `{"path":"big.txt"}`},
+		{text: "ok"},
+	}
+	ctx, err := withTools(context.Background(), dir, editsAllow, nil, func(chatToolNotification) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := chatSendEffort(ctx, "go", "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(path); string(b) != two {
+		t.Fatalf("the write did not happen, so this test proves nothing: %q", b[:30])
+	}
+	got := readResultsOf(f, 3)
+	last := got[len(got)-1]
+	if last == repeatNote || !strings.Contains(last, "new line of a long file") {
+		t.Errorf("the changed file must be sent whole, got %q", last)
+	}
+}
+
+func TestOnlyBigIdenticalReadsListsAndSearchesAreCollapsed(t *testing.T) {
+	big := strings.Repeat("x", minRepeatBytes+10)
+	mk := func(name, text string, isErr bool) (*turn.ToolCall, *turn.ToolResult) {
+		return &turn.ToolCall{Name: name, Arguments: json.RawMessage(`{"a":1}`)},
+			&turn.ToolResult{IsError: isErr, Content: []turn.ContentBlock{{Type: turn.BlockText, Text: text}}}
+	}
+	cases := []struct {
+		name, text string
+		isErr      bool
+		collapsed  bool
+	}{
+		{"read", big, false, true},
+		{"list", big, false, true},
+		{"grep", big, false, true},
+		{"read", big, true, false},                      // an error is not "unchanged"
+		{"read", strings.Repeat("x", 20), false, false}, // too short to be worth a note
+		{"run", big, false, false},                      // a command can give another result each time
+		{"write", big, false, false},
+	}
+	for _, c := range cases {
+		seen := map[string]string{}
+		call, first := mk(c.name, c.text, c.isErr)
+		collapseRepeat(seen, call, first)
+		call2, second := mk(c.name, c.text, c.isErr)
+		collapseRepeat(seen, call2, second)
+		if got := second.Content[0].Text == repeatNote; got != c.collapsed {
+			t.Errorf("%s err=%v len=%d: collapsed = %v, want %v", c.name, c.isErr, len(c.text), got, c.collapsed)
+		}
+		if first.Content[0].Text == repeatNote {
+			t.Errorf("%s: the first result must never be collapsed", c.name)
+		}
+	}
+}
+
+// "The same call" means the same tool on the same path: two different files that happen
+// to hold the same text are each sent whole, and a file read, then another, then the
+// first again is still recognised as repeated.
+func TestARepeatIsJudgedPerCallNotPerTool(t *testing.T) {
+	dir := projectDir(t)
+	body := strings.Repeat("shared text of a long file\n", 40)
+	for _, n := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := setUpFake(t)
+	f.script = []scripted{
+		{name: "read", args: `{"path":"a.txt"}`},
+		{name: "read", args: `{"path":"b.txt"}`},
+		{name: "read", args: `{"path":"a.txt"}`},
+		{text: "ok"},
+	}
+	ctx, _ := collect(t, dir)
+	if _, err := chatSendEffort(ctx, "go", "", "", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	got := readResultsOf(f, 3)
+	if len(got) != 3 {
+		t.Fatalf("results = %d", len(got))
+	}
+	if got[0] == repeatNote || got[1] == repeatNote {
+		t.Errorf("a first read of a path must be whole: %q / %q", got[0], got[1])
+	}
+	if got[2] != repeatNote {
+		t.Errorf("a.txt read again must be the note, got %q", got[2])
 	}
 }

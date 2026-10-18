@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -38,16 +39,17 @@ type fakeLLM struct {
 	failHeader string
 	// rate, when set, gives the rate-limit headers of each chat answer (by call
 	// number, from 1): the requests left and the reset. Empty strings send none.
-	rate     func(call int) (remaining, reset string)
-	calls    int      // chat requests seen
-	efforts  []string // reasoning_effort of each chat request ("" when absent)
-	thinking []string // thinking.type of each chat request ("" when absent)
-	models   []string
-	status   int
-	streams  int      // chat requests that asked for server-sent events
-	think    []string // reasoning fragments a streamed answer sends first
-	script   []scripted
-	tools    [][]string // names of the tools offered with each chat request
+	rate      func(call int) (remaining, reset string)
+	calls     int      // chat requests seen
+	maxTokens []int    // max_tokens of each chat request, refused ones included
+	efforts   []string // reasoning_effort of each chat request ("" when absent)
+	thinking  []string // thinking.type of each chat request ("" when absent)
+	models    []string
+	status    int
+	streams   int      // chat requests that asked for server-sent events
+	think     []string // reasoning fragments a streamed answer sends first
+	script    []scripted
+	tools     [][]string // names of the tools offered with each chat request
 	// emptyNext makes the next N chat requests answer with no text at all, finishing
 	// with emptyFinish ("stop" when empty).
 	emptyNext   int
@@ -97,6 +99,14 @@ func newFakeLLM(t *testing.T, models ...string) *fakeLLM {
 			json.NewEncoder(w).Encode(map[string]any{"data": data})
 		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/chat/completions"):
 			f.calls++
+			if raw, err := io.ReadAll(r.Body); err == nil {
+				var peek struct {
+					MaxTokens int `json:"max_tokens"`
+				}
+				json.Unmarshal(raw, &peek)
+				f.maxTokens = append(f.maxTokens, peek.MaxTokens)
+				r.Body = io.NopCloser(bytes.NewReader(raw))
+			}
 			if f.delay > 0 {
 				time.Sleep(f.delay)
 			}

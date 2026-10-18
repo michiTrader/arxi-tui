@@ -208,7 +208,11 @@ func canonicalOpenAIResponse(resp *chatResponse) (turn.Response, error) {
 		}
 		call, err := turn.NewToolCall(wire.ID, wire.Function.Name, []byte(rawArgs))
 		if err != nil {
-			return out, fmt.Errorf("provider tool call %q: %w", wire.ID, err)
+			// Valid JSON that is not a call's arguments (a bare number, a list, a
+			// stream that stopped at a lucky place) is as unusable as half a call, and
+			// as likely to be gone on the next ask: a refusal that is asked again, not
+			// a turn lost to "decode tool arguments".
+			return cutToolCall(out, wire.Function.Name, ""), nil
 		}
 		out.Content = append(out.Content, turn.ContentBlock{Type: turn.BlockToolCall, ToolCall: &call})
 		kept++
