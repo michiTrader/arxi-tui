@@ -2123,6 +2123,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// below so Esc closes the bar before it can stop a turn.
 						panicGesture.Reset()
 						find.key(ev.Key)
+					} else if _, userBound := effBeh().boundActions(ev.Key); isCtrlF(ev.Key) && !userBound && !slashMenuOpen(input) && !hasFindBar(doc) {
+						// Say why nothing opens: a scene saved before the find bar existed, or
+						// one written by hand, has no bar to open.
+						panicGesture.Reset()
+						sceneNotice = noFindBarNotice
 					} else if ev.Key.Type == term.KeyEscape && !slashMenuOpen(input) && cancelRunningTurn(drv) {
 						// Esc stops the turn in flight. A line starting with "/" is a
 						// menu, and there Esc keeps its meaning of closing it, so a menu
