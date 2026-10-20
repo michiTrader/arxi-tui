@@ -91,8 +91,10 @@ func settingChoiceIs(key, fragment string) bool {
 // before the filter; filter is what narrows the rows.
 //
 // The value stage steps aside as soon as the fragment cannot be a pick: `/settings
-// autocompact 75` must reach the typed surface (75 is a valid percentage the rows do not
-// list), and offering an empty menu there would make Enter do nothing at all.
+// chat.light zzz` must reach the typed surface so Enter refuses it, and offering an empty
+// menu there would make Enter do nothing at all. The factory spelling `-` needs no case of
+// its own: no value a row offers contains a hyphen, so `-` matches nothing and steps aside
+// (a test holds that, because the day a value gains a hyphen `-` would stop resetting).
 func settingsMenuStage(input string) (key, prefix, filter string, open bool) {
 	rest, in := menuOpen(settingsPrefix, input)
 	if !in {
@@ -101,7 +103,7 @@ func settingsMenuStage(input string) (key, prefix, filter string, open bool) {
 	first, tail, spaced := strings.Cut(rest, " ")
 	if spaced && isSettingKey(first) && settingChoices(first) != nil {
 		tail = strings.TrimLeft(tail, " ")
-		if tail != "-" && !settingChoiceIs(first, tail) && settingChoiceMatches(first, tail) {
+		if !settingChoiceIs(first, tail) && settingChoiceMatches(first, tail) {
 			return first, settingsPrefix + first + " ", tail, true
 		}
 		return "", "", "", false

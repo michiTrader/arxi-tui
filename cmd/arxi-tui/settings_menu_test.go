@@ -275,3 +275,19 @@ func TestLoopAPickedValueThatTheRuleRefusesChangesNothing(t *testing.T) {
 		t.Errorf("a refused value was written: %s", b)
 	}
 }
+
+// `/settings <name> -` puts the factory value back, and it reaches the typed surface only
+// because no row's value contains a hyphen, so the fragment "-" matches no row and the menu
+// steps aside. A value with a hyphen would turn that line into a menu that swallows the Enter.
+func TestNoOfferedValueContainsAHyphenSoTheFactoryDashStaysTheTypedLines(t *testing.T) {
+	for _, k := range settingsKeys {
+		for _, c := range settingChoices(k) {
+			if strings.Contains(c, "-") {
+				t.Errorf("%s offers %q: `/settings %s -` would match it and open the menu instead of restoring the factory value; give the menu an explicit case for \"-\" first", k, c, k)
+			}
+		}
+	}
+	if _, _, _, open := settingsMenuStage("/settings chat.light -"); open {
+		t.Error("`/settings chat.light -` must be the typed surface's: it restores the factory value")
+	}
+}
