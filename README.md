@@ -306,7 +306,6 @@ accepted. The autocompact rows are at the bottom of the same menu, as they alway
 shown one and shows a hidden one, and the menu stays open on it. It never offers the input, the
 menus, or anything that contains the input, because hiding those leaves a screen you cannot undo it
 from; `/ui hide <id>` still hides any node by hand. Hidden parts are for this session only.
-
 **See every key, and change the ones that can change.** `/keys` opens a list of the menu keys, the
 shortcuts you bound and every fixed key, each with what it does; type to narrow it (`/keys scroll`).
 Enter on a menu key (`menu next`, `menu pick`...) lists the keys it can have: Enter on a key adds it,
