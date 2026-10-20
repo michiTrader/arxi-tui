@@ -380,10 +380,10 @@ func TestLoopABadSettingIsAWarningAndNothingIsKept(t *testing.T) {
 func TestLoopTheAutocompactMenuStillOpensOnBareSettings(t *testing.T) {
 	t.Setenv(configDirEnv, t.TempDir())
 	t.Setenv(historyEnv, t.TempDir())
-	if _, open := settingsMenuOpen("/settings "); !open {
+	if _, _, _, open := settingsMenuStage("/settings "); !open {
 		t.Error("the menu must still open on '/settings '")
 	}
-	if _, open := settingsMenuOpen("/settings list"); open {
+	if _, _, _, open := settingsMenuStage("/settings list"); open {
 		t.Error("the menu must step aside for '/settings list'")
 	}
 }

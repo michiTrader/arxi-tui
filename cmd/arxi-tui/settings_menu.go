@@ -191,3 +191,13 @@ func settingPickNotice(key string) string {
 	return fmt.Sprintf("%s is %s — %s. Type the new value and press enter (- puts the factory value back)",
 		key, strconvQuote(uiText(key)), firstClause(d.role))
 }
+
+// settingsValueMenuOpen is whether the line is in the second stage, where Enter picks a
+// row. The typed surface also recognises such a line (`/settings chat.scrollbar n` is a
+// setting and a value), and it is checked earlier in the loop, so without this it takes
+// the Enter first and reads the half-typed fragment "n" as the value: refused, and the
+// row that was highlighted is never picked.
+func settingsValueMenuOpen(input string) bool {
+	key, _, _, open := settingsMenuStage(input)
+	return open && key != ""
+}

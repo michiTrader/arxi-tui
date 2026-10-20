@@ -122,16 +122,6 @@ func settingsAfterPick(cur autoCompactSetting, pick string) autoCompactSetting {
 	return cur
 }
 
-// settingsMenuOpen is whether the autocompact menu owns the line. A `/settings list` or
-// `/settings <name> <value>` line is the settings surface's (settings_surface.go), so the
-// menu steps aside for it: the overlay, its keys and the Enter all ask this one function.
-func settingsMenuOpen(input string) (string, bool) {
-	if _, surface := settingsSurfaceLine(input); surface {
-		return "", false
-	}
-	return menuOpen(settingsPrefix, input)
-}
-
 func settingsCommand(input string, sel int, cat string) bool {
 	return menuCommand("settings", input, sel, cat)
 }

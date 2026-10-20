@@ -1553,6 +1553,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// when the stage changes, because each stage lists different things.
 			if !settingsMn.loaded || settingsShown != skey {
 				settingsMn.setRows(settingsRows(skey, autoCompact, hubWindow))
+				if skey == "" {
+					// setRows starts on the row in force, which at this stage is the
+					// autocompact one at the very bottom: the menu would open on its
+					// last page and hide every setting. Start at the top.
+					settingsMn.sel = 0
+				}
 				settingsShown = skey
 			}
 			state.ModelActive = true
@@ -2385,7 +2391,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								keepScene("/ui color: " + tok + " is now " + styleWords(theme.Resolve(tok)))
 							}
 							input, caret = "", 0
-						} else if sargs, ok := settingsSurfaceLine(input); ev.Key.Type == term.KeyEnter && ok {
+						} else if sargs, ok := settingsSurfaceLine(input); ev.Key.Type == term.KeyEnter && ok && !settingsValueMenuOpen(input) {
 							// /settings list | <name> | <name> <value>: the settings
 							// surface (settings_surface.go). A change is the same one
 							// /ui text makes, kept in the same texts.json.
