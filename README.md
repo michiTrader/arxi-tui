@@ -307,6 +307,17 @@ shown one and shows a hidden one, and the menu stays open on it. It never offers
 menus, or anything that contains the input, because hiding those leaves a screen you cannot undo it
 from; `/ui hide <id>` still hides any node by hand. Hidden parts are for this session only.
 
+**See every key, and change the ones that can change.** `/keys` opens a list of the menu keys, the
+shortcuts you bound and every fixed key, each with what it does; type to narrow it (`/keys scroll`).
+Enter on a menu key (`menu next`, `menu pick`...) lists the keys it can have: Enter on a key adds it,
+or takes it away if it already has it, and the last row (`factory`) puts the factory keys back. Enter
+on any other row explains it and changes nothing. A key you want that is not offered is typed:
+`/keys next alt+n`. `/keys <key> <action>` binds a shortcut and `/keys <key> off` frees it (the same
+as `/ui key`); `/keys list` prints everything into the conversation. A change is kept in
+`behaviour.json`, checked by the rule `/ui menukeys` and `/ui key` use (ctrl+c refused, a key that
+would do two things refused, a plain letter refused), and `/ui undo` takes it back. The fixed keys
+(the editor, history, scroll, ctrl+o, ctrl+f...) are listed but cannot be moved in this version.
+
 **Every setting in one place.** `/settings list` prints each setting with its value, what it
 does, and its factory value when you changed it; `/settings <name>` explains one in full;
 `/settings <name> <value>` changes it (a bad value is refused with the reason, and nothing is

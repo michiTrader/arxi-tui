@@ -1,5 +1,15 @@
 # Pending work
 
+## Done since: `/keys`, every key in one place (branch feat/keys-menu)
+
+- Step B of "the keys": `/keys` opens a list of the six menu keys, your own shortcuts and every fixed key with what it does, narrowed by typing. Enter on a menu key opens the keys it can take; a pick adds or removes that key and `factory` puts the originals back. It goes through `applyBehaviourPatch`, the one rule behind `/ui menukeys` and `/ui key`, and is kept in `behaviour.json`. Typed lines: `/keys <action> <key>`, `/keys <key> <action>`, `/keys <key> off`, `/keys list`.
+- New file `cmd/arxi-tui/keys_menu.go`; `main.go` only routes to it; `keys` added to `fold.Commands`.
+- The list is a declared registry (`factoryKeys`), and the handlers still read the keys themselves. Each row carries a probe that asks the real handler, and a test runs every probe, so a row that drifts from the code fails. Rows with no probe (esc, enter, tab, the wheel, which are inline in the loop) are NOT guarded by it; that is step A's work.
+- Decision, and why: a pick is built over the user's own layer, not the folder's (a pick must never copy a project's keys into the user's file); removing a menu action's last key is refused (an action needs one); returning to the factory keys deletes the entry instead of keeping a copy of them.
+- Tests: 21 (registry against the handlers, no key listed twice, ctrl+c fixed on every path, stage reading, rows, offered rows are all accepted by the rule, typed lines, real loop: open, narrow, pick-and-keep, typed key outside the offer, fixed row explains itself, `/keys list`, a moved key really steers /mode). Mutations: 9 on the new code; three survived at first (the dash/`factory` special case was dead code, so it was removed and the assumption became a test; the "leave out owned keys" filter had no test) and a test now kills each.
+- NOT done: the fixed keys cannot be moved; step A (freeze the factory keys as a contract in `docs/` and a test that fails when one changes by accident) waits for the owner to try `/keys` and decide which keys are final.
+- NOT verified: a real terminal, and above all whether Windows Terminal / PowerShell deliver ctrl/alt/shift+arrows, which decides which of the fixed scroll keys are worth keeping. The owner has not said which terminal is used.
+
 ## Done since: the settings menu hides and shows parts of the screen (branch feat/hidden-parts)
 
 - Closes "settings that are only a `/ui` command": the parts you can hide are now a stage of the `/settings` menu (`hidden`), one row per part, Enter toggles it and the menu stays open on the same row. Session only, as `/ui hide` is; nothing is written.

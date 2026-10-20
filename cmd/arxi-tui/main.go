@@ -888,6 +888,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// settingsShown is the stage of the /settings menu the rows were read for ("" is the
 	// list of settings, otherwise the setting whose values are listed).
 	var settingsShown string
+	// keysMn is the /keys menu and keysShown the stage its rows were read for (keys_menu.go).
+	var keysMn modelMenu
+	var keysShown string
 	// autoCompactCh wakes the loop to try the autocompact again: the turn_done that
 	// asks for it is emitted a moment before the session frees itself, so the first
 	// try can meet "busy" (autoCompactTry).
@@ -1274,6 +1277,24 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		}
 	}
 
+	// applyKeysOutcome carries out what one /keys line decided. The typed line and a pick in
+	// the /keys menu both end here, so a key changed either way is validated, kept and
+	// confirmed by the same code as /ui key and /ui menukeys.
+	applyKeysOutcome := func(out keysOutcome) {
+		switch {
+		case out.err != "":
+			collected = appendLocalWarning(collected, out.err)
+		case out.changed:
+			userBeh = out.next
+			activate()
+			recomposeTheme()
+			keepScene(out.note)
+		default:
+			collected = appendLocalNote(collected, out.note)
+		}
+		keysMn.loaded = false
+	}
+
 	// ---- what the user's behaviour runs (behaviour.go) ----------------------------
 	//
 	// actionQ holds actions waiting to run. A key, a command of the user's or a hook
@@ -1569,6 +1590,18 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			state.ModelActive = true
 			state.ModelMatches, state.ModelSelected = settingsMn.view(filter)
+		} else if kact, _, filter, open := keysStage(input); open && hub == nil {
+			// `/keys ` borrows the same overlay: first every key, then, once a menu
+			// action is picked, the keys it can have (keys_menu.go).
+			if !keysMn.loaded || keysShown != kact {
+				keysMn.setRows(keysRows(kact, effBeh()))
+				if kact == "" {
+					keysMn.sel = 0
+				}
+				keysShown = kact
+			}
+			state.ModelActive = true
+			state.ModelMatches, state.ModelSelected = keysMn.view(filter)
 		} else if filter, open := modeMenuOpen(input); open && hub == nil {
 			// `/mode ` borrows the same overlay.
 			if !modeMn.loaded {
@@ -1601,6 +1634,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		} else if slashMenuOpen(input) {
 			effortMn.loaded = false
 			settingsMn.loaded = false
+			keysMn.loaded = false
 			modeMn.loaded = false
 			resumeMn.loaded = false
 			styleMn.loaded = false
@@ -2403,6 +2437,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// /ui text makes, kept in the same texts.json.
 							applySettingsOutcome(runSettingsSurface(sargs, userWords, autoCompact, uiHidden))
 							input, caret, slashSel = "", 0, 0
+						} else if kargs, ok := keysTypedLine(input); ev.Key.Type == term.KeyEnter && ok {
+							// /keys list | <action> <key> | <key> <action> | <key> off:
+							// the keys surface (keys_menu.go), kept in the same behaviour.json.
+							applyKeysOutcome(runKeysLine(kargs, userBeh, effBeh()))
+							input, caret, slashSel = "", 0, 0
 						} else if key, val, ok := uiTextCommand(input); ev.Key.Type == term.KeyEnter && ok {
 							// /ui text <key> [sentence]: the same wording change the agent
 							// proposes, typed by the user, so it is not asked about.
@@ -2500,6 +2539,28 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 									applySettingsOutcome(runSettingsSurface(skey+" "+pick, userWords, autoCompact, uiHidden))
 								}
 								settingsMn.loaded = false
+							}
+						} else if kact, kpre, _, open := keysStage(input); open {
+							// The `/keys ` menu: same keys. At the first stage a pick of a
+							// menu action leaves its line in the input (the second stage);
+							// any other row explains itself. At the second a pick is the key,
+							// changed through the same code as the typed line.
+							var pick string
+							input, caret, pick = choiceMenuKey(&keysMn, kpre, input, caret, ev.Key)
+							if pick != "" {
+								if kact == "" {
+									line, note := keysPick(pick, effBeh())
+									if line != "" {
+										input = line
+										caret = len([]rune(input))
+										slashSel = 0
+									} else if note != "" {
+										collected = appendLocalNote(collected, note)
+									}
+								} else {
+									applyKeysOutcome(runKeysLine(kact+" "+pick, userBeh, effBeh()))
+								}
+								keysMn.loaded = false
 							}
 						} else if _, open := styleMenuOpen(input); open {
 							// The `/style ` menu: same keys; a pick changes how your
@@ -2651,6 +2712,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							caret = len([]rune(input))
 							slashSel = 0
 							settingsMn.loaded = false
+						} else if ev.Key.Type == term.KeyEnter && keysCommand(input, slashSel, slashCat) {
+							input = keysPrefix
+							caret = len([]rune(input))
+							slashSel = 0
+							keysMn.loaded = false
 						} else if ev.Key.Type == term.KeyEnter && effortCommand(input, slashSel, slashCat) {
 							input = effortPrefix
 							caret = len([]rune(input))
