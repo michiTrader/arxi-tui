@@ -14,7 +14,7 @@ components, windows, effects, widgets, voice as a package). **Nothing of that de
   (the model draws the screen as text at a width and state it chooses, or as a proposed `ui_edit` would leave it,
   without applying or asking; plain text, no colours). `ui_inspect` is the option `inspect:true`
   of `ui_preview` (why each node is drawn or hidden, and the Tab order). `ui_test` is `save`/`expect`/`forget` of `ui_preview`.
-  UI history is done (below). Next in A: `/ui export` and `/ui import`.
+  UI history and `/ui export`/`/ui import` are done (below), which closes phase A. Next: phase B (shells as data, scenarios 1 to 3).
 - `ui_simulate` is the option `keys` of `ui_preview` (names like `down enter ctrl+c`, `type:<text>`, `paste:<text>`;
   combinable with `change` to try a proposal). The keys run the real `loop()` in a COPY of the program
   (`arxi-tui __simulate-ui`, same binary, no new dependency): its own temporary folders, a short environment with no
@@ -39,6 +39,17 @@ components, windows, effects, widgets, voice as a package). **Nothing of that de
   (the oldest unnamed goes first, never the newest), 20 names (a name moves to the version that takes it), 2 MB
   of file. NOT in a version: packages (they have their own delta in the undo file) and `ui_tests.json`, so a restore
   never rewinds them. An unreadable history file is reported and left as it is. Cost: no tool slot, no new dependency.
+- `/ui export [file]` and `/ui import <file>` (typed by the user; the model has no tool for either): the interface as ONE
+  JSON file `{format:"arxi-interface", version:1, scene, tokens, texts, behaviour}`, each part the same document
+  that is saved. Not in the file: packages (programs with their own permissions: a file from someone else must not
+  install any), `ui_tests.json` and the history. Export never overwrites (a name that exists is refused; no name
+  means `arxi-interface-<date>.json` in the current folder) and refuses when nothing of yours is saved. Import checks
+  the format and version, refuses unknown fields and trailing data, loads the four parts with the same parsers a change
+  by the model goes through, and refuses a layout with no root; if anything fails nothing is touched. It REPLACES the
+  layout, colours, words and behaviour, goes through the same step as a restore (so `/ui undo` returns and it is a
+  version in `/ui history`), names the commands and keys the file adds, and is refused with `-scene`. Max 1 MB.
+  NOT done: no signing or trust prompt for a file of unknown origin beyond that listing; no merge of one part of a
+  file; nothing is imported from a URL.
 - Cost of `ui_preview` on a `/ui` turn: 3 of the 8 client tools (so two package tools are dropped where one fit
   before, with the usual notice) and about 560 more bytes of tool definitions on those turns only.
 

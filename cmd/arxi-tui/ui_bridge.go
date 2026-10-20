@@ -879,7 +879,7 @@ func uiTypedLine(line string) bool {
 		return ok
 	case "text", "animate", "key", "menukeys":
 		return len(f) >= 3
-	case "history":
+	case "history", "export", "import":
 		return true
 	}
 	for _, v := range patch.Verbs() {
