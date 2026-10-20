@@ -196,7 +196,7 @@ func (b *uiBridge) guideText() string {
 		return ""
 	}
 	cwd, _ := os.Getwd()
-	return uiGuide(doc, thm) + "\n" + behaviourGuide(b.behaviourNow()) + "\n" + packagesGuide(loadAllPackages(cwd, b.behaviourNow())) + "\n" + scenariosGuide()
+	return uiGuide(doc, thm) + "\n" + behaviourGuide(b.behaviourNow()) + "\n" + packagesGuide(loadAllPackages(cwd, b.behaviourNow())) + "\n" + scenariosGuide() + "\n" + historyGuide()
 }
 
 // call runs one tool call. ask puts a change to the user and blocks until they decide.
@@ -879,6 +879,8 @@ func uiTypedLine(line string) bool {
 		return ok
 	case "text", "animate", "key", "menukeys":
 		return len(f) >= 3
+	case "history":
+		return true
 	}
 	for _, v := range patch.Verbs() {
 		if v == f[1] {

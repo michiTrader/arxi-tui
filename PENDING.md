@@ -14,7 +14,7 @@ components, windows, effects, widgets, voice as a package). **Nothing of that de
   (the model draws the screen as text at a width and state it chooses, or as a proposed `ui_edit` would leave it,
   without applying or asking; plain text, no colours). `ui_inspect` is the option `inspect:true`
   of `ui_preview` (why each node is drawn or hidden, and the Tab order). `ui_test` is `save`/`expect`/`forget` of `ui_preview`.
-  Next in A: UI history and `/ui export`.
+  UI history is done (below). Next in A: `/ui export` and `/ui import`.
 - `ui_simulate` is the option `keys` of `ui_preview` (names like `down enter ctrl+c`, `type:<text>`, `paste:<text>`;
   combinable with `change` to try a proposal). The keys run the real `loop()` in a COPY of the program
   (`arxi-tui __simulate-ui`, same binary, no new dependency): its own temporary folders, a short environment with no
@@ -31,6 +31,14 @@ components, windows, effects, widgets, voice as a package). **Nothing of that de
   edit. NOT done: no rerun after what the user types or `/ui undo`; no automatic rollback of a change that breaks a
   test (the change is the user's to decide); packages and project settings are not in the copy, so a test cannot
   cover them. Cost: no tool slot; definitions 2494 B of the 2500 B ceiling (the detail is in `ui_guide`).
+- UI history: every kept change, `/ui undo`, `/ui reset` and restore is a version of the four documents
+  (scene, theme, texts, behaviour), kept in `ui_history.json` in the config folder. The user types `/ui history`
+  (list, newest first, `now` marks the current one), `/ui history diff <n|name>`, `/ui history name <n> <name>` and
+  `/ui history restore <n|name>`. Restore is the USER's only: the model has no tool for it and its guide says so.
+  A restore writes the current state to `interface.prev.json`, so `/ui undo` still returns. Limits: 50 versions
+  (the oldest unnamed goes first, never the newest), 20 names (a name moves to the version that takes it), 2 MB
+  of file. NOT in a version: packages (they have their own delta in the undo file) and `ui_tests.json`, so a restore
+  never rewinds them. An unreadable history file is reported and left as it is. Cost: no tool slot, no new dependency.
 - Cost of `ui_preview` on a `/ui` turn: 3 of the 8 client tools (so two package tools are dropped where one fit
   before, with the usual notice) and about 560 more bytes of tool definitions on those turns only.
 

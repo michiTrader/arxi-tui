@@ -1268,6 +1268,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			return
 		}
 		sceneNotice = summary + " · saved (/ui undo takes it back)"
+		if err := recordVersion(summary); err != nil {
+			sceneNotice += "; not kept in /ui history: " + err.Error()
+		}
 	}
 	keepScene := func(summary string) { keepSceneWith(summary, nil) }
 
@@ -2419,6 +2422,27 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								} else {
 									sceneNotice = "/ui: interface mode off. Messages are an ordinary chat again"
 								}
+							}
+							input, caret, slashSel = "", 0, 0
+						} else if hargs, ok := uiHistoryLine(input); ev.Key.Type == term.KeyEnter && ok {
+							// /ui history [list | diff | restore | name]: the versions of the
+							// saved interface (ui_history.go). Typed by the user, never asked.
+							out := runHistoryLine(hargs, persistsScene(doc))
+							switch {
+							case out.err != "":
+								collected = appendLocalWarning(collected, out.err)
+							case out.restored:
+								if next, cols, words, bh, err := loadInterface(out.state); err != nil {
+									collected = appendLocalWarning(collected, "/ui history: "+err.Error())
+								} else {
+									doc, userCols, userWords, userBeh = next, cols, words, bh
+									reloadPackages()
+									recomposeTheme()
+									collected = appendLocalNote(collected, out.note)
+									sceneNotice = "/ui history: " + out.label
+								}
+							default:
+								collected = appendLocalNote(collected, out.note)
 							}
 							input, caret, slashSel = "", 0, 0
 						} else if what, ok := uiHistoryCommand(input); ev.Key.Type == term.KeyEnter && ok {
@@ -3984,8 +4008,12 @@ func applyUIHistory(what string, doc **scene.Document) (string, userTokens, user
 		return "/ui " + what + ": this scene was started with -scene; the saved interface was changed and shows next time", nil, nil, behaviour{}, false
 	}
 	*doc = next
+	histNote := ""
+	if err := recordVersion("/ui " + what); err != nil {
+		histNote = "; not kept in /ui history: " + err.Error()
+	}
 	if what == "undo" {
-		return "/ui undo: the interface is back as it was before the last change", cols, words, bh, true
+		return "/ui undo: the interface is back as it was before the last change" + histNote, cols, words, bh, true
 	}
 	return "/ui reset: the built-in interface is back (/ui undo brings yours back)", cols, words, bh, true
 }
