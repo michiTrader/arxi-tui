@@ -315,7 +315,7 @@ on any other row explains it and changes nothing. A key you want that is not off
 as `/ui key`); `/keys list` prints everything into the conversation. A change is kept in
 `behaviour.json`, checked by the rule `/ui menukeys` and `/ui key` use (ctrl+c refused, a key that
 would do two things refused, a plain letter refused), and `/ui undo` takes it back. The fixed keys
-(the editor, history, scroll, ctrl+o, ctrl+f...) are listed but cannot be moved in this version.
+(the editor, history, scroll, ctrl+o, ctrl+f...) are listed but cannot be moved in this version. The factory keys are a frozen contract, `docs/KEYS.md`, and a test fails if one changes without it; `arxi-tui -probe-keys` shows which keys your terminal delivers.
 
 **Every setting in one place.** `/settings list` prints each setting with its value, what it
 does, and its factory value when you changed it; `/settings <name>` explains one in full;
