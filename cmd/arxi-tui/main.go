@@ -173,6 +173,11 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
 var version = "dev"
 
 func main() {
+	// ui_preview with keys runs the real loop in a copy of this program that has folders
+	// of its own and no way out (ui_simulate.go); simulateMain refuses to run otherwise.
+	if len(os.Args) == 2 && os.Args[1] == simulateArg {
+		os.Exit(simulateMain(os.Stdin, os.Stdout))
+	}
 	// -scene names the document to boot. Its default is the shipped SOBRIA
 	// scene; a path lets a user (or a tester) boot any document —
 	// testdata/ANIMATION.json to see the motion props, testdata/SUBAGENTS.json

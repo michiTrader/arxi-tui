@@ -266,6 +266,10 @@ func (c clipHelper) run(text string) error {
 	return cmd.Run()
 }
 
+// lookPath finds a clipboard program. A simulation (ui_simulate.go) replaces it so that
+// pressing keys in one never reaches the user's real clipboard.
+var lookPath = exec.LookPath
+
 // copyToClipboard sends text to the terminal (OSC 52) and to every helper that runs. It
 // reports what it could not do; an OSC 52 write that the terminal drops is invisible.
 func copyToClipboard(tty interface{ Write([]byte) (int, error) }, text string) (note string) {
@@ -273,7 +277,7 @@ func copyToClipboard(tty interface{ Write([]byte) (int, error) }, text string) (
 		text = strings.ToValidUTF8(text, "�")
 	}
 	viaHelper := false
-	for _, h := range clipHelpers(runtime.GOOS, exec.LookPath) {
+	for _, h := range clipHelpers(runtime.GOOS, lookPath) {
 		if h.run(text) == nil {
 			viaHelper = true
 			break
