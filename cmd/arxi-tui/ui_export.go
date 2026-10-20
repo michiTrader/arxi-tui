@@ -218,6 +218,14 @@ func runImport(args string, persists bool) historyOutcome {
 	}
 	fi, err := os.Stat(path)
 	if err != nil {
+		// The reason is written here, not taken from the system: Windows answers
+		// in the language of the machine ("El sistema no puede encontrar el
+		// archivo especificado"), so a user whose interface is English reads a
+		// refusal in Spanish, and a test that pins the wording would pin it per
+		// platform. The common case has a name the user can act on.
+		if os.IsNotExist(err) {
+			return fail(path + ": no such file")
+		}
 		return fail(err.Error())
 	}
 	if fi.IsDir() {

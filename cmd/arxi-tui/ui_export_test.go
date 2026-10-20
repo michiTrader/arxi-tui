@@ -279,10 +279,13 @@ func TestImportIsRefusedForAScenePassedWithDashScene(t *testing.T) {
 
 func TestATildePathMeansTheHomeFolder(t *testing.T) {
 	home := t.TempDir()
+	// Home is HOME on Linux and USERPROFILE on Windows; os.UserHomeDir reads
+	// whichever the platform has, so both are set or the test only passes on one.
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	got := exportPath("~/a/b.json", time.Now())
-	if got != filepath.Join(home, "a", "b.json") {
-		t.Errorf("got %s", got)
+	if want := filepath.Join(home, "a", "b.json"); got != want {
+		t.Errorf("got %s, want %s\nConsequence: ~/ exports to the wrong folder, or is read as a file name.", got, want)
 	}
 }
 
@@ -347,7 +350,12 @@ func TestARefusedImportThroughTheLoopSaysWhyOnScreen(t *testing.T) {
 	if len(sent) != 0 {
 		t.Errorf("reached the model: %q", sent)
 	}
-	if !strings.Contains(lastFrame(out), "Nothing was changed") {
+	// Folded, not raw: at 110 columns the refusal is longer than the row, so the
+	// layout wraps "Nothing was changed" onto the next row and the raw frame has
+	// two spaces there. The sentence is the decision under test; where the row
+	// broke is the layout's business. (screen() in package_loop_test.go is
+	// Linux-only, hence the expression here.)
+	if !strings.Contains(strings.Join(strings.Fields(lastFrame(out)), " "), "Nothing was changed") {
 		t.Errorf("no reason on screen:\n%s", lastFrame(out))
 	}
 }
