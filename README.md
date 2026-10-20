@@ -296,6 +296,13 @@ How the conversation is drawn:
 Blank rows at the start or end of a message, and the empty answer of a turn that only
 called tools, are not drawn, so the gaps between turns are one row and no more.
 
+**Browse the settings without knowing their names.** `/settings` opens a menu of every setting with its
+value now (and the factory one if you changed it) and what it does; type to narrow it, Enter on a
+setting lists the values it can take (`yes`/`no`, `wrap`/`hide`, the thinking levels...), and Enter
+on a value changes it, kept in `texts.json` exactly as if you had typed the line below. A setting
+that is a free number has no list: Enter leaves `/settings <name> ` in the input and says what is
+accepted. The autocompact rows are at the bottom of the same menu, as they always were.
+
 **Every setting in one place.** `/settings list` prints each setting with its value, what it
 does, and its factory value when you changed it; `/settings <name>` explains one in full;
 `/settings <name> <value>` changes it (a bad value is refused with the reason, and nothing is
