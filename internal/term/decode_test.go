@@ -65,6 +65,16 @@ var keyTable = []struct {
 	{"\x1b[1;5D", "ctrl+left"},
 	{"\x1b[1;3C", "alt+right"},
 	{"\x1b[1;2A", "shift+up"},
+	// The scroll keys /keys lists (page 3). Each is the sequence xterm, Windows Terminal
+	// and conhost (VT input) send; a decoder that lost one would leave the row listed and
+	// the key dead, and the remedy is the case here, not the list.
+	{"\x1b[1;5A", "ctrl+up"},
+	{"\x1b[1;5B", "ctrl+down"},
+	{"\x1b[1;3A", "alt+up"},
+	{"\x1b[1;3B", "alt+down"},
+	{"\x1b[1;2B", "shift+down"},
+	{"\x1b[1;5H", "ctrl+home"},
+	{"\x1b[1;5F", "ctrl+end"},
 	{"\x1b[1;4A", "alt+shift+up"},
 	{"\x1b[1;8B", "ctrl+alt+shift+down"},
 	{"\x1b[3;5~", "ctrl+delete"},
