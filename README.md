@@ -468,6 +468,9 @@ is stateless), so forgetting the history on the TUI side is the whole reset.
 
 **Phase 0 — Scene engine:** Complete and running.
 
+- **History.** Every kept change is a numbered version. `/ui history` lists them, `/ui history diff <n|name>`
+  shows what changed since one, `/ui history name <n> <name>` names it (named versions are never dropped) and
+  `/ui history restore <n|name>` brings it back (`/ui undo` then returns). Only you can restore; the model cannot.
 - ✅ Scene document parser and validator (`internal/scene`)
 - ✅ Fold over log events (`internal/fold`)
 - ✅ Render engine with all base nodes: stack, row, box, text, markdown, input,
@@ -995,6 +998,7 @@ Everything is in **`~/.arxi`**, the same on every system and from every project 
 
 | In `~/.arxi` | What |
 |---|---|
+| `ui_history.json` | the versions of the interface for `/ui history` (up to 50, named ones kept) |
 | `scene.json`, `theme.json`, `texts.json`, `behaviour.json` | the interface you shaped (layout, colours, words, keys/commands/animations); `/ui undo` and `/ui reset` work on the four together |
 | `history`, `sessions/`, `search.json`, `style` | input history, saved conversations, the search service, the message style |
 | `providers/`, `secrets/` | the providers and the API keys (written by the core) |
