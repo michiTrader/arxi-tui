@@ -167,3 +167,50 @@ func TestTheGuideTellsTheModelToLookBeforeSayingDone(t *testing.T) {
 		t.Errorf("the guide does not mention ui_preview.\nConsequence: the tool is lent but the model has no reason to call it, and keeps saying done unseen.\nRemedy: say when to use it in the LAYOUT part of uiGuide.")
 	}
 }
+
+func TestInspectSaysWhyANodeIsHiddenAndWhyItIsDrawn(t *testing.T) {
+	r := newBridgeRig(t, "ask")
+	idle := r.preview(t, `{"inspect":true}`).Text
+	if !strings.Contains(idle, "shells row  HIDDEN") {
+		t.Errorf("with no shell the shells row is not reported hidden:\n%s\nConsequence: the model adds a row, sees nothing, and edits the wrong thing.\nRemedy: report the gate the renderer evaluated.", idle)
+	}
+	busy := r.preview(t, `{"inspect":true,"shells":2}`).Text
+	if strings.Contains(busy, "shells row  HIDDEN") || !strings.Contains(busy, "shells row") {
+		t.Errorf("with two shells the shells row is reported hidden or missing:\n%s", busy)
+	}
+}
+
+func TestInspectIsOffUnlessAsked(t *testing.T) {
+	r := newBridgeRig(t, "ask")
+	if got := r.preview(t, `{}`).Text; strings.Contains(got, "TAB ORDER") || strings.Contains(got, "NODES") {
+		t.Errorf("the report is in the answer without being asked:\n%s\nConsequence: every look costs tokens the model did not want.\nRemedy: add it only for inspect:true.", got)
+	}
+}
+
+func TestInspectListsTheTabOrderIncludingAButtonAProposalAdds(t *testing.T) {
+	r := newBridgeRig(t, "ask")
+	if got := r.preview(t, `{"inspect":true}`).Text; !strings.Contains(got, "TAB ORDER: input only") {
+		t.Errorf("the factory scene has no pressable node and the report says otherwise:\n%s", got)
+	}
+	add := `{"change":{"commands":["/ui add node below_input {\"id\":\"go\",\"type\":\"button\",\"text\":\"Go\",\"on_press\":\"cmd:/help\"}"]},"inspect":true}`
+	got := r.preview(t, add).Text
+	for _, want := range []string{"go button", "on_press cmd:/help", "TAB ORDER: input, go, then the input again"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the report of a scene with a button lacks %q:\n%s\nConsequence: the model cannot check that the button can be reached with the keyboard.\nRemedy: walk the same focus ring the loop walks.", want, got)
+		}
+	}
+}
+
+func TestInspectDoesNotListWhatTheRendererSkips(t *testing.T) {
+	r := newBridgeRig(t, "ask")
+	lines := strings.Split(r.preview(t, `{"inspect":true}`).Text, "\n")
+	indent := func(row string) int { return len(row) - len(strings.TrimLeft(row, " ")) }
+	for i, l := range lines {
+		if !strings.Contains(l, "  HIDDEN (") {
+			continue
+		}
+		if i+1 < len(lines) && indent(lines[i+1]) > indent(l) {
+			t.Errorf("something inside a hidden node is listed under it: %q.\nConsequence: the model believes it is drawn and looks for the fault elsewhere.\nRemedy: stop at a node the renderer hides.", lines[i+1])
+		}
+	}
+}

@@ -50,6 +50,7 @@ type previewArgs struct {
 	Working bool            `json:"working"`
 	Shells  int             `json:"shells"`
 	Input   string          `json:"input"`
+	Inspect bool            `json:"inspect"`
 	Chat    []previewLine   `json:"chat"`
 	Change  json.RawMessage `json:"change"`
 }
@@ -67,7 +68,7 @@ func (b *uiBridge) preview(ctx context.Context, raw json.RawMessage) (res driver
 	var a previewArgs
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &a); err != nil {
-			return fail("ui_preview takes {width, height, working, shells, input, chat, change}: " + err.Error())
+			return fail("ui_preview takes {width, height, working, shells, input, inspect, chat, change}: " + err.Error())
 		}
 	}
 	if a.Width == 0 {
@@ -137,6 +138,9 @@ func (b *uiBridge) preview(ctx context.Context, raw json.RawMessage) (res driver
 	out.WriteString(" (" + strings.Join(notes, "; ") + ")\n")
 	out.WriteString(frame.Plain())
 	out.WriteString("\n")
+	if a.Inspect {
+		out.WriteString(inspectText(doc, state))
+	}
 	if bad := frame.Overflow(); len(bad) > 0 {
 		fmt.Fprintf(&out, "WARNING: rows %v are wider than %d columns and the terminal will wrap or cut them.\n", oneBased(bad), a.Width)
 	}

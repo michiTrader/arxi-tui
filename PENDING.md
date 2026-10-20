@@ -12,8 +12,13 @@ components, windows, effects, widgets, voice as a package). **Nothing of that de
 - Decided by the owner (section 10 of the design): write the tier-2 interpreter in this repo, order A, B, C,
   first visible result = shells (scenarios 1 to 3). Phase A has started: `ui_preview` is built
   (the model draws the screen as text at a width and state it chooses, or as a proposed `ui_edit` would leave it,
-  without applying or asking; plain text, no colours). Next in A: `ui_inspect`, `ui_simulate`, `ui_test`, UI
-  history and `/ui export`. It costs 3 of the 8 client tools on a `/ui` turn (so two package tools are dropped
+  without applying or asking; plain text, no colours). `ui_inspect` is the option `inspect:true`
+  of `ui_preview` (why each node is drawn or hidden, and the Tab order). Next in A: `ui_simulate`, `ui_test`, UI
+  history and `/ui export`.
+- For `ui_simulate`: the real `loop()` can be driven with `newFakeTTY` and `term.ParseKey` names, but it
+  touches state a simulation must isolate by injection (environment variables are process-wide): the config,
+  history and sessions folders, the shell registry (`shellRegistry.build`), `openBrowser`, `copyToClipboard`
+  (runs a clipboard helper) and the plugin fetcher. It costs 3 of the 8 client tools on a `/ui` turn (so two package tools are dropped
   where one fit before, with the usual notice) and about 560 more bytes of tool definitions on those turns only.
 
 ## Done since: the factory keys are a frozen contract (branch feat/keys-contract)
