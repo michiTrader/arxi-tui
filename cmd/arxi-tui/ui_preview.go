@@ -56,6 +56,10 @@ type previewArgs struct {
 	Keys    json.RawMessage `json:"keys"`
 	Chat    []previewLine   `json:"chat"`
 	Change  json.RawMessage `json:"change"`
+	// Save, Expect and Forget keep and delete a test of the interface (ui_scenarios.go).
+	Save   string   `json:"save"`
+	Expect []string `json:"expect"`
+	Forget string   `json:"forget"`
 }
 
 type previewLine struct {
@@ -80,21 +84,8 @@ func (b *uiBridge) preview(ctx context.Context, raw json.RawMessage) (res driver
 	if a.Height == 0 {
 		a.Height = previewDefH
 	}
-	if a.Width < previewMinW || a.Width > previewMaxW || a.Height < previewMinH || a.Height > previewMaxH {
-		return fail(fmt.Sprintf("width must be %d..%d and height %d..%d (a phone is about 40x20)", previewMinW, previewMaxW, previewMinH, previewMaxH))
-	}
-	if a.Shells < 0 || a.Shells > maxShells {
-		return fail(fmt.Sprintf("shells must be 0..%d", maxShells))
-	}
-	if len(a.Chat) > previewMaxChat {
-		return fail(fmt.Sprintf("chat takes at most %d lines", previewMaxChat))
-	}
-	for _, l := range a.Chat {
-		switch strings.ToLower(strings.TrimSpace(l.Role)) {
-		case "user", "assistant", "note", "error", "warn":
-		default:
-			return fail(fmt.Sprintf("chat role %q is not one of user, assistant, note, error, warn", l.Role))
-		}
+	if msg := previewFactsError(a.Width, a.Height, a.Shells, a.Chat); msg != "" {
+		return fail(msg)
 	}
 	doc, _, _, _, _ := b.snapshot()
 	if doc == nil {
@@ -106,6 +97,12 @@ func (b *uiBridge) preview(ctx context.Context, raw json.RawMessage) (res driver
 	keys, kerr := simKeysArg(a.Keys)
 	if kerr != nil {
 		return fail(kerr.Error())
+	}
+	if a.Save != "" || a.Forget != "" {
+		return b.keepScenario(ctx, a, keys)
+	}
+	if len(a.Expect) > 0 {
+		return fail("expect belongs to a test: pass save:\"<name>\" with it, or drop it")
 	}
 	if len(keys) > 0 {
 		if _, err := parseSimKeys(keys); err != nil {
@@ -168,6 +165,28 @@ func (b *uiBridge) preview(ctx context.Context, raw json.RawMessage) (res driver
 	return driver.ClientToolResult{OK: true, Text: out.String(), Arg: "interface", Summary: "Looked at the screen"}
 }
 
+// previewFactsError is what is wrong with the facts a preview, or a saved test, is asked
+// to draw, "" when they can be drawn.
+func previewFactsError(width, height, shells int, chat []previewLine) string {
+	if width < previewMinW || width > previewMaxW || height < previewMinH || height > previewMaxH {
+		return fmt.Sprintf("width must be %d..%d and height %d..%d (a phone is about 40x20)", previewMinW, previewMaxW, previewMinH, previewMaxH)
+	}
+	if shells < 0 || shells > maxShells {
+		return fmt.Sprintf("shells must be 0..%d", maxShells)
+	}
+	if len(chat) > previewMaxChat {
+		return fmt.Sprintf("chat takes at most %d lines", previewMaxChat)
+	}
+	for _, l := range chat {
+		switch strings.ToLower(strings.TrimSpace(l.Role)) {
+		case "user", "assistant", "note", "error", "warn":
+		default:
+			return fmt.Sprintf("chat role %q is not one of user, assistant, note, error, warn", l.Role)
+		}
+	}
+	return ""
+}
+
 // previewState is the folded state a screen with these facts would be drawn from. The
 // host fields are the ones the loop fills on every repaint (main.go), set the way it
 // sets them.
@@ -218,19 +237,8 @@ func (b *uiBridge) pressKeys(ctx context.Context, a previewArgs, keys []string, 
 	var out strings.Builder
 	fmt.Fprintf(&out, "screen %dx%d after pressing: %s (%s)\n", a.Width, a.Height, strings.Join(keys, " "),
 		strings.Join(append(notes, "a copy of the program ran the keys: nothing was sent, run or opened for real; packages are not in it"), "; "))
-	out.WriteString(res.Screen + "\n")
-	if res.QuitAt > 0 {
-		fmt.Fprintf(&out, "THE PROGRAM ENDED at key %d (%s).\n", res.QuitAt, keys[res.QuitAt-1])
-	}
-	if len(res.Submitted) > 0 {
-		fmt.Fprintf(&out, "SENT TO THE MODEL (%d): %s\n", len(res.Submitted), quoteAll(res.Submitted))
-	}
-	if len(res.Opened) > 0 {
-		fmt.Fprintf(&out, "BROWSER WAS ASKED TO OPEN: %s\n", quoteAll(res.Opened))
-	}
-	if len(res.Copied) > 0 {
-		fmt.Fprintf(&out, "CLIPBOARD WAS GIVEN: %s\n", quoteAll(res.Copied))
-	}
+	out.WriteString(simBody(res, keys))
+	out.WriteString("\n")
 	if res.Notice != "" {
 		fmt.Fprintf(&out, "NOTE: %s\n", res.Notice)
 	}
@@ -262,4 +270,100 @@ func interfaceOf(doc *scene.Document, u userTokens, tx userTexts, bh behaviour) 
 		st.Behaviour = string(encodeBehaviour(bh))
 	}
 	return st
+}
+
+// simBody is what the keys did, as the model reads it and as a saved test is checked
+// against: the screen after them, and a line for each thing that left the program.
+func simBody(res simResult, keys []string) string {
+	var out strings.Builder
+	out.WriteString(res.Screen + "\n")
+	if res.QuitAt > 0 {
+		fmt.Fprintf(&out, "THE PROGRAM ENDED at key %d (%s).\n", res.QuitAt, keys[res.QuitAt-1])
+	}
+	if len(res.Submitted) > 0 {
+		fmt.Fprintf(&out, "SENT TO THE MODEL (%d): %s\n", len(res.Submitted), quoteAll(res.Submitted))
+	}
+	if len(res.Opened) > 0 {
+		fmt.Fprintf(&out, "BROWSER WAS ASKED TO OPEN: %s\n", quoteAll(res.Opened))
+	}
+	if len(res.Copied) > 0 {
+		fmt.Fprintf(&out, "CLIPBOARD WAS GIVEN: %s\n", quoteAll(res.Copied))
+	}
+	return strings.TrimRight(out.String(), "\n")
+}
+
+// keepScenario saves, replaces or deletes a test of the interface, and says how the test
+// does on the interface on screen now.
+func (b *uiBridge) keepScenario(ctx context.Context, a previewArgs, keys []string) driver.ClientToolResult {
+	fail := func(text string) driver.ClientToolResult {
+		return driver.ClientToolResult{Arg: "interface", Summary: "The test was not kept", Text: text}
+	}
+	b.mu.Lock()
+	policy := b.policy
+	b.mu.Unlock()
+	if policy == policyDeny {
+		return fail("tests may not be changed in plan mode; say which test you would save instead")
+	}
+	if a.Save != "" && a.Forget != "" {
+		return fail("pass save or forget, not both")
+	}
+	if len(a.Change) > 0 && string(a.Change) != "null" {
+		return fail("a test is kept for the interface on screen: apply the change with ui_edit first (or save the test before it, to watch it fail and then pass)")
+	}
+	if a.Inspect {
+		return fail("inspect describes a screen; it is not part of a test")
+	}
+	list, err := loadScenarios()
+	if err != nil {
+		return fail(err.Error() + "\nFix or delete that file; no test was changed.")
+	}
+	if a.Forget != "" {
+		for i, s := range list {
+			if s.Name == a.Forget {
+				list = append(list[:i:i], list[i+1:]...)
+				if err := saveScenarios(list); err != nil {
+					return fail("the test could not be deleted: " + err.Error())
+				}
+				return driver.ClientToolResult{OK: true, Arg: "interface", Summary: "Deleted a test", Text: fmt.Sprintf("deleted the test %q; %d left", a.Forget, len(list))}
+			}
+		}
+		return fail(fmt.Sprintf("there is no test named %q; the saved ones are listed in ui_guide", a.Forget))
+	}
+	s := scenario{Name: a.Save, Width: a.Width, Height: a.Height, Working: a.Working, Shells: a.Shells,
+		Input: a.Input, Chat: a.Chat, Keys: keys, Expect: a.Expect}
+	if err := s.validate(); err != nil {
+		return fail(err.Error())
+	}
+	replaced := false
+	for i := range list {
+		if list[i].Name == s.Name {
+			list[i], replaced = s, true
+		}
+	}
+	if !replaced {
+		if len(list) >= maxScenarios {
+			return fail(fmt.Sprintf("there are already %d tests, the most; forget one first (forget:\"<name>\")", maxScenarios))
+		}
+		list = append(list, s)
+	}
+	if err := saveScenarios(list); err != nil {
+		return fail("the test could not be saved: " + err.Error())
+	}
+	doc, _, colors, _, texts := b.snapshot()
+	out := runScenario(ctx, interfaceOf(doc, colors, texts, b.behaviourNow()), s)
+	verb := "saved"
+	if replaced {
+		verb = "replaced"
+	}
+	var text strings.Builder
+	fmt.Fprintf(&text, "%s the test %q (%d saved). It is run again after every ui_edit you make.\n", verb, s.Name, len(list))
+	switch {
+	case out.err != "":
+		fmt.Fprintf(&text, "It could not be run now: %s", out.err)
+	case out.passed():
+		text.WriteString("It PASSES on the interface on screen now.")
+	default:
+		fmt.Fprintf(&text, "It FAILS on the interface on screen now: %s\nThis is what it saw:\n%s", strings.Join(out.failures, "; "), out.body)
+	}
+	return driver.ClientToolResult{OK: true, Arg: "interface", Summary: verb + " a test", Text: text.String()}
 }
