@@ -20,6 +20,11 @@ import (
 // TestMain keeps every test that drives loop() away from the developer's real history
 // file: Enter records a line, and a test run must not leave its prompts in ~/.config.
 func TestMain(m *testing.M) {
+	// A simulation (ui_simulate.go) runs this test binary as its child, with the folders
+	// it was given in the environment; it must not replace them with the tests' own.
+	if os.Getenv("ARXI_SIM_CHILD") == "1" {
+		os.Exit(simulateMain(os.Stdin, os.Stdout))
+	}
 	dir, err := os.MkdirTemp("", "arxi-history-test")
 	if err != nil {
 		os.Exit(1)

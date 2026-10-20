@@ -13,13 +13,26 @@ components, windows, effects, widgets, voice as a package). **Nothing of that de
   first visible result = shells (scenarios 1 to 3). Phase A has started: `ui_preview` is built
   (the model draws the screen as text at a width and state it chooses, or as a proposed `ui_edit` would leave it,
   without applying or asking; plain text, no colours). `ui_inspect` is the option `inspect:true`
-  of `ui_preview` (why each node is drawn or hidden, and the Tab order). Next in A: `ui_simulate`, `ui_test`, UI
-  history and `/ui export`.
-- For `ui_simulate`: the real `loop()` can be driven with `newFakeTTY` and `term.ParseKey` names, but it
-  touches state a simulation must isolate by injection (environment variables are process-wide): the config,
-  history and sessions folders, the shell registry (`shellRegistry.build`), `openBrowser`, `copyToClipboard`
-  (runs a clipboard helper) and the plugin fetcher. It costs 3 of the 8 client tools on a `/ui` turn (so two package tools are dropped
-  where one fit before, with the usual notice) and about 560 more bytes of tool definitions on those turns only.
+  of `ui_preview` (why each node is drawn or hidden, and the Tab order). `ui_test` is `save`/`expect`/`forget` of `ui_preview`.
+  Next in A: UI history and `/ui export`.
+- `ui_simulate` is the option `keys` of `ui_preview` (names like `down enter ctrl+c`, `type:<text>`, `paste:<text>`;
+  combinable with `change` to try a proposal). The keys run the real `loop()` in a COPY of the program
+  (`arxi-tui __simulate-ui`, same binary, no new dependency): its own temporary folders, a short environment with no
+  keys and an empty PATH (no clipboard program, no git), a refusing network, a recording browser and pretend shells.
+  The answer shows the screen after the keys, what went to the model, the addresses the browser was asked to open, the
+  clipboard and where the program ended. Not carried into the copy: packages and the project's own settings.
+  Cost: no new tool slot; the three definitions stay under 2500 B (the detail is in `ui_guide`).
+- `ui_test` is the options `save`, `expect` and `forget` of `ui_preview`: a test is the facts and keys of a call plus
+  `expect`, texts that must be in the answer (the screen after the keys and the lines under it: sent to the model,
+  browser, clipboard, where the program ended; a leading `!` means must NOT be there). Kept in `ui_tests.json` in the
+  config folder, NOT inside the interface, so `/ui undo` and `/ui reset` never take the checks away. After every
+  applied `ui_edit` each test runs in the isolated copy and the answer says `TESTS: all N pass` or which FAIL, with the
+  screen of the first two; the change stays applied. Limits: 12 tests, 8 expectations each, 60 s for all the runs of an
+  edit. NOT done: no rerun after what the user types or `/ui undo`; no automatic rollback of a change that breaks a
+  test (the change is the user's to decide); packages and project settings are not in the copy, so a test cannot
+  cover them. Cost: no tool slot; definitions 2494 B of the 2500 B ceiling (the detail is in `ui_guide`).
+- Cost of `ui_preview` on a `/ui` turn: 3 of the 8 client tools (so two package tools are dropped where one fit
+  before, with the usual notice) and about 560 more bytes of tool definitions on those turns only.
 
 ## Done since: the factory keys are a frozen contract (branch feat/keys-contract)
 
