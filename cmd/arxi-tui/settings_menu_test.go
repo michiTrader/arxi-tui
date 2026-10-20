@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"github.com/charmbracelet/x/ansi"
+	"github.com/michiTrader/arxi_tui/internal/defaultscene"
 	"github.com/michiTrader/arxi_tui/internal/fold"
+	"github.com/michiTrader/arxi_tui/internal/scene"
 )
 
 // readTexts is what texts.json holds ("" when nothing was ever kept).
@@ -289,5 +291,153 @@ func TestNoOfferedValueContainsAHyphenSoTheFactoryDashStaysTheTypedLines(t *test
 	}
 	if _, _, _, open := settingsMenuStage("/settings chat.light -"); open {
 		t.Error("`/settings chat.light -` must be the typed surface's: it restores the factory value")
+	}
+}
+
+// ---- hiding parts of the screen ---------------------------------------------------------
+
+func defaultDoc(t *testing.T) *scene.Document {
+	t.Helper()
+	doc, err := scene.ParseNamed(defaultscene.Name, defaultscene.JSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return doc
+}
+
+func partIDs(doc *scene.Document) []string {
+	var ids []string
+	for _, p := range hidableParts(doc) {
+		ids = append(ids, p.id)
+	}
+	return ids
+}
+
+func idListHas(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// The menu is one Enter away from a mistake that a typed command is not, so it must not
+// offer the two things whose hiding the user cannot undo from the screen they are left with.
+func TestTheMenuNeverOffersTheInputOrTheMenusToHide(t *testing.T) {
+	ids := partIDs(defaultDoc(t))
+	for _, never := range []string{"prompt", "menu", "cmds", "model_menu", "models"} {
+		if idListHas(ids, never) {
+			t.Errorf("%q is offered to hide: hiding it leaves a screen the user cannot type /ui show into, or hides the menu they are using; offered: %v", never, ids)
+		}
+	}
+	for _, want := range []string{"banner", "chat", "status", "where", "shells", "panels"} {
+		if !idListHas(ids, want) {
+			t.Errorf("%q is not offered to hide although the factory screen has it; offered: %v", want, ids)
+		}
+	}
+}
+
+func TestAContainerOfTheInputIsNotOfferedEither(t *testing.T) {
+	// The rule reads structure, not names: a scene of the user's own may wrap the input in a
+	// node of any id, and hiding that wrapper hides the input just the same.
+	doc, err := scene.ParseDocument([]byte(`{"root":{"type":"stack","children":[
+		{"id":"wrap","type":"stack","children":[{"id":"typing","type":"input","bind":"user.input"}]},
+		{"id":"log","type":"markdown","bind":"chat.history"}]}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := partIDs(doc)
+	if idListHas(ids, "wrap") || idListHas(ids, "typing") {
+		t.Errorf("the input or what contains it is offered to hide: %v", ids)
+	}
+	if !idListHas(ids, "log") {
+		t.Errorf("an ordinary node is not offered: %v", ids)
+	}
+}
+
+func TestTogglingAPartHidesItThenShowsItAndSaysWhich(t *testing.T) {
+	doc := defaultDoc(t)
+	hidden := map[string]bool{}
+	if n := toggleHidden(doc, hidden, "banner"); !hidden["banner"] || !strings.Contains(n, "hidden") {
+		t.Errorf("first pick: hidden=%v notice=%q; want banner hidden and said so", hidden, n)
+	}
+	if n := toggleHidden(doc, hidden, "banner"); hidden["banner"] || !strings.Contains(n, "shown again") {
+		t.Errorf("second pick: hidden=%v notice=%q; want banner shown and said so", hidden, n)
+	}
+}
+
+func TestAStaleRowCannotHideTheInput(t *testing.T) {
+	hidden := map[string]bool{}
+	n := toggleHidden(defaultDoc(t), hidden, "prompt")
+	if hidden["prompt"] || !strings.Contains(n, "not a part the menu hides") {
+		t.Errorf("a pick of the input hid it (hidden=%v) or did not refuse: %q; the check must not trust that the row was ever offered", hidden, n)
+	}
+}
+
+func TestTheHiddenRowsSayWhichPartsAreHidden(t *testing.T) {
+	doc := defaultDoc(t)
+	var shown, gone string
+	for _, r := range hiddenRows(doc, map[string]bool{"banner": true}) {
+		switch r.Ref {
+		case "banner":
+			gone = r.Provider
+		case "chat":
+			shown = r.Provider
+		}
+	}
+	if !strings.Contains(gone, "HIDDEN") || strings.Contains(shown, "HIDDEN") {
+		t.Errorf("rows do not tell hidden from shown: banner=%q chat=%q", gone, shown)
+	}
+}
+
+func TestTheHiddenStageStaysOpenEvenWhenTheFilterMatchesNothing(t *testing.T) {
+	key, _, filter, open := settingsMenuStage("/settings hidden zzzz")
+	if !open || key != settingHiddenStage || filter != "zzzz" {
+		t.Errorf("got key=%q filter=%q open=%v: with no typed form to fall to, a closed menu would send the words to the model", key, filter, open)
+	}
+}
+
+func TestTheFirstStageHasTheHiddenPartsRow(t *testing.T) {
+	rows := settingsRows("", autoCompactSetting{}, 0, nil, map[string]bool{"status": true})
+	for _, r := range rows {
+		if r.Ref == settingHiddenStage {
+			if !strings.Contains(r.Provider, "status") {
+				t.Errorf("the row does not name what is hidden: %q", r.Provider)
+			}
+			return
+		}
+	}
+	t.Error("the first stage has no hidden-parts row: the only way to hide a part from the menu is gone")
+}
+
+func TestLoopPickingAPartHidesItOnScreenAndPickingAgainBringsItBack(t *testing.T) {
+	t.Setenv(configDirEnv, t.TempDir())
+	t.Setenv(historyEnv, t.TempDir())
+	script := append(typed("/settings hidden banner"), scheduledEvent{40 * time.Millisecond, enterEvent()})
+	script = append(script, scheduledEvent{200 * time.Millisecond, enterEvent()}) // the menu stays open on the same row
+	script = append(script, exitKeys()...)
+	out, sub := runLoopDefault(t, 110, 40, script)
+	if len(sub) != 0 {
+		t.Errorf("the menu reached the model: %q", sub)
+	}
+	plain := stripANSI(out)
+	if !strings.Contains(plain, "banner is hidden for this session") {
+		t.Errorf("the first pick did not say banner is hidden:\n%s", lastFrame(out))
+	}
+	if !strings.Contains(plain, "banner is shown again") {
+		t.Errorf("the second pick did not bring it back:\n%s", lastFrame(out))
+	}
+}
+
+func TestLoopHidingAPartDoesNotTouchSavedFiles(t *testing.T) {
+	cfg := t.TempDir()
+	t.Setenv(configDirEnv, cfg)
+	t.Setenv(historyEnv, t.TempDir())
+	script := append(typed("/settings hidden banner"), scheduledEvent{40 * time.Millisecond, enterEvent()})
+	script = append(script, exitKeys()...)
+	runLoopDefault(t, 110, 40, script)
+	if b := readTexts(t, cfg); b != "" {
+		t.Errorf("a session-only hide wrote texts.json: %s", b)
 	}
 }
