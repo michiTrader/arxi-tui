@@ -306,6 +306,8 @@ accepted. The autocompact rows are at the bottom of the same menu, as they alway
 shown one and shows a hidden one, and the menu stays open on it. It never offers the input, the
 menus, or anything that contains the input, because hiding those leaves a screen you cannot undo it
 from; `/ui hide <id>` still hides any node by hand. Hidden parts are for this session only.
+**Where this is going.** `docs/DESIGN-OPEN-TUI.md` is a proposal (not built) for making every part of the interface something you can change by asking arxi: shell buttons and windows, queued messages, how tool calls are drawn, effects, a sound bar, pictures. `docs/GUARDRAILS.md` is in force now and is tested: one static binary with no C that still builds for Termux, a closed list of dependencies, a size budget, and a factory interface that does not move by accident.
+
 **See every key, and change the ones that can change.** `/keys` opens a list of the menu keys, the
 shortcuts you bound and every fixed key, each with what it does; type to narrow it (`/keys scroll`).
 Enter on a menu key (`menu next`, `menu pick`...) lists the keys it can have: Enter on a key adds it,
