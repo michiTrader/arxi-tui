@@ -182,8 +182,8 @@ func (b *uiBridge) definitions() []driver.ClientToolDef {
 				`"packages":{"type":"array","items":{"type":"object"},"description":"[{put:<package>}|{remove:id}|{disable:id}|{enable:id}]; the user approves a package before it runs; see ui_guide"},` +
 				`"summary":{"type":"string","description":"one sentence saying what changes, shown to the user"}}}`)},
 		{Name: uiToolPreview,
-			Description: "Draw the screen as text, as the user sees it; changes nothing. Look after ui_edit, or pass change (a ui_edit argument) to see a proposal first. No colours.",
-			Schema: json.RawMessage(`{"type":"object","properties":{"width":{"type":"integer"},"height":{"type":"integer"},"working":{"type":"boolean"},"shells":{"type":"integer"},"input":{"type":"string"},` +
+			Description: "Draw the screen as text, as the user sees it; changes nothing. Look after ui_edit, or pass change (a ui_edit argument) to see a proposal first. inspect:true says why each node is drawn or hidden, and the Tab order. No colours.",
+			Schema: json.RawMessage(`{"type":"object","properties":{"width":{"type":"integer"},"height":{"type":"integer"},"working":{"type":"boolean"},"shells":{"type":"integer"},"input":{"type":"string"},"inspect":{"type":"boolean"},` +
 				`"chat":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string","description":"user|assistant|note|error"},"text":{"type":"string"}}}},` +
 				`"change":{"type":"object"}}}`)},
 	}
