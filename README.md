@@ -301,7 +301,11 @@ value now (and the factory one if you changed it) and what it does; type to narr
 setting lists the values it can take (`yes`/`no`, `wrap`/`hide`, the thinking levels...), and Enter
 on a value changes it, kept in `texts.json` exactly as if you had typed the line below. A setting
 that is a free number has no list: Enter leaves `/settings <name> ` in the input and says what is
-accepted. The autocompact rows are at the bottom of the same menu, as they always were.
+accepted. The autocompact rows are at the bottom of the same menu, as they always were. The
+`hidden` row opens the parts of the screen (banner, chat, status, the folder line...): Enter hides a
+shown one and shows a hidden one, and the menu stays open on it. It never offers the input, the
+menus, or anything that contains the input, because hiding those leaves a screen you cannot undo it
+from; `/ui hide <id>` still hides any node by hand. Hidden parts are for this session only.
 
 **Every setting in one place.** `/settings list` prints each setting with its value, what it
 does, and its factory value when you changed it; `/settings <name>` explains one in full;
