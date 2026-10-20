@@ -1,3 +1,16 @@
+## Done since: guardrails and the design of the open TUI (branch feat/open-tui)
+
+`docs/GUARDRAILS.md` + `internal/guard` (tests only): the dependency list, no cgo, the release script
+still static and building Termux, the Termux binary built and held to a size budget, and the factory scene and its
+goldens pinned by hash. Each was checked by breaking it on purpose. `docs/DESIGN-OPEN-TUI.md` is the proposal
+for making the whole interface editable by asking (data store, verbs, keymap in data, a small interpreter,
+components, windows, effects, widgets, voice as a package). **Nothing of that design is built.**
+
+- Needs the owner: paste `docs/ci-termux-job.yml` into `.github/workflows/ci.yml`; confirm or change the size
+  budget (11000000 bytes is my number, measured today: 9503073).
+- Not guarded yet: start-up time and memory (needs a baseline from a phone and from CI).
+- Open decisions are in section 10 of the design (tier-2 interpreter, order, first visible result).
+
 ## Done since: the factory keys are a frozen contract (branch feat/keys-contract)
 
 `docs/KEYS.md` lists every factory key and the default menu keys, and says how a key may change

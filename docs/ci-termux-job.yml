@@ -1,0 +1,20 @@
+# A job for .github/workflows/ci.yml, to be pasted by the owner (the agent that wrote it
+# cannot edit workflow files). It runs the guardrails of docs/GUARDRAILS.md on every pull
+# request: the dependency list, no cgo, the Termux build and its size, the pinned factory
+# interface. Add it under `jobs:` beside `test:` and `core:`.
+#
+#   guardrails:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#       - uses: actions/setup-go@v5
+#         with:
+#           go-version: "1.25.0"
+#       # Builds android/arm64 with CGO_ENABLED=0 exactly as scripts/build-release.sh does
+#       # and fails over budget. Not run with -short, which skips the build.
+#       - name: Guardrails
+#         run: go test -count=1 ./internal/guard
+#
+# The same test already runs inside `go test ./...` (the `test` job), so this job adds a
+# separate, named line in the pull request checks: a red "guardrails" says "the install
+# story or the factory interface changed", not "some test failed".
