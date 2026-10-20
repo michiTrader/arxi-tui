@@ -293,6 +293,10 @@ var templateProjectedBinds = map[string]struct {
 		witness: "row.label",
 		reason:  "one row_template instance per setting (Scene 5, E5); a bare bind has no scalar projection",
 	},
+	"host.shell.rows": {
+		witness: "row.command",
+		reason:  "one row_template instance per background shell; a bare bind has no scalar projection",
+	},
 	"hub.rows": {
 		witness: "row.line",
 		reason:  "one row_template instance per visible provider-hub row; a bare bind has no scalar projection",

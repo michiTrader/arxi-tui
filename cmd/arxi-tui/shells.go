@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/michiTrader/arxi_tui/internal/driver"
+	"github.com/michiTrader/arxi_tui/internal/fold"
 )
 
 // This file is the background shells: commands that outlive one tool call (a dev server,
@@ -391,6 +392,79 @@ func shellNames(infos []shellInfo) string {
 		}
 	}
 	return strings.Join(names, " · ")
+}
+
+const (
+	maxShellRows     = 20
+	maxShellRowLast  = 80
+	maxShellRowShown = 80
+)
+
+// shellRows is host.shell.rows: one row per shell, oldest first, at most maxShellRows (the
+// newest ones when there are more). What a shell printed comes from a program outside arxi,
+// so Last goes through cleanShellText and is cut; the command is cut too.
+func shellRows(r *shellRegistry) []fold.ShellRow {
+	if r == nil {
+		return nil
+	}
+	all := r.list()
+	if len(all) > maxShellRows {
+		all = all[len(all)-maxShellRows:]
+	}
+	rows := make([]fold.ShellRow, 0, len(all))
+	for _, i := range all {
+		last := ""
+		if s, ok := r.find(i.ID); ok {
+			text, _ := s.output(false, 4096)
+			last = lastShellLine(text)
+		}
+		age := time.Since(i.Started)
+		if i.State != shellRunning && !i.Ended.IsZero() {
+			age = i.Ended.Sub(i.Started)
+		}
+		state := shellStateWord(i)
+		if i.State == shellRunning {
+			state = "running"
+		}
+		rows = append(rows, fold.ShellRow{
+			ID:      strconv.Itoa(i.ID),
+			Command: cutShellField(i.Command, maxShellRowShown),
+			State:   state,
+			Age:     shellAge(age),
+			Running: i.State == shellRunning,
+			Last:    cutShellField(last, maxShellRowLast),
+		})
+	}
+	return rows
+}
+
+// lastShellLine is the last non-empty line of text, which must come from shell.output (it
+// returns the text already cleaned of escapes and control characters).
+func lastShellLine(text string) string {
+	lines := strings.Split(strings.TrimRight(text, "\n"), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			return l
+		}
+	}
+	return ""
+}
+
+// cutShellField keeps at most n characters of a one-line field, marking the cut.
+func cutShellField(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s
+}
+
+// runningShellRows is the rows of a driver that has a registry.
+func runningShellRows(drv any) []fold.ShellRow {
+	if h, ok := drv.(shellHost); ok {
+		return shellRows(h.Shells())
+	}
+	return nil
 }
 
 // runningShellList lists the running shells of a driver that has a registry.

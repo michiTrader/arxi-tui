@@ -376,6 +376,12 @@ type State struct {
 	// bar, a node the user can hide, move or restyle like any other.
 	HostShellList string `json:"host.shell.list"`
 
+	// HostShellRows is one row per background shell (running or ended), for a scene that
+	// draws a list of them: host.shell.list is only the names, joined in one string. Host
+	// view state like HostShellList; the loop fills it each frame from the shell registry
+	// and leaves it empty while the menu is open.
+	HostShellRows []ShellRow `json:"host.shell.rows"`
+
 	// HostPanels is the one line each approved package keeps on screen, "Title: text" joined
 	// with " · ", empty when no package has one. Host view state like HostBranch.
 	HostPanels string `json:"host.panels"`
@@ -1643,6 +1649,22 @@ type CommunityMatch struct {
 	ManifestURL string `json:"manifest_url"`
 	Description string `json:"description"`
 	Preview     string `json:"preview"`
+}
+
+// ShellRow is one row in host.shell.rows. Every field is text so a row_template can draw
+// it; Running is the one boolean, because this engine's `when` has no comparison operator.
+//
+// ID is the number /shell and the model's shell_read use, and the only field that is safe
+// inside an on_press command. Command and Last are written by a program outside arxi (Last
+// is the last line it printed, cleaned of escape and control characters and cut short):
+// they are for drawing, not for building a command from.
+type ShellRow struct {
+	ID      string `json:"id"`
+	Command string `json:"command"`
+	State   string `json:"state"`
+	Age     string `json:"age"`
+	Running bool   `json:"running"`
+	Last    string `json:"last"`
 }
 
 // ConfigCategory is one row in config.categories: a settings group the /config

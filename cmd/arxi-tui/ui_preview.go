@@ -210,6 +210,7 @@ func previewState(a previewArgs) fold.State {
 		names = append(names, fmt.Sprintf("shell %d", i))
 	}
 	st.HostShellList = strings.Join(names, " · ")
+	st.HostShellRows = shellRows(newSimShells(a.Shells, func(string) {}))
 	return st
 }
 
