@@ -119,3 +119,20 @@ func enterEvent() term.Event {
 func pasteEvent(text string) term.Event {
 	return term.Event{Kind: term.EventPaste, Text: text}
 }
+
+// frameCount is how many frames the loop has written so far.
+func (f *fakeTTY) frameCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.frames)
+}
+
+// frameAt is the n-th frame written (0-based), "" when there is none.
+func (f *fakeTTY) frameAt(n int) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if n < 0 || n >= len(f.frames) {
+		return ""
+	}
+	return f.frames[n]
+}

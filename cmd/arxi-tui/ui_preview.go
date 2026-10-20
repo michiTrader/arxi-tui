@@ -7,9 +7,11 @@ import (
 	"os"
 	"strings"
 
+	"github.com/michiTrader/arxi_tui/internal/defaultscene"
 	"github.com/michiTrader/arxi_tui/internal/driver"
 	"github.com/michiTrader/arxi_tui/internal/engine"
 	"github.com/michiTrader/arxi_tui/internal/fold"
+	"github.com/michiTrader/arxi_tui/internal/scene"
 )
 
 // This file is ui_preview: the model looking at the screen it is editing.
@@ -51,6 +53,7 @@ type previewArgs struct {
 	Shells  int             `json:"shells"`
 	Input   string          `json:"input"`
 	Inspect bool            `json:"inspect"`
+	Keys    json.RawMessage `json:"keys"`
 	Chat    []previewLine   `json:"chat"`
 	Change  json.RawMessage `json:"change"`
 }
@@ -68,7 +71,7 @@ func (b *uiBridge) preview(ctx context.Context, raw json.RawMessage) (res driver
 	var a previewArgs
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &a); err != nil {
-			return fail("ui_preview takes {width, height, working, shells, input, inspect, chat, change}: " + err.Error())
+			return fail("ui_preview takes {width, height, working, shells, input, inspect, keys, chat, change}: " + err.Error())
 		}
 	}
 	if a.Width == 0 {
@@ -98,6 +101,20 @@ func (b *uiBridge) preview(ctx context.Context, raw json.RawMessage) (res driver
 		return fail("the interface is not on screen yet; try again")
 	}
 	notes := []string{"plain text; colours are not shown"}
+	_, _, curColors, _, curTexts := b.snapshot()
+	layers := uiDraft{doc: doc, colors: curColors, texts: curTexts, beh: b.behaviourNow()}
+	keys, kerr := simKeysArg(a.Keys)
+	if kerr != nil {
+		return fail(kerr.Error())
+	}
+	if len(keys) > 0 {
+		if _, err := parseSimKeys(keys); err != nil {
+			return fail(err.Error())
+		}
+		if a.Inspect {
+			return fail("inspect describes the screen before any key; ask for it without keys")
+		}
+	}
 	if len(a.Change) > 0 && string(a.Change) != "null" {
 		var d uiDraft
 		if r := b.editFlow(ctx, a.Change, nil, &d); !r.OK {
@@ -105,11 +122,15 @@ func (b *uiBridge) preview(ctx context.Context, raw json.RawMessage) (res driver
 		}
 		if d.doc != nil {
 			doc = d.doc
+			layers = d
 		}
-		if d.words {
+		if d.words && len(keys) == 0 {
 			notes = append(notes, "the proposal rewords texts; the screen below still has the words in use")
 		}
 		notes = append([]string{"AS IT WOULD BE after the change; nothing was applied"}, notes...)
+	}
+	if len(keys) > 0 {
+		return b.pressKeys(ctx, a, keys, layers, notes)
 	}
 	defer func() {
 		// A scene the engine cannot draw must come back as a refusal the model can read,
@@ -179,4 +200,66 @@ func oneBased(rows []int) []int {
 		out[i] = r + 1
 	}
 	return out
+}
+
+// pressKeys runs the keys in the isolated copy (ui_simulate.go) and writes what came out.
+func (b *uiBridge) pressKeys(ctx context.Context, a previewArgs, keys []string, l uiDraft, notes []string) driver.ClientToolResult {
+	cwd, _ := os.Getwd()
+	req := simRequest{Width: a.Width, Height: a.Height, Shells: a.Shells, Working: a.Working,
+		Input: a.Input, Chat: a.Chat, Keys: keys, Cwd: cwd,
+		State: interfaceOf(l.doc, l.colors, l.texts, l.beh)}
+	res, err := simulate(ctx, req)
+	if err != nil {
+		return driver.ClientToolResult{Arg: "interface", Summary: "The keys were not pressed", Text: err.Error()}
+	}
+	if res.Err != "" {
+		return driver.ClientToolResult{Arg: "interface", Summary: "The keys were not pressed", Text: res.Err}
+	}
+	var out strings.Builder
+	fmt.Fprintf(&out, "screen %dx%d after pressing: %s (%s)\n", a.Width, a.Height, strings.Join(keys, " "),
+		strings.Join(append(notes, "a copy of the program ran the keys: nothing was sent, run or opened for real; packages are not in it"), "; "))
+	out.WriteString(res.Screen + "\n")
+	if res.QuitAt > 0 {
+		fmt.Fprintf(&out, "THE PROGRAM ENDED at key %d (%s).\n", res.QuitAt, keys[res.QuitAt-1])
+	}
+	if len(res.Submitted) > 0 {
+		fmt.Fprintf(&out, "SENT TO THE MODEL (%d): %s\n", len(res.Submitted), quoteAll(res.Submitted))
+	}
+	if len(res.Opened) > 0 {
+		fmt.Fprintf(&out, "BROWSER WAS ASKED TO OPEN: %s\n", quoteAll(res.Opened))
+	}
+	if len(res.Copied) > 0 {
+		fmt.Fprintf(&out, "CLIPBOARD WAS GIVEN: %s\n", quoteAll(res.Copied))
+	}
+	if res.Notice != "" {
+		fmt.Fprintf(&out, "NOTE: %s\n", res.Notice)
+	}
+	return driver.ClientToolResult{OK: true, Text: out.String(), Arg: "interface", Summary: "Pressed keys and looked at the screen"}
+}
+
+func quoteAll(list []string) string {
+	q := make([]string, len(list))
+	for i, s := range list {
+		q[i] = quoteShort(s)
+	}
+	return strings.Join(q, ", ")
+}
+
+// interfaceOf is the saved form of an interface held in memory: what saveInterfaceWith
+// writes, so the copy finds it as the real program would at start-up.
+func interfaceOf(doc *scene.Document, u userTokens, tx userTexts, bh behaviour) interfaceState {
+	var st interfaceState
+	if doc != nil && !sameDocument(doc.Source(), defaultscene.JSON) {
+		st.Scene = string(doc.Source())
+	}
+	if len(u) > 0 {
+		st.Tokens = string(encodeUserTokens(u))
+	}
+	if len(tx) > 0 {
+		st.Texts = string(encodeUserTexts(tx))
+	}
+	if !bh.empty() {
+		st.Behaviour = string(encodeBehaviour(bh))
+	}
+	return st
 }

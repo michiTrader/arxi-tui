@@ -99,6 +99,30 @@ type shellRegistry struct {
 	open func(addr string) error
 	// onExit is told of a shell that ended on its own (not one that was stopped).
 	onExit func(shellInfo)
+	// fake marks a registry whose shells run no process (a simulation, ui_simulate.go):
+	// stop only marks them stopped.
+	fake bool
+}
+
+// newSimShells is a registry of n shells that look running and run nothing, and that
+// refuses to start a real one: what a simulation shows when asked for "3 shells".
+func newSimShells(n int, opened func(string)) *shellRegistry {
+	r := &shellRegistry{fake: true,
+		build: func(string, string) *exec.Cmd { return exec.Command("/nonexistent/arxi-simulation") },
+		open:  func(addr string) error { opened(addr); return nil },
+	}
+	for i := 1; i <= n; i++ {
+		msg := fmt.Sprintf("simulated output of shell %d\n", i)
+		r.shells = append(r.shells, &shell{
+			info:    shellInfo{ID: i, Command: fmt.Sprintf("simulated command %d", i), State: shellRunning, Started: time.Now()},
+			cmd:     &exec.Cmd{},
+			buf:     []byte(msg),
+			written: int64(len(msg)),
+			done:    make(chan struct{}),
+		})
+	}
+	r.next = n
+	return r
 }
 
 func newShellRegistry(onExit func(shellInfo)) *shellRegistry {
@@ -232,6 +256,13 @@ func (r *shellRegistry) stop(id int) bool {
 	}
 	s.killing = true
 	s.mu.Unlock()
+	if r.fake {
+		s.mu.Lock()
+		s.info.State, s.info.Ended = shellStopped, time.Now()
+		s.mu.Unlock()
+		close(s.done)
+		return true
+	}
 	stopTree(s.cmd, false)
 	select {
 	case <-s.done:
