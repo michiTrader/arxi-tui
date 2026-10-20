@@ -471,6 +471,9 @@ is stateless), so forgetting the history on the TUI side is the whole reset.
 - **History.** Every kept change is a numbered version. `/ui history` lists them, `/ui history diff <n|name>`
   shows what changed since one, `/ui history name <n> <name>` names it (named versions are never dropped) and
   `/ui history restore <n|name>` brings it back (`/ui undo` then returns). Only you can restore; the model cannot.
+- **Share.** `/ui export [file]` writes your layout, colours, words and behaviour as one JSON file (never
+  overwriting; packages, tests and history are not in it). `/ui import <file>` replaces your interface with the file's,
+  tells you which commands and keys it adds, and `/ui undo` takes it back. Only you can run either; the model cannot.
 - ✅ Scene document parser and validator (`internal/scene`)
 - ✅ Fold over log events (`internal/fold`)
 - ✅ Render engine with all base nodes: stack, row, box, text, markdown, input,

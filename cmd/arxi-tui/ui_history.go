@@ -389,6 +389,23 @@ func historyName(ref, name string) (string, error) {
 	return fmt.Sprintf("/ui history: #%d is now called %q%s. /ui history restore %s brings it back.", h.Versions[idx].ID, name, moved, name), nil
 }
 
+// makeSaved makes st the saved interface and keeps what was saved as the one /ui undo
+// returns to. A restore and an import both go through it.
+func makeSaved(st interfaceState) error {
+	cur, err := currentInterface()
+	if err != nil {
+		return err
+	}
+	cb, _ := json.Marshal(cur)
+	if err := os.MkdirAll(configDir(), 0o700); err != nil {
+		return err
+	}
+	if err := writeAtomic(previousInterfacePath(), cb); err != nil {
+		return err
+	}
+	return writeInterface(st)
+}
+
 // historyRestore makes a version the saved interface. What was saved is kept as the one
 // /ui undo returns to, and the restore is itself a new version, so nothing is lost.
 func historyRestore(ref string) (interfaceState, string, error) {
@@ -403,18 +420,7 @@ func historyRestore(ref string) (interfaceState, string, error) {
 	if _, _, _, _, err := loadInterface(v.State); err != nil {
 		return interfaceState{}, "", fmt.Errorf("#%d no longer loads (%v); it was left alone", v.ID, err)
 	}
-	cur, err := currentInterface()
-	if err != nil {
-		return interfaceState{}, "", err
-	}
-	cb, _ := json.Marshal(cur)
-	if err := os.MkdirAll(configDir(), 0o700); err != nil {
-		return interfaceState{}, "", err
-	}
-	if err := writeAtomic(previousInterfacePath(), cb); err != nil {
-		return interfaceState{}, "", err
-	}
-	if err := writeInterface(v.State); err != nil {
+	if err := makeSaved(v.State); err != nil {
 		return interfaceState{}, "", err
 	}
 	label := fmt.Sprintf("restored #%d", v.ID)
@@ -498,7 +504,7 @@ func uiHistoryLine(input string) (string, bool) {
 // so the model knows what the user can go back to and does not claim it can do it.
 func historyGuide() string {
 	var sb strings.Builder
-	sb.WriteString("HISTORY. The user can go back one step with /ui undo, or to any earlier version with /ui history (list, diff <n>, restore <n or name>, name <name>). You cannot restore; do not say you did. Packages and tests are not rewound.\n")
+	sb.WriteString("HISTORY. The user can go back one step with /ui undo, or to any earlier version with /ui history (list, diff <n>, restore <n or name>, name <name>). You cannot restore or import; do not say you did. /ui export [file] and /ui import <file> move the whole interface as one file (the user types them). Packages and tests are not rewound.\n")
 	h, err := loadUIHistory()
 	if err != nil || len(h.Versions) == 0 {
 		return sb.String()

@@ -2424,10 +2424,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								}
 							}
 							input, caret, slashSel = "", 0, 0
-						} else if hargs, ok := uiHistoryLine(input); ev.Key.Type == term.KeyEnter && ok {
-							// /ui history [list | diff | restore | name]: the versions of the
-							// saved interface (ui_history.go). Typed by the user, never asked.
-							out := runHistoryLine(hargs, persistsScene(doc))
+						} else if sverb, hargs, ok := uiStateLine(input); ev.Key.Type == term.KeyEnter && ok {
+							// /ui history [list | diff | restore | name], /ui export and
+							// /ui import: the saved interface as a whole (ui_history.go,
+							// ui_export.go). Typed by the user, never asked.
+							out := runStateLine(sverb, hargs, persistsScene(doc))
 							switch {
 							case out.err != "":
 								collected = appendLocalWarning(collected, out.err)
