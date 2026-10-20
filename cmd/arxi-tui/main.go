@@ -192,7 +192,20 @@ func main() {
 	// tracked tap never raises Android's keyboard again. -mouse=false takes it off on any
 	// terminal (drag-to-select stays the terminal's); -mouse puts it back on a phone.
 	mouse := flag.Bool("mouse", true, `track the mouse (wheel scrolling); unset: on, except on Termux`)
+	probeKeys := flag.Bool("probe-keys", false, `print the raw bytes and the decoded key of every key press (to check which keys this terminal and shell deliver), then exit on ctrl+c`)
 	flag.Parse()
+	if *probeKeys {
+		tty, err := term.Open()
+		if err == nil {
+			err = tty.Probe(os.Stdout)
+			tty.Close()
+		}
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "arxi-tui: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
 	flag.Visit(func(f *flag.Flag) {
 		if f.Name == "mouse" {
 			v := *mouse

@@ -1,3 +1,14 @@
+## Done since: `arxi-tui -probe-keys` (branch feat/key-probe)
+
+Prints the raw bytes and the decoded key of every key press, so the owner can check which keys
+a given terminal and shell really deliver (the `/keys` list shows what the program handles, not
+what a terminal sends). A key that prints nothing never reached the program. Ctrl-C ends it.
+Checked on a Linux pseudo-terminal only; **still open: run it in PowerShell 7 under Windows
+Terminal and report which of ctrl/alt/shift+arrows, ctrl+home/end print nothing.** Windows
+Terminal binds alt+arrows by default (focus moves between panes), so those are expected to be
+taken before they reach the program. Found on the way: a terminal that spells alt+up as
+`ESC ESC [ A` decodes as `esc` then `up` (not alt+up) - fix only if the real run shows it.
+
 # Pending work
 
 ## Done since: `/keys`, every key in one place (branch feat/keys-menu)
