@@ -11,6 +11,7 @@ import (
 	"github.com/michiTrader/arxi_tui/internal/defaultscene"
 	"github.com/michiTrader/arxi_tui/internal/fold"
 	"github.com/michiTrader/arxi_tui/internal/scene"
+	"github.com/michiTrader/arxi_tui/internal/term"
 )
 
 // readTexts is what texts.json holds ("" when nothing was ever kept).
@@ -439,5 +440,28 @@ func TestLoopHidingAPartDoesNotTouchSavedFiles(t *testing.T) {
 	runLoopDefault(t, 110, 40, script)
 	if b := readTexts(t, cfg); b != "" {
 		t.Errorf("a session-only hide wrote texts.json: %s", b)
+	}
+}
+
+// After a pick the menu reloads its rows. If the highlight went back to the top, hiding
+// three parts in a row would mean three trips down the list; it must stay on the part just
+// toggled. The second part is picked twice: the same one has to be toggled both times.
+func TestLoopTheHighlightStaysOnTheTogglePartAfterAPick(t *testing.T) {
+	t.Setenv(configDirEnv, t.TempDir())
+	t.Setenv(historyEnv, t.TempDir())
+	ids := partIDs(defaultDoc(t))
+	if len(ids) < 2 {
+		t.Fatalf("the factory screen offers %d parts; this test needs two", len(ids))
+	}
+	second := ids[1]
+	script := append(typed("/settings hidden "),
+		scheduledEvent{40 * time.Millisecond, arrowEvent(term.KeyDown)},
+		scheduledEvent{40 * time.Millisecond, enterEvent()},
+		scheduledEvent{200 * time.Millisecond, enterEvent()})
+	script = append(script, exitKeys()...)
+	out, _ := runLoopDefault(t, 110, 40, script)
+	plain := stripANSI(out)
+	if !strings.Contains(plain, second+" is hidden for this session") || !strings.Contains(plain, second+" is shown again") {
+		t.Errorf("picking the second part (%q) twice did not hide then show that same part; the highlight went back to the top:\n%s", second, lastFrame(out))
 	}
 }
