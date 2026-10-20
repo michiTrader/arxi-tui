@@ -10,7 +10,11 @@ components, windows, effects, widgets, voice as a package). **Nothing of that de
   bytes is approved; measured: 9503073.
 - Not guarded yet: start-up time and memory (needs a baseline from a phone and from CI).
 - Decided by the owner (section 10 of the design): write the tier-2 interpreter in this repo, order A, B, C,
-  first visible result = shells (scenarios 1 to 3). Phase A has started with `ui_preview`.
+  first visible result = shells (scenarios 1 to 3). Phase A has started: `ui_preview` is built
+  (the model draws the screen as text at a width and state it chooses, or as a proposed `ui_edit` would leave it,
+  without applying or asking; plain text, no colours). Next in A: `ui_inspect`, `ui_simulate`, `ui_test`, UI
+  history and `/ui export`. It costs 3 of the 8 client tools on a `/ui` turn (so two package tools are dropped
+  where one fit before, with the usual notice) and about 560 more bytes of tool definitions on those turns only.
 
 ## Done since: the factory keys are a frozen contract (branch feat/keys-contract)
 
