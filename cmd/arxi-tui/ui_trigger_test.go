@@ -87,8 +87,8 @@ func TestTheInterfaceToolsRideOnlyWithAQuestionThatAskedForThem(t *testing.T) {
 
 	turn(t, c, out, "/ui make the border of the input bar a rainbow")
 	tools, system, prompt := core.at(1)
-	if len(tools) != 2 {
-		t.Fatalf("the request carried %d tools, want ui_guide and ui_edit", len(tools))
+	if len(tools) != 3 {
+		t.Fatalf("the request carried %d tools, want ui_guide, ui_edit and ui_preview", len(tools))
 	}
 	if !strings.Contains(system, uiSystemHint) || !strings.Contains(system, "Current document") || !strings.Contains(system, "input_frame") {
 		t.Fatalf("the guide did not travel with the request (system is %d bytes)", len(system))
@@ -101,7 +101,7 @@ func TestTheInterfaceToolsRideOnlyWithAQuestionThatAskedForThem(t *testing.T) {
 	// still about the interface and carries the guide and the tools.
 	turn(t, c, out, "and make it a bit slower")
 	tools, system, prompt = core.at(2)
-	if len(tools) != 2 || !strings.Contains(system, "ui_edit") || !strings.Contains(system, uiSystemHintLater) {
+	if len(tools) != 3 || !strings.Contains(system, "ui_edit") || !strings.Contains(system, uiSystemHintLater) {
 		t.Fatalf("the interface did not stay on for the follow-up: %d tools", len(tools))
 	}
 	// The 20 KB guide was given once, with the message that asked for it; repeating it on

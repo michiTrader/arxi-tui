@@ -260,15 +260,15 @@ first phase after which it can pass.
 | 13 | "A side panel with the project's files" | D |
 | 14 | "Make my TUI the default" | G |
 
-## 10. Decisions for the owner
+## 10. Decisions of the owner
 
-1. **Budget:** the proposed 11000000 bytes for Termux is a number I chose (about 16% over today).
-2. **Tier 2:** a JavaScript subset written here, or none (tiers 0, 1 and 3 only, with logic in external
-   programs). I recommend writing it, because the queue and effects need state and a package that
-   starts a process for every keypress is slow on a phone.
-3. **Order:** A, then B, then C. The rest follows.
-4. **First visible result:** I propose scenarios 1 to 3 (shells) as the first thing a person can try,
-   after A and B.
+All four were answered by the owner and are now closed.
+
+1. **Budget:** 11000000 bytes for the Termux binary. Approved.
+2. **Tier 2:** a small JavaScript subset interpreter written in this repository, with no dependency.
+   Approved.
+3. **Order:** A, then B, then C. The rest follows. Approved.
+4. **First visible result:** scenarios 1 to 3 (shells), after A and B. Approved.
 
 ## 11. Risks, stated
 
