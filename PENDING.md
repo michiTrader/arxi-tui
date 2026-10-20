@@ -1,5 +1,13 @@
 # Pending work
 
+## Done since: the settings menu hides and shows parts of the screen (branch feat/hidden-parts)
+
+- Closes "settings that are only a `/ui` command": the parts you can hide are now a stage of the `/settings` menu (`hidden`), one row per part, Enter toggles it and the menu stays open on the same row. Session only, as `/ui hide` is; nothing is written.
+- Decision, and why: the menu never offers the input, an overlay (the menus), or any node that contains an input. `/ui hide` accepts any id, and that is kept. A menu is one Enter from a mistake a typed command is not, and hiding the input leaves a screen from which `/ui show` cannot be typed. The rule reads structure (type input / overlay), not names, so a user's own scene is covered. `toggleHidden` re-checks, so a stale row cannot hide the input either.
+- Tests: 10 new (what is offered, never the input / menus / a wrapper of the input, toggle both ways, stale row refused, rows say HIDDEN, stage stays open on a filter that matches nothing, first-stage row, real loop hide/show, nothing written to texts.json, highlight stays on the toggled part). Mutations: 11, one survived at first (the highlight reset after a pick had no test); a test now holds it and kills it.
+- NOT done: parts that have no `id` in the scene cannot be addressed (same limit as `/ui hide`); hidden parts are still not kept between sessions.
+- NOT verified: a real terminal.
+
 ## Done since: `/settings` is a menu (branch genspark_ai_developer_settings_menu)
 
 - Closes the first half of "the owner can see and change every setting from inside the TUI": `/settings` now lists every setting with its value and what it does, narrowed by typing; Enter on a setting opens the values it can take, Enter on a value changes it. A pick becomes the same `/settings <name> <value>` call the typed line makes, so the menu, the typed line, `/ui text` and the agent's `ui_edit` share one rule and one file (`texts.json`). New file `cmd/arxi-tui/settings_menu.go`; `main.go` only routes to it.

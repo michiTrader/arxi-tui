@@ -1552,7 +1552,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			// picked, the values it can take (settings_menu.go). The rows are read again
 			// when the stage changes, because each stage lists different things.
 			if !settingsMn.loaded || settingsShown != skey {
-				settingsMn.setRows(settingsRows(skey, autoCompact, hubWindow))
+				prevSel, prevShown := settingsMn.sel, settingsShown
+				settingsMn.setRows(settingsRows(skey, autoCompact, hubWindow, doc, uiHidden))
+				if skey == settingHiddenStage && prevShown == skey {
+					// Toggling a part reloads the rows; the highlight stays on the part
+					// just toggled so the next one is one key away, not at the top.
+					settingsMn.sel = prevSel
+				}
 				if skey == "" {
 					// setRows starts on the row in force, which at this stage is the
 					// autocompact one at the very bottom: the menu would open on its
@@ -2479,6 +2485,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 									caret = len([]rune(input))
 									slashSel = 0
 									sceneNotice = settingPickNotice(pick)
+								case skey == settingHiddenStage:
+									sceneNotice = toggleHidden(doc, uiHidden, pick)
+									input = settingsPrefix + settingHiddenStage + " "
+									caret = len([]rune(input))
+									slashSel = 0
 								case skey == "":
 									autoCompact = settingsAfterPick(autoCompact, pick)
 									sceneNotice = settingsNotice(autoCompact, hubWindow)

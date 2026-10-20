@@ -6,6 +6,7 @@ import (
 
 	"github.com/michiTrader/arxi_tui/internal/engine"
 	"github.com/michiTrader/arxi_tui/internal/fold"
+	"github.com/michiTrader/arxi_tui/internal/scene"
 )
 
 // This file is the navigable half of /settings: `/settings` opens a menu of every
@@ -28,6 +29,93 @@ import (
 // A setting that is a free number (scroll.wheel_step, tool.output_rows...) has no list of
 // values to offer, so it has no second stage: picking it leaves `/settings <name> ` in the
 // input for the user to finish, which is the typed surface's.
+
+// settingHiddenStage is the one stage of the menu that is not a text key: the parts of
+// the screen the user can hide. It is a stage of its own because a part is not a value of
+// a setting: there is one row per part, and a pick toggles it.
+const settingHiddenStage = "hidden"
+
+// hidablePart is one node the user may hide with the menu.
+type hidablePart struct{ id, kind string }
+
+// hidableParts lists the nodes of the live scene that the menu offers to hide, in the
+// order the document declares them.
+//
+// `/ui hide` itself accepts any id, including the input and the menus; the menu does not
+// offer those, because a menu is one Enter away from a mistake that a typed command is
+// not. Hiding the input leaves a screen the user cannot type `/ui show` into, and hiding a
+// menu overlay hides the very menu being used to undo it. Two rules decide, and neither
+// reads a name (a scene of the user's own names its nodes as it likes):
+//
+//   - a node that is, or contains, an input is never offered: hiding it hides the input;
+//   - an overlay, and everything inside it, is never offered: those are the menus.
+//
+// A row template is not walked: hiding it would blank every row of a list that draws from
+// it, which is not "a part of the screen" the user would point at.
+func hidableParts(doc *scene.Document) []hidablePart {
+	if doc == nil {
+		return nil
+	}
+	var out []hidablePart
+	collectHidable(doc.Root, &out)
+	return out
+}
+
+// collectHidable appends the offerable nodes under n and reports whether n is, or
+// contains, an input or an overlay (so n itself is not offered).
+func collectHidable(n *scene.Node, out *[]hidablePart) (protected bool) {
+	if n == nil {
+		return false
+	}
+	if n.Type == "overlay" {
+		return true // its descendants are menus: not even visited
+	}
+	protected = n.Type == "input"
+	var sub []hidablePart
+	kids := append([]*scene.Node{}, n.Children...)
+	kids = append(kids, n.PrefixNode(), n.Suffix)
+	for _, c := range kids {
+		if collectHidable(c, &sub) {
+			protected = true
+		}
+	}
+	if !protected && n.ID != "" {
+		*out = append(*out, hidablePart{id: n.ID, kind: n.Type})
+	}
+	*out = append(*out, sub...)
+	return protected
+}
+
+// hiddenRows is the second stage of "hidden": one row per part, saying what a pick does.
+func hiddenRows(doc *scene.Document, hidden map[string]bool) []fold.ModelMatch {
+	var rows []fold.ModelMatch
+	for _, p := range hidableParts(doc) {
+		state := "shown, enter hides it"
+		if hidden[p.id] {
+			state = "HIDDEN, enter shows it"
+		}
+		rows = append(rows, fold.ModelMatch{Ref: p.id, Name: p.id, Provider: p.kind + " · " + state})
+	}
+	return rows
+}
+
+// toggleHidden hides a part that is shown and shows one that is hidden, and says which.
+// An id the menu would not have offered is refused, so a stale row cannot hide the input.
+func toggleHidden(doc *scene.Document, hidden map[string]bool, id string) string {
+	ok := false
+	for _, p := range hidableParts(doc) {
+		ok = ok || p.id == id
+	}
+	if !ok {
+		return "/settings: " + strconvQuote(id) + " is not a part the menu hides (/ui hide <id> hides any node by hand)"
+	}
+	if hidden[id] {
+		delete(hidden, id)
+		return "/settings: " + id + " is shown again"
+	}
+	hidden[id] = true
+	return "/settings: " + id + " is hidden for this session (/settings hidden shows it again; not kept between sessions)"
+}
 
 // settingChoices are the values a setting can take when they are a short closed set; nil
 // when it is a free number or sentence, which a list of rows cannot offer. The accepted
@@ -101,6 +189,12 @@ func settingsMenuStage(input string) (key, prefix, filter string, open bool) {
 		return "", "", "", false
 	}
 	first, tail, spaced := strings.Cut(rest, " ")
+	if spaced && first == settingHiddenStage {
+		// Always open, even when the filter matches nothing: there is no typed form of
+		// this stage for the line to fall to, so stepping aside would send the words to
+		// the model as a message.
+		return first, settingsPrefix + first + " ", strings.TrimLeft(tail, " "), true
+	}
 	if spaced && isSettingKey(first) && settingChoices(first) != nil {
 		tail = strings.TrimLeft(tail, " ")
 		if !settingChoiceIs(first, tail) && settingChoiceMatches(first, tail) {
@@ -121,9 +215,12 @@ func settingsMenuStage(input string) (key, prefix, filter string, open bool) {
 // 80` and Enter was how autocompact was set before this menu listed anything else; it
 // still is, and the pick, and the warning it gives when the model's window is unknown,
 // stay one path. A second stage for autocompact would only repeat these six rows.
-func settingsRows(stage string, ac autoCompactSetting, window int) []fold.ModelMatch {
+func settingsRows(stage string, ac autoCompactSetting, window int, doc *scene.Document, hidden map[string]bool) []fold.ModelMatch {
 	if stage == "" {
-		return append(settingsKeyRows(), settingsMenuData(ac, window)...)
+		return append(settingsKeyRows(hidden), settingsMenuData(ac, window)...)
+	}
+	if stage == settingHiddenStage {
+		return hiddenRows(doc, hidden)
 	}
 	cur := normalizedChoice(stage, uiText(stage))
 	var rows []fold.ModelMatch
@@ -161,7 +258,7 @@ func normalizedChoice(key, v string) string {
 // settingsKeyRows is the first stage: every setting, its value now, and what it does.
 // A value that is not the factory one says what the factory one is, so the menu answers
 // "what did I change?" without a second command.
-func settingsKeyRows() []fold.ModelMatch {
+func settingsKeyRows(hidden map[string]bool) []fold.ModelMatch {
 	rows := make([]fold.ModelMatch, 0, len(settingsKeys))
 	for _, k := range settingsKeys {
 		cur := uiText(k)
@@ -171,6 +268,8 @@ func settingsKeyRows() []fold.ModelMatch {
 		}
 		rows = append(rows, fold.ModelMatch{Ref: k, Name: k, Provider: val + " — " + firstClause(textIndex[k].role)})
 	}
+	rows = append(rows, fold.ModelMatch{Ref: settingHiddenStage, Name: settingHiddenStage,
+		Provider: hiddenList(hidden) + " — parts of the screen you hid; pick to hide or show one (kept for this session only)"})
 	return rows
 }
 
