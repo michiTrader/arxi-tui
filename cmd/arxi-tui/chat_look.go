@@ -57,7 +57,7 @@ func chatLookKeys(add func(key, def, role string, paragraph bool)) {
 }
 
 // chatToolNames are the tools whose displayed name can be changed.
-var chatToolNames = []string{"list", "read", "grep", "edit", "write", "run", "web_fetch", "web_search", "ui_guide", "ui_edit", "shell_start", "shell_read", "shell_stop", "open_url"}
+var chatToolNames = []string{"list", "read", "grep", "edit", "write", "run", "web_fetch", "web_search", "ui_guide", "ui_edit", "ui_preview", "shell_start", "shell_read", "shell_stop", "open_url"}
 
 func chatToolTitle(tool string) string {
 	return engine.DefaultChatLook().Title(tool)

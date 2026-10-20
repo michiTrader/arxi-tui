@@ -316,7 +316,7 @@ func TestNoToolsMeansNothingExtraIsSent(t *testing.T) {
 	}
 }
 
-// The interface tools come first and use two of the eight; the rest are for packages.
+// The interface tools come first and use three of the eight; the rest are for packages.
 func TestPackageToolsShareTheEightWithTheInterfaceTools(t *testing.T) {
 	var ts []extv2.Tool
 	for _, n := range []string{"a", "b", "c", "d", "e", "f", "g"} {
@@ -341,7 +341,7 @@ func TestPackageToolsShareTheEightWithTheInterfaceTools(t *testing.T) {
 		for {
 			select {
 			case ev := <-out:
-				if ev.Type == "chat.warn" && strings.Contains(fmt.Sprint(ev.Payload), "not offered this time: pkg_p_g") {
+				if ev.Type == "chat.warn" && strings.Contains(fmt.Sprint(ev.Payload), "not offered this time: pkg_p_f, pkg_p_g") {
 					warned = true
 				}
 				if ev.Type == "agent.turn_done" {

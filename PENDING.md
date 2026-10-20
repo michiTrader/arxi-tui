@@ -6,10 +6,11 @@ goldens pinned by hash. Each was checked by breaking it on purpose. `docs/DESIGN
 for making the whole interface editable by asking (data store, verbs, keymap in data, a small interpreter,
 components, windows, effects, widgets, voice as a package). **Nothing of that design is built.**
 
-- Needs the owner: paste `docs/ci-termux-job.yml` into `.github/workflows/ci.yml`; confirm or change the size
-  budget (11000000 bytes is my number, measured today: 9503073).
+- Done by the owner (#308): the guardrails job is in `.github/workflows/ci.yml`. The size budget of 11000000
+  bytes is approved; measured: 9503073.
 - Not guarded yet: start-up time and memory (needs a baseline from a phone and from CI).
-- Open decisions are in section 10 of the design (tier-2 interpreter, order, first visible result).
+- Decided by the owner (section 10 of the design): write the tier-2 interpreter in this repo, order A, B, C,
+  first visible result = shells (scenarios 1 to 3). Phase A has started with `ui_preview`.
 
 ## Done since: the factory keys are a frozen contract (branch feat/keys-contract)
 

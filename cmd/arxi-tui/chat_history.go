@@ -31,7 +31,7 @@ const (
 // toolDigestEntry is one tool call as a short word: read(main.go), run(ren a b), a failed
 // one marked. The interface guide is left out: it is reading, not doing.
 func toolDigestEntry(t driver.ToolCall) string {
-	if t.Name == uiToolGuide {
+	if t.Name == uiToolGuide || t.Name == uiToolPreview {
 		return ""
 	}
 	arg := strings.Join(strings.Fields(t.Arg), " ")

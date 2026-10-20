@@ -66,8 +66,9 @@ const uiSystemHintLater = "You are running inside arxi-tui, the app the user tal
 
 // Names of the two tools, as the model calls them.
 const (
-	uiToolGuide = "ui_guide"
-	uiToolEdit  = "ui_edit"
+	uiToolGuide   = "ui_guide"
+	uiToolEdit    = "ui_edit"
+	uiToolPreview = "ui_preview"
 )
 
 // uiBridge is the host side of the two tools. The chat turn calls it from its own
@@ -180,6 +181,11 @@ func (b *uiBridge) definitions() []driver.ClientToolDef {
 				`"behaviour":{"type":"object","description":"animations, menu_keys, keys, commands, hooks; format in ui_guide"},` +
 				`"packages":{"type":"array","items":{"type":"object"},"description":"[{put:<package>}|{remove:id}|{disable:id}|{enable:id}]; the user approves a package before it runs; see ui_guide"},` +
 				`"summary":{"type":"string","description":"one sentence saying what changes, shown to the user"}}}`)},
+		{Name: uiToolPreview,
+			Description: "Draw the screen as text, as the user sees it; changes nothing. Look after ui_edit, or pass change (a ui_edit argument) to see a proposal first. No colours.",
+			Schema: json.RawMessage(`{"type":"object","properties":{"width":{"type":"integer"},"height":{"type":"integer"},"working":{"type":"boolean"},"shells":{"type":"integer"},"input":{"type":"string"},` +
+				`"chat":{"type":"array","items":{"type":"object","properties":{"role":{"type":"string","description":"user|assistant|note|error"},"text":{"type":"string"}}}},` +
+				`"change":{"type":"object"}}}`)},
 	}
 }
 
@@ -204,12 +210,33 @@ func (b *uiBridge) call(ctx context.Context, c driver.ClientToolCall, ask func(d
 		return driver.ClientToolResult{OK: true, Text: text, Arg: "interface", Summary: "Read how the interface is built"}
 	case uiToolEdit:
 		return b.edit(ctx, c.Arguments, ask)
+	case uiToolPreview:
+		return b.preview(ctx, c.Arguments)
 	}
 	return driver.ClientToolResult{Text: c.Name + " is not a tool of this client"}
 }
 
 func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(driver.Approval) bool) driver.ClientToolResult {
+	return b.editFlow(ctx, raw, ask, nil)
+}
+
+// uiDraft is a proposed change that was built and validated but not applied: what
+// ui_preview draws. editFlow fills it when it is given one, which is the whole
+// difference between asking for a change and looking at it first.
+type uiDraft struct {
+	doc  *scene.Document
+	diff string
+	// words says the change reworded texts, which the preview cannot show: the words
+	// in use are a process-wide table the loop is reading while the turn runs.
+	words bool
+}
+
+func (b *uiBridge) editFlow(ctx context.Context, raw json.RawMessage, ask func(driver.Approval) bool, dry *uiDraft) driver.ClientToolResult {
 	refuse := func(summary, text string) driver.ClientToolResult {
+		if dry != nil {
+			// Looking is not trying: a refusal here is not the model repeating itself.
+			return driver.ClientToolResult{Arg: "interface", Summary: "The proposed change is not valid", Text: text + "\nNothing was changed (this was only a preview)."}
+		}
 		// The chat shows the Summary and only the model sees the Text, so a bare
 		// "The change was refused" told the user nothing while the model looped on a
 		// reason nobody could read. The first line of the reason goes on the screen.
@@ -226,7 +253,7 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	b.mu.Lock()
 	policy := b.policy
 	b.mu.Unlock()
-	if policy == policyDeny {
+	if policy == policyDeny && dry == nil {
 		return refuse("Not available in plan mode", "the interface may not be changed in plan mode; say what you would change instead")
 	}
 	var args struct {
@@ -322,8 +349,16 @@ func (b *uiBridge) edit(ctx context.Context, raw json.RawMessage, ask func(drive
 	} else if len(args.Colors) == 0 && len(args.Texts) == 0 && len(args.Behaviour) == 0 && len(args.Packages) == 0 {
 		return refuse("The change was refused", "ui_edit needs colors, texts, behaviour, packages, commands or scene")
 	}
+	if diff == "" && dry != nil {
+		dry.doc = next
+		return driver.ClientToolResult{OK: true}
+	}
 	if diff == "" {
 		return driver.ClientToolResult{OK: true, Arg: "interface", Summary: "Nothing to change", Text: "the new document is the same as the one on screen; nothing was changed"}
+	}
+	if dry != nil {
+		dry.doc, dry.diff, dry.words = next, diff, len(args.Texts) > 0
+		return driver.ClientToolResult{OK: true}
 	}
 	summary := strings.TrimSpace(args.Summary)
 	if summary == "" {
@@ -571,6 +606,7 @@ LAYOUT. The interface is a JSON scene document drawn top to bottom: {"root": nod
   where = above <id> | below <id> | into <id> [top] | above_input | below_input
 Example, one more blank line under the input bar:
   /ui add node below_input {"id":"input_gap_extra","type":"text","text":""}
+LOOK BEFORE YOU SAY DONE. ui_edit saying "applied" only means the document was valid. Call ui_preview to see the screen as text (width and height, working:true for a turn in flight, shells:N, input, chat lines), at 80 wide and at about 40 wide (a phone). Pass change: {...} (the same arguments as ui_edit) to see a proposal first. Colours are not drawn.
 BANNER. The top of the screen is nodes like any other, so it is yours to remove, replace or add to; never say it cannot be changed and never search files or run commands for it. The factory one is the row "banner" (the coloured logo letters, and the words node "banner_words" with \"v0.1.0 · Run /help for commands\") followed by the blank row "banner_gap". Recipes:
   - change only the words: /ui set banner_words text "my words"  (or hide them with an empty text)
   - drop it: /ui remove banner  (and /ui remove banner_gap for the blank row under it)
