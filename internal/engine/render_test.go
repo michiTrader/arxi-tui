@@ -450,7 +450,9 @@ func TestSlashMenuLayout(t *testing.T) {
 // a pure-white name and a lighter-grey description; every other row uses the resting
 // tokens; the active tab is the selected tab token.
 func TestSlashMenuSelectionColours(t *testing.T) {
-	r := Renderer{Width: 90, Height: 20}
+	// Tall enough to show every command: a new command row must not push the last ones off
+	// the frame and make this look like a colour bug.
+	r := Renderer{Width: 90, Height: 24}
 	styled := r.RenderFrame(slashMenuDoc(t), slashState(2)).Styled()
 
 	if !strings.Contains(styled, "«menu.name.selected:/focus»") || !strings.Contains(styled, "«menu.desc.selected:  Focus a node by id»") {
