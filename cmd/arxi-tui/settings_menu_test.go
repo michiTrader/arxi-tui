@@ -63,7 +63,7 @@ func TestTheMenuStageIsReadFromTheLineAlone(t *testing.T) {
 // ---- the rows -------------------------------------------------------------------------
 
 func TestTheFirstStageNamesEverySettingAndKeepsTheAutocompactRows(t *testing.T) {
-	rows := settingsRows("", autoCompactSetting{Percent: 80}, 1_000_000)
+	rows := settingsRows("", autoCompactSetting{Percent: 80}, 1_000_000, nil, nil)
 	for _, k := range settingsKeys {
 		if !hasRef(rows, k) {
 			t.Errorf("the menu lacks the setting %q: a setting the list shows but the menu hides cannot be found by browsing; add it to settingsKeys's rows", k)
@@ -74,20 +74,20 @@ func TestTheFirstStageNamesEverySettingAndKeepsTheAutocompactRows(t *testing.T) 
 			t.Errorf("the autocompact row %q is gone: `/settings` has always opened on these, and users pick them", ref)
 		}
 	}
-	if len(rows) != len(settingsKeys)+1+len(autoCompactPercents) {
-		t.Errorf("got %d rows, want %d settings + off + %d percentages", len(rows), len(settingsKeys), len(autoCompactPercents))
+	if len(rows) != len(settingsKeys)+1+1+len(autoCompactPercents) {
+		t.Errorf("got %d rows, want %d settings + hidden parts + off + %d percentages", len(rows), len(settingsKeys), len(autoCompactPercents))
 	}
 }
 
 func TestARowSaysTheValueAndTheFactoryOneWhenTheyDiffer(t *testing.T) {
 	setWith(t)
-	for _, r := range settingsRows("", autoCompactSetting{}, 0) {
+	for _, r := range settingsRows("", autoCompactSetting{}, 0, nil, nil) {
 		if r.Ref == "chat.scrollbar" && (!strings.Contains(r.Provider, `"yes"`) || strings.Contains(r.Provider, "factory")) {
 			t.Errorf("a setting at its factory value must show only the value: %q", r.Provider)
 		}
 	}
 	setWith(t, "chat.scrollbar", "no")
-	for _, r := range settingsRows("", autoCompactSetting{}, 0) {
+	for _, r := range settingsRows("", autoCompactSetting{}, 0, nil, nil) {
 		if r.Ref == "chat.scrollbar" && (!strings.Contains(r.Provider, `"no"`) || !strings.Contains(r.Provider, `factory "yes"`)) {
 			t.Errorf("a changed setting must say what it is now and what the factory one is: %q", r.Provider)
 		}
@@ -110,7 +110,7 @@ func TestEveryClosedSetOfValuesIsAcceptedByTheRuleThatChecksWrites(t *testing.T)
 
 func TestTheValueRowsMarkWhatIsInForceAndWhatIsFactory(t *testing.T) {
 	setWith(t, "status.narrow", "hide")
-	rows := settingsRows("status.narrow", autoCompactSetting{}, 0)
+	rows := settingsRows("status.narrow", autoCompactSetting{}, 0, nil, nil)
 	var cur, factory []string
 	for _, r := range rows {
 		if r.Current {
@@ -130,7 +130,7 @@ func TestTheValueRowsMarkWhatIsInForceAndWhatIsFactory(t *testing.T) {
 
 func TestAYesNoWrittenAsOffStillMarksTheNoRow(t *testing.T) {
 	setWith(t, "chat.light", "off")
-	for _, r := range settingsRows("chat.light", autoCompactSetting{}, 0) {
+	for _, r := range settingsRows("chat.light", autoCompactSetting{}, 0, nil, nil) {
 		if r.Ref == "no" && !r.Current {
 			t.Error(`"off" means no (validSettingValue accepts it): with the no row unmarked the menu shows nothing in force`)
 		}
@@ -141,7 +141,7 @@ func TestAYesNoWrittenAsOffStillMarksTheNoRow(t *testing.T) {
 }
 
 func TestTheEffortRowsCarryTheirMeaning(t *testing.T) {
-	rows := settingsRows("effort.default", autoCompactSetting{}, 0)
+	rows := settingsRows("effort.default", autoCompactSetting{}, 0, nil, nil)
 	if hasRef(rows, "off") {
 		t.Error(`"off" is not a default effort (validChatLook refuses it); the menu must not offer it`)
 	}
