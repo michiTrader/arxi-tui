@@ -885,6 +885,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	var hubImages bool
 	autoCompact := loadAutoCompact(settingsPath())
 	var settingsMn modelMenu
+	// settingsShown is the stage of the /settings menu the rows were read for ("" is the
+	// list of settings, otherwise the setting whose values are listed).
+	var settingsShown string
 	// autoCompactCh wakes the loop to try the autocompact again: the turn_done that
 	// asks for it is emitted a moment before the session frees itself, so the first
 	// try can meet "busy" (autoCompactTry).
@@ -1247,6 +1250,30 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	}
 	keepScene := func(summary string) { keepSceneWith(summary, nil) }
 
+	// applySettingsOutcome carries out what one /settings line decided. The typed line and
+	// a pick in the /settings menu both end here, so a setting changed either way is kept,
+	// confirmed and refused by the same code.
+	applySettingsOutcome := func(out settingsOutcome) {
+		switch {
+		case out.err != "":
+			collected = appendLocalWarning(collected, out.err)
+		case out.wordsChanged:
+			userWords = out.words
+			activate()
+			keepScene(out.note)
+		case out.acChanged:
+			autoCompact = out.ac
+			note := out.note
+			if err := saveAutoCompact(settingsPath(), autoCompact); err != nil {
+				note += " (not saved: " + err.Error() + ")"
+			}
+			sceneNotice = note
+			settingsMn.loaded = false
+		default:
+			collected = appendLocalNote(collected, out.note)
+		}
+	}
+
 	// ---- what the user's behaviour runs (behaviour.go) ----------------------------
 	//
 	// actionQ holds actions waiting to run. A key, a command of the user's or a hook
@@ -1520,10 +1547,19 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			}
 			state.ModelActive = true
 			state.ModelMatches, state.ModelSelected = effortMn.view(filter)
-		} else if filter, open := settingsMenuOpen(input); open && hub == nil {
-			// `/settings ` borrows the same overlay.
-			if !settingsMn.loaded {
-				settingsMn.setRows(settingsMenuData(autoCompact, hubWindow))
+		} else if skey, _, filter, open := settingsMenuStage(input); open && hub == nil {
+			// `/settings ` borrows the same overlay: first the settings, then, once one is
+			// picked, the values it can take (settings_menu.go). The rows are read again
+			// when the stage changes, because each stage lists different things.
+			if !settingsMn.loaded || settingsShown != skey {
+				settingsMn.setRows(settingsRows(skey, autoCompact, hubWindow))
+				if skey == "" {
+					// setRows starts on the row in force, which at this stage is the
+					// autocompact one at the very bottom: the menu would open on its
+					// last page and hide every setting. Start at the top.
+					settingsMn.sel = 0
+				}
+				settingsShown = skey
 			}
 			state.ModelActive = true
 			state.ModelMatches, state.ModelSelected = settingsMn.view(filter)
@@ -2355,29 +2391,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								keepScene("/ui color: " + tok + " is now " + styleWords(theme.Resolve(tok)))
 							}
 							input, caret = "", 0
-						} else if sargs, ok := settingsSurfaceLine(input); ev.Key.Type == term.KeyEnter && ok {
+						} else if sargs, ok := settingsSurfaceLine(input); ev.Key.Type == term.KeyEnter && ok && !settingsValueMenuOpen(input) {
 							// /settings list | <name> | <name> <value>: the settings
 							// surface (settings_surface.go). A change is the same one
 							// /ui text makes, kept in the same texts.json.
-							out := runSettingsSurface(sargs, userWords, autoCompact, uiHidden)
-							switch {
-							case out.err != "":
-								collected = appendLocalWarning(collected, out.err)
-							case out.wordsChanged:
-								userWords = out.words
-								activate()
-								keepScene(out.note)
-							case out.acChanged:
-								autoCompact = out.ac
-								note := out.note
-								if err := saveAutoCompact(settingsPath(), autoCompact); err != nil {
-									note += " (not saved: " + err.Error() + ")"
-								}
-								sceneNotice = note
-								settingsMn.loaded = false
-							default:
-								collected = appendLocalNote(collected, out.note)
-							}
+							applySettingsOutcome(runSettingsSurface(sargs, userWords, autoCompact, uiHidden))
 							input, caret, slashSel = "", 0, 0
 						} else if key, val, ok := uiTextCommand(input); ev.Key.Type == term.KeyEnter && ok {
 							// /ui text <key> [sentence]: the same wording change the agent
@@ -2447,16 +2465,28 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								setEffort(after, false)
 								sceneNotice = ""
 							}
-						} else if _, open := settingsMenuOpen(input); open {
-							// The `/settings ` menu: same keys; a pick sets autocompact
-							// and is remembered.
+						} else if skey, spre, _, open := settingsMenuStage(input); open {
+							// The `/settings ` menu: same keys. At the first stage a pick
+							// names a setting and leaves its line in the input; at the
+							// second a pick is the value, changed through the same code as
+							// the typed line. Autocompact keeps the pick it always had.
 							var pick string
-							input, caret, pick = choiceMenuKey(&settingsMn, settingsPrefix, input, caret, ev.Key)
+							input, caret, pick = choiceMenuKey(&settingsMn, spre, input, caret, ev.Key)
 							if pick != "" {
-								autoCompact = settingsAfterPick(autoCompact, pick)
-								sceneNotice = settingsNotice(autoCompact, hubWindow)
-								if err := saveAutoCompact(settingsPath(), autoCompact); err != nil {
-									sceneNotice += " (not saved: " + err.Error() + ")"
+								switch {
+								case skey == "" && !strings.HasPrefix(pick, "autocompact:"):
+									input = settingPickLine(pick)
+									caret = len([]rune(input))
+									slashSel = 0
+									sceneNotice = settingPickNotice(pick)
+								case skey == "":
+									autoCompact = settingsAfterPick(autoCompact, pick)
+									sceneNotice = settingsNotice(autoCompact, hubWindow)
+									if err := saveAutoCompact(settingsPath(), autoCompact); err != nil {
+										sceneNotice += " (not saved: " + err.Error() + ")"
+									}
+								default:
+									applySettingsOutcome(runSettingsSurface(skey+" "+pick, userWords, autoCompact, uiHidden))
 								}
 								settingsMn.loaded = false
 							}

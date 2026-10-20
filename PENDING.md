@@ -1,5 +1,13 @@
 # Pending work
 
+## Done since: `/settings` is a menu (branch genspark_ai_developer_settings_menu)
+
+- Closes the first half of "the owner can see and change every setting from inside the TUI": `/settings` now lists every setting with its value and what it does, narrowed by typing; Enter on a setting opens the values it can take, Enter on a value changes it. A pick becomes the same `/settings <name> <value>` call the typed line makes, so the menu, the typed line, `/ui text` and the agent's `ui_edit` share one rule and one file (`texts.json`). New file `cmd/arxi-tui/settings_menu.go`; `main.go` only routes to it.
+- Two bugs found by the first test run, both fixed and covered: (1) the typed surface also recognises `/settings chat.scrollbar n` (a setting plus a value) and is checked earlier in the loop, so it took the Enter and refused the half-typed `n`; (2) `setRows` starts on the row in force, which was the autocompact one at the very bottom, so the menu opened on its last page and hid every setting.
+- Tests: 17 new (stage reading, rows, value marks, spellings like `off` for `no`, every offered value accepted by the rule that checks writes, hyphen assumption behind `-`, and the real loop for list/narrow/pick/autocompact/refusal). Mutations: 13 on the new code, 12 killed at first; the survivor was a guard that could never matter (a dead `"-"` check), removed, and the assumption it hid is now a test with a counterfactual (a value with a hyphen fails it).
+- Still NOT a free-form editor: a setting that is a number has no list, so after the pick you type the number. Settings that are only a `/ui` command (hidden parts) are listed by `/settings list` but are not rows of the menu.
+- NOT verified: in a real terminal. The full suite has one failure that is not this change: `TestLoopABigPasteShowsAMarkerAndSendsTheRealText` (see "Frágil sin arreglar" below) fails on this branch's long name (`genspark_ai_developer_settings_menu`) and passes on a short one (checked: same code, a branch called `tmp-short`). It is the known fragility, not a regression of this change; a short branch name avoids it.
+
 ## Done since: copying the chat without the scrollbar column (branch feat/copy-clean)
 
 - The bar's column and the spaces that pad each row out to it are real characters on the screen, so a mouse selection took them. Changed: no bar (the chat fits) means no padding and no bar cell; `/ui text chat.scrollbar no` removes the bar altogether (validated yes/no). With the bar showing, the `│` and the padding are STILL copied: a program cannot make a terminal selection skip a column. `/copy` is the clean way.
