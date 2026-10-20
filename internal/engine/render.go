@@ -2899,6 +2899,19 @@ func rowScopesFor(bind string, state fold.State) []map[string]string {
 			})
 		}
 		return rows
+	case "host.shell.rows":
+		rows := make([]map[string]string, 0, len(state.HostShellRows))
+		for _, r := range state.HostShellRows {
+			rows = append(rows, map[string]string{
+				"row.id":      r.ID,
+				"row.command": r.Command,
+				"row.state":   r.State,
+				"row.age":     r.Age,
+				"row.running": boolField(r.Running),
+				"row.last":    r.Last,
+			})
+		}
+		return rows
 	case "config.categories":
 		rows := make([]map[string]string, 0, len(state.ConfigCategories))
 		for _, c := range state.ConfigCategories {

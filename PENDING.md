@@ -1,3 +1,15 @@
+## Done since: B1, one row per shell as data (branch feat/shell-rows)
+
+`host.shell.rows` is a list bind: one row per shell, the newest 20, with `row.id`, `row.command`, `row.state`,
+`row.age`, `row.running` and `row.last` (the last line the shell printed: cleaned of escapes and controls,
+whitespace collapsed, cut to 80 characters). Only `row.id` is safe inside an `on_press` command; `command` and
+`last` come from an outside program. Pressing a row (Tab and Enter) resolves it against the same rows the loop
+draws (`pressState`). The menu hides the rows like the rest of the status line; `ui_preview` shows them with
+`shells:N`. It is not in the default scene (the factory goldens do not change). Scenario 3, the list and the
+choice, passes through the real loop with a row that presses `/shell show {row.id}`; the window for the output
+is phase D. Scenario 1 already passed with `host.shells` and a button `cmd:/shell`; the table in the design
+is corrected. Next in B: the verb catalogue (B2), event payloads, `extract` and `output.post` (B3).
+
 ## Done since: guardrails and the design of the open TUI (branch feat/open-tui)
 
 `docs/GUARDRAILS.md` + `internal/guard` (tests only): the dependency list, no cgo, the release script
@@ -14,7 +26,7 @@ components, windows, effects, widgets, voice as a package). **Nothing of that de
   (the model draws the screen as text at a width and state it chooses, or as a proposed `ui_edit` would leave it,
   without applying or asking; plain text, no colours). `ui_inspect` is the option `inspect:true`
   of `ui_preview` (why each node is drawn or hidden, and the Tab order). `ui_test` is `save`/`expect`/`forget` of `ui_preview`.
-  UI history and `/ui export`/`/ui import` are done (below), which closes phase A. Next: phase B (shells as data, scenarios 1 to 3).
+  UI history and `/ui export`/`/ui import` are done (below), which closes phase A. Phase B has started (B1 below).
 - `ui_simulate` is the option `keys` of `ui_preview` (names like `down enter ctrl+c`, `type:<text>`, `paste:<text>`;
   combinable with `change` to try a proposal). The keys run the real `loop()` in a COPY of the program
   (`arxi-tui __simulate-ui`, same binary, no new dependency): its own temporary folders, a short environment with no

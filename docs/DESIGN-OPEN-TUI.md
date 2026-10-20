@@ -228,7 +228,7 @@ an `extract` that joins an array and an `output.post` stage for rules that may r
 |---|---|---|
 | 0 | guardrails (done in this branch) | `internal/guard` passes and fails when it should |
 | A | `ui_inspect`, `ui_preview`, `ui_simulate`, `ui_test`, history, `/ui export` | the agent checks its own change before asking you |
-| B | data store with schemas, the verb catalogue, shells / queue / input / chat as structured data, event payloads, `extract` that joins, `output.post` | every value and verb of the app is in the registry; a test enumerates both |
+| B | data store with schemas, the verb catalogue, shells / queue / input / chat as structured data, event payloads, `extract` that joins, `output.post` | every value and verb of the app is in the registry; a test enumerates both. Split in B1 `host.shell.rows` (done), B2 verb catalogue, B3 event payloads, `extract`, `output.post` |
 | C | keymap with contexts, tier 1, tier 2, the message queue, mid-turn steering (core too) | `ctrl+o`, `ctrl+f`, the down arrow and Enter-while-busy are no longer decided in Go |
 | D | components, panels, windows, mouse; menus and `/provider` as windows | no Go file draws a particular screen (a test searches for it) |
 | E | effects, widgets, streams, pictures | word-by-word animation and a decibel bar exist as profile content |
@@ -245,9 +245,9 @@ first phase after which it can pass.
 
 | # | Request | Needs |
 |---|---|---|
-| 1 | "A button under the input with the number of running shells; Enter opens the shells" | B, D |
+| 1 | "A button under the input with the number of running shells; Enter opens the shells" | A (`host.shells` plus a button with `cmd:/shell`; checked by a test) |
 | 2 | "Let me reach that button with the down arrow from the last line of the input" | C |
-| 3 | "A window listing the shells; choose one to see its output" | B, D |
+| 3 | "A window listing the shells; choose one to see its output" | B1 for the list and the choice (`host.shell.rows`, `/shell show {row.id}`), D for the window |
 | 4 | "Queue what I type while you work, show how many are waiting, let me edit or cancel them" | B, C |
 | 5 | "One line per tool call, a blank row between them, and `ctrl+o` cycles one line / cut / full" | D, C |
 | 6 | "Thinking: words appear, the line is cleared when full, then it continues" | E |

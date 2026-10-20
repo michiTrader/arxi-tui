@@ -207,6 +207,10 @@ var signedBinds = map[string]bool{
 	"config.categories": true,
 	"config.settings":   true,
 
+	// §4.3/§4.7 host view state: one row per background shell, for a `list` that draws
+	// them (host.shell.list is only their names in one string).
+	"host.shell.rows": true,
+
 	// §4.3/§4.7 view state — the provider hub (/provider). Host-composed
 	// text and one list; see fold.State for why the host composes them (the API key
 	// must never be in State, so a form's key row is published already masked).
@@ -389,6 +393,8 @@ var rowSchemas = map[string]map[string]bool{
 	// The /login screen's list. row.marker is the same fixed-width gutter the
 	// providers screen wears; row.label and row.status are the two columns.
 	"hub.rows": {"row.line": true, "row.status": true},
+	// The background shells, one row each. row.id is the number /shell and shell_read use.
+	"host.shell.rows": {"row.id": true, "row.command": true, "row.state": true, "row.age": true, "row.running": true, "row.last": true},
 }
 
 // RowSchema returns the signed `row.<field>` names for a list bind, or nil if

@@ -112,6 +112,16 @@ type pluginActionRouter interface {
 // with "/", Tab and Enter belong to the menu, so focusKey is never reached then.
 // Ctrl-C never reaches here either, so the escape hatch stays uncapturable
 // (invariant 6) whatever a button's action names.
+// pressState is the state a press resolves its rows against: the fold of the log plus the
+// host's own lists, the ones the repaint adds (host.shell.rows). A press that read only the
+// fold would see no rows for them: the list is drawn, Tab never reaches a row and Enter on
+// it does nothing, with no message anywhere.
+func pressState(collected []fold.Event, drv any) fold.State {
+	st := fold.Fold(collected)
+	st.HostShellRows = runningShellRows(drv)
+	return st
+}
+
 func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fold.State, notice *string, hidden map[string]bool, uiMax *string, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, enqueue func(line string), ctx context.Context, drv Driver) (bool, string, string) {
 	switch {
 	case k.Type == term.KeyTab:

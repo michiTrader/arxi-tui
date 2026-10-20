@@ -1746,6 +1746,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.HostEffort, state.HostCwd, state.HostMode, state.ModelName = "", "", "", ""
 			state.HostUsage, state.HostBranch, state.HostScroll, state.HostShells = "", "", "", ""
 			state.HostShellList = ""
+			state.HostShellRows = nil
 			state.HostPanels = ""
 			state.HostPaste = ""
 			state.HostFind = ""
@@ -1760,6 +1761,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			state.HostScroll = scrollLabel(chatScroll)
 			state.HostShells = shellsLabel(runningShells(drv))
 			state.HostShellList = runningShellList(drv)
+			state.HostShellRows = runningShellRows(drv)
 			state.HostPanels = pkgAuto.panelsLine()
 			state.HostPaste = ""
 			if pastes.has(input) {
@@ -3015,7 +3017,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if picked != "" {
 								enqueue(actionList{"cmd:" + picked}, false)
 							}
-						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, fold.Fold(collected), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) {
+						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, pressState(collected, drv), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) {
 							if raw, isRaw := strings.CutPrefix(line, rawActionMark); isRaw {
 								enqueue(actionList{raw}, false)
 								return
