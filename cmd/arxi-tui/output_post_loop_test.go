@@ -169,3 +169,35 @@ func TestLoopWithoutAnOutputPostRuleAnswersAreNotHeldBack(t *testing.T) {
 		t.Errorf("an input.pre rule must not touch answers; last frame:\n%s", lastFrame(out))
 	}
 }
+
+// /resume replaces the conversation as /clear does, so an answer still with the rules must
+// not land in the one that was brought back; and the answers that follow are reworded again.
+func TestLoopOutputPostALateAnswerDoesNotLandInAResumedConversation(t *testing.T) {
+	rule := `case "$1" in *slow*) sleep 1.2;; esac; ` + colour
+	script := typed("/clear")
+	script[0].delay = 300 * time.Millisecond
+	script = append(script, scheduledEvent{10 * time.Millisecond, enterEvent()})
+	script = append(script, typed("/resume ")...)
+	script = append(script, scheduledEvent{300 * time.Millisecond, enterEvent()})
+	script = append(script, exitAfter(1900)...)
+	out, _ := loopFeeding(t, postPackage(rule), "sp", script, func(send func(fold.Event)) {
+		time.Sleep(100 * time.Millisecond)
+		for _, e := range answerTurn(2000, "first colour") { // saved, then cleared, then resumed
+			send(e)
+		}
+		time.Sleep(350 * time.Millisecond) // after /clear, before the resume is chosen
+		send(answer(2010, "slow colour"))
+		time.Sleep(850 * time.Millisecond) // after the resume
+		send(answer(2011, " third colour"))
+	})
+	s := screen(out)
+	if !strings.Contains(s, "first colour") {
+		t.Fatalf("the conversation was not resumed, so this proves nothing; last frame:\n%s", lastFrame(out))
+	}
+	if strings.Contains(s, "slow") {
+		t.Errorf("the answer of the replaced conversation was drawn after /resume; last frame:\n%s", lastFrame(out))
+	}
+	if !strings.Contains(onlyTheChat(out), "third color") {
+		t.Errorf("an answer after the resume must be reworded again (the rules must not stay busy); last frame:\n%s", lastFrame(out))
+	}
+}
