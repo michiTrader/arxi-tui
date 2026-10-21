@@ -169,3 +169,23 @@ func TestCapabilitiesTellEveryPower(t *testing.T) {
 		t.Errorf("a package with no permissions listed %v", c)
 	}
 }
+
+// "*" and "join" go together: one without the other is a setting that is ignored or a
+// default nobody chose, so the package is refused when saved, with what to do.
+func TestExtractStarNeedsJoinAndJoinNeedsStar(t *testing.T) {
+	doc := func(op string) string { return cmdDoc(`{"net":["api.example.com"]}`, op, "") }
+	const url = `"kind":"http","url":"https://api.example.com/"`
+	accepted(t, doc(`{`+url+`,"extract":"data.sentences.*.t","join":"space"}`), Options{})
+	accepted(t, doc(`{`+url+`,"extract":"data.sentences.*.t","join":"newline"}`), Options{})
+	accepted(t, doc(`{`+url+`,"extract":"data.sentences.*.t","join":"none"}`), Options{})
+	refused(t, doc(`{`+url+`,"extract":"data.sentences.*.t"}`), Options{}, `"join" must say how`, "none, space, newline")
+	refused(t, doc(`{`+url+`,"extract":"data.text","join":"space"}`), Options{}, "has no \"*\"", "remove join")
+	refused(t, doc(`{`+url+`,"extract":"data.sentences.*.t","join":"comma"}`), Options{}, `join "comma" is not understood`)
+	refused(t, doc(`{`+url+`,"extract":"a.*.b.*.c","join":"space"}`), Options{}, "more than one list")
+	refused(t, doc(`{`+url+`,"join":"space"}`), Options{}, "join is set")
+	// "*" only where a path may be written at all.
+	refused(t, doc(`{`+url+`,"extract":"data.**.t","join":"space"}`), Options{}, "dotted path")
+	refused(t, doc(`{`+url+`,"extract":"data.s*.t","join":"space"}`), Options{}, "dotted path")
+	// A builtin has no output to read, so it has no join either.
+	refused(t, cmdDoc(`{}`, `{"kind":"builtin","name":"help.open","join":"space"}`, ""), Options{}, "does not use join")
+}

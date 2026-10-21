@@ -86,3 +86,50 @@ func TestACommandDoesNotCarryARuleVerdict(t *testing.T) {
 		t.Fatalf("out=%+v err=%v", out, err)
 	}
 }
+
+// A translation comes back in segments. "*" walks every entry of one list and "join"
+// says how they are put together, so the whole paragraph is one value.
+func TestExtractWalksAListAndJoinsItsEntries(t *testing.T) {
+	doc := `{"data":{"sentences":[{"t":"Hello"},{"t":"world."},{"t":"Bye"}],"n":[1,2,3],"mixed":[{"t":"a"},{"u":"b"}],"empty":[]}}`
+	for _, c := range []struct{ path, join, want string }{
+		{"data.sentences.*.t", "space", "Hello world. Bye"},
+		{"data.sentences.*.t", "none", "Helloworld.Bye"},
+		{"data.sentences.*.t", "newline", "Hello\nworld.\nBye"},
+		{"data.n.*", "space", "1 2 3"}, // the entries are scalars themselves
+	} {
+		got, err := extractPath([]byte(doc), c.path, c.join)
+		if err != nil || got != c.want {
+			t.Errorf("extract %s join %s = %q, %v; want %q", c.path, c.join, got, err, c.want)
+		}
+	}
+	for _, c := range []struct{ path, join, want string }{
+		{"data.mixed.*.t", "space", "entry 1 of the list"},                  // one entry lacks the key: say which
+		{"data.empty.*", "space", "is empty"},                               // nothing to join is not an empty string
+		{"data.*", "space", "needs a list"},                                 // data is an object
+		{"data.sentences.*", "space", "not a single value"},                 // an entry that is an object
+		{"data.sentences.*.t", "comma", "join \"comma\" is not understood"}, // the runner checks again
+	} {
+		_, err := extractPath([]byte(doc), c.path, c.join)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("extract %s join %s: err = %v, want it to say %q", c.path, c.join, err, c.want)
+		}
+	}
+}
+
+// A list longer than MaxJoined is an answer the operation was not made for: it is
+// refused, never cut silently (a translation with its tail missing reads as complete).
+func TestExtractJoinRefusesAListLongerThanTheLimitAndAcceptsExactlyTheLimit(t *testing.T) {
+	list := func(n int) []byte {
+		parts := make([]string, n)
+		for i := range parts {
+			parts[i] = `"x"`
+		}
+		return []byte(`{"l":[` + strings.Join(parts, ",") + `]}`)
+	}
+	if got, err := extractPath(list(MaxJoined), "l.*", "none"); err != nil || len(got) != MaxJoined {
+		t.Fatalf("exactly %d entries must join: got %d chars, %v", MaxJoined, len(got), err)
+	}
+	if _, err := extractPath(list(MaxJoined+1), "l.*", "none"); err == nil || !strings.Contains(err.Error(), "ask the service for less") {
+		t.Fatalf("%d entries must be refused with a remedy, got %v", MaxJoined+1, err)
+	}
+}
