@@ -1029,7 +1029,10 @@ const (
 	noteTurnToken  = "chat.note"
 	// commandTurnToken draws the command word of a message ("/ui") in the user's turn.
 	commandTurnToken = "chat.command"
-	usageTurnToken   = "chat.usage"
+	// A line the user wrote while an answer was being written: dim, with a note that it waits.
+	queuedTurnToken = "chat.queued"
+	queuedTurnNote  = "  (queued)"
+	usageTurnToken  = "chat.usage"
 
 	// assistantIndent is the left margin of an answer: the width of the user's
 	// "┃ " marker, so the two voices line up as a pair of columns instead of the
@@ -1527,6 +1530,16 @@ func (r *Renderer) renderMarkdown(n *scene.Node, state fold.State, budget int) u
 		}
 		for len(lines) > 0 && len(lines[len(lines)-1]) == 0 {
 			lines = lines[:len(lines)-1]
+		}
+		// The lines waiting for the answer in flight, in the order they will go.
+		if len(state.Queued) > 0 {
+			if len(lines) > 0 {
+				lines = append(lines, ui.Line{})
+			}
+			for _, q := range state.Queued {
+				cont := ui.Line{{Text: strings.Repeat(" ", ansi.StringWidth(userTurnMarker)), Style: queuedTurnToken}}
+				lines = append(lines, ui.WrapText(userTurnMarker+q+queuedTurnNote, queuedTurnToken, r.Width, cont)...)
+			}
 		}
 		if r.ChatFind != "" {
 			matches := findMatchRows(lines, r.ChatFind)

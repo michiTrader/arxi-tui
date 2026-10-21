@@ -117,6 +117,11 @@ var catalogue = []Verb{
 		Doc:     "put the line being typed in the queue of messages, to be sent when the answer being written ends",
 		Example: "queue.push",
 	},
+	{
+		Name: "queue.steer", Protection: Free,
+		Doc:     "stop the answer being written and send the line being typed at once (what the answer did stays in the conversation)",
+		Example: "queue.steer",
+	},
 }
 
 // All returns the catalogue, in a stable order. It is a copy: a caller cannot change it.

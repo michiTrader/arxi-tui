@@ -409,3 +409,26 @@ func TestChatUsageMovesLastContextDuringAndAfterAFailedTurn(t *testing.T) {
 		t.Error("chat.usage must be a handled type")
 	}
 }
+
+// Lines written while an answer is pending wait in State.Queued, oldest first; one that goes
+// now leaves the front, and a take-back (no count) empties the list.
+func TestQueuedLinesWaitAndLeaveFromTheFront(t *testing.T) {
+	ev := func(typ string, p map[string]any) Event { return Event{Type: typ, Payload: p} }
+	queued := func(s string) Event { return ev("chat.queued", map[string]any{"text": s}) }
+	st := Fold([]Event{queued("a"), queued("b"), queued("c"), queued("")})
+	if len(st.Queued) != 3 || st.Queued[0] != "a" || st.Queued[2] != "c" {
+		t.Fatalf("Queued = %q, want [a b c] (an empty line is not queued)", st.Queued)
+	}
+	st = Fold([]Event{queued("a"), queued("b"), queued("c"), ev("chat.unqueued", map[string]any{"n": float64(1)})})
+	if len(st.Queued) != 2 || st.Queued[0] != "b" {
+		t.Errorf("after one left: %q, want [b c].\nConsequence: a line that was sent stays drawn as waiting.\nRemedy: chat.unqueued with n takes n lines from the front.", st.Queued)
+	}
+	st = Fold([]Event{queued("a"), queued("b"), ev("chat.unqueued", nil)})
+	if len(st.Queued) != 0 {
+		t.Errorf("after a take-back: %q, want none", st.Queued)
+	}
+	st = Fold([]Event{queued("a"), ev("chat.unqueued", map[string]any{"n": float64(5)})})
+	if len(st.Queued) != 0 {
+		t.Errorf("n larger than the queue left %q", st.Queued)
+	}
+}

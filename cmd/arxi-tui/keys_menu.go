@@ -49,6 +49,8 @@ var factoryKeys = []factoryKey{
 	{Keys: []string{"esc"}, What: "stop the answer being written, or close the menu that is open"},
 	{Keys: []string{"enter"}, What: "send the message (or run the command on the line); while an answer is being written the message waits and is sent when it ends",
 		Spent: keymapTakes},
+	{Keys: []string{"alt+enter"}, What: "while an answer is being written, the other way from enter: stop it and send the line at once (steer), or make it wait if enter steers",
+		Note: "enter's way is /ui busy queue|steer", Spent: keymapTakes},
 	{Keys: []string{"shift+enter", "ctrl+enter", "ctrl+j"}, What: "a new line in the message, without sending it",
 		Spent: isNewlineGesture},
 	{Keys: []string{"up", "down"}, What: "walk the lines you sent before (inside a long message they move between its rows first)",

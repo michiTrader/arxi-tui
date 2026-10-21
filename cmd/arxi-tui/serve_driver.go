@@ -335,6 +335,9 @@ func (d *serveDriver) CancelTurn() bool {
 	return d.chat != nil && d.chat.cancelTurn()
 }
 
+// StopForSteer ends the turn in flight, quietly, so the line the loop sends next replaces it.
+func (d *serveDriver) StopForSteer() bool { return d.chat != nil && d.chat.stopForSteer() }
+
 // Busy reports whether the chat is still inside a turn (or a compaction).
 func (d *serveDriver) Busy() bool { return d.chat != nil && d.chat.busyNow() }
 

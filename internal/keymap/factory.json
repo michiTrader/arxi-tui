@@ -4,6 +4,9 @@
     { "key": "ctrl+o", "do": "do:view.expand" },
     { "key": "ctrl+f", "when": "find.open && !screen.open && !approval.pending", "do": "do:find.toggle" },
     { "key": "ctrl+f", "when": "!menu.open && !key.user_bound && !screen.open && !approval.pending", "do": "do:find.toggle" },
-    { "key": "enter", "when": "agent.working && !menu.open && !screen.open && !approval.pending && !find.open && !ui.focused && !key.user_bound", "do": "do:queue.push" }
+    { "key": "enter", "when": "agent.working && !menu.open && !screen.open && !approval.pending && !find.open && !ui.focused && !key.user_bound && !busy.steers", "do": "do:queue.push" },
+    { "key": "enter", "when": "agent.working && !menu.open && !screen.open && !approval.pending && !find.open && !ui.focused && !key.user_bound && busy.steers", "do": "do:queue.steer" },
+    { "key": "alt+enter", "when": "agent.working && !menu.open && !screen.open && !approval.pending && !find.open && !ui.focused && !key.user_bound && !busy.steers", "do": "do:queue.steer" },
+    { "key": "alt+enter", "when": "agent.working && !menu.open && !screen.open && !approval.pending && !find.open && !ui.focused && !key.user_bound && busy.steers", "do": "do:queue.push" }
   ]
 }
