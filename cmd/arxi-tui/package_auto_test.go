@@ -505,3 +505,14 @@ func TestGuideTeachesEventsPanelsAndServicesAndListsThem(t *testing.T) {
 		}
 	}
 }
+
+// The model learns what a package can do only from this guide, so what B3 added must be
+// in it: ${text} for a turn.done event, and "*" with "join" in an extract.
+func TestGuideTeachesTheAnswerPlaceholderAndTheJoinedExtract(t *testing.T) {
+	g := packagesGuide(packageSet{})
+	for _, want := range []string{"${text}", "turn.done", `"*"`, `"join"`, "none, space or newline", "200 entries"} {
+		if !strings.Contains(g, want) {
+			t.Errorf("the guide the model reads does not say %q, so it cannot build a package that uses it", want)
+		}
+	}
+}
