@@ -270,15 +270,25 @@ func TestLoopATurnDoneEventHearsTheModelsAnswerOfThatTurnOnly(t *testing.T) {
 }
 
 // A turn that failed, or was cancelled, leaves words behind (a streamed half answer). The
-// next turn that ends well must not be given them.
+// next turn that ends well must not be given them. Each ending is tried alone, so one
+// cannot hide that the other forgot to drop the words.
 func TestLoopWordsOfAFailedOrCancelledTurnAreNotHeardByTheNextOne(t *testing.T) {
-	out := loopWithTurns(t, eventSaying("turn.done"), "sp", [][]fold.Event{
-		{answer(2000, "half-an-answer"), {Type: "agent.failed", Seq: 2001, Payload: map[string]any{"error": "boom"}}},
-		{answer(2002, "cut-short"), {Type: "chat.cancelled", Seq: 2003}},
-		{answer(2004, "the real one"), {Type: "agent.turn_done", Seq: 2005}},
-	})
-	got := heardBy(out)
-	if len(got) != 1 || got[0] != "the real one" {
-		t.Errorf("the event heard %q, want only [\"the real one\"]: the words of a failed or cancelled turn must be dropped; last frame:\n%s", got, lastFrame(out))
+	for _, c := range []struct {
+		name string
+		end  fold.Event
+	}{
+		{"failed", fold.Event{Type: "agent.failed", Seq: 2001, Payload: map[string]any{"error": "boom"}}},
+		{"cancelled", fold.Event{Type: "chat.cancelled", Seq: 2001}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out := loopWithTurns(t, eventSaying("turn.done"), "sp", [][]fold.Event{
+				{answer(2000, "half-an-answer"), c.end},
+				{answer(2002, "the real one"), {Type: "agent.turn_done", Seq: 2003}},
+			})
+			got := heardBy(out)
+			if len(got) != 1 || got[0] != "the real one" {
+				t.Errorf("the event heard %q, want only [\"the real one\"]: the words of a %s turn must be dropped; last frame:\n%s", got, c.name, lastFrame(out))
+			}
+		})
 	}
 }
