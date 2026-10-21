@@ -64,6 +64,7 @@ has to decide which — not ignore the contradiction.
 | [0052](0052-the-selection-reason-is-guarded-across-every-ranking-fact-it-carries.md) | The selection reason is guarded across every ranking fact it carries, because the receipt's one free-text field named by the exit evidence was witnessed at a single substring | accepted |
 | [0053](0053-the-retrieval-selection-witness-spans-every-position.md) | The retrieval selection witness spans every position, because the selection and reason guards each retrieved a single record and so proved only that the first selection describes the sole record present | accepted |
 | [0054](0054-the-per-position-selection-witness-covers-every-classification-dimension.md) | The per-position selection witness covers every classification dimension, because ADR-0053's two records differed only in ranking facts and so left the non-ranking classification unwitnessed past the first selection | accepted |
+| [0055](0055-a-steer-joins-a-running-chat-turn-at-its-next-tool-round.md) | A steer joins a running chat turn at its next tool round, which keeps the work ADR-0005 refused to throw away | accepted |
 
 ## Format
 

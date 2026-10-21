@@ -212,7 +212,7 @@ var Registry = []Cmd{
 			p("effort", "string", "thinking level: off, on, minimal, low, medium, high, xhigh or max, whichever the model takes (model list shows them); omit to let the model decide"),
 			p("history", "string", "earlier turns as a JSON list of {role,text} (wire only)"),
 			p("stream-thinking", "bool", "send the model's thinking as chat.thinking notifications before the reply (wire only)"),
-			p("workdir", "string", "a folder the model may look into with read-only tools; each call is sent as a chat.tool notification (wire only)"),
+			p("workdir", "string", "a folder the model may look into with read-only tools; each call is sent as a chat.tool notification; a turn that takes steering first sends a chat.steerable notification; a chat.steer line {text} sent after that while the turn runs joins the conversation before the model's next ask and is acknowledged by a chat.steered notification, and is dropped if the turn ends first (wire only)"),
 			enum(def(p("edits", "string", "whether the model may change files in the workdir: deny offers it no tool that does, ask shows each change as a chat.approval notification and waits for a chat.decision line, allow lets it change files unasked (wire only)"),
 				"deny"), "deny", "ask", "allow"),
 			enum(def(p("runs", "string", "whether the model may run shell commands in the workdir: deny offers it no such tool, ask shows each command as a chat.approval notification and waits for a chat.decision line, allow runs them unasked (wire only)"),
