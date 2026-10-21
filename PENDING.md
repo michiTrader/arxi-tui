@@ -1,3 +1,13 @@
+## Done since: C3, Enter while the agent works queues the line (branch feat/keymap-enter-queue)
+
+`enter` while an answer is being written is a keymap binding (`do:queue.push`) instead of text lost on a busy
+session. New names `agent.working`, `ui.focused`; new Free verb `queue.push`. Up to 8 lines wait; one is sent per
+finished answer, through the `input.pre` rules; they come back on the input when the answer is stopped or fails;
+`/clear` and `/resume` forget them. This is new behaviour, not a move: before, the line was refused and lost.
+The `down` row (focus a shells chip) was NOT done: there is no chip nor a focus target for one, so it is a new
+widget (phase D). The retry that waits for a session still finishing its turn has no test of its own (see
+DESIGN-OPEN-TUI, Built C3). Real mid-turn steering is core work and is still open.
+
 ## Done since: B3 part 2, `extract` that joins a list (branch feat/extract-join)
 
 `extract` accepts one `*` (`result.segments.*.text`) with a required `join` (`none`, `space`, `newline`); at most

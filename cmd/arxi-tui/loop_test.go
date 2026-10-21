@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode"
@@ -30,12 +31,18 @@ type testDriver struct {
 	// how many submissions happened — the paste path must submit a multi-line
 	// block once, not once per line.
 	submitted []string
+	subCount  int32 // len(submitted), kept with atomics so another goroutine may read it
 	// attached records every AttachImages call, in order.
 	attached [][]driver.ChatImage
 }
 
+// submittedCount is how many prompts were sent so far, readable from another goroutine than
+// the loop's: a test that looks while the loop runs must not race with it.
+func (d *testDriver) submittedCount() int { return int(atomic.LoadInt32(&d.subCount)) }
+
 func (d *testDriver) SubmitPrompt(ctx context.Context, text string) error {
 	d.submitted = append(d.submitted, text)
+	atomic.AddInt32(&d.subCount, 1)
 	d.seq += 1000
 	ev := fold.Event{
 		Type:    "run.prompt",

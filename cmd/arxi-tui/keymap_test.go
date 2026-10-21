@@ -44,6 +44,8 @@ func TestEachFlagOfTheStateReachesItsOwnName(t *testing.T) {
 		"screen.open":      {screenOpen: true},
 		"approval.pending": {approvalPending: true},
 		"find.open":        {findOpen: true},
+		"agent.working":    {agentWorking: true},
+		"ui.focused":       {uiFocused: true},
 	}
 	if len(cases) != len(keymapSchema) {
 		t.Fatalf("the schema has %d names and this test %d; add the new name here", len(keymapSchema), len(cases))
@@ -116,6 +118,39 @@ func TestCtrlFConditionsInEverySituation(t *testing.T) {
 		}
 		if ok != r.want || (ok && do != "do:find.toggle") {
 			t.Errorf("%s: ctrl+f taken=%v do=%q, want taken=%v. Consequence: the find bar opens where it must not, or does not where it must. Remedy: fix the `when` of the ctrl+f bindings in internal/keymap/factory.json.", r.name, ok, do, r.want)
+		}
+	}
+}
+
+// Enter is the queue only while an answer is being written and nothing else owns the key.
+// Every row names a situation where Enter belongs to something else.
+func TestEnterQueuesOnlyWhereNothingElseOwnsTheKey(t *testing.T) {
+	m, err := factoryKeymap()
+	if err != nil {
+		t.Fatal(err)
+	}
+	enter := term.Key{Type: term.KeyEnter}
+	rows := []struct {
+		name string
+		st   keymapState
+		want bool
+	}{
+		{"idle: Enter sends", keymapState{}, false},
+		{"the agent works", keymapState{agentWorking: true}, true},
+		{"the agent works and a menu is open: Enter picks a command", keymapState{agentWorking: true, menuOpen: true}, false},
+		{"the agent works and the user bound Enter", keymapState{agentWorking: true, userBound: true}, false},
+		{"the agent works and a screen is up", keymapState{agentWorking: true, screenOpen: true}, false},
+		{"the agent works and a change waits for y/n", keymapState{agentWorking: true, approvalPending: true}, false},
+		{"the agent works and the find bar is open: Enter is next match", keymapState{agentWorking: true, findOpen: true}, false},
+		{"the agent works and a node holds the focus: Enter presses it", keymapState{agentWorking: true, uiFocused: true}, false},
+	}
+	for _, r := range rows {
+		do, ok, why := resolveKey(m, enter, r.st)
+		if why != "" {
+			t.Errorf("%s: %s", r.name, why)
+		}
+		if ok != r.want || (ok && do != "do:queue.push") {
+			t.Errorf("%s: enter taken=%v do=%q, want taken=%v. Consequence: Enter queues a line that belongs to a menu, a button, the find bar or a question, or sends into a busy session. Remedy: fix the `when` of the enter binding in internal/keymap/factory.json.", r.name, ok, do, r.want)
 		}
 	}
 }

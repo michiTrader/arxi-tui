@@ -202,7 +202,7 @@ func TestTheFactoryKeymapParsesAgainstItsOwnNames(t *testing.T) {
 	}
 	// The host owns the schema and the action check; here the grammar alone must hold.
 	sch := expr.Schema{}
-	for _, n := range []string{"menu.open", "key.user_bound", "screen.open", "approval.pending", "find.open"} {
+	for _, n := range []string{"menu.open", "key.user_bound", "screen.open", "approval.pending", "find.open", "agent.working", "ui.focused"} {
 		sch[n] = expr.Bool
 	}
 	m, err := Parse(FactoryJSON, sch, nil)

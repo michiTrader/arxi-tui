@@ -27,6 +27,7 @@ var verbImpl = map[string]func(args []string, env verbEnv) string{
 	"shell.read":  verbShellRead,
 	"view.expand": func(_ []string, env verbEnv) string { return verbUI("view.expand", env) },
 	"find.toggle": func(_ []string, env verbEnv) string { return verbUI("find.toggle", env) },
+	"queue.push":  func(_ []string, env verbEnv) string { return verbUI("queue.push", env) },
 }
 
 // queuedVerbEnv is the environment of a verb that came out of the loop's action queue. What

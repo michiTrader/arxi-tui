@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sync"
+	"time"
 
 	"github.com/michiTrader/arxi_tui/internal/expr"
 	"github.com/michiTrader/arxi_tui/internal/keymap"
@@ -28,6 +29,8 @@ var keymapSchema = expr.Schema{
 	"screen.open":      expr.Bool, // the automations, team, flow, providers or installer screen is up
 	"approval.pending": expr.Bool, // a change waits for y/n
 	"find.open":        expr.Bool, // the find bar is open
+	"agent.working":    expr.Bool, // an answer is being written (or a compaction runs)
+	"ui.focused":       expr.Bool, // a node of the scene holds the focus, so Enter presses it
 }
 
 // keymapState is what the loop knows when a key is pressed. The loop fills one in per key.
@@ -37,6 +40,8 @@ type keymapState struct {
 	screenOpen      bool
 	approvalPending bool
 	findOpen        bool
+	agentWorking    bool
+	uiFocused       bool
 }
 
 // lookup answers the questions a condition asks, from one snapshot. Every name of
@@ -53,6 +58,10 @@ func (s keymapState) lookup(name string) (expr.Value, bool) {
 		return expr.B(s.approvalPending), true
 	case "find.open":
 		return expr.B(s.findOpen), true
+	case "agent.working":
+		return expr.B(s.agentWorking), true
+	case "ui.focused":
+		return expr.B(s.uiFocused), true
 	}
 	return expr.Value{}, false
 }
@@ -94,3 +103,14 @@ func resolveKey(m *keymap.Map, k term.Key, st keymapState) (do string, ok bool, 
 	}
 	return b.Do, ok, ""
 }
+
+// The queue of messages waiting for an answer to end.
+const (
+	queueMax       = 8
+	queueRetries   = 20
+	queueRetryWait = 150 * time.Millisecond
+)
+
+// busyReporter is the optional capability of a Driver that knows its session is still
+// finishing a turn, a moment after the turn_done event was sent.
+type busyReporter interface{ Busy() bool }

@@ -359,9 +359,11 @@ A condition that cannot be decided shows a notice and does not take the key.
 - What used to be said by where a branch sat in the Go chain of `main.go` is now written in
   `internal/keymap/factory.json`. The `isCtrlO` and `isCtrlF` helpers are gone; the find bar keeps only
   the keys it owns while open (typing, Enter, up/down, Esc).
-- Not done yet: `down` (focus the shells chip) and `Enter` while the agent works (`queue.push`); they
-  need names such as `input.at_end`, `shells.count`, `agent.working`, and the message queue. A keymap
-  file the user can edit (`/ui keymap`) comes after those rows move.
+- Not done yet: `down` (focus the shells chip). Checked while reading the code: **there is no shells
+  chip and no focus target for one**, and `down` today only walks the history, a menu or the caret. So
+  that row is not a move of existing behaviour but a new widget (a chip with focus); it needs the
+  widget first (phase D) and is left for it.
+
 - Size: the android/arm64 binary (`CGO_ENABLED=0`, `-s -w`, `-trimpath`) is 9,830,753 B against
   9,765,217 B on master, +65,536 B. That includes `internal/expr`, which is linked in for the first
   time here. The limit is 11,000,000 B.
@@ -379,3 +381,29 @@ A condition that cannot be decided shows a notice and does not take the key.
   is open, which I could not reach from the keyboard. So it is either equivalent in practice or a
   gap I did not find; it is listed here instead of being passed over. `consent.open` was removed
   from the names: it could never answer yes, because a consent screen is handled before the keymap.
+
+### Built (C3): `enter` while the agent works
+
+- `enter` is now a binding (`agent.working && !menu.open && !screen.open && !approval.pending &&
+  !find.open && !ui.focused && !key.user_bound`, `do:queue.push`). New names: `agent.working`,
+  `ui.focused`. New Free verb: `queue.push`.
+- This one is **a new behaviour, not a move**: until now Enter on a busy session handed the line to
+  the chat, which refused it, and the text was lost. The queue is in the loop: up to 8 lines, one sent
+  per finished answer (through the `input.pre` rules like a typed line), put back on the input when
+  the answer is stopped or fails, forgotten by `/clear` and `/resume`. The line goes into the history.
+  A line with a picture is refused with a notice, because the marker would outlive its picture.
+- Real mid-turn steering is still core work and is not done; the queue is the honest version.
+- Size: the android/arm64 binary (`CGO_ENABLED=0`, `-s -w`, `-trimpath`) is 9,896,289 B against
+  9,830,753 B on master, +65,536 B. The limit is 11,000,000 B.
+- Checked by breaking it on purpose (30 mutants in two rounds, run on a committed tree). The first
+  round found that two things I had added were not needed and no test noticed them: the `input.filled`
+  name and a guard against synthetic events. Both were removed rather than tested. It also found five
+  real gaps, each closed with a test before this note was written: the focus fact, the condition
+  table for the key, the history, the picture refusal, and the forgetting of the queue. Of the last
+  round of 14 mutants, 12 were caught at once and the other 2 (the focus fact and `msgQ = nil` on
+  `/clear`) are caught since by `TestEnterOnAFocusedButtonPressesItWhileTheAgentWorks` and by
+  `TestClearForgetsTheQueue` / `TestLinesGivenBackAreNotSentAgainWhenALaterAnswerEnds`.
+  **Not checked:** the mutation of `if busy {` in `drainQueue` did not build in the form I wrote, and I did
+  not redo it, so the wait-and-retry path (the session still finishing a turn after `turn_done`) has no
+  test of its own. The test driver is never busy after `turn_done`. A real session is, for a moment,
+  which is why the retry exists. It is the least checked part of this change.

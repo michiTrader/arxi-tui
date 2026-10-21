@@ -335,6 +335,9 @@ func (d *serveDriver) CancelTurn() bool {
 	return d.chat != nil && d.chat.cancelTurn()
 }
 
+// Busy reports whether the chat is still inside a turn (or a compaction).
+func (d *serveDriver) Busy() bool { return d.chat != nil && d.chat.busyNow() }
+
 // Compact summarises the older part of the conversation (see chatSession.compact).
 func (d *serveDriver) Compact(ctx context.Context, focus string) error {
 	if d.chat == nil {
