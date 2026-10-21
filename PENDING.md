@@ -1,3 +1,11 @@
+## Done since: C4, steer + enter_while_busy + queued lines on screen (branch feat/steer-busy-setting)
+
+`alt+enter` and a second `enter` row make steer (stop the answer, send at once) and queue each other's other way,
+chosen by the setting `enter_while_busy` (`/ui busy queue|steer`, always put to the user). The waiting lines are
+drawn dim under the chat as `(queued)`. Ported by hand from the unmerged 063e98e (#246); its tool-call memory was
+not ported (master has its own). A stopped turn no longer posts anything after it was stopped. Open: the core cannot
+take a message mid-turn; Windows Terminal never sends alt+enter; the `drainQueue` retry still has no test.
+
 ## Done since: C3, Enter while the agent works queues the line (branch feat/keymap-enter-queue)
 
 `enter` while an answer is being written is a keymap binding (`do:queue.push`) instead of text lost on a busy

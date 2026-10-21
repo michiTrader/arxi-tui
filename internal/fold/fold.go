@@ -12,7 +12,12 @@ import (
 // a pure function of events already received.
 type State struct {
 	// Run-state binds (mapped from arxi core's event catalog, docs/BINDS.md §4.1)
-	History           []ChatLine   `json:"chat.history"`
+	History []ChatLine `json:"chat.history"`
+	// Queued are the lines the user wrote while an answer was being written and that wait
+	// for it to end, oldest first. Not a bind: the transcript draws them under the last
+	// line, in the order they will go. chat.queued adds one; chat.unqueued takes the first
+	// n away (a line is being sent) or all of them (they went back to the input).
+	Queued            []string     `json:"-"`
 	ThinkingText      string       `json:"thinking.text"`
 	AgentWorking      bool         `json:"agent.working"`
 	AgentMode         string       `json:"agent.mode"`
@@ -694,6 +699,8 @@ var handled = map[string]bool{
 	"chat.approval":   true,
 	"chat.decided":    true,
 	"chat.cancelled":  true,
+	"chat.queued":     true,
+	"chat.unqueued":   true,
 	"run.started":     true,
 	"agent.blocked":   true,
 	"agent.unblocked": true,
@@ -988,6 +995,19 @@ func (s *State) apply(e Event) {
 		// of the last turn that happened to finish.
 		if c, ok := e.Payload["context_tokens"].(float64); ok && c > 0 {
 			s.LastContext = uint64(c)
+		}
+
+	case "chat.queued":
+		if text, _ := e.Payload["text"].(string); text != "" {
+			s.Queued = append(s.Queued, text)
+		}
+
+	case "chat.unqueued":
+		n, ok := e.Payload["n"].(float64)
+		if !ok || int(n) >= len(s.Queued) {
+			s.Queued = nil
+		} else if n > 0 {
+			s.Queued = s.Queued[int(n):]
 		}
 
 	case "chat.warn":

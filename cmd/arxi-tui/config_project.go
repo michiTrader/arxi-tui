@@ -336,6 +336,9 @@ func mergeBehaviour(user, proj behaviour) behaviour {
 		}
 	}
 	out.Hooks = append(out.Hooks, proj.Hooks...)
+	if proj.EnterWhileBusy != "" {
+		out.EnterWhileBusy = proj.EnterWhileBusy
+	}
 	return out
 }
 

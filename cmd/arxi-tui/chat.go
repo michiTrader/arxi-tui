@@ -658,6 +658,29 @@ func (c *chatSession) cancelTurn() bool {
 	return true
 }
 
+// stopForSteer ends the turn in flight so that a correction can be sent in its place. It is
+// cancelTurn without the "Cancelled" line and without the waiting lines going back to the
+// input: the user did not stop, they redirected. What the turn did stays in the history
+// (the request, what the tools returned, and the note that it was interrupted), so the new
+// line is read as a correction of that work and not as a message out of nowhere. It reports
+// whether there was a turn to stop; a compaction is not a turn and is left alone.
+func (c *chatSession) stopForSteer() bool {
+	c.mu.Lock()
+	if !c.busy || c.cancel == nil || c.compacting {
+		c.mu.Unlock()
+		return false
+	}
+	cancel := c.cancel
+	c.cancel = nil
+	c.busy = false
+	c.history = append(c.history, unansweredTurn(c.turnText, whyInterrupted, c.turnEchoes))
+	c.memory = invalidate(c.memory, c.turnEchoes)
+	c.turnText, c.turnTools, c.turnEchoes = "", nil, nil
+	c.mu.Unlock()
+	cancel()
+	return true
+}
+
 // reset starts a new conversation: the history is forgotten, a turn still in
 // flight is orphaned (its result is discarded), and the next line may be sent
 // at once. The core keeps no chat state of its own (chat.send is stateless, the
@@ -764,7 +787,9 @@ func (c *chatSession) fail(ctx context.Context, gen int64, msg string) {
 
 // post queues a conversation event without ever blocking its caller (see fail).
 func (c *chatSession) post(ctx context.Context, gen int64, typ string, payload map[string]any) {
-	if !c.current(gen) {
+	// A turn that was stopped (cancelled, or steered away from) says nothing more: what it
+	// would add would land among the lines of the turn that replaced it.
+	if !c.current(gen) || ctx.Err() != nil {
 		return
 	}
 	ev := fold.Event{Type: typ, Seq: c.nextSeq(), Actor: "assistant", Payload: payload}

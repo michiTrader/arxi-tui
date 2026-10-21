@@ -31,6 +31,7 @@ var keymapSchema = expr.Schema{
 	"find.open":        expr.Bool, // the find bar is open
 	"agent.working":    expr.Bool, // an answer is being written (or a compaction runs)
 	"ui.focused":       expr.Bool, // a node of the scene holds the focus, so Enter presses it
+	"busy.steers":      expr.Bool, // the user's enter_while_busy setting is "steer"
 }
 
 // keymapState is what the loop knows when a key is pressed. The loop fills one in per key.
@@ -42,6 +43,7 @@ type keymapState struct {
 	findOpen        bool
 	agentWorking    bool
 	uiFocused       bool
+	busySteers      bool
 }
 
 // lookup answers the questions a condition asks, from one snapshot. Every name of
@@ -62,6 +64,8 @@ func (s keymapState) lookup(name string) (expr.Value, bool) {
 		return expr.B(s.agentWorking), true
 	case "ui.focused":
 		return expr.B(s.uiFocused), true
+	case "busy.steers":
+		return expr.B(s.busySteers), true
 	}
 	return expr.Value{}, false
 }
@@ -103,6 +107,14 @@ func resolveKey(m *keymap.Map, k term.Key, st keymapState) (do string, ok bool, 
 	}
 	return b.Do, ok, ""
 }
+
+// What Enter does with a line sent while an answer is being written (behaviour.json,
+// enter_while_busy). Queue is the factory behaviour: the line waits and goes when the answer
+// ends. Steer stops the turn in flight and sends the line at once.
+const (
+	busyQueue = "queue"
+	busySteer = "steer"
+)
 
 // The queue of messages waiting for an answer to end.
 const (

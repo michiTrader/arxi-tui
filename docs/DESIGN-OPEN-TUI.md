@@ -393,6 +393,8 @@ A condition that cannot be decided shows a notice and does not take the key.
   the answer is stopped or fails, forgotten by `/clear` and `/resume`. The line goes into the history.
   A line with a picture is refused with a notice, because the marker would outlive its picture.
 - Real mid-turn steering is still core work and is not done; the queue is the honest version.
+  (C4 below adds the TUI side of steering: stop the turn and send at once. The core still cannot
+  take a message into a turn in flight.)
 - Size: the android/arm64 binary (`CGO_ENABLED=0`, `-s -w`, `-trimpath`) is 9,896,289 B against
   9,830,753 B on master, +65,536 B. The limit is 11,000,000 B.
 - Checked by breaking it on purpose (30 mutants in two rounds, run on a committed tree). The first
@@ -407,3 +409,39 @@ A condition that cannot be decided shows a notice and does not take the key.
   not redo it, so the wait-and-retry path (the session still finishing a turn after `turn_done`) has no
   test of its own. The test driver is never busy after `turn_done`. A real session is, for a moment,
   which is why the retry exists. It is the least checked part of this change.
+
+### Built (C4): steer, `enter_while_busy` and the queued lines on screen
+
+This is the part of the older, never-merged work in `063e98e` (#246) that fits the keymap, ported by
+hand on top of C3. Its model-memory part (tool-call record in the history) is **not** ported: master
+already has its own (`chat_history.go`, `chat_memory.go`), and the two do the same job.
+
+- `alt+enter` is a binding, and `enter` has a second one for the other mode. Four rows in
+  `factory.json`: `enter`/`alt+enter` x `busy.steers`, to `do:queue.push` or `do:queue.steer`, all
+  under the same guard as C3. New name `busy.steers` (the user's setting). New Free verb `queue.steer`.
+- Setting `enter_while_busy` (`queue`, the factory way and stored as nothing, or `steer`) in
+  `behaviour.json`, typed as `/ui busy queue|steer`, taught in the guide the model reads, and always put
+  to the user when the agent proposes it (`touchesWhatRuns`): steering stops work in flight.
+- Steering is `chatSession.stopForSteer`: like a cancel but with no "Cancelled" line and the waiting
+  lines are not given back. The stopped turn stays in the history (request, tools, and the note
+  `whyInterrupted`), so the new line reads as a correction. A stopped turn says nothing more: `post` now
+  ignores a turn whose context is cancelled (this also covers a cancel). A compaction is left alone.
+- The waiting lines are drawn dim under the conversation, `┃ text  (queued)` (token `chat.queued`),
+  from `State.Queued` (events `chat.queued` and `chat.unqueued`, which the host emits). They replace the
+  C3 note "queued (N waiting)".
+- A line with a picture can steer (it is sent at once); it still cannot wait in the queue.
+- Not done: Windows Terminal never delivers `alt+enter`, so on that terminal only the setting reaches
+  steer (said in KEYS.md). The core cannot take a message mid-turn, so a steer is a stop plus a new
+  request, and what the model was writing is lost. A session that cannot be stopped (no
+  `StopForSteer`) keeps the line and says so.
+- Mutation checks (committed tree, one mutant at a time). First batch of 18: 12 were caught by the
+  intended test, 3 survived (the cancelled-context check in `post`, and the two `chat.unqueued` marks
+  that take a line off the screen when it is sent or given back) and 3 did not compile. After adding
+  tests the 3 survivors are caught, and a rewritten form of one of the non-compiling ones (the
+  "driver cannot steer" refusal) is caught. A second batch of 6 had 4 caught, 1 that did not compile
+  and 1 survivor: keeping the pictures on a steering line. That survivor was a real bug, not a weak
+  test: the keymap decides the key before the block that attaches a line's pictures, so a steering
+  line lost its picture. It is fixed, a test was added, and the mutant is caught. **Not checked:** the
+  wait-and-retry of `drainQueue` (still no test of its own), and the removal of `queuedMark(text)`,
+  which I could not write as a mutant that compiles.
+

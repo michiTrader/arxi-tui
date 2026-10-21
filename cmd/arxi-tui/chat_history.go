@@ -175,6 +175,7 @@ func unansweredWith(why string, echoes []toolEcho) string {
 }
 
 const (
-	whyCancelled = "it was cancelled"
-	whyFailed    = "the request failed"
+	whyCancelled   = "it was cancelled"
+	whyInterrupted = "the user interrupted it with a new message, which follows"
+	whyFailed      = "the request failed"
 )

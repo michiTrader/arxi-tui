@@ -18,7 +18,13 @@ import (
 // colour) and, once the loop has ended, what the driver was asked to send.
 func queueLoop(t *testing.T, drv Driver, evCh chan fold.Event, script []scheduledEvent, feed func(send func(fold.Event))) []string {
 	t.Helper()
-	t.Setenv(configDirEnv, t.TempDir())
+	return queueLoopIn(t, t.TempDir(), drv, evCh, script, feed)
+}
+
+// queueLoopIn is queueLoop with the folder the settings are read from chosen by the test.
+func queueLoopIn(t *testing.T, cfg string, drv Driver, evCh chan fold.Event, script []scheduledEvent, feed func(send func(fold.Event))) []string {
+	t.Helper()
+	t.Setenv(configDirEnv, cfg)
 	t.Setenv(historyEnv, t.TempDir())
 	t.Setenv(sessionsEnv, "")
 	doc, err := scene.ParseNamed(defaultscene.Name, defaultscene.JSON)
@@ -77,8 +83,12 @@ func TestEnterWhileTheAgentWorksQueuesTheLineAndSendsItWhenTheAnswerEnds(t *test
 	if len(drv.submitted) != 1 || drv.submitted[0] != "second question" {
 		t.Fatalf("submitted = %q, want the queued line sent once after the answer ended.\nConsequence: a message written while the agent worked never reaches it.\nRemedy: drain the queue on agent.turn_done.", drv.submitted)
 	}
-	if i := lastWith(frames, "queued (1 waiting)"); i < 0 {
-		t.Error("no note said the line was queued. Consequence: the user cannot tell the line was kept. Remedy: queue.push says so in the conversation.")
+	i := firstWith(frames, "┃ second question  (queued)")
+	if i < 0 {
+		t.Error("the waiting line was not drawn under the conversation. Consequence: the user cannot tell the line was kept. Remedy: queue.push adds a chat.queued event.")
+	}
+	if j := lastWith(frames, "second question"); j >= 0 && strings.Contains(frames[j], "(queued)") {
+		t.Errorf("the line was sent and is still drawn as waiting.\nConsequence: the user sees the same message twice, one of them marked as not sent.\nRemedy: draining the queue adds a chat.unqueued event.\nframe:\n%s", frames[j])
 	}
 }
 
@@ -130,6 +140,9 @@ func TestAStoppedAnswerGivesTheQueuedLinesBackOnTheLine(t *testing.T) {
 	if i < 0 {
 		t.Fatal("nothing said the queued line came back. Remedy: say so in the conversation.")
 	}
+	if strings.Contains(frames[i], "(queued)") {
+		t.Errorf("the line is back on the input and still drawn as waiting under the chat.\nConsequence: the same message appears twice and one copy says it is going to be sent.\nRemedy: giving the queue back adds a chat.unqueued event.\nframe:\n%s", frames[i])
+	}
 	if !strings.Contains(frames[i], "┃ keep me") {
 		t.Errorf("the line did not come back on the input.\nConsequence: what the user wrote is gone.\nRemedy: giveBackQueue puts it on the input.\nframe:\n%s", frames[i])
 	}
@@ -173,7 +186,7 @@ func TestAQueuedLineIsInTheHistory(t *testing.T) {
 	// the note was not there, after it the input was empty.
 	back := false
 	for _, f := range frames {
-		if strings.Contains(f, "queued (1 waiting)") && strings.Contains(f, "┃ remember me") {
+		if strings.Contains(f, "┃ remember me  (queued)") && strings.Count(f, "remember me") >= 2 {
 			back = true
 		}
 	}
@@ -200,7 +213,7 @@ func TestALineWithAPictureIsKeptOnTheInputNotQueued(t *testing.T) {
 	if firstWith(frames, "cannot wait in the queue") < 0 {
 		t.Error("nothing said a line with a picture cannot be queued. Remedy: queue.push refuses it and says why.")
 	}
-	if lastWith(frames, "queued (") >= 0 {
+	if lastWith(frames, "(queued)") >= 0 {
 		t.Error("a line with a picture was queued. Consequence: the picture would be sent with a different message, or lost.")
 	}
 	if n := len(drv.attached); n == 0 || len(drv.attached[n-1]) != 0 {
@@ -228,7 +241,7 @@ func TestACommandWhileTheAgentWorksIsNotQueued(t *testing.T) {
 	if len(drv.submitted) != 0 {
 		t.Errorf("submitted = %q; a command must not reach the model", drv.submitted)
 	}
-	if lastWith(frames, "queued (") >= 0 {
+	if lastWith(frames, "(queued)") >= 0 {
 		t.Error("a command was queued as a message. Consequence: it would be sent to the model as text. Remedy: the binding must not apply while the slash menu is open.")
 	}
 }
@@ -239,7 +252,7 @@ func TestAnEmptyLineWhileTheAgentWorksQueuesNothing(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		send(working())
 	})
-	if lastWith(frames, "queued (") >= 0 {
+	if lastWith(frames, "(queued)") >= 0 {
 		t.Error("an empty line was queued")
 	}
 }
@@ -251,7 +264,7 @@ func TestEnterWhileAChangeWaitsForAnAnswerQueuesNothing(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 		send(working())
 	})
-	if lastWith(frames, "queued (") >= 0 {
+	if lastWith(frames, "(queued)") >= 0 {
 		t.Error("a line was queued while a question waited. Consequence: text typed for the question would be sent as a message. Remedy: the binding is off while approval.pending.")
 	}
 }
@@ -271,10 +284,10 @@ func TestTheQueueHasALimitAndTheLineIsKeptWhenItIsFull(t *testing.T) {
 	if !strings.Contains(all, "messages are already waiting") {
 		t.Error("the full queue said nothing. Remedy: a notice when queueMax is reached.")
 	}
-	if i := lastWith(frames, "queued (8 waiting)"); i < 0 {
+	if i := lastWith(frames, "┃ mh  (queued)"); i < 0 {
 		t.Error("the eighth line was not queued")
 	}
-	if lastWith(frames, "queued (9 waiting)") >= 0 {
+	if lastWith(frames, "┃ mi  (queued)") >= 0 {
 		t.Error("a ninth line was queued past the limit")
 	}
 }
@@ -352,7 +365,7 @@ func TestEnterOnAFocusedButtonPressesItWhileTheAgentWorks(t *testing.T) {
 			if len(drv.submitted) != 1 || drv.submitted[0] != "pressed" {
 				t.Errorf("submitted = %q, want [pressed]. Consequence: with the agent %s, Enter on a focused button does not press it (the queue took the key, or the line was sent instead). Remedy: the enter binding is off while ui.focused.", drv.submitted, name)
 			}
-			if strings.Contains(tty.output(), "queued (") {
+			if strings.Contains(tty.output(), "(queued)") {
 				t.Errorf("the line was queued while a button held the focus (agent %s)", name)
 			}
 		})

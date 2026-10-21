@@ -46,6 +46,7 @@ func TestEachFlagOfTheStateReachesItsOwnName(t *testing.T) {
 		"find.open":        {findOpen: true},
 		"agent.working":    {agentWorking: true},
 		"ui.focused":       {uiFocused: true},
+		"busy.steers":      {busySteers: true},
 	}
 	if len(cases) != len(keymapSchema) {
 		t.Fatalf("the schema has %d names and this test %d; add the new name here", len(keymapSchema), len(cases))
@@ -151,6 +152,42 @@ func TestEnterQueuesOnlyWhereNothingElseOwnsTheKey(t *testing.T) {
 		}
 		if ok != r.want || (ok && do != "do:queue.push") {
 			t.Errorf("%s: enter taken=%v do=%q, want taken=%v. Consequence: Enter queues a line that belongs to a menu, a button, the find bar or a question, or sends into a busy session. Remedy: fix the `when` of the enter binding in internal/keymap/factory.json.", r.name, ok, do, r.want)
+		}
+	}
+}
+
+// The setting decides which of Enter and Alt+Enter queues and which steers; the other
+// conditions switch both off in the same situations.
+func TestEnterAndAltEnterAreEachOthersOtherWay(t *testing.T) {
+	m, err := factoryKeymap()
+	if err != nil {
+		t.Fatal(err)
+	}
+	enter := term.Key{Type: term.KeyEnter}
+	altEnter := term.Key{Type: term.KeyEnter, Mod: term.ModAlt}
+	rows := []struct {
+		name string
+		k    term.Key
+		st   keymapState
+		want string
+	}{
+		{"enter queues by default", enter, keymapState{agentWorking: true}, "do:queue.push"},
+		{"enter steers when the user chose steer", enter, keymapState{agentWorking: true, busySteers: true}, "do:queue.steer"},
+		{"alt+enter steers by default", altEnter, keymapState{agentWorking: true}, "do:queue.steer"},
+		{"alt+enter queues when the user chose steer", altEnter, keymapState{agentWorking: true, busySteers: true}, "do:queue.push"},
+		{"idle: alt+enter is not the keymap's", altEnter, keymapState{}, ""},
+		{"a menu is open: alt+enter is not the keymap's", altEnter, keymapState{agentWorking: true, menuOpen: true}, ""},
+		{"a button holds the focus: alt+enter is not the keymap's", altEnter, keymapState{agentWorking: true, uiFocused: true}, ""},
+		{"a question waits: alt+enter is not the keymap's", altEnter, keymapState{agentWorking: true, approvalPending: true}, ""},
+		{"a menu is open and steer is chosen: enter picks the command", enter, keymapState{agentWorking: true, busySteers: true, menuOpen: true}, ""},
+	}
+	for _, r := range rows {
+		do, ok, why := resolveKey(m, r.k, r.st)
+		if why != "" {
+			t.Errorf("%s: %s", r.name, why)
+		}
+		if do != r.want || ok != (r.want != "") {
+			t.Errorf("%s: %s resolved to (%q, %v), want %q.\nConsequence: Enter and Alt+Enter do the wrong one of queue and steer, or take a key a menu, a button or a question owns.\nRemedy: fix the `when` of the enter and alt+enter bindings in internal/keymap/factory.json.", r.name, r.k, do, ok, r.want)
 		}
 	}
 }

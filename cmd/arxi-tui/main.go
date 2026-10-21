@@ -440,6 +440,13 @@ type turnCanceller interface {
 	CancelTurn() bool
 }
 
+// turnSteerer is the optional capability a Driver has when the turn in flight can be stopped
+// to make room for a correction (serveDriver): unlike a cancel it says nothing in the
+// conversation and keeps what the turn did in the history.
+type turnSteerer interface {
+	StopForSteer() bool
+}
+
 // cancelRunningTurn stops the turn in flight, if the driver has one. The conversation
 // gets its "Cancelled" line from the driver's own event, not from here.
 func cancelRunningTurn(drv Driver) bool {
@@ -1478,6 +1485,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			approvalPending: hasAp && ap.PendingApproval(),
 			findOpen:        find.open,
 			uiFocused:       uiFocus != "",
+			busySteers:      effBeh().EnterWhileBusy == busySteer,
 		}
 		// The conversation is folded only for a key the keymap names: typing must not
 		// fold the whole log once per letter.
@@ -1495,7 +1503,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// sendNow sends a line the way a typed one is sent: through the input.pre rules when
 	// there are any, otherwise straight to the driver. It reports false when the rules are
 	// still checking the previous line, so the caller tries again.
-	sendNow := func(text string) bool {
+	sendNow := func(text string, keepPictures bool) bool {
 		if pkgs.hasRules() {
 			if pipeBusy {
 				return false
@@ -1504,9 +1512,28 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			startInputPre(ctx, pkgRunner, pkgs.runnablePackages(), text, pipeDoneCh)
 			return true
 		}
-		attachPictures(drv, nil)
+		if !keepPictures {
+			attachPictures(drv, nil)
+		}
 		_ = drv.SubmitPrompt(ctx, text)
 		return true
+	}
+	// queuedMark and unqueuedMark keep what the conversation draws under the last line (the
+	// lines waiting, dim, marked "(queued)") in step with msgQ: n lines left the queue, to be
+	// sent now or given back.
+	queuedMark := func(text string) {
+		e := fold.Event{Type: "chat.queued", Actor: "host", Payload: map[string]any{"text": text}}
+		if n := len(collected); n > 0 {
+			e.Seq = collected[n-1].Seq + 1
+		}
+		collected = append(append([]fold.Event(nil), collected...), e)
+	}
+	unqueuedMark := func(n int) {
+		e := fold.Event{Type: "chat.unqueued", Actor: "host", Payload: map[string]any{"n": float64(n)}}
+		if k := len(collected); k > 0 {
+			e.Seq = collected[k-1].Seq + 1
+		}
+		collected = append(append([]fold.Event(nil), collected...), e)
 	}
 	// giveBackQueue puts the waiting messages back on the line, in front of what is being
 	// typed, and says so. Used when the answer did not end well (Esc, an error): sending
@@ -1519,6 +1546,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		back := strings.Join(msgQ, "\n")
 		n := len(msgQ)
 		msgQ = nil
+		unqueuedMark(n)
 		if strings.TrimSpace(input) != "" {
 			back += "\n" + input
 		}
@@ -1551,7 +1579,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			return
 		}
 		next := msgQ[0]
-		if !sendNow(next) {
+		if !sendNow(next, false) {
 			if attempt >= queueRetries {
 				giveBackQueue("the rules kept checking the previous line")
 				return
@@ -1565,6 +1593,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			return
 		}
 		msgQ = msgQ[1:]
+		unqueuedMark(1)
 	}
 	// uiVerb is what the verbs that change the loop's own view do. They live here because the
 	// state they change (the expanded tools, the find bar) is the loop's.
@@ -1586,13 +1615,45 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			default:
 				msgQ = append(msgQ, text)
 				hist.Add(text)
-				collected = appendLocalNote(collected, fmt.Sprintf("queued (%d waiting): sent when the answer ends", len(msgQ)))
+				queuedMark(text)
 				chatScroll = 0
 				// The action runs with the line saved as a draft to put back; what was
 				// queued must not come back.
 				input, caret, draft, draftCaret = "", 0, "", 0
 				pastes.reset()
 				images.reset()
+			}
+		case "queue.steer":
+			text := strings.TrimSpace(input)
+			st, canSteer := drv.(turnSteerer)
+			switch {
+			case text == "":
+			case !canSteer:
+				sceneNotice = "this session cannot be steered; the line is kept, send it when the answer ends"
+			case pkgs.hasRules() && pipeBusy:
+				sceneNotice = "the rules are still checking the previous line; nothing was stopped, try again in a moment"
+			default:
+				// The answer in flight is stopped where it is (what it did stays in the
+				// history, see chatSession.stopForSteer) and the line goes at once. The
+				// lines already waiting keep waiting: they are not this correction.
+				// The keymap decides this key before the block that attaches a line's
+				// pictures, so they are attached here, for this line only.
+				pics := images.used(input)
+				hasPictures := len(pics) > 0
+				if hasPictures {
+					if warn := attachPictures(drv, pics); warn != "" {
+						collected = appendLocalWarning(collected, warn)
+					}
+				}
+				st.StopForSteer()
+				collected = appendLocalWarning(collected, "interrupted the answer in flight to steer it with your new line")
+				if sendNow(text, hasPictures) {
+					hist.Add(text)
+					chatScroll = 0
+					input, caret, draft, draftCaret = "", 0, "", 0
+					pastes.reset()
+					images.reset()
+				}
 			}
 		case "find.toggle":
 			switch {

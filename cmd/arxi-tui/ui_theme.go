@@ -188,7 +188,7 @@ var tokenRoles = map[string]string{
 	"text": "plain text", "dim": "faded text (banner tail, status bar)", "header": "agent mode in the status bar",
 	"input": "the text you type", "banner": "banner text", "chat.user": "your own messages",
 	"chat.band": "background behind your messages (/style band)", "chat.error": "error lines",
-	"chat.warn": "warnings", "chat.note": "what one of your own / commands answered", "chat.usage": "time/token line under each answer",
+	"chat.warn": "warnings", "chat.queued": "your messages waiting for the answer in flight", "chat.note": "what one of your own / commands answered", "chat.usage": "time/token line under each answer",
 	"chat.tool": "tool names in tool lines", "chat.tool.dot": "dot before a tool line waiting for approval",
 	"chat.tool.dot.ok": "dot before a finished tool line", "chat.tool.dot.fail": "dot before a failed tool line",
 	"chat.tool.result": "result of a tool call (beside it or under it; the format is the tool.* texts)", "chat.tool.fail": "failed tool result",
