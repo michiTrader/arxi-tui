@@ -262,18 +262,15 @@ func TestFinderKeys(t *testing.T) {
 	ctrlF := r('f', term.ModCtrl)
 
 	var closed finder
-	if !closed.owns(ctrlF, true) || closed.owns(ctrlF, false) {
-		t.Error("a closed finder owns ctrl+f only when the prompt can open it")
-	}
-	if closed.owns(plain(term.KeyEnter), true) || closed.owns(r('a', 0), true) {
-		t.Error("a closed finder must leave every other key alone")
+	if closed.owns(ctrlF) || closed.owns(plain(term.KeyEnter)) || closed.owns(r('a', 0)) || closed.owns(plain(term.KeyEscape)) {
+		t.Error("a closed finder owns nothing: opening it with ctrl+f is the keymap's, and every other key is the chain's")
 	}
 	open := finder{open: true}
-	if !open.owns(ctrlF, false) {
-		t.Error("an open finder must always be able to close")
+	if open.owns(ctrlF) {
+		t.Error("ctrl+f on an open bar is the keymap's (do:find.toggle), not the finder's")
 	}
 	for _, k := range []term.Key{plain(term.KeyEscape), plain(term.KeyEnter), plain(term.KeyUp), plain(term.KeyDown), plain(term.KeyBackspace), r('a', 0), r('A', term.ModShift)} {
-		if !open.owns(k, true) {
+		if !open.owns(k) {
 			t.Errorf("an open finder must own %+v", k)
 		}
 	}
@@ -281,13 +278,13 @@ func TestFinderKeys(t *testing.T) {
 		{Type: term.KeyEnter, Mod: term.ModShift}, {Type: term.KeyUp, Mod: term.ModCtrl}, {Type: term.KeyPgUp},
 		{Type: term.KeyEnd}, r('c', term.ModCtrl), r('a', term.ModAlt), {Type: term.KeyRunes},
 	} {
-		if open.owns(k, true) {
+		if open.owns(k) {
 			t.Errorf("an open finder must leave %+v to the usual chain", k)
 		}
 	}
 
 	var f finder
-	f.key(ctrlF)
+	f.begin()
 	if !f.open || f.jump {
 		t.Fatalf("ctrl+f opens, and with no word there is nothing to jump to: %+v", f)
 	}
@@ -323,13 +320,13 @@ func TestFinderKeys(t *testing.T) {
 	if f.open || f.word != "keep" {
 		t.Errorf("esc closes and keeps the word: %+v", f)
 	}
-	f.key(ctrlF)
+	f.begin()
 	if !f.open || !f.jump || f.back != 0 {
 		t.Errorf("ctrl+f with a kept word looks for it at once: %+v", f)
 	}
-	f.key(ctrlF)
+	f.close()
 	if f.open {
-		t.Error("ctrl+f on an open bar closes it")
+		t.Error("close puts the bar away")
 	}
 }
 

@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "bindings": [
+    { "key": "ctrl+o", "do": "do:view.expand" },
+    { "key": "ctrl+f", "when": "find.open && !screen.open && !approval.pending", "do": "do:find.toggle" },
+    { "key": "ctrl+f", "when": "!menu.open && !key.user_bound && !screen.open && !approval.pending", "do": "do:find.toggle" }
+  ]
+}

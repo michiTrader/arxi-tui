@@ -1462,6 +1462,43 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		styleMn.loaded = false
 		settingChanged("style", promptStyle, fromHook)
 	}
+	// The keymap the keys are read from, and what a condition of it may ask.
+	keys, keysErr := factoryKeymap()
+	if keysErr != nil {
+		sceneNotice = "the built-in keymap could not be read: " + keysErr.Error()
+	}
+	// keymapFacts is the snapshot of what a condition may ask when key k is pressed.
+	keymapFacts := func(k term.Key) keymapState {
+		_, userBound := effBeh().boundActions(k)
+		ap, hasAp := drv.(approver)
+		return keymapState{
+			menuOpen:        slashMenuOpen(input),
+			userBound:       userBound,
+			screenOpen:      auto != nil || team != nil || flow != nil || hub != nil || browse != nil,
+			approvalPending: hasAp && ap.PendingApproval(),
+			findOpen:        find.open,
+		}
+	}
+	// uiVerb is what the verbs that change the loop's own view do. They live here because the
+	// state they change (the expanded tools, the find bar) is the loop's.
+	uiVerb := func(name string) string {
+		switch name {
+		case "view.expand":
+			expandTools = !expandTools
+		case "find.toggle":
+			switch {
+			case find.open:
+				find.close()
+			case !hasFindBar(doc):
+				// Say why nothing opens: a scene saved before the find bar existed, or one
+				// written by hand, has no bar to open.
+				sceneNotice = noFindBarNotice
+			default:
+				find.begin()
+			}
+		}
+		return ""
+	}
 	// runQueued takes the next waiting action. The settings it can change directly it
 	// changes; every other line is put on the input as typed text and the caller gets the
 	// Enter that sends it, so it travels the loop's own dispatch chain.
@@ -1490,7 +1527,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			case scene.ActionDo:
 				// A verb of the catalogue. Whatever reaches the queue was made by a
 				// button, a key, a command or a hook, never typed (see queuedVerbEnv).
-				collected = appendLocalNote(collected, runVerbLine(act.Arg, queuedVerbEnv(drv, cwd)))
+				env := queuedVerbEnv(drv, cwd)
+				env.ui = uiVerb
+				if note := runVerbLine(act.Arg, env); note != "" {
+					collected = appendLocalNote(collected, note)
+				}
 				chatScroll = 0
 			case scene.ActionOpen:
 				if why := openRefusal(act, q.hook, pkgs); why != "" {
@@ -2151,13 +2192,20 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						// screen on y/r/n/Esc and leaving it standing otherwise.
 						panicGesture.Reset()
 						bundleMod.handleKey(ev.Key)
-					} else if isCtrlO(ev.Key) {
-						// Show the cut part of a command's output or of a change, or cut it
-						// again. It sits after the consent screens (which own every key)
-						// and before the approval prompt, so a long change can be opened
-						// in full while the question is still waiting.
+					} else if do, taken, why := resolveKey(keys, ev.Key, keymapFacts(ev.Key)); taken || why != "" {
+						// A key the keymap takes (internal/keymap/factory.json): which key,
+						// when it runs, and what it does is data. The conditions say what the
+						// chain below used to say by where a branch sat (not under a consent
+						// screen, not while a question waits). It follows the consent screens,
+						// which own every key, and the Ctrl-C branch, which no keymap can take
+						// (invariant 6). ctrl+o still works while a question waits, so a long
+						// change can be opened in full before it is answered.
 						panicGesture.Reset()
-						expandTools = !expandTools
+						if why != "" {
+							sceneNotice = why
+						} else {
+							enqueue(actionList{do}, false)
+						}
 					} else if ap, ok := drv.(approver); ok && ap.PendingApproval() &&
 						ev.Key.Type != term.KeyWheelUp && ev.Key.Type != term.KeyWheelDown {
 						// The model wants to change a file and the turn is waiting for
@@ -2312,18 +2360,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								}
 							}
 						}
-					} else if _, userBound := effBeh().boundActions(ev.Key); find.owns(ev.Key, hasFindBar(doc) && !slashMenuOpen(input) && !userBound) {
-						// ctrl+f opens the find bar in the input bar; while it is open its
-						// keys (letters, backspace, enter/up/down, esc) are the bar's and the
-						// rest of the keyboard works as usual (find.go). Before the Esc branch
-						// below so Esc closes the bar before it can stop a turn.
+					} else if find.owns(ev.Key) {
+						// While the find bar is open its keys (letters, backspace, enter/up/down,
+						// esc) are the bar's and the rest of the keyboard works as usual
+						// (find.go). Before the Esc branch below so Esc closes the bar before it
+						// can stop a turn. Opening it is the keymap's (ctrl+f).
 						panicGesture.Reset()
 						find.key(ev.Key)
-					} else if _, userBound := effBeh().boundActions(ev.Key); isCtrlF(ev.Key) && !userBound && !slashMenuOpen(input) && !hasFindBar(doc) {
-						// Say why nothing opens: a scene saved before the find bar existed, or
-						// one written by hand, has no bar to open.
-						panicGesture.Reset()
-						sceneNotice = noFindBarNotice
 					} else if ev.Key.Type == term.KeyEscape && !slashMenuOpen(input) && cancelRunningTurn(drv) {
 						// Esc stops the turn in flight. A line starting with "/" is a
 						// menu, and there Esc keeps its meaning of closing it, so a menu
@@ -4190,14 +4233,6 @@ func applyViewState(hidden map[string]bool, op *patch.ViewStateOp) {
 	for _, id := range op.Show {
 		delete(hidden, id)
 	}
-}
-
-// isCtrlO reports whether a key event is Ctrl-O (0x0f), which expands or cuts the
-// output of the tools in the conversation.
-func isCtrlO(k term.Key) bool {
-	return k.Type == term.KeyRunes &&
-		len(k.Runes) == 1 && k.Runes[0] == 'o' &&
-		k.Mod&term.ModCtrl != 0
 }
 
 // isCtrlC reports whether a key event is Ctrl-C. The decoder reports control

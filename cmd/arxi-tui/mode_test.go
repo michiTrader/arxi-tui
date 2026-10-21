@@ -124,17 +124,22 @@ func TestLoopModeShowsInTheBarAndShiftTabCyclesIt(t *testing.T) {
 }
 
 func TestCtrlOIsTheExpandKeyAndNothingElseIs(t *testing.T) {
+	keys, err := factoryKeymap()
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctrl := func(r rune) term.Key { return term.Key{Type: term.KeyRunes, Runes: []rune{r}, Mod: term.ModCtrl} }
-	if !isCtrlO(ctrl('o')) {
-		t.Error("ctrl+o must expand")
+	do, ok, why := resolveKey(keys, ctrl('o'), keymapState{})
+	if !ok || why != "" || do != "do:view.expand" {
+		t.Errorf("ctrl+o resolved to (%q, %v, %q). Consequence: the expand key stops working. Remedy: keep {key: ctrl+o, do: do:view.expand} in internal/keymap/factory.json.", do, ok, why)
 	}
 	for _, k := range []term.Key{
 		{Type: term.KeyRunes, Runes: []rune{'o'}},
 		ctrl('c'), ctrl('p'),
 		{Type: term.KeyEnter},
 	} {
-		if isCtrlO(k) {
-			t.Errorf("%+v is not ctrl+o", k)
+		if do, ok, _ := resolveKey(keys, k, keymapState{}); ok {
+			t.Errorf("%+v resolved to %q but is not ctrl+o", k, do)
 		}
 	}
 }

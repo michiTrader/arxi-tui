@@ -57,6 +57,15 @@ action not listed here has no key by default.
 `first` and `last` have no default key. A moved action frees its factory key for nothing
 else: the old key becomes inert in a menu rather than quietly doing what another action did.
 
+### Where a row is decided
+
+Most rows are still decided in Go (`cmd/arxi-tui/main.go`). The rows for `ctrl+o` and `ctrl+f`
+are decided by data: `internal/keymap/factory.json`, a list of `{key, when, do}` bindings
+(`docs/DESIGN-OPEN-TUI.md` section 5.3). `when` is a tier-1 condition over the names in
+`keymapSchema`; the first binding of a key whose `when` holds wins. A key in that file must have
+a row above (`TestEveryKeyOfTheFactoryKeymapHasARowInDocsKeys`), so the file cannot take a key
+the contract does not list. The next rows to move are `down` and `enter`.
+
 ## 3. Where it was checked
 
 `arxi-tui -probe-keys` prints the bytes a terminal delivers and the key they decode to.
