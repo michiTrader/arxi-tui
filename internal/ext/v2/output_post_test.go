@@ -267,3 +267,13 @@ func TestOutputPostSkipsDisabledRulesAndPackages(t *testing.T) {
 		t.Errorf("got %+v calls %v: a switched-off package or rule must not run", res, s.calls)
 	}
 }
+
+// A streamed answer reaches a rule in pieces, and a piece that starts with a space holds the
+// space between two words. An operation's output is trimmed, so the edges are put back.
+func TestOutputPostPutsBackTheSpaceAtTheEdgesOfAPiece(t *testing.T) {
+	s := newScripted(map[string]func(Input) (Outcome, error){"r": ok(Outcome{Verdict: VerdictTransform, Text: "and second"})})
+	res := s.RunOutputPost(context.Background(), []*Package{postPkg(t, "a", "r")}, " and  second \n")
+	if res.Text != " and second \n" {
+		t.Errorf("got %q: a piece's leading space joins it to the one before, and its trailing newline to the one after", res.Text)
+	}
+}

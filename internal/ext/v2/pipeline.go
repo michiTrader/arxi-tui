@@ -268,7 +268,7 @@ func (r *Runner) RunOutputPost(ctx context.Context, pkgs []*Package, text string
 					note(p, rule, "the rule reworded the answer to nothing, so it was kept as the model said it")
 					continue
 				}
-				res.Text = out.Text
+				res.Text = keepEdges(res.Text, out.Text)
 			case VerdictHandled, VerdictBlock:
 				note(p, rule, fmt.Sprintf("verdict %q holds an answer back, and an answer has already come, so the rule can only reword it (\"transform\"); it was kept as it was", out.Verdict))
 				continue
@@ -282,4 +282,16 @@ func (r *Runner) RunOutputPost(ctx context.Context, pkgs []*Package, text string
 		}
 	}
 	return res
+}
+
+// keepEdges gives reworded text the white space the original had at its two ends. An
+// operation's output is trimmed, but a streamed answer reaches the screen in pieces that
+// join where they touch: a piece that starts with a space is the space between two words,
+// and losing it would glue them together.
+func keepEdges(original, reworded string) string {
+	body := strings.TrimLeft(original, " \t\r\n")
+	lead := original[:len(original)-len(body)]
+	trimmed := strings.TrimRight(body, " \t\r\n")
+	tail := body[len(trimmed):]
+	return lead + reworded + tail
 }
