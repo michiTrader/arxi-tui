@@ -22,7 +22,7 @@ escape hatch (invariant 6) and cannot be moved or taken by any setting, scene or
 |---|---|
 | `ctrl+c` | stop the answer being written; when idle it clears the line, and twice in a row leaves the program |
 | `esc` | stop the answer being written, or close the menu that is open |
-| `enter` | send the message (or run the command on the line) |
+| `enter` | send the message (or run the command on the line); while an answer is being written the message waits and is sent when it ends |
 | `shift+enter`, `ctrl+enter`, `ctrl+j` | a new line in the message, without sending it |
 | `up`, `down` | walk the lines you sent before (inside a long message they move between its rows first) |
 | `ctrl+p`, `ctrl+n` | the same as up and down |
@@ -59,12 +59,18 @@ else: the old key becomes inert in a menu rather than quietly doing what another
 
 ### Where a row is decided
 
-Most rows are still decided in Go (`cmd/arxi-tui/main.go`). The rows for `ctrl+o` and `ctrl+f`
-are decided by data: `internal/keymap/factory.json`, a list of `{key, when, do}` bindings
+Most rows are still decided in Go (`cmd/arxi-tui/main.go`). The rows for `ctrl+o`, `ctrl+f` and
+`enter` (only the part while an answer is being written) are decided by data: `internal/keymap/factory.json`, a list of `{key, when, do}` bindings
 (`docs/DESIGN-OPEN-TUI.md` section 5.3). `when` is a tier-1 condition over the names in
 `keymapSchema`; the first binding of a key whose `when` holds wins. A key in that file must have
 a row above (`TestEveryKeyOfTheFactoryKeymapHasARowInDocsKeys`), so the file cannot take a key
-the contract does not list. The next rows to move are `down` and `enter`.
+the contract does not list. The next row to move is `down`.
+
+`enter` while the agent works is `do:queue.push`: the line waits (up to 8) and one goes out each time
+an answer ends. It is off when a menu is open (Enter picks a command), a screen is up, a question
+waits for y/n, the find bar is open, a node holds the focus (Enter presses it) or the user bound
+the key. Stopping the answer (esc, ctrl+c) or a failed answer puts the waiting lines back on the
+input; `/clear` and `/resume` forget them. A line with a picture is not queued yet.
 
 ## 3. Where it was checked
 

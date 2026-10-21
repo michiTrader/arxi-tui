@@ -1471,13 +1471,100 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	keymapFacts := func(k term.Key) keymapState {
 		_, userBound := effBeh().boundActions(k)
 		ap, hasAp := drv.(approver)
-		return keymapState{
+		st := keymapState{
 			menuOpen:        slashMenuOpen(input),
 			userBound:       userBound,
 			screenOpen:      auto != nil || team != nil || flow != nil || hub != nil || browse != nil,
 			approvalPending: hasAp && ap.PendingApproval(),
 			findOpen:        find.open,
+			uiFocused:       uiFocus != "",
 		}
+		// The conversation is folded only for a key the keymap names: typing must not
+		// fold the whole log once per letter.
+		if keymapTakes(k) {
+			st.agentWorking = fold.Fold(collected).AgentWorking
+		}
+		return st
+	}
+	// The queue of messages (docs/DESIGN-OPEN-TUI.md section 5.3, queue.push). A line sent
+	// while an answer is being written waits here and goes out, one at a time, when the
+	// answer ends. Without it Enter handed the line to a busy session, which refused it, and
+	// the text was lost.
+	var msgQ []string
+	queueCh := make(chan int, 1)
+	// sendNow sends a line the way a typed one is sent: through the input.pre rules when
+	// there are any, otherwise straight to the driver. It reports false when the rules are
+	// still checking the previous line, so the caller tries again.
+	sendNow := func(text string) bool {
+		if pkgs.hasRules() {
+			if pipeBusy {
+				return false
+			}
+			pipeBusy = true
+			startInputPre(ctx, pkgRunner, pkgs.runnablePackages(), text, pipeDoneCh)
+			return true
+		}
+		attachPictures(drv, nil)
+		_ = drv.SubmitPrompt(ctx, text)
+		return true
+	}
+	// giveBackQueue puts the waiting messages back on the line, in front of what is being
+	// typed, and says so. Used when the answer did not end well (Esc, an error): sending
+	// them on would answer a question the user has just stopped, and dropping them would
+	// lose what they wrote.
+	giveBackQueue := func(why string) {
+		if len(msgQ) == 0 {
+			return
+		}
+		back := strings.Join(msgQ, "\n")
+		n := len(msgQ)
+		msgQ = nil
+		if strings.TrimSpace(input) != "" {
+			back += "\n" + input
+		}
+		input = back
+		caret = len([]rune(input))
+		collected = appendLocalNote(collected, fmt.Sprintf("%s: the %d queued message(s) are back on the line, not sent", why, n))
+	}
+	// drainQueue sends the next waiting message once the session is free. The turn_done
+	// that asks for it is emitted a moment before the session frees itself, so a busy
+	// session is asked again a few times (like the autocompact).
+	drainQueue := func(attempt int) {
+		if len(msgQ) == 0 {
+			return
+		}
+		busy := fold.Fold(collected).AgentWorking
+		if b, ok := drv.(busyReporter); ok && b.Busy() {
+			busy = true
+		}
+		if busy {
+			if attempt >= queueRetries {
+				giveBackQueue("the session did not become free")
+				return
+			}
+			time.AfterFunc(queueRetryWait, func() {
+				select {
+				case queueCh <- attempt + 1:
+				default:
+				}
+			})
+			return
+		}
+		next := msgQ[0]
+		if !sendNow(next) {
+			if attempt >= queueRetries {
+				giveBackQueue("the rules kept checking the previous line")
+				return
+			}
+			time.AfterFunc(queueRetryWait, func() {
+				select {
+				case queueCh <- attempt + 1:
+				default:
+				}
+			})
+			return
+		}
+		msgQ = msgQ[1:]
 	}
 	// uiVerb is what the verbs that change the loop's own view do. They live here because the
 	// state they change (the expanded tools, the find bar) is the loop's.
@@ -1485,6 +1572,28 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		switch name {
 		case "view.expand":
 			expandTools = !expandTools
+		case "queue.push":
+			text := strings.TrimSpace(input)
+			switch {
+			case text == "":
+			case len(images.used(input)) > 0:
+				// The pictures were set for the line on Enter; they must not wait for
+				// another message, and they cannot wait in the queue yet.
+				attachPictures(drv, nil)
+				sceneNotice = "a message with pictures cannot wait in the queue yet; send it when the answer ends"
+			case len(msgQ) >= queueMax:
+				sceneNotice = fmt.Sprintf("%d messages are already waiting; the line is kept, send it when they have gone", queueMax)
+			default:
+				msgQ = append(msgQ, text)
+				hist.Add(text)
+				collected = appendLocalNote(collected, fmt.Sprintf("queued (%d waiting): sent when the answer ends", len(msgQ)))
+				chatScroll = 0
+				// The action runs with the line saved as a draft to put back; what was
+				// queued must not come back.
+				input, caret, draft, draftCaret = "", 0, "", 0
+				pastes.reset()
+				images.reset()
+			}
 		case "find.toggle":
 			switch {
 			case find.open:
@@ -1989,6 +2098,19 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// chosen share is followed by a compaction (compact.go says when).
 		if e.Type == "agent.turn_done" && autoCompact.On {
 			autoCompactTry(0)
+		}
+		switch e.Type {
+		case "agent.turn_done":
+			if len(msgQ) > 0 {
+				select {
+				case queueCh <- 0:
+				default:
+				}
+			}
+		case "chat.cancelled":
+			giveBackQueue("you stopped the answer")
+		case "agent.failed":
+			giveBackQueue("the answer failed")
 		}
 		// The packages' own reactions to the end of a turn (package_auto.go).
 		switch e.Type {
@@ -2797,6 +2919,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 									}
 									collected = evs
 									dropPost()
+									msgQ = nil
 									sessLog.Continue(id)
 									ctxHigh = false
 									pkgAuto.sessionResumed()
@@ -3020,6 +3143,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							}
 							collected = nil
 							dropPost()
+							msgQ = nil
 							sessLog.End()
 							for drained := false; !drained; {
 								select {
@@ -3471,6 +3595,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 
 		case attempt := <-autoCompactCh:
 			autoCompactTry(attempt)
+			repaint()
+
+		case attempt := <-queueCh:
+			drainQueue(attempt)
 			repaint()
 
 		case out := <-flowCh:

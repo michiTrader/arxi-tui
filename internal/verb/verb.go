@@ -112,6 +112,11 @@ var catalogue = []Verb{
 		Doc:     "open the find bar on the input row, or close it when it is open",
 		Example: "find.toggle",
 	},
+	{
+		Name: "queue.push", Protection: Free,
+		Doc:     "put the line being typed in the queue of messages, to be sent when the answer being written ends",
+		Example: "queue.push",
+	},
 }
 
 // All returns the catalogue, in a stable order. It is a copy: a caller cannot change it.
