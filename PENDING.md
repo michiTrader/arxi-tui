@@ -498,3 +498,5 @@ Abierto, menor:
    no fallan de forma intermitente.
 
 **B3, part 3 (`output.post`):** rules that reword what is shown of the model's answer, never what the model, the saved session or `${text}` events see. Done; Phase B is complete. Next: Phase C (keymap with contexts as data, tier-1 evaluator, tier-2 interpreter, queue, steering).
+
+**C1 (`internal/expr`):** tier-1 expression language (typed, schema-checked at compile time, bounded, errors that say what to write). Done and tested, not wired in yet. Next in C: keymap with contexts as data (its first user), tier-2 interpreter, queue, steering.

@@ -315,3 +315,29 @@ model said it; at most 8 rules and 2 s per answer; an answer over 4000 character
 as said, with a note; a piece of a streamed answer keeps the spaces at its ends. While the
 rules run (on a worker) later events wait in order; `/clear` and `/resume` drop an answer in
 flight. With no `output.post` rule nothing is held. The consent screen has its own line.
+
+### Built (C1): tier 1, `internal/expr`
+
+A small expression language for conditions and short calculations, for example
+`focus == 'prompt' && input.at_end && shells.count > 0`. It is a package of its own and nothing in
+the TUI uses it yet; the keymap (next in C) will be its first user, so no binary-size change is
+claimed here (about 600 lines of Go, no dependencies).
+
+- **Names are checked when the expression is compiled**, against a schema the host gives
+  (`name -> yes/no | number | text`). A misspelt name is refused where it is written, with up to
+  three near names ("did you mean shells.count?").
+- **Strict types, no truthiness.** `shells.count` alone is refused with "compare it, for example
+  `(shells.count) > 0`". `&&`, `||` and `!` take yes/no; `<` takes numbers; `==` takes two values
+  of the same kind; `+` adds numbers or joins texts. Every refusal says what to write instead.
+- **It always ends and stays small.** No loops, functions, assignment or recursion. At most 400
+  characters, 120 parts and 24 levels deep; numbers are whole and at most 2^40, so a product that
+  would wrap is an error and not a wrong answer; a joined text is at most 1000 characters; division
+  by zero is an error with a remedy.
+- **A missing value is an error, never `false`.** `&&` and `||` stop early, so a name on the right is
+  not read when the left already decides. A host that gives another kind than its schema promised
+  is reported as "the host and its schema disagree".
+
+Each behaviour above was checked by breaking it on purpose: more than 60 mutants of the parser, checker and
+evaluator, each caught in the end by the test that names it (some survived at first and led to new tests: a product
+that wraps to exactly 0, `<`/`>` against `<=`/`>=`, an escaped backslash, a single `&`, a `)` inside a
+text, the order of suggestions, and the order of `Names()`).
