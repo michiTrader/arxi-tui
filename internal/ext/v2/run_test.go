@@ -37,12 +37,12 @@ func TestCleanText(t *testing.T) {
 func TestExtractPathTable(t *testing.T) {
 	doc := `{"a":{"b":[10,{"c":"deep"}],"t":true},"big":12345678901234567890}`
 	for path, want := range map[string]string{"a.b.0": "10", "a.b.1.c": "deep", "a.t": "true", "big": "12345678901234567890"} {
-		got, err := extractPath([]byte(doc), path)
+		got, err := extractPath([]byte(doc), path, "")
 		if err != nil || got != want {
 			t.Errorf("extractPath(%s) = %q, %v; want %q", path, got, err, want)
 		}
 	}
-	if _, err := extractPath([]byte(`nope`), "a"); err == nil || !strings.Contains(err.Error(), "not JSON") {
+	if _, err := extractPath([]byte(`nope`), "a", ""); err == nil || !strings.Contains(err.Error(), "not JSON") {
 		t.Errorf("got %v", err)
 	}
 }

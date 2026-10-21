@@ -92,7 +92,7 @@ func finish(o Op, oc opCtx, raw []byte, truncated bool) (Outcome, error) {
 		if truncated {
 			return Outcome{}, fmt.Errorf("the output is longer than %d bytes, so \"extract\" could not read it whole; ask the service for less", MaxOutputBytes)
 		}
-		v, err := extractPath(raw, o.Extract)
+		v, err := extractPath(raw, o.Extract, o.Join)
 		if err != nil {
 			return Outcome{}, err
 		}
@@ -138,32 +138,83 @@ func parseOutcome(raw []byte) (Outcome, error) {
 // extractPath reads one value out of a JSON document by a dotted path. A name selects
 // a key and a number selects a list position. Only a single scalar is a value: an
 // object or a list is refused, because showing "map[...]" is never what was meant.
-func extractPath(raw []byte, path string) (string, error) {
+func extractPath(raw []byte, path, join string) (string, error) {
 	var v any
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
 	if err := dec.Decode(&v); err != nil {
 		return "", fmt.Errorf("the output is not JSON (%v), so extract %q cannot read it", firstLine(err.Error()), path)
 	}
-	cur := v
-	for _, seg := range strings.Split(path, ".") {
+	segs := strings.Split(path, ".")
+	for i, seg := range segs {
+		if seg != "*" {
+			continue
+		}
+		// "*" walks every entry of the list before it and joins what each one yields.
+		list, err := walkPath(v, segs[:i], path)
+		if err != nil {
+			return "", err
+		}
+		items, ok := list.([]any)
+		if !ok {
+			return "", fmt.Errorf("\"*\" in %q needs a list, and the value before it is not one", path)
+		}
+		if len(items) == 0 {
+			return "", fmt.Errorf("the list before \"*\" in %q is empty, so there is nothing to join", path)
+		}
+		if len(items) > MaxJoined {
+			return "", fmt.Errorf("the list before \"*\" in %q has %d entries, more than the %d that are joined; ask the service for less", path, len(items), MaxJoined)
+		}
+		sep, ok := joinSeparators[join]
+		if !ok {
+			return "", fmt.Errorf("join %q is not understood; use %s", join, strings.Join(JoinKinds, ", "))
+		}
+		parts := make([]string, 0, len(items))
+		for n, it := range items {
+			leaf, err := walkPath(it, segs[i+1:], path)
+			if err != nil {
+				return "", fmt.Errorf("entry %d of the list: %w", n, err)
+			}
+			s, err := scalarText(leaf, path)
+			if err != nil {
+				return "", fmt.Errorf("entry %d of the list: %w", n, err)
+			}
+			parts = append(parts, s)
+		}
+		return strings.Join(parts, sep), nil
+	}
+	leaf, err := walkPath(v, segs, path)
+	if err != nil {
+		return "", err
+	}
+	return scalarText(leaf, path)
+}
+
+// walkPath follows names and list positions from cur; it never meets a "*".
+func walkPath(cur any, segs []string, path string) (any, error) {
+	for _, seg := range segs {
 		switch node := cur.(type) {
 		case map[string]any:
 			next, ok := node[seg]
 			if !ok {
-				return "", fmt.Errorf("the output has no %q at %q; the keys there are %s", seg, path, keyList(node))
+				return nil, fmt.Errorf("the output has no %q at %q; the keys there are %s", seg, path, keyList(node))
 			}
 			cur = next
 		case []any:
 			i, err := strconv.Atoi(seg)
 			if err != nil || i < 0 || i >= len(node) {
-				return "", fmt.Errorf("%q is not a position in a list of %d at %q", seg, len(node), path)
+				return nil, fmt.Errorf("%q is not a position in a list of %d at %q", seg, len(node), path)
 			}
 			cur = node[i]
 		default:
-			return "", fmt.Errorf("%q reaches a single value before %q ends; shorten the path", path, seg)
+			return nil, fmt.Errorf("%q reaches a single value before %q ends; shorten the path", path, seg)
 		}
 	}
+	return cur, nil
+}
+
+// scalarText is the text of a single value; an object or a list is never one.
+func scalarText(cur any, path string) (string, error) {
 	switch s := cur.(type) {
 	case string:
 		return s, nil
