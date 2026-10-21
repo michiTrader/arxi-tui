@@ -238,6 +238,12 @@ segments, and a rule sees only the line you type (`input.pre`), never the model'
 an `extract` that joins an array and an `output.post` stage for rules that may reword what is shown
 (display only, never what the model sees).
 
+**Built (B3, part 2).** `extract` can put a `*` where a list is (`result.segments.*.text`) and then needs a
+`join` of `none`, `space` or `newline`: every entry becomes one text. One `*` per path, at most 200 entries (a
+longer list is refused, never cut, because a translation with its tail missing reads as complete); a `*` without
+`join`, or a `join` without `*`, is refused when the package is saved; an entry that lacks the key is an error
+naming its position. The result is cleaned like any other output. `output.post` is the last piece of B3.
+
 ## 8. Phases
 
 | Phase | Builds | Done when |

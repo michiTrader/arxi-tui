@@ -1,3 +1,11 @@
+## Done since: B3 part 2, `extract` that joins a list (branch feat/extract-join)
+
+`extract` accepts one `*` (`result.segments.*.text`) with a required `join` (`none`, `space`, `newline`); at most
+200 entries, refused (not cut) beyond that; `*` and `join` must come together, checked at save and again at run;
+the guide the model reads teaches it. Tests: extraction table, pairing rules, the limit at 200 and 201, and an
+HTTP end-to-end of a translation in segments (with an escape inside a segment); 13 mutants, each caught by the
+intended test. Next in B3: `output.post` (rules that reword what is shown, never what the model sees).
+
 ## Done since: B3 part 1, event payload `${text}` (branch feat/event-payloads)
 
 A `turn.done` event can read the model's answer as `${text}` (url, body, argv). The loop gathers the `llm.response`
