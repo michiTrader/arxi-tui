@@ -7,13 +7,15 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/michiTrader/arxi_tui/internal/verb"
 )
 
 // ActionKind is the closed prefix set of an on_press action (BINDS.md §4.8).
 //
 // It is a closed set because Q18's decision is that the action vocabulary is
 // closed per surface: a prefix outside this set is a load-time refusal, not a
-// silent no-op. The set is small on purpose — seven live kinds — so the host's
+// silent no-op. The set is small on purpose — eight live kinds — so the host's
 // dispatch switch is exhaustive and a new kind is a signed change to this type,
 // never a string the host quietly ignores.
 type ActionKind int
@@ -48,6 +50,12 @@ const (
 	// checks the shape and the setting name; the values each setting takes belong to
 	// the host (the effort levels depend on the model in use), which refuses the rest.
 	ActionSet
+	// ActionDo calls a verb of the catalogue (do:shell.stop 2). The verbs, their parameters
+	// and who may run them are in internal/verb; this layer checks that the verb exists and
+	// the arguments fit (a value still holding a {row.<field>} is checked once it is
+	// replaced). Which verbs a button may carry is the validator's rule, and what the
+	// verb does is the host's.
+	ActionDo
 )
 
 // SetSettings are the settings a set: action may change, in a stable order. They are
@@ -176,7 +184,7 @@ func AnswerKinds() []string {
 func ParseAction(s string) (Action, error) {
 	prefix, arg, ok := strings.Cut(s, ":")
 	if !ok {
-		return Action{}, fmt.Errorf("on_press %q has no action prefix; it must be one of cmd:<command>, focus:<node>, answer:<kind>, ext:<plugin-id>:<action>, say:<text>, open:<https address>, set:<setting>=<value> (BINDS.md §4.8)", s)
+		return Action{}, fmt.Errorf("on_press %q has no action prefix; it must be one of cmd:<command>, focus:<node>, answer:<kind>, ext:<plugin-id>:<action>, say:<text>, open:<https address>, set:<setting>=<value>, do:<verb> <arguments> (BINDS.md §4.8)", s)
 	}
 	switch prefix {
 	case "cmd":
@@ -237,8 +245,13 @@ func ParseAction(s string) (Action, error) {
 			return Action{}, fmt.Errorf("on_press %q gives the value %q, which is not a plain lowercase word of at most %d characters (BINDS.md §4.8)", s, value, MaxSetValue)
 		}
 		return Action{Kind: ActionSet, Setting: setting, Arg: value}, nil
+	case "do":
+		if err := verb.Check(arg); err != nil {
+			return Action{}, fmt.Errorf("on_press %q: %w (BINDS.md §4.8)", s, err)
+		}
+		return Action{Kind: ActionDo, Arg: arg}, nil
 	default:
-		return Action{}, fmt.Errorf("on_press %q uses an unknown action prefix %q; the closed set is cmd:, focus:, answer:, ext:, say:, open:, set: (BINDS.md §4.8)", s, prefix)
+		return Action{}, fmt.Errorf("on_press %q uses an unknown action prefix %q; the closed set is cmd:, focus:, answer:, ext:, say:, open:, set:, do: (BINDS.md §4.8)", s, prefix)
 	}
 }
 

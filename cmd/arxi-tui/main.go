@@ -1486,6 +1486,11 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				}
 			case scene.ActionSay:
 				collected = appendLocalNote(collected, act.Arg)
+			case scene.ActionDo:
+				// A verb of the catalogue. Whatever reaches the queue was made by a
+				// button, a key, a command or a hook, never typed (see queuedVerbEnv).
+				collected = appendLocalNote(collected, runVerbLine(act.Arg, queuedVerbEnv(drv, cwd)))
+				chatScroll = 0
 			case scene.ActionOpen:
 				if why := openRefusal(act, q.hook, pkgs); why != "" {
 					collected = appendLocalWarning(collected, why)
@@ -2856,7 +2861,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if h, ok := drv.(shellHost); ok {
 								reg = h.Shells()
 							}
-							collected = appendLocalNote(collected, runShellCommand(args, reg, cwd))
+							collected = appendLocalNote(collected, runShellCommand(args, reg, cwd, !synth))
 							chatScroll = 0
 							input, caret, slashSel = "", 0, 0
 						} else if args, isFolder := folderLine(input, slashSel, slashCat); isFolder && ev.Key.Type == term.KeyEnter {

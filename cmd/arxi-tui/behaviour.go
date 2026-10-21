@@ -16,6 +16,7 @@ import (
 	"github.com/michiTrader/arxi_tui/internal/scene"
 	"github.com/michiTrader/arxi_tui/internal/term"
 	"github.com/michiTrader/arxi_tui/internal/theme"
+	"github.com/michiTrader/arxi_tui/internal/verb"
 )
 
 // This file is the behaviour half of the user's interface. The scene says what is drawn,
@@ -383,6 +384,11 @@ func validateActions(who string, list actionList, allowExt bool, self string) er
 		case scene.ActionExt:
 			if !allowExt {
 				return fmt.Errorf("%s: %q routes to a plugin without a keypress of its own; bind it to a key or a command instead", who, a)
+			}
+		case scene.ActionDo:
+			name, _, _ := strings.Cut(act.Arg, " ")
+			if v, ok := verb.Find(name); ok && v.Protection == verb.Typed {
+				return fmt.Errorf("%s: %q is a verb only a line you type yourself may start (%s starts something that keeps running); a shortcut, command or hook cannot carry it", who, a, name)
 			}
 		case scene.ActionOpen:
 			// allowExt is true exactly where a keypress or a typed command starts the
@@ -785,7 +791,7 @@ func behaviourGuide(b behaviour) string {
       Appear in the / menu and run when picked. The name cannot be an existing command.
   hooks       [{"on":"effort","is":"max","do":["cmd:/ui style status header"]}]
       on is effort, mode or style; is is one of its values (effort also has "none" for cleared) or left out for any change. Hooks fire when the user changes the setting, never when an action did, so nothing loops.
-  An action is one of: cmd:/<line typed as the user would type it>, focus:<node id>, say:<text shown to the user, never sent to the model>, set:<setting>=<value> (effort, mode or style with one of its values, e.g. set:effort=max), open:<https address> (keys and commands only, never a hook; the host must be in permissions.open of a package the user approved), ext:<plugin-id>:<action> (keys and commands only; plugins are installed with /ui plugin add <url> and ask the user's consent). answer: is not allowed here.
+  An action is one of: cmd:/<line typed as the user would type it>, focus:<node id>, say:<text shown to the user, never sent to the model>, set:<setting>=<value> (effort, mode or style with one of its values, e.g. set:effort=max), do:<verb> <arguments> (a verb of the catalogue that needs no typing of yours), open:<https address> (keys and commands only, never a hook; the host must be in permissions.open of a package the user approved), ext:<plugin-id>:<action> (keys and commands only; plugins are installed with /ui plugin add <url> and ask the user's consent). answer: is not allowed here.
   A key, a command or a hook can be removed with null (keys) or by sending the list without it. Changes to keys, commands and hooks are always put to the user, even in full access, because they decide what their own keyboard does later.
   The user types the common ones themselves: /ui animate <name> <colour,colour,...> [fps=N] [spread=N] [diagonal|radial|...] [bold] | off, /ui key <key> <action...> | off, /ui menukeys <action> <key...> | off.
 

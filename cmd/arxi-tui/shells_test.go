@@ -337,41 +337,41 @@ func TestReadWaitsForOutputButNotLongerThanAsked(t *testing.T) {
 func TestShellCommandForTheUser(t *testing.T) {
 	r := newTestShells(t)
 	dir := t.TempDir()
-	if got := runShellCommand("", r, dir); !strings.Contains(got, "no shells") {
+	if got := runShellCommand("", r, dir, true); !strings.Contains(got, "no shells") {
 		t.Errorf("empty list: %q", got)
 	}
-	if got := runShellCommand("start echo hi; sleep 30", r, dir); !strings.Contains(got, "started shell 1") {
+	if got := runShellCommand("start echo hi; sleep 30", r, dir, true); !strings.Contains(got, "started shell 1") {
 		t.Errorf("start: %q", got)
 	}
 	s, _ := r.find(1)
 	waitFor(t, "output", func() bool { return s.hasNew() })
-	if got := runShellCommand("", r, dir); !strings.Contains(got, "1  running") || !strings.Contains(got, "echo hi") {
+	if got := runShellCommand("", r, dir, true); !strings.Contains(got, "1  running") || !strings.Contains(got, "echo hi") {
 		t.Errorf("list: %q", got)
 	}
 	for _, form := range []string{"show 1", "1"} {
-		if got := runShellCommand(form, r, dir); !strings.Contains(got, "hi") || !strings.Contains(got, "shell 1 (running") {
+		if got := runShellCommand(form, r, dir, true); !strings.Contains(got, "hi") || !strings.Contains(got, "shell 1 (running") {
 			t.Errorf("%q: %q", form, got)
 		}
 	}
-	if got := runShellCommand("show 7", r, dir); !strings.Contains(got, "no shell 7") {
+	if got := runShellCommand("show 7", r, dir, true); !strings.Contains(got, "no shell 7") {
 		t.Errorf("show unknown: %q", got)
 	}
-	if got := runShellCommand("frobnicate", r, dir); !strings.Contains(got, "unknown") {
+	if got := runShellCommand("frobnicate", r, dir, true); !strings.Contains(got, "unknown") {
 		t.Errorf("unknown verb: %q", got)
 	}
-	if got := runShellCommand("stop 9", r, dir); !strings.Contains(got, "not running") {
+	if got := runShellCommand("stop 9", r, dir, true); !strings.Contains(got, "not running") {
 		t.Errorf("stop unknown: %q", got)
 	}
-	if got := runShellCommand("stop 1", r, dir); !strings.Contains(got, "stopped shell 1") || r.running() != 0 {
+	if got := runShellCommand("stop 1", r, dir, true); !strings.Contains(got, "stopped shell 1") || r.running() != 0 {
 		t.Errorf("stop: %q", got)
 	}
-	if got := runShellCommand("stop all", r, dir); !strings.Contains(got, "no shell was running") {
+	if got := runShellCommand("stop all", r, dir, true); !strings.Contains(got, "no shell was running") {
 		t.Errorf("stop all, none: %q", got)
 	}
-	if got := runShellCommand("start", r, dir); !strings.Contains(got, "name the command") {
+	if got := runShellCommand("start", r, dir, true); !strings.Contains(got, "name the command") {
 		t.Errorf("start with no command: %q", got)
 	}
-	if got := runShellCommand("", nil, dir); !strings.Contains(got, "no tools") {
+	if got := runShellCommand("", nil, dir, true); !strings.Contains(got, "no tools") {
 		t.Errorf("nil registry: %q", got)
 	}
 }

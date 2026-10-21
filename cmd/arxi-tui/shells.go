@@ -494,36 +494,32 @@ func shellLine(input string, sel int, cat string) (args string, ok bool) {
 //	/shell show <n>         what shell n printed last
 //	/shell stop <n|all>     end one, or all of them
 //	/shell start <command>  start one by hand
-func runShellCommand(args string, r *shellRegistry, dir string) string {
+func runShellCommand(args string, r *shellRegistry, dir string, typed bool) string {
 	if r == nil {
 		return "/shell: this session has no tools to run commands with"
 	}
-	verb, rest, _ := strings.Cut(strings.TrimSpace(args), " ")
+	env := verbEnv{shells: r, dir: dir, typed: typed}
+	verbName, rest, _ := strings.Cut(strings.TrimSpace(args), " ")
 	rest = strings.TrimSpace(rest)
-	switch strings.ToLower(verb) {
+	switch strings.ToLower(verbName) {
 	case "", "list":
 		return shellList(r.list())
 	case "start", "run":
-		info, err := r.start(rest, dir)
-		if err != nil {
-			return "/shell: " + err.Error()
+		if rest == "" {
+			return "/shell start: name the command to run. /shell start <command>"
 		}
-		return fmt.Sprintf("/shell: started shell %d: %s\nIt runs in the background; /shell show %d reads it, /shell stop %d ends it.", info.ID, info.Command, info.ID, info.ID)
+		return runVerbLine("shell.start "+rest, env)
 	case "stop", "kill":
-		if strings.EqualFold(rest, "all") || rest == "" {
-			if n := r.stopAll(); n > 0 {
-				return fmt.Sprintf("/shell: stopped %d shell(s)", n)
-			}
-			return "/shell: no shell was running"
+		if rest == "" {
+			rest = "all"
 		}
-		id, err := strconv.Atoi(rest)
-		if err != nil || !r.stop(id) {
+		if n, err := strconv.Atoi(rest); (err != nil || n < 1) && !strings.EqualFold(rest, "all") {
 			return "/shell: shell " + rest + " is not running"
 		}
-		return fmt.Sprintf("/shell: stopped shell %d", id)
+		return runVerbLine("shell.stop "+strings.ToLower(rest), env)
 	}
-	arg := verb
-	if strings.EqualFold(verb, "show") {
+	arg := verbName
+	if strings.EqualFold(verbName, "show") {
 		arg = rest
 	}
 	lines := 30
@@ -534,19 +530,12 @@ func runShellCommand(args string, r *shellRegistry, dir string) string {
 	}
 	id, err := strconv.Atoi(strings.TrimSpace(arg))
 	if err != nil {
-		return "/shell: unknown " + verb + "; use /shell, /shell show <n>, /shell stop <n|all> or /shell start <command>"
+		return "/shell: unknown " + verbName + "; use /shell, /shell show <n>, /shell stop <n|all> or /shell start <command>"
 	}
-	s, ok := r.find(id)
-	if !ok {
+	if id < 1 {
 		return fmt.Sprintf("/shell: there is no shell %d", id)
 	}
-	text, _ := s.output(false, maxShellRead)
-	info := s.snapshot()
-	head := fmt.Sprintf("shell %d (%s): %s", info.ID, shellStateWord(info), info.Command)
-	if strings.TrimSpace(text) == "" {
-		return head + "\n(no output yet)"
-	}
-	return head + "\n" + lastLines(text, lines)
+	return runVerbLine(fmt.Sprintf("shell.read %d %d", id, lines), env)
 }
 
 // lastLines keeps the last n lines of s.
