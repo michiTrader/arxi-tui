@@ -38,7 +38,7 @@ func TestEachNewEventFiresOnlyItsOwnPackageEvents(t *testing.T) {
 				t.Errorf("%s fired an event waiting for %s", other, on)
 			}
 		}
-		r.a.turnDone()
+		r.a.turnDone("")
 		r.a.turnFailed()
 		time.Sleep(120 * time.Millisecond)
 		if strings.Count(r.notes(), "it was") != 1 {

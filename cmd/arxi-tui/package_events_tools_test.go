@@ -91,7 +91,7 @@ func TestEachOfTheSevenNewEventsFiresOnlyItsOwn(t *testing.T) {
 		"file.changed":    (*packageAuto).fileChanged,
 		"session.resumed": (*packageAuto).sessionResumed,
 		// the older ones must not run them either
-		"turn.done": (*packageAuto).turnDone, "turn.failed": (*packageAuto).turnFailed,
+		"turn.done": func(a *packageAuto) { a.turnDone("") }, "turn.failed": (*packageAuto).turnFailed,
 		"turn.started": (*packageAuto).turnStarted, "turn.cancelled": (*packageAuto).turnCancelled,
 		"shell.ended": (*packageAuto).shellEnded,
 	}

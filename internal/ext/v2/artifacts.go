@@ -89,7 +89,7 @@ func (p *Package) validateEvent(i int, e Event, opt Options) error {
 			}
 		}
 	}
-	return p.validateOp(who, e.Op, opCtx{kind: ctxEvent}, opt)
+	return p.validateOp(who, e.Op, opCtx{kind: ctxEvent, event: e.On}, opt)
 }
 
 func (p *Package) validatePanel(i int, pn Panel, opt Options) error {

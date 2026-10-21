@@ -98,15 +98,48 @@ func (r *Runner) run(ctx context.Context, p *Package, o Op, oc opCtx, in Input) 
 	return Outcome{}, fmt.Errorf("operation kind %q cannot run", o.Kind)
 }
 
-// RunEvent runs the operation of an event. Nothing was typed, so it has no text to work
-// with, and what comes back is only ever shown: an event cannot send to the model, rewrite
-// a line, or start anything.
-func (r *Runner) RunEvent(ctx context.Context, p *Package, e Event) (string, error) {
-	out, err := r.run(ctx, p, e.Op, opCtx{kind: ctxEvent}, Input{})
+// RunEvent runs the operation of an event. Nothing was typed, so it has no text of the
+// user's to work with, and what comes back is only ever shown: an event cannot send to
+// the model, rewrite a line, or start anything.
+//
+// answer is what the model just said, and only an event on turn.done may be given it
+// (as ${text}). An event whose operation uses ${text} does not run when the answer is
+// empty, because a hole is never filled with nothing: it returns no text and no error,
+// since a turn that only used tools has nothing to react to and that is not a failure.
+// An event on anything else that uses ${text} is refused, as the validator would have.
+func (r *Runner) RunEvent(ctx context.Context, p *Package, e Event, answer string) (string, error) {
+	in := Input{}
+	if opUsesText(e.Op) {
+		if e.On != EventTurnDone {
+			return "", fmt.Errorf("%w: event %s uses ${text}, which only an event on %s has; nothing ran", ErrNotSigned, e.ID, EventTurnDone)
+		}
+		in.Text = CleanText(strings.TrimSpace(answer), MaxEventTextRunes, 0)
+		if in.Text == "" {
+			return "", nil
+		}
+	}
+	out, err := r.run(ctx, p, e.Op, opCtx{kind: ctxEvent, event: e.On}, in)
 	if err != nil {
 		return "", err
 	}
 	return onlyText("event "+e.ID, out)
+}
+
+// opUsesText reports whether the operation places ${text} anywhere it can be filled: the
+// url, the body or an argument. (A header or the program name may not hold any placeholder.)
+func opUsesText(o Op) bool {
+	for _, s := range append([]string{o.URL, o.Body}, o.Argv...) {
+		parts, err := parseTemplate(s)
+		if err != nil {
+			continue
+		}
+		for _, pt := range parts {
+			if pt.ph == textPlaceholder {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // RunPanel runs the operation of a panel and returns its one line. A panel with no

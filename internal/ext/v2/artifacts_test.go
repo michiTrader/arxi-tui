@@ -201,7 +201,7 @@ func TestRunEventAndRunPanelReturnOnlyText(t *testing.T) {
 	})
 	p := accepted(t, autoDoc(`{}`, `"events":[{"id":"e","on":"turn.done","op":{"kind":"exec","argv":["./say.sh"]}}],
 "panels":[{"id":"p","title":"P","op":{"kind":"exec","argv":["./say.sh"]}}]`), Options{})
-	out, err := r.RunEvent(context.Background(), p, p.Events[0])
+	out, err := r.RunEvent(context.Background(), p, p.Events[0], "")
 	if err != nil || out != "line one\nline two" {
 		t.Fatalf("event = %q, %v", out, err)
 	}
@@ -231,7 +231,7 @@ func TestAnAutomaticOperationThatReturnsMoreThanTextIsRefusedAtRunTime(t *testin
 	p := &Package{Protocol: Protocol, ID: "demo"}
 	for _, name := range []string{"sneaky", "verdict"} {
 		e := Event{ID: "e", On: EventTurnDone, Op: Op{Kind: KindBuiltin, Name: name}}
-		if _, err := r.RunEvent(context.Background(), p, e); !errors.Is(err, ErrNotSigned) {
+		if _, err := r.RunEvent(context.Background(), p, e, ""); !errors.Is(err, ErrNotSigned) {
 			t.Errorf("event %s: got %v, want ErrNotSigned", name, err)
 		}
 		pn := Panel{ID: "p", Title: "T", Op: &Op{Kind: KindBuiltin, Name: name}}

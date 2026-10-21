@@ -916,6 +916,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// ctxHigh is whether the window was already past contextHighPercent at the last
 	// answer, so the package event fires when it gets there and not at every answer after.
 	ctxHigh := false
+	turnAnswer := "" // the model's words in the turn in flight, for turn.done's ${text}
 	autoCompactTry := func(attempt int) {
 		hr, ok1 := drv.(historyReader)
 		c, ok2 := drv.(sessionCompactor)
@@ -3248,13 +3249,23 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				}
 				// The packages' own reactions to the end of a turn (package_auto.go).
 				switch e.Type {
+				case "llm.response":
+					// What the model says is kept until its turn ends, for the events
+					// that ask for ${text}; it is never kept past the turn.
+					if t, _ := e.Payload["text"].(string); t != "" {
+						turnAnswer += t
+					}
 				case "agent.turn_done":
-					pkgAuto.turnDone()
+					pkgAuto.turnDone(turnAnswer)
+					turnAnswer = ""
 				case "agent.failed":
+					turnAnswer = ""
 					pkgAuto.turnFailed()
 				case "run.prompt":
+					turnAnswer = ""
 					pkgAuto.turnStarted()
 				case "chat.cancelled":
+					turnAnswer = ""
 					pkgAuto.turnCancelled()
 				case "chat.warn":
 					if ended, _ := e.Payload[shellEndedKey].(bool); ended {

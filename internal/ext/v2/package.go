@@ -683,6 +683,12 @@ func (p *Package) Capabilities() []string {
 			}
 		}
 		out = append(out, "react by itself, with nothing typed, when "+strings.Join(on, ", ")+" happens, and show you a note")
+		for _, e := range p.Events {
+			if opUsesText(e.Op) {
+				out = append(out, "read the text of every answer the model gives, and pass it to a program or a request (event "+e.ID+")")
+				break
+			}
+		}
 	}
 	if len(p.Panels) > 0 {
 		var titles []string
