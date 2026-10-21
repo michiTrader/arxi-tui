@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -369,5 +370,59 @@ func TestEnterOnAFocusedButtonPressesItWhileTheAgentWorks(t *testing.T) {
 				t.Errorf("the line was queued while a button held the focus (agent %s)", name)
 			}
 		})
+	}
+}
+
+// slowFreeDriver is a driver whose session frees itself a little after turn_done, as the
+// real chat session does: Busy() stays true for the first `busyFor` questions.
+type slowFreeDriver struct {
+	*testDriver
+	busyFor int32
+	asked   int32
+}
+
+func (d *slowFreeDriver) Busy() bool { return atomic.AddInt32(&d.asked, 1) <= d.busyFor }
+
+// turn_done is emitted a moment before the session is free. The line must wait and ask
+// again, not be given back or sent into a busy session.
+func TestAQueuedLineWaitsForASessionThatFreesItselfAfterTurnDone(t *testing.T) {
+	drv := &slowFreeDriver{testDriver: newQueueDriver(), busyFor: 3}
+	frames := queueLoop(t, drv, drv.evCh, append(sendLine("late line"), leave(2200*time.Millisecond)...), func(send func(fold.Event)) {
+		time.Sleep(100 * time.Millisecond)
+		send(working())
+		time.Sleep(900 * time.Millisecond)
+		send(turnDone(20))
+	})
+	if len(drv.submitted) != 1 || drv.submitted[0] != "late line" {
+		t.Fatalf("submitted = %q, want the queued line sent once the session freed itself.\nConsequence: a line queued behind a slow-to-free session is lost or sent into a busy session, which refuses it.\nRemedy: drainQueue must ask again after queueRetryWait while Busy() is true.", drv.submitted)
+	}
+	if n := atomic.LoadInt32(&drv.asked); n < 4 {
+		t.Errorf("Busy() was asked %d times, want at least 4 (3 busy + 1 free).\nConsequence: the retry path was not exercised.\nRemedy: the driver must report busy for the first answers.", n)
+	}
+	if i := firstWith(frames, "back on the line"); i >= 0 {
+		t.Errorf("the line was given back although the session freed itself in time.\nConsequence: the user must send it again.\nRemedy: give back only after queueRetries asks.\nframe:\n%s", frames[i])
+	}
+}
+
+// A session that never frees itself must not hold the line forever: after queueRetries
+// asks it comes back on the input, with the reason.
+func TestAQueuedLineComesBackWhenTheSessionNeverFrees(t *testing.T) {
+	drv := &slowFreeDriver{testDriver: newQueueDriver(), busyFor: 1 << 30}
+	wait := time.Duration(queueRetries+4) * queueRetryWait
+	frames := queueLoop(t, drv, drv.evCh, append(sendLine("stuck line"), leave(900*time.Millisecond+wait)...), func(send func(fold.Event)) {
+		time.Sleep(100 * time.Millisecond)
+		send(working())
+		time.Sleep(900 * time.Millisecond)
+		send(turnDone(20))
+	})
+	if len(drv.submitted) != 0 {
+		t.Fatalf("submitted = %q into a session that never freed. Remedy: never send while Busy() is true.", drv.submitted)
+	}
+	i := firstWith(frames, "the session did not become free")
+	if i < 0 {
+		t.Fatal("nothing said the queued line came back.\nConsequence: the line stays in a queue nothing drains and the user does not know.\nRemedy: after queueRetries asks, giveBackQueue(\"the session did not become free\").")
+	}
+	if !strings.Contains(frames[i], "┃ stuck line") || strings.Contains(frames[i], "(queued)") {
+		t.Errorf("the line did not come back on the input, or is still drawn as waiting.\nframe:\n%s", frames[i])
 	}
 }
