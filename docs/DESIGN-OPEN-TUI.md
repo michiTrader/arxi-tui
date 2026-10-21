@@ -300,3 +300,18 @@ All four were answered by the owner and are now closed.
 - A fully editable interface can be edited into a worse one; history, undo, safe mode and
   profile tests are the answer and must exist before the windows do (hence phase A first).
 - Real steering needs the core to change; until then the queue is the honest version.
+
+### Built (B3, part 3): `output.post`
+
+A rule with `"stage":"output.post"` rewords what the user is SHOWN of each answer of the model.
+It reads the answer as `${input}` and its `transform` text is drawn instead. The model's own
+words are kept everywhere that remembers: the model's history, the saved session, and the
+`${text}` of `turn.done` events. The host draws a copy of the `llm.response` event (as
+`sentPaste.forChat` does for a pasted block) and logs the original.
+
+Limits, all tested: a rule can only reword or say something (no `handled`/`block`, no `send`,
+no empty text; `on_error: "block"` is refused at save); a failing rule shows the answer as the
+model said it; at most 8 rules and 2 s per answer; an answer over 4000 characters is shown
+as said, with a note; a piece of a streamed answer keeps the spaces at its ends. While the
+rules run (on a worker) later events wait in order; `/clear` and `/resume` drop an answer in
+flight. With no `output.post` rule nothing is held. The consent screen has its own line.
