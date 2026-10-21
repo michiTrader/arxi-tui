@@ -203,13 +203,19 @@ func (s packageSet) inertOwner(name string) (string, bool) {
 }
 
 // hasRules reports whether any package that may run has an input.pre rule to apply.
-func (s packageSet) hasRules() bool {
+func (s packageSet) hasRules() bool { return s.hasRuleOn(extv2.StageInputPre) }
+
+// hasPostRules reports whether any package that may run has an output.post rule, which is
+// what decides whether the loop holds an answer back for a moment before showing it.
+func (s packageSet) hasPostRules() bool { return s.hasRuleOn(extv2.StageOutputPost) }
+
+func (s packageSet) hasRuleOn(stage string) bool {
 	for _, p := range s.pkgs {
 		if !p.runnable() {
 			continue
 		}
 		for _, r := range p.Rules {
-			if !r.Disabled && r.Stage == extv2.StageInputPre {
+			if !r.Disabled && r.Stage == stage {
 				return true
 			}
 		}
@@ -274,6 +280,44 @@ func startInputPre(ctx context.Context, r *extv2.Runner, pkgs []*extv2.Package, 
 			done <- out
 		}()
 		out.res = r.RunInputPre(ctx, pkgs, line)
+	}()
+}
+
+// postOutcome is what the output.post worker hands back: the answer's event as the model
+// made it, the text to show instead, and what the rules had to say.
+type postOutcome struct {
+	event fold.Event
+	epoch int
+	res   extv2.PostResult
+}
+
+// answerShown is the event the chat draws for an answer: the same event with the text the
+// rules chose. The model's own event is not touched (the payload is copied, as
+// sentPaste.forChat does), because the session log and the model's memory keep its words.
+func answerShown(e fold.Event, text string) fold.Event {
+	payload := make(map[string]any, len(e.Payload))
+	for k, v := range e.Payload {
+		payload[k] = v
+	}
+	payload["text"] = text
+	e.Payload = payload
+	return e
+}
+
+// startOutputPost runs the output.post rules over one answer on a worker, so a slow rule
+// never freezes the loop or the panic gesture. The runner is bounded by PipelineBudget, and
+// a crash leaves the answer as the model said it.
+func startOutputPost(ctx context.Context, r *extv2.Runner, pkgs []*extv2.Package, e fold.Event, epoch int, done chan<- postOutcome) {
+	text, _ := e.Payload["text"].(string)
+	go func() {
+		out := postOutcome{event: e, epoch: epoch, res: extv2.PostResult{Text: text}}
+		defer func() {
+			if rec := recover(); rec != nil {
+				out.res = extv2.PostResult{Text: text, Notes: []extv2.Note{{Message: fmt.Sprintf("the rules crashed (%v); the answer is shown as the model said it", rec)}}}
+			}
+			done <- out
+		}()
+		out.res = r.RunOutputPost(ctx, pkgs, text)
 	}()
 }
 

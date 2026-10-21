@@ -78,7 +78,13 @@ const (
 )
 
 // Stages a rule may attach to.
-const StageInputPre = "input.pre"
+const (
+	// StageInputPre looks at a plain-text line before it is sent to the model.
+	StageInputPre = "input.pre"
+	// StageOutputPost looks at what the model answered, and rewords only what the user
+	// is SHOWN of it: the model, the saved session and the events keep its own words.
+	StageOutputPost = "output.post"
+)
 
 // Operation results: how an operation's output becomes an outcome.
 const (
@@ -452,23 +458,27 @@ func (p *Package) validateRule(i int, r Rule, opt Options) error {
 		return fmt.Errorf("%s: id %q is not usable; use lowercase letters, digits, '.', '-' or '_', starting with a letter", who, r.ID)
 	}
 	who = "rule " + r.ID
-	if r.Stage != StageInputPre {
-		return fmt.Errorf("%s: stage %q does not exist, so the rule would never run; the stages are %s", who, r.Stage, StageInputPre)
+	if r.Stage != StageInputPre && r.Stage != StageOutputPost {
+		return fmt.Errorf("%s: stage %q does not exist, so the rule would never run; the stages are %s and %s", who, r.Stage, StageInputPre, StageOutputPost)
 	}
 	switch r.OnError {
-	case "", "continue", "block":
+	case "", "continue":
+	case "block":
+		if r.Stage == StageOutputPost {
+			return fmt.Errorf("%s: on_error \"block\" holds a line back, and an answer has already come, so there is nothing to hold; a rule on %s that fails shows the answer as the model said it. Remove on_error", who, StageOutputPost)
+		}
 	default:
 		return fmt.Errorf("%s: on_error %q is not understood; use \"continue\" (the line goes on as typed) or \"block\" (the line is held back)", who, r.OnError)
 	}
 	if r.When != nil {
-		if err := r.When.validate(who); err != nil {
+		if err := r.When.validate(who, r.Stage); err != nil {
 			return err
 		}
 	}
 	return p.validateOp(who, r.Op, opCtx{kind: ctxRule}, opt)
 }
 
-func (w *When) validate(who string) error {
+func (w *When) validate(who, stage string) error {
 	if w.Prefix == "" && w.Contains == "" && w.Matches == "" {
 		return fmt.Errorf("%s: \"when\" is empty, so it would match every line; fill prefix, contains or matches, or leave \"when\" out on purpose", who)
 	}
@@ -477,7 +487,7 @@ func (w *When) validate(who string) error {
 			return fmt.Errorf("%s: when.%s is longer than %d characters", who, f.n, MaxWhenLen)
 		}
 	}
-	if strings.HasPrefix(strings.TrimSpace(w.Prefix), "/") {
+	if stage == StageInputPre && strings.HasPrefix(strings.TrimSpace(w.Prefix), "/") {
 		return fmt.Errorf("%s: when.prefix starts with '/', but a rule never sees a / line (commands are resolved first), so it would never match; match plain text", who)
 	}
 	if w.Matches != "" {
@@ -668,8 +678,11 @@ func (p *Package) Capabilities() []string {
 	if p.Permissions.Send {
 		out = append(out, "send text to the model")
 	}
-	if len(p.Rules) > 0 {
+	if p.hasStage(StageInputPre) {
 		out = append(out, "read and rewrite every line you type before it is sent")
+	}
+	if p.hasStage(StageOutputPost) {
+		out = append(out, "read every answer the model gives and reword what you see of it (the model and the saved session keep its own words)")
 	}
 	if len(p.Tools) > 0 {
 		var names []string
@@ -710,6 +723,16 @@ func (p *Package) Capabilities() []string {
 		out = append(out, "run a program that keeps running after you start it with /service start ("+strings.Join(names, ", ")+") until you stop it, and show what it prints")
 	}
 	return out
+}
+
+// hasStage reports whether any rule of the package attaches to the stage.
+func (p *Package) hasStage(stage string) bool {
+	for _, r := range p.Rules {
+		if r.Stage == stage {
+			return true
+		}
+	}
+	return false
 }
 
 func (p *Package) hasPackageExec() bool {

@@ -1932,6 +1932,97 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	}
 	repaint()
 
+	// onEvent takes one event of the conversation into the loop. e is what the core
+	// said, and is what everything that REMEMBERS gets: the session log, the packages'
+	// events and ${text}. shown is what the chat DRAWS, which differs only when an
+	// output.post rule reworded an answer.
+	onEvent := func(e, shown fold.Event) {
+		collected = addEvent(collected, sentPastes.forChat(shown))
+		if logLenProbe != nil {
+			logLenProbe(len(collected))
+		}
+		if err := sessLog.Record(e); err != nil {
+			sceneNotice = err.Error()
+		}
+		// Autocompact: a turn that just ended and left the window past the
+		// chosen share is followed by a compaction (compact.go says when).
+		if e.Type == "agent.turn_done" && autoCompact.On {
+			autoCompactTry(0)
+		}
+		// The packages' own reactions to the end of a turn (package_auto.go).
+		switch e.Type {
+		case "llm.response":
+			// What the model says is kept until its turn ends, for the events
+			// that ask for ${text}; it is never kept past the turn.
+			if t, _ := e.Payload["text"].(string); t != "" {
+				turnAnswer += t
+			}
+		case "agent.turn_done":
+			pkgAuto.turnDone(turnAnswer)
+			turnAnswer = ""
+		case "agent.failed":
+			turnAnswer = ""
+			pkgAuto.turnFailed()
+		case "run.prompt":
+			turnAnswer = ""
+			pkgAuto.turnStarted()
+		case "chat.cancelled":
+			turnAnswer = ""
+			pkgAuto.turnCancelled()
+		case "chat.warn":
+			if ended, _ := e.Payload[shellEndedKey].(bool); ended {
+				pkgAuto.shellEnded()
+			}
+		case "chat.tool":
+			name, _ := e.Payload["name"].(string)
+			ok, _ := e.Payload["ok"].(bool)
+			pkgAuto.toolUsed(name)
+			if changedFile(name, ok) {
+				pkgAuto.fileChanged()
+			}
+		case "chat.approval":
+			name, _ := e.Payload["name"].(string)
+			pkgAuto.approvalAsked(name)
+		case "chat.error":
+			if failed, _ := e.Payload[providerErrorKey].(bool); failed {
+				pkgAuto.providerError()
+			}
+		}
+		if e.Type == "agent.turn_done" {
+			var fire bool
+			ctxHigh, fire = contextHighCrossed(ctxHigh, contextPercent(fold.Fold(collected).LastContext, hubWindow))
+			if fire {
+				pkgAuto.contextHigh()
+			}
+		}
+		repaint()
+	}
+	// output.post (internal/ext/v2/pipeline.go): an answer is held back while the rules
+	// reword it on a worker, so the loop is never frozen by a slow one. What arrives in
+	// the meantime waits in postHeld and is taken in order afterwards, so the screen
+	// never shows a later line above the answer it follows. postEpoch is bumped when the
+	// conversation is replaced (/clear, /resume), so a late answer never lands in the new one.
+	var postHeld []fold.Event
+	postBusy, postEpoch := false, 0
+	postDoneCh := make(chan postOutcome, 1)
+	dropPost := func() {
+		postEpoch++
+		postBusy = false
+		postHeld = nil
+	}
+	arrive := func(e fold.Event) {
+		if postBusy {
+			postHeld = append(postHeld, e)
+			return
+		}
+		if t, _ := e.Payload["text"].(string); e.Type == "llm.response" && strings.TrimSpace(t) != "" && pkgs.hasPostRules() {
+			postBusy = true
+			startOutputPost(ctx, pkgRunner, pkgs.runnablePackages(), e, postEpoch, postDoneCh)
+			return
+		}
+		onEvent(e, e)
+	}
+
 	termEvents := tty.Events()
 	for {
 		select {
@@ -2662,6 +2753,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 										}
 									}
 									collected = evs
+									dropPost()
 									sessLog.Continue(id)
 									ctxHigh = false
 									pkgAuto.sessionResumed()
@@ -2884,6 +2976,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								c.ClearSession()
 							}
 							collected = nil
+							dropPost()
 							sessLog.End()
 							for drained := false; !drained; {
 								select {
@@ -3235,66 +3328,38 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				// terminal input (e.g. user wants to review the transcript).
 				eventCh = nil
 			} else {
-				collected = addEvent(collected, sentPastes.forChat(e))
-				if logLenProbe != nil {
-					logLenProbe(len(collected))
-				}
-				if err := sessLog.Record(e); err != nil {
-					sceneNotice = err.Error()
-				}
-				// Autocompact: a turn that just ended and left the window past the
-				// chosen share is followed by a compaction (compact.go says when).
-				if e.Type == "agent.turn_done" && autoCompact.On {
-					autoCompactTry(0)
-				}
-				// The packages' own reactions to the end of a turn (package_auto.go).
-				switch e.Type {
-				case "llm.response":
-					// What the model says is kept until its turn ends, for the events
-					// that ask for ${text}; it is never kept past the turn.
-					if t, _ := e.Payload["text"].(string); t != "" {
-						turnAnswer += t
-					}
-				case "agent.turn_done":
-					pkgAuto.turnDone(turnAnswer)
-					turnAnswer = ""
-				case "agent.failed":
-					turnAnswer = ""
-					pkgAuto.turnFailed()
-				case "run.prompt":
-					turnAnswer = ""
-					pkgAuto.turnStarted()
-				case "chat.cancelled":
-					turnAnswer = ""
-					pkgAuto.turnCancelled()
-				case "chat.warn":
-					if ended, _ := e.Payload[shellEndedKey].(bool); ended {
-						pkgAuto.shellEnded()
-					}
-				case "chat.tool":
-					name, _ := e.Payload["name"].(string)
-					ok, _ := e.Payload["ok"].(bool)
-					pkgAuto.toolUsed(name)
-					if changedFile(name, ok) {
-						pkgAuto.fileChanged()
-					}
-				case "chat.approval":
-					name, _ := e.Payload["name"].(string)
-					pkgAuto.approvalAsked(name)
-				case "chat.error":
-					if failed, _ := e.Payload[providerErrorKey].(bool); failed {
-						pkgAuto.providerError()
-					}
-				}
-				if e.Type == "agent.turn_done" {
-					var fire bool
-					ctxHigh, fire = contextHighCrossed(ctxHigh, contextPercent(fold.Fold(collected).LastContext, hubWindow))
-					if fire {
-						pkgAuto.contextHigh()
-					}
-				}
-				repaint()
+				arrive(e)
 			}
+
+		case out := <-postDoneCh:
+			// The rules answered for an answer of the model.
+			if out.epoch != postEpoch {
+				break // the conversation was replaced while they ran
+			}
+			postBusy = false
+			onEvent(out.event, answerShown(out.event, out.res.Text))
+			for _, n := range out.res.Notes {
+				who := strings.Trim(n.Package+"/"+n.Rule, "/")
+				if who != "" {
+					who += ": "
+				}
+				collected = appendLocalWarning(collected, "rule "+who+n.Message)
+			}
+			for _, say := range out.res.Say {
+				collected = appendLocalNote(collected, say)
+			}
+			// Whatever came in meanwhile, in the order it came. An answer among it
+			// may hold the queue again; what is left waits for that one.
+			held := postHeld
+			postHeld = nil
+			for i, h := range held {
+				arrive(h)
+				if postBusy {
+					postHeld = append(postHeld, held[i+1:]...)
+					break
+				}
+			}
+			repaint()
 
 		case req := <-consentReqCh:
 			// The install worker reached supervisor.Mount's prompt for an unseen
