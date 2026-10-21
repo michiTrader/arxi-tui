@@ -114,6 +114,14 @@ and so on, each with parameters and a protection level. Factory commands (`/shel
 approval) can be bound to a key or a button but never run from a script without the user's own
 press. This extends the existing closed `on_press` grammar; it does not replace it.
 
+**Built (B2).** `internal/verb` holds the catalogue: each verb has a name, typed parameters (int with limits, or
+text) and a protection (`free` or `typed`). Today: `shell.start` (typed), `shell.stop`, `shell.read`. `on_press`
+gains an eighth prefix, `do:<verb> <arguments>`, read by the same `scene.ParseAction`. A typed verb cannot be
+carried by a button, key, command or hook (refused at load and again at run); only a line the user types starts
+it. `/shell` now calls the verbs, and `/shell start` from a button (`cmd:`) is refused too. The host keeps a map
+of implementations and a test walks the catalogue so the two cannot drift; the VERBS chapter of `ui_guide` is
+generated from the catalogue.
+
 ### 5.3 Keys with contexts, as data
 
 Today a key goes through the big chain in `main.go`. The proposal is a keymap in data:

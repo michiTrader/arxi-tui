@@ -1,3 +1,14 @@
+## Done since: B2, the verb catalogue (branch feat/verb-catalogue)
+
+`internal/verb` is the catalogue of verbs: name, typed parameters, protection (`free` or `typed`). Today
+`shell.start` (typed), `shell.stop`, `shell.read`. `on_press` has an eighth prefix, `do:<verb> <args>`, read by
+`scene.ParseAction`; `{row.<field>}` works inside it, so a row can carry a stop button (`do:shell.stop {row.id}`;
+Scenario 3 now passes through the real loop). `/shell` calls the same verbs. A bug found on the way: a button with
+`cmd:/shell start <program>` started a real program; the loop now passes `!synth` and a typed verb is refused
+unless the user typed the line. The guide the model reads has a VERBS chapter generated from the catalogue.
+Tests: catalogue and implementation checked against each other; typed verb refused in button, key, command, hook
+and the action queue. Next in B: event payloads (`turn.done` with text), `extract` and `output.post` (B3).
+
 ## Done since: B1, one row per shell as data (branch feat/shell-rows)
 
 `host.shell.rows` is a list bind: one row per shell, the newest 20, with `row.id`, `row.command`, `row.state`,

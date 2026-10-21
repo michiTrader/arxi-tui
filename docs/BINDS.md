@@ -517,6 +517,7 @@ The closed prefix set, and what each one does when pressed:
 | `cmd:` | a command line, e.g. `cmd:/send hi`, `cmd:/max chat` | run the command exactly as if the user had typed it into the input and pressed Enter: the host queues the line and runs it through the same door a typed one takes (§4.3.1), so a button and the keyboard cannot diverge. A `cmd:` never reaches the model by itself; use `cmd:/send <text>` for that. The `cmd:/max`, `cmd:/focus`, `cmd:/ui …` (incl. `plugin`) forms §4.3 names are the registered commands; a `cmd:` naming an unknown command gets the same local warning a typed one does (it is not this field's job to enumerate the command registry — that would be a second copy of it). |
 | `focus:` | a node `id`, e.g. `focus:reject` | set `ui.focus` (§4.3) to that id. It is the declarative twin of `cmd:/focus <node>`: a button can hand focus to a sibling without the user knowing the command. The id is resolved at press time against the live scene; a `focus:` naming no node in the scene leaves focus unchanged and reports it, never crashes. |
 | `answer:` | a kind, e.g. `answer:approve`, `answer:reject` | answer the agent's pending prompt/inbox item with that kind (Scene 8's approve/reject buttons). The **kind vocabulary is itself closed** — `approve`, `reject`, `reply` — mirroring the arxi core's `inbox.approve`/`inbox.reject`/`inbox.reply` verbs, so a scene author and the core agree on what a button means. |
+| `do:` | a verb of the catalogue and its arguments, e.g. `do:shell.stop 2`, `do:shell.stop {row.id}` | call the verb (`internal/verb`). The catalogue is closed and each verb has typed parameters and a protection level. A *typed* verb (today `shell.start`) starts something that outlives the press, so it is refused when the scene is saved and again when it runs; only a line the user types may start it. The command line `/shell start` is held to the same rule when it did not come from the user's own typing (a button with `cmd:/shell start <program>` used to start a real program). |
 
 `ext:<plugin-id>:<action>` is a **fourth** prefix routing a press to a
 behavioral plugin (a press routed to a subprocess over NDJSON). Its wire is
@@ -570,7 +571,7 @@ refinement so no golden depends on a field the engine does not yet read.
 Refusals, each addressed with `file:line`:
 
 - An `on_press` whose prefix is outside the closed set
-  (`cmd:`/`focus:`/`answer:`/`ext:`/`say:`/`open:`/`set:`): refusal naming the
+  (`cmd:`/`focus:`/`answer:`/`ext:`/`say:`/`open:`/`set:`/`do:`): refusal naming the
   node and listing the legal prefixes.
 - An `on_press` with a prefix but an empty argument (`cmd:`, `focus:`, `answer:`
   with nothing after the colon): refusal, because a command/id/kind is the whole
