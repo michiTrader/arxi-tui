@@ -102,6 +102,16 @@ var catalogue = []Verb{
 		},
 		Example: "shell.read 1 50",
 	},
+	{
+		Name: "view.expand", Protection: Free,
+		Doc:     "show the cut part of a result or a change in full, or cut it again",
+		Example: "view.expand",
+	},
+	{
+		Name: "find.toggle", Protection: Free,
+		Doc:     "open the find bar on the input row, or close it when it is open",
+		Example: "find.toggle",
+	},
 }
 
 // All returns the catalogue, in a stable order. It is a copy: a caller cannot change it.

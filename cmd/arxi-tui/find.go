@@ -22,7 +22,10 @@ import (
 //	letters / backspace   edit the word (the chat jumps to the newest hit as you type)
 //	enter, up             the previous (older) hit
 //	down                  the next (newer) hit
-//	esc, ctrl+f           close the bar (the chat stays where it is)
+//	esc                   close the bar (the chat stays where it is)
+//
+// Ctrl+F itself is not decided here: it is a binding of the factory keymap
+// (internal/keymap/factory.json) that runs do:find.toggle.
 //
 // Every other key (page up/down, the wheel, ctrl+up...) keeps its usual job. Ctrl+C is never
 // touched. A shortcut of the user's own on ctrl+f wins, and a scene whose prompt has no find
@@ -77,12 +80,9 @@ func (f *finder) edited() {
 	f.jump = f.word != ""
 }
 
-// owns says whether a key is the finder's: ctrl+f when it can open, and the bar's own keys
-// while it is open. canOpen is false when the scene has no bar or the user bound the chord.
-func (f *finder) owns(k term.Key, canOpen bool) bool {
-	if isCtrlF(k) {
-		return canOpen || f.open
-	}
+// owns says whether a key is the finder's: a closed bar owns nothing (ctrl+f, which opens it,
+// is the keymap's), and an open bar owns the keys that edit and walk the word.
+func (f *finder) owns(k term.Key) bool {
 	if !f.open {
 		return false
 	}
@@ -99,12 +99,6 @@ func (f *finder) owns(k term.Key, canOpen bool) bool {
 // key applies a key the finder owns.
 func (f *finder) key(k term.Key) {
 	switch {
-	case isCtrlF(k):
-		if f.open {
-			f.close()
-		} else {
-			f.begin()
-		}
 	case k.Type == term.KeyEscape:
 		f.close()
 	case k.Type == term.KeyEnter, k.Type == term.KeyUp:
@@ -144,8 +138,6 @@ func (f *finder) add(s string) {
 		f.edited()
 	}
 }
-
-func isCtrlF(k term.Key) bool { return ctrlLetter(k, 'f') }
 
 // hasFindBar says whether the scene on display gives the prompt a find bar: an input bound to
 // user.input whose suffix is bound to host.find.

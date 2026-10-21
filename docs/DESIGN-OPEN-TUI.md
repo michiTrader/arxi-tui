@@ -341,3 +341,41 @@ Each behaviour above was checked by breaking it on purpose: more than 60 mutants
 evaluator, each caught in the end by the test that names it (some survived at first and led to new tests: a product
 that wraps to exactly 0, `<`/`>` against `<=`/`>=`, an escaped backslash, a single `&`, a `)` inside a
 text, the order of suggestions, and the order of `Names()`).
+
+### Built (C2): the keymap as data, first slice (`ctrl+o`, `ctrl+f`)
+
+`internal/keymap` reads `{version:1, bindings:[{key, when, do}]}`. `when` is a tier-1 yes/no
+condition over names the host publishes (`menu.open`, `key.user_bound`, `screen.open`,
+`approval.pending`, `find.open`); `do` is the same closed action grammar a button
+carries, checked with the rules of a user shortcut. The first binding of a key whose `when` holds
+wins, in file order. A binding hidden behind an earlier one with no `when` (or the same `when`) is
+refused at load. `ctrl+c`, plain letters and unknown key names are refused, each with what to write.
+A condition that cannot be decided shows a notice and does not take the key.
+
+- `ctrl+o` is `do:view.expand`; `ctrl+f` is `do:find.toggle`, two bindings (the bar is open: always,
+  unless a screen or a question stands in the way; the bar is closed: only when no menu, no user
+  shortcut, no screen and no pending question stands in the way). Two new Free verbs, `view.expand`
+  and `find.toggle`, run from a key or a button; queued without a screen to change they say so.
+- What used to be said by where a branch sat in the Go chain of `main.go` is now written in
+  `internal/keymap/factory.json`. The `isCtrlO` and `isCtrlF` helpers are gone; the find bar keeps only
+  the keys it owns while open (typing, Enter, up/down, Esc).
+- Not done yet: `down` (focus the shells chip) and `Enter` while the agent works (`queue.push`); they
+  need names such as `input.at_end`, `shells.count`, `agent.working`, and the message queue. A keymap
+  file the user can edit (`/ui keymap`) comes after those rows move.
+- Size: the android/arm64 binary (`CGO_ENABLED=0`, `-s -w`, `-trimpath`) is 9,830,753 B against
+  9,765,217 B on master, +65,536 B. That includes `internal/expr`, which is linked in for the first
+  time here. The limit is 11,000,000 B.
+- Checked by breaking it on purpose. `internal/keymap`: 15 mutants, each caught by the test that names
+  it (one needed a new test first: `alt+ctrl+g` and `ctrl+alt+g` being one key). Host side
+  (`factory.json` conditions, `keymapState.lookup`, the facts the loop gives, the verbs, the action
+  check): the mutants of the three conditions in the file, of `lookup`, of the user-bound, menu,
+  approval and screen facts, of the verbs, and of the action check are each caught by the test that
+  names them. Four needed something first: the screen fact and the action check had no test through
+  the loop (a loop test with the automations screen up, and a test of what a key may carry, were
+  added); two mutants of the loop's facts did not build and were redone in a form that does.
+  **Not caught:** making the loop's `find.open` fact always "no". Every test still passes, because
+  with the bar open the second binding of ctrl+f holds anyway and `find.toggle` closes the bar from
+  the loop's own state. It only matters when a menu is open or the user bound ctrl+f while the bar
+  is open, which I could not reach from the keyboard. So it is either equivalent in practice or a
+  gap I did not find; it is listed here instead of being passed over. `consent.open` was removed
+  from the names: it could never answer yes, because a consent screen is handled before the keymap.

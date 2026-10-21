@@ -14,6 +14,9 @@ type verbEnv struct {
 	shells *shellRegistry
 	dir    string
 	typed  bool
+	// ui carries out the verbs that change the loop's own view (the expanded tools, the find
+	// bar). Only the loop has that state, so it hands this in; nil means there is no screen.
+	ui func(verb string) string
 }
 
 // verbImpl is what each verb of internal/verb does. A test holds the two lists together:
@@ -22,6 +25,8 @@ var verbImpl = map[string]func(args []string, env verbEnv) string{
 	"shell.start": verbShellStart,
 	"shell.stop":  verbShellStop,
 	"shell.read":  verbShellRead,
+	"view.expand": func(_ []string, env verbEnv) string { return verbUI("view.expand", env) },
+	"find.toggle": func(_ []string, env verbEnv) string { return verbUI("find.toggle", env) },
 }
 
 // queuedVerbEnv is the environment of a verb that came out of the loop's action queue. What
@@ -56,6 +61,15 @@ func runVerbLine(line string, env verbEnv) string {
 		return err.Error()
 	}
 	return runVerb(c, env)
+}
+
+// verbUI runs a verb that changes the view. Without a screen to change (a line queued by a
+// hook of a session that draws nothing) it says so and does nothing.
+func verbUI(name string, env verbEnv) string {
+	if env.ui == nil {
+		return name + ": this session has no screen to change; nothing was done"
+	}
+	return env.ui(name)
 }
 
 func verbShellStart(args []string, env verbEnv) string {
