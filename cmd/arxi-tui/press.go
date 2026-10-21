@@ -267,7 +267,7 @@ func dispatchPress(onPress, currentFocus, answerText string, state fold.State, d
 			enqueue(line)
 		}
 		return currentFocus
-	case scene.ActionSay, scene.ActionOpen, scene.ActionSet:
+	case scene.ActionSay, scene.ActionOpen, scene.ActionSet, scene.ActionDo:
 		// These are carried out by the loop, which owns the conversation, the settings
 		// and the approved packages. They go through its queue like a typed line does.
 		if enqueue == nil {

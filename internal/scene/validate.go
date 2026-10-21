@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/michiTrader/arxi_tui/internal/theme"
+	"github.com/michiTrader/arxi_tui/internal/verb"
 )
 
 // TokenError records a reference to an undefined token in a scene. LESSONS.md
@@ -874,6 +875,12 @@ func (d *Document) validateOnPress(n *Node, path string, scope map[string]bool) 
 	if err != nil {
 		return &Error{Loc: d.locOf(path), Msg: fmt.Sprintf("node type %q: %s", n.Type, err)}
 	}
+	if action.Kind == ActionDo {
+		name, _, _ := strings.Cut(action.Arg, " ")
+		if v, ok := verb.Find(name); ok && v.Protection == verb.Typed {
+			return &Error{Loc: d.locOf(path), Msg: fmt.Sprintf("node type %q: on_press do:%s is a verb only a line the user types may start; a button cannot, because what it starts outlives the press and its label can say anything (BINDS.md §4.8); write cmd:/... to put the line in the input for the user to send, or use a free verb (%s)", n.Type, name, strings.Join(freeVerbNames(), ", "))}
+		}
+	}
 	for _, token := range interpolationTokens(action.Arg) {
 		if scope == nil {
 			return &Error{
@@ -1252,4 +1259,15 @@ func (d *Document) validateRowReferencesInText(n *Node, path string, scope map[s
 		}
 	}
 	return nil
+}
+
+// freeVerbNames are the verbs a button may carry.
+func freeVerbNames() []string {
+	var out []string
+	for _, v := range verb.All() {
+		if v.Protection == verb.Free {
+			out = append(out, v.Name)
+		}
+	}
+	return out
 }

@@ -196,7 +196,7 @@ func (b *uiBridge) guideText() string {
 		return ""
 	}
 	cwd, _ := os.Getwd()
-	return uiGuide(doc, thm) + "\n" + behaviourGuide(b.behaviourNow()) + "\n" + packagesGuide(loadAllPackages(cwd, b.behaviourNow())) + "\n" + scenariosGuide() + "\n" + historyGuide()
+	return uiGuide(doc, thm) + "\n" + behaviourGuide(b.behaviourNow()) + "\n" + verbsGuide() + "\n" + packagesGuide(loadAllPackages(cwd, b.behaviourNow())) + "\n" + scenariosGuide() + "\n" + historyGuide()
 }
 
 // call runs one tool call. ask puts a change to the user and blocks until they decide.
