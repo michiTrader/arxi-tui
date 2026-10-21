@@ -219,6 +219,14 @@ decibel bar is a widget bound to the level; a key sends the partial text with `c
 the answer needs the text of the answer: events carry no text today (**verified**:
 `packageAuto.turnDone` fires `turn.done` with an empty argument, `package_auto.go`; and `template.go`
 refuses a placeholder in anything that runs by itself), so an event payload is part of phase B.
+
+**Built (B3, part 1).** A `turn.done` event can read the model's answer as `${text}` in a url, a body or an
+argument. Only that event gets it (any other place that writes `${text}` is refused when the package is saved,
+and again when it runs); the answer is cleaned of escapes and cut to 4000 characters; an event that names
+`${text}` does not run when the turn said nothing (a hole is never filled with nothing); the words of a failed
+or cancelled turn are dropped; the consent screen says the package reads every answer. What an event returns is
+still only shown, so it cannot send the answer anywhere the package was not already allowed to reach (`net`,
+`exec`), and those are listed on the same screen.
 None of this is tested on any device; Termux:API availability and latency are open questions.
 
 ## 7. Translation
