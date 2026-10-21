@@ -149,6 +149,25 @@ func TestShowSaysWhatThePackageCanDo(t *testing.T) {
 	}
 }
 
+// The consent screen tells an output.post rule apart from an input.pre one, and says the model
+// keeps its own words, so the user approves what it really does.
+func TestShowSaysAnOutputPostRuleRewordsOnlyWhatYouSee(t *testing.T) {
+	doc := pkgDoc("tidy", `,"permissions":{"exec":["sh"]},"rules":[{"id":"r","stage":"output.post","op":{"kind":"exec","argv":["sh","-c","cat"]}}]`)
+	set, cwd := loadedWith(t, map[string]string{"tidy": doc})
+	if len(set.pkgs) != 1 {
+		t.Fatalf("did not load: %s", problemsText(set))
+	}
+	text := runPackageCommand(packageCommand{Verb: "show", ID: "tidy"}, set, cwd, false).Note
+	for _, want := range []string{"read every answer the model gives", "the model and the saved session keep its own words", "Rule r on output.post", "the model keeps its own words"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("show does not say %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "every line you type") {
+		t.Errorf("an output.post package does not read what you type, and the screen says it does:\n%s", text)
+	}
+}
+
 func TestListNamesTheProblemsAndTheState(t *testing.T) {
 	cfg := t.TempDir()
 	t.Setenv(configDirEnv, cfg)

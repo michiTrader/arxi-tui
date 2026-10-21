@@ -387,6 +387,16 @@ func TestGuideTellsTheModelToLeaveTheCodeToTheHostAndResultOutOfBuiltins(t *test
 	}
 }
 
+// The guide is how the model learns that output.post exists and what it may not do.
+func TestGuideTeachesTheOutputPostStageAndItsLimits(t *testing.T) {
+	g := packagesGuide(packageSet{})
+	for _, want := range []string{`stage "output.post"`, "keep its own words", "it never reads the rewording", `on_error "block" is refused`, "4000 characters"} {
+		if !strings.Contains(g, want) {
+			t.Errorf("the packages guide does not say %q, so the model would not know it", want)
+		}
+	}
+}
+
 func TestGuideTeachesPackagesAndListsWhatIsThere(t *testing.T) {
 	r := newPkgRig(t, "ask")
 	write(t, filepath.Join(userPackagesDir(), "mine.json"), pkgDoc("mine", echoPkg), 0o644)
