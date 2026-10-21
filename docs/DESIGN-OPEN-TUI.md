@@ -445,3 +445,44 @@ already has its own (`chat_history.go`, `chat_memory.go`), and the two do the sa
   wait-and-retry of `drainQueue` (still no test of its own), and the removal of `queuedMark(text)`,
   which I could not write as a mutant that compiles.
 
+
+### Built (C5): tier 2, `internal/script`
+
+An interpreter for a small, strict subset of JavaScript, written in this repo with no dependency
+(about 3,900 lines of Go without tests). It is **not wired in yet**: nothing in `cmd/` imports it, so
+the Termux binary did not grow (9,961,825 B, limit 11,000,000 B, measured on android/arm64). Wiring
+it to a script-backed verb or keymap action is the next PR, and the size is measured again there.
+
+- **API.** `script.Load(src, Config{Name, Globals, Limits})` parses, checks every name and runs the
+  top level. `Script.Call(name, args...)` runs a top-level function; `Eval` runs `main()`. A script
+  sees only `Config.Globals`: data is copied in and out, a `HostFunc` is the only door to Go. State
+  kept in top-level `let`s lasts between calls; a failed call keeps what it did and the script stays
+  usable. Panics become an "internal error" `*Error`.
+- **Language.** `let`/`const`, functions, arrows, closures, `if`/`for`/`for of`/`while`, `break`/
+  `continue`, destructuring, defaults, rest, spread, template texts, `?.` and `??`, lists and objects
+  (keys in the order they were set), and `Math`, `Number`, `String`, `Object`, `JSON`, list and text
+  methods.
+- **Strict as tier 1.** No truthiness (conditions and `!` need a yes/no), `===`/`!==` only, no
+  `NaN`/`Infinity` (a result that would be one is an error), `+` joins text with text only, a read
+  before the declaration has run is an error, and a `const`, a host global or a function cannot be
+  assigned (refused at load).
+- **Refusals say what to use instead.** `class`, `new`, `this`, `async`, `try`, `==`, `&`, `var`,
+  `require`, `eval`, `Date`, `RegExp`, `console`, `parseInt`, `Array(n)` ... each fails with the line,
+  the column and a remedy ("Consequence: ... Remedy: ..."). That text is the repair loop the eval
+  measures: the model reads it and fixes its own script.
+- **Limits owned here** (`DefaultLimits`): 200,000 steps and 4 MiB allocated per call (counters start
+  fresh on every call), calls nested 64 deep, 1 MiB of live state kept between calls, 1 MiB per text.
+  A limit error is its own kind (`KindLimit`), apart from syntax and runtime errors.
+- **Tests.** About 40 tests in `script_test.go`, including the message queue written as a script.
+- **Mutation checks** (committed tree, one mutant at a time). Caught by the intended test: the step
+  limit (by a **timeout**, since without it the test hangs, not by an assertion), the alloc limit, the
+  depth limit, the Live-state limit, truthiness in `!`, `==` refused, `const` assignment, use before
+  declaration, a fresh binding per loop round, state kept after a call, `+` on mixed types, the
+  `NaN`/`Infinity` check, strict equality for numbers, texts and yes/no (after a test was added for
+  yes/no), and the panic recovery. **One real gap found and closed:** giving the depth back after a
+  call survived, because no test made many calls in a row; `TestManyCallsOneAfterTheOtherAreNotNesting`
+  catches it. Mutants that did not compile or changed nothing were discarded and redone, not counted.
+  **Not checked:** the refusal word lists one by one, the text and list library functions, and the
+  per-call fresh counters (my mutant for that did not compile, and a second attempt was not run).
+- **Not done:** `switch`, `try`/`catch`, regular expressions, `Date`, getters, classes (refused on
+  purpose, each with its remedy); timing of a script (steps count work, not milliseconds).
