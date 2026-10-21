@@ -50,7 +50,7 @@ var (
 		"upgrade": true, "te": true, "trailer": true, "proxy-authorization": true,
 		"proxy-connection": true, "expect": true, "keep-alive": true,
 	}
-	extractRe = regexp.MustCompile(`^[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*$`)
+	extractRe = regexp.MustCompile(`^([A-Za-z0-9_-]+|\*)(\.([A-Za-z0-9_-]+|\*))*$`)
 )
 
 func (p *Package) validateOp(who string, o Op, oc opCtx, opt Options) error {
@@ -106,6 +106,7 @@ func refuseFields(who string, o Op, kind string) error {
 	if kind == KindBuiltin {
 		add(o.Result != "", "result")
 		add(o.Extract != "", "extract")
+		add(o.Join != "", "join")
 		add(o.TimeoutMS != 0, "timeout_ms")
 	}
 	if len(stray) > 0 {
@@ -151,6 +152,9 @@ func (p *Package) validateResult(who string, o Op, oc opCtx) error {
 	}
 	if o.Extract != "" && (len(o.Extract) > 200 || !extractRe.MatchString(o.Extract)) {
 		return fmt.Errorf("%s: extract %q is not a dotted path; write names and list positions joined by dots, like \"current.temp\" or \"items.0.name\"", who, o.Extract)
+	}
+	if err := checkJoin(who, o); err != nil {
+		return err
 	}
 	return nil
 }
@@ -393,4 +397,26 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// checkJoin ties "*" in an extract path to "join": one needs the other, and a path may
+// walk one list only, because joining lists of lists has no single sensible shape.
+func checkJoin(who string, o Op) error {
+	stars := 0
+	for _, seg := range strings.Split(o.Extract, ".") {
+		if seg == "*" {
+			stars++
+		}
+	}
+	switch {
+	case stars > 1:
+		return fmt.Errorf("%s: extract %q walks more than one list with \"*\"; use one, and give the position of the others (like \"sentences.*.words.0\")", who, o.Extract)
+	case stars == 1 && o.Join == "":
+		return fmt.Errorf("%s: extract %q walks every entry of a list with \"*\", so \"join\" must say how to put them together: %s", who, o.Extract, strings.Join(JoinKinds, ", "))
+	case stars == 0 && o.Join != "":
+		return fmt.Errorf("%s: join is set but extract %q has no \"*\" to walk a list, so it would be ignored; remove join, or put \"*\" where the list is", who, o.Extract)
+	case o.Join != "" && !contains(JoinKinds, o.Join):
+		return fmt.Errorf("%s: join %q is not understood; use %s", who, o.Join, strings.Join(JoinKinds, ", "))
+	}
+	return nil
 }

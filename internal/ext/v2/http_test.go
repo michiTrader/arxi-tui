@@ -296,3 +296,25 @@ func TestSameTarget(t *testing.T) {
 		}
 	}
 }
+
+// The real shape of the need: a translation service answers a paragraph in segments, and
+// one command shows the whole paragraph.
+func TestHTTPExtractJoinsTheSegmentsOfATranslation(t *testing.T) {
+	f := newNetFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"result":{"segments":[{"text":"Hola, "},{"text":"mundo. "},{"text":"Adiós."}]}}`)
+	}), publicIP)
+	p, c := httpPkg(t, `{"kind":"http","url":"https://api.example.com/","extract":"result.segments.*.text","join":"none"}`, "")
+	out, err := f.r.RunCommand(context.Background(), p, c, "")
+	if err != nil || out.Say != "Hola, mundo. Adiós." {
+		t.Fatalf("got %q, %v; the segments must arrive as one paragraph", out.Say, err)
+	}
+	// Output is untrusted: what a segment holds is cleaned like any other output.
+	g := newNetFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, `{"result":{"segments":[{"text":"ok\u001b[2J"},{"text":"fine"}]}}`)
+	}), publicIP)
+	p, c = httpPkg(t, `{"kind":"http","url":"https://api.example.com/","extract":"result.segments.*.text","join":"space"}`, "")
+	out, err = g.r.RunCommand(context.Background(), p, c, "")
+	if err != nil || out.Say != "ok fine" {
+		t.Fatalf("got %q, %v; an escape inside a segment must not reach the screen", out.Say, err)
+	}
+}

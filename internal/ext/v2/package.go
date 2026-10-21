@@ -285,6 +285,11 @@ type Op struct {
 	// path such as "current.temp" or "items.0.name", so a third-party API that
 	// knows nothing of this contract can still back a command.
 	Extract string `json:"extract,omitempty"`
+	// Join says how the values are put together when Extract has a "*" segment that
+	// walks every entry of a list ("sentences.*.text"): none, space or newline. It is
+	// required with a "*" and refused without one, so no document carries a setting
+	// that is ignored or a default nobody chose.
+	Join string `json:"join,omitempty"`
 }
 
 // Parse reads a package from bytes. It is strict: an unknown key is an error, because
@@ -743,3 +748,12 @@ func (p *Package) hasPackageExec() bool {
 	}
 	return false
 }
+
+// JoinKinds lists what Op.Join may be, and the text each one puts between the values.
+var JoinKinds = []string{"none", "space", "newline"}
+
+var joinSeparators = map[string]string{"none": "", "space": " ", "newline": "\n"}
+
+// MaxJoined bounds how many entries a "*" walks: a list longer than that is an answer
+// the operation was not made for, and it is refused, not cut.
+const MaxJoined = 200
