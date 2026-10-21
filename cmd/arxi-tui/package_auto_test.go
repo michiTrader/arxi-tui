@@ -118,7 +118,7 @@ func eventPkg(on, extra, script string) map[string]string {
 // A turn ending fires turn.done events, and what they say is a note of the host's.
 func TestATurnEndingFiresTheTurnDoneEvents(t *testing.T) {
 	r := newAutoRig(t, eventPkg("turn.done", "", "printf 'all done'"), []string{"ev"})
-	r.a.turnDone()
+	r.a.turnDone("")
 	waitUntil(t, "the event's note", func() bool { return strings.Contains(r.notes(), "ev/e: all done") })
 	// turn.failed is another event and must not have run it.
 	before := len(r.messages())
@@ -134,7 +134,7 @@ func TestAFailedTurnFiresTheTurnFailedEvents(t *testing.T) {
 	r.a.turnFailed()
 	waitUntil(t, "the event's note", func() bool { return strings.Contains(r.notes(), "it broke") })
 	before := len(r.messages())
-	r.a.turnDone()
+	r.a.turnDone("")
 	time.Sleep(150 * time.Millisecond)
 	if n := len(r.messages()); n != before {
 		t.Errorf("a finished turn fired a turn.failed event")
@@ -163,7 +163,7 @@ func TestASettingEventReactsOnlyToItsValue(t *testing.T) {
 // An unapproved package, a switched-off event and a revoked package do nothing.
 func TestOnlyApprovedPackagesReact(t *testing.T) {
 	r := newAutoRig(t, eventPkg("turn.done", "", "printf 'ran'"), nil)
-	r.a.turnDone()
+	r.a.turnDone("")
 	time.Sleep(200 * time.Millisecond)
 	if len(r.messages()) != 0 {
 		t.Fatalf("a package the user did not approve ran: %v", r.messages())
@@ -174,7 +174,7 @@ func TestOnlyApprovedPackagesReact(t *testing.T) {
 // warning that names the package, not a crash.
 func TestAnEventThatFailsIsAWarningNamingIt(t *testing.T) {
 	r := newAutoRig(t, eventPkg("turn.done", "", "echo nope >&2; exit 2"), []string{"ev"})
-	r.a.turnDone()
+	r.a.turnDone("")
 	waitUntil(t, "the warning", func() bool { return strings.Contains(r.warns(), "ev/e") })
 }
 
@@ -183,9 +183,9 @@ func TestASlowEventIsNotStartedTwice(t *testing.T) {
 	dir := t.TempDir()
 	count := filepath.Join(dir, "n")
 	r := newAutoRig(t, eventPkg("turn.done", "", "echo x >> "+count+"; sleep 1; printf done"), []string{"ev"})
-	r.a.turnDone()
-	r.a.turnDone()
-	r.a.turnDone()
+	r.a.turnDone("")
+	r.a.turnDone("")
+	r.a.turnDone("")
 	waitUntil(t, "the note", func() bool { return strings.Contains(r.notes(), "done") })
 	b, _ := os.ReadFile(count)
 	if n := strings.Count(string(b), "x"); n != 1 {
@@ -208,7 +208,7 @@ func TestAPanelShowsItsLineAndRefreshesAfterATurn(t *testing.T) {
 	counter := filepath.Join(t.TempDir(), "c")
 	r := newAutoRig(t, panelPkg("echo x >> "+counter+"; printf 'run %s' \"$(wc -l < "+counter+" | tr -d ' ')\""), []string{"pn"})
 	waitUntil(t, "the first line", func() bool { return r.a.panelsLine() == "Clock: run 1" })
-	r.a.turnDone()
+	r.a.turnDone("")
 	waitUntil(t, "the refreshed line", func() bool { return r.a.panelsLine() == "Clock: run 2" })
 }
 
@@ -219,7 +219,7 @@ func TestAPanelWithoutRefreshIsNotRunAfterATurn(t *testing.T) {
 	files["pn/package.json"] = execPkg("pn", "", `"panels":[{"id":"p","title":"Clock","op":{"kind":"exec","argv":["./p.sh"]}}]`)
 	r := newAutoRig(t, files, []string{"pn"})
 	waitUntil(t, "the line", func() bool { return r.a.panelsLine() == "Clock: once" })
-	r.a.turnDone()
+	r.a.turnDone("")
 	time.Sleep(250 * time.Millisecond)
 	b, _ := os.ReadFile(counter)
 	if n := strings.Count(string(b), "x"); n != 1 {
@@ -257,8 +257,8 @@ func TestATimedPanelRefreshesWhenDue(t *testing.T) {
 func TestAFailingPanelWarnsOnceAndShowsFailed(t *testing.T) {
 	r := newAutoRig(t, panelPkg("echo bad >&2; exit 1"), []string{"pn"})
 	waitUntil(t, "the failed line", func() bool { return r.a.panelsLine() == "Clock: (failed)" })
-	r.a.turnDone()
-	r.a.turnDone()
+	r.a.turnDone("")
+	r.a.turnDone("")
 	time.Sleep(300 * time.Millisecond)
 	if n := strings.Count(r.warns(), "pn/p"); n != 1 {
 		t.Errorf("warned %d times for the same failure, want 1: %q", n, r.warns())

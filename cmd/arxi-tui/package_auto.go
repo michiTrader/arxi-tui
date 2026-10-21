@@ -200,7 +200,11 @@ func (a *packageAuto) goJob(key string, fn func(ctx context.Context) error, done
 
 // fire runs the events that react to on (and to value, for the events that carry one:
 // a setting, a tool name, a model). value is ignored for the others.
-func (a *packageAuto) fire(on, value string) {
+func (a *packageAuto) fire(on, value string) { a.fireWith(on, value, "") }
+
+// fireWith is fire for an event that also carries text: the answer of the model, for
+// turn.done. The text reaches only the events whose operation names ${text}.
+func (a *packageAuto) fireWith(on, value, answer string) {
 	type job struct {
 		p installedPackage
 		e extv2.Event
@@ -231,7 +235,7 @@ func (a *packageAuto) fire(on, value string) {
 		who := cleanWarnText(j.p.ID + "/" + j.e.ID)
 		var text string
 		a.goJob("event:"+j.p.ID+"/"+j.e.ID, func(ctx context.Context) (err error) {
-			text, err = r.RunEvent(ctx, j.p.Package, j.e)
+			text, err = r.RunEvent(ctx, j.p.Package, j.e, answer)
 			return err
 		}, func(err error) {
 			switch {
@@ -245,8 +249,11 @@ func (a *packageAuto) fire(on, value string) {
 }
 
 // turnDone and turnFailed are the ends of a turn the user asked for.
-func (a *packageAuto) turnDone() {
-	a.fire(extv2.EventTurnDone, "")
+//
+// answer is what the model said in the turn (empty when it only used tools, or when the
+// turn was a compaction): it reaches only the events whose operation names ${text}.
+func (a *packageAuto) turnDone(answer string) {
+	a.fireWith(extv2.EventTurnDone, "", answer)
 	a.refreshPanels(func(p *autoPanel) bool { return p.hasOp && p.refresh == extv2.EventTurnDone })
 }
 

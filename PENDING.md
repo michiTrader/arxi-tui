@@ -1,3 +1,12 @@
+## Done since: B3 part 1, event payload `${text}` (branch feat/event-payloads)
+
+A `turn.done` event can read the model's answer as `${text}` (url, body, argv). The loop gathers the `llm.response`
+text of the turn and drops it when the turn ends, fails, is cancelled or a new one starts. Refused anywhere but
+`turn.done`, at save and at run; cleaned, cut to 4000 characters; the event does not run on an empty answer; the
+consent screen says it. Tests: validation, runner, and the real loop (each turn hears its own words only; a failed
+and a cancelled turn each drop theirs); 9 mutants, each caught by the intended test. Next in B3: `extract` that
+joins an array (translation in segments), then `output.post` (rules that reword what is shown).
+
 ## Done since: B2, the verb catalogue (branch feat/verb-catalogue)
 
 `internal/verb` is the catalogue of verbs: name, typed parameters, protection (`free` or `typed`). Today

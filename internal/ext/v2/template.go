@@ -8,7 +8,8 @@ import (
 )
 
 // A template is a string with placeholders: ${args} (everything after the command
-// name), ${1}..${9} (the words of it), ${input} (the line a rule is looking at).
+// name), ${1}..${9} (the words of it), ${input} (the line a rule is looking at) and
+// ${text} (the model's answer, for an event on turn.done only).
 // "$$" is a literal dollar sign and any other "$" is itself, so "costs $5" needs no
 // escaping. The syntax is chosen so that JSON, which is full of braces, can be written
 // without escaping them.
@@ -49,7 +50,7 @@ func parseTemplate(s string) ([]tmplPart, error) {
 			}
 			name := s[i+2 : i+2+end]
 			if !knownPlaceholder(name) {
-				return nil, fmt.Errorf("placeholder ${%s} is not one this contract knows; the placeholders are ${args}, ${1} to ${9} and ${input}", name)
+				return nil, fmt.Errorf("placeholder ${%s} is not one this contract knows; the placeholders are ${args}, ${1} to ${9}, ${input} and ${text}", name)
 			}
 			flush()
 			parts = append(parts, tmplPart{ph: name})
@@ -63,7 +64,7 @@ func parseTemplate(s string) ([]tmplPart, error) {
 }
 
 func knownPlaceholder(n string) bool {
-	if n == "args" || n == "input" {
+	if n == "args" || n == "input" || n == textPlaceholder {
 		return true
 	}
 	return len(n) == 1 && n[0] >= '1' && n[0] <= '9'
@@ -76,6 +77,12 @@ func checkPlaceholders(who string, parts []tmplPart, oc opCtx) error {
 			continue
 		}
 		switch {
+		case p.ph == textPlaceholder && oc.kind == ctxEvent && oc.event == EventTurnDone:
+			// The one value an automatic operation may be given: the answer the
+			// model just finished. The host never runs the event when there is none.
+			continue
+		case p.ph == textPlaceholder:
+			return fmt.Errorf("%s: ${text} is the model's answer, and only an event on %s has one; here use another value or write it out", who, EventTurnDone)
 		case oc.kind.automatic():
 			return fmt.Errorf("%s: ${%s} has nothing to fill it, because this runs by itself and the user typed no text; write the value out", who, p.ph)
 		case p.ph == "input" && oc.kind != ctxRule:
@@ -98,11 +105,19 @@ func hasPlaceholder(parts []tmplPart) bool {
 	return false
 }
 
+// textPlaceholder names the answer of the model, which a turn.done event may use.
+const textPlaceholder = "text"
+
+// MaxEventTextRunes bounds the answer an event is given. It is outside text, so it is
+// cleaned like any output and cut with an ellipsis when it is longer.
+const MaxEventTextRunes = 4000
+
 // Input is what an operation is run with.
 type Input struct {
 	Args  string   // the text after the command name, trimmed
 	Words []string // Args split on white space
 	Line  string   // the line a rule is looking at
+	Text  string   // the model's answer (an event on turn.done only), already cleaned
 }
 
 func (in Input) value(name string) string {
@@ -111,6 +126,8 @@ func (in Input) value(name string) string {
 		return in.Args
 	case "input":
 		return in.Line
+	case textPlaceholder:
+		return in.Text
 	}
 	n := int(name[0] - '0')
 	if n >= 1 && n <= len(in.Words) {

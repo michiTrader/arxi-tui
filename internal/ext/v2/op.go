@@ -27,6 +27,9 @@ func (k ctxKind) automatic() bool { return k == ctxEvent || k == ctxPanel || k =
 type opCtx struct {
 	kind    ctxKind
 	minArgs int
+	// event is what an event reacts to (ctxEvent only); it decides whether ${text}
+	// has anything to fill it.
+	event string
 }
 
 // Timeouts, in milliseconds. A rule runs on every line the user types, so it gets far

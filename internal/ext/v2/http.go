@@ -168,7 +168,7 @@ func (r *Runner) runHTTP(ctx context.Context, p *Package, o Op, oc opCtx, in Inp
 	if err != nil {
 		return Outcome{}, err
 	}
-	for _, v := range []string{in.Args, in.Line} {
+	for _, v := range []string{in.Args, in.Line, in.Text} {
 		if strings.ContainsRune(v, 0) {
 			return Outcome{}, fmt.Errorf("the text holds a NUL byte, which a request cannot carry; remove it")
 		}

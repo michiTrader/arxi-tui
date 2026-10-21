@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -176,5 +177,118 @@ func TestLoopARunningShellIsNamedAboveTheBar(t *testing.T) {
 	}
 	if s := screen(tty.output()); !strings.Contains(s, "shell 1 ask") || strings.Contains(s, "1 shell") {
 		t.Errorf("the running shell must be named right above the info bar, not counted in it; last frame:\n%s", lastFrame(tty.output()))
+	}
+}
+
+// loopWithTurns runs the real loop with one package installed and feeds it the events a
+// model turn produces, each after a pause so what an event runs has time to land.
+func loopWithTurns(t *testing.T, files map[string]string, id string, turns [][]fold.Event) string {
+	t.Helper()
+	cfg := t.TempDir()
+	t.Setenv(configDirEnv, cfg)
+	t.Setenv(historyEnv, t.TempDir())
+	t.Setenv(sessionsEnv, "")
+	for name, body := range files {
+		mode := os.FileMode(0o644)
+		if strings.HasSuffix(name, ".sh") {
+			mode = 0o755
+		}
+		write(t, filepath.Join(cfg, packagesDirName, filepath.FromSlash(name)), body, mode)
+	}
+	cwd, _ := os.Getwd()
+	p, ok := loadAllPackages(cwd, behaviour{}).find(id)
+	if !ok {
+		t.Fatal("the package did not load")
+	}
+	if err := grantPackage(p, cwd); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := scene.ParseNamed(defaultscene.Name, defaultscene.JSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tty := newFakeTTY(100, 30, []scheduledEvent{
+		{time.Duration(300+len(turns)*250) * time.Millisecond, ctrlCharEvent('c')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+	})
+	drv := &testDriver{evCh: make(chan fold.Event, 64), seq: 1000}
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		for _, turn := range turns {
+			for _, e := range turn {
+				drv.evCh <- e
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+	}()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	return tty.output()
+}
+
+func answer(seq int64, text string) fold.Event {
+	return fold.Event{Type: "llm.response", Seq: seq, Payload: map[string]any{"text": text}}
+}
+
+// heardBy lists what the event of eventSaying was given, in order. The script wraps its
+// argument in heard<...> so the answers the chat shows by themselves are not mistaken
+// for what the event heard.
+var heardRe = regexp.MustCompile(`heard<([^>]*)>`)
+
+func heardBy(out string) []string {
+	var got []string
+	for _, m := range heardRe.FindAllStringSubmatch(screen(out), -1) {
+		got = append(got, m[1])
+	}
+	return got
+}
+
+func eventSaying(on string) map[string]string {
+	return map[string]string{
+		"sp/package.json": execPkg("sp", "", `"events":[{"id":"e","on":"`+on+`","op":{"kind":"exec","argv":["./e.sh","${text}"]}}]`),
+		"sp/e.sh":         "#!/bin/sh\nprintf 'heard<%s>' \"$1\"\n",
+	}
+}
+
+// The model's words reach a turn.done event through the real loop, once, for the turn
+// they belong to: a second turn is not given the first one's words, and a turn that only
+// used tools (no words) does not run the event at all.
+func TestLoopATurnDoneEventHearsTheModelsAnswerOfThatTurnOnly(t *testing.T) {
+	out := loopWithTurns(t, eventSaying("turn.done"), "sp", [][]fold.Event{
+		{answer(2000, "first answer"), {Type: "agent.turn_done", Seq: 2001}},
+		{answer(2002, "second answer"), {Type: "agent.turn_done", Seq: 2003}},
+		{{Type: "agent.turn_done", Seq: 2004}}, // a turn with no words at all
+	})
+	got := heardBy(out)
+	want := []string{"first answer", "second answer"}
+	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Errorf("the event heard %q, want %q: each turn must be given its own words once, and a turn with no words must not run the event; last frame:\n%s", got, want, lastFrame(out))
+	}
+}
+
+// A turn that failed, or was cancelled, leaves words behind (a streamed half answer). The
+// next turn that ends well must not be given them. Each ending is tried alone, so one
+// cannot hide that the other forgot to drop the words.
+func TestLoopWordsOfAFailedOrCancelledTurnAreNotHeardByTheNextOne(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		end  fold.Event
+	}{
+		{"failed", fold.Event{Type: "agent.failed", Seq: 2001, Payload: map[string]any{"error": "boom"}}},
+		{"cancelled", fold.Event{Type: "chat.cancelled", Seq: 2001}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out := loopWithTurns(t, eventSaying("turn.done"), "sp", [][]fold.Event{
+				{answer(2000, "half-an-answer"), c.end},
+				{answer(2002, "the real one"), {Type: "agent.turn_done", Seq: 2003}},
+			})
+			got := heardBy(out)
+			if len(got) != 1 || got[0] != "the real one" {
+				t.Errorf("the event heard %q, want only [\"the real one\"]: the words of a %s turn must be dropped; last frame:\n%s", got, c.name, lastFrame(out))
+			}
+		})
 	}
 }
