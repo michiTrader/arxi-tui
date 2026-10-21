@@ -145,7 +145,7 @@ func TestRulesValidation(t *testing.T) {
 	}
 	op := `"op":{"kind":"exec","argv":["git"]}`
 	accepted(t, mk(`{"id":"r","stage":"input.pre","when":{"prefix":"!"},`+op+`}`), Options{})
-	refused(t, mk(`{"id":"r","stage":"output.post",`+op+`}`), Options{}, "stage \"output.post\" does not exist")
+	refused(t, mk(`{"id":"r","stage":"output.pre",`+op+`}`), Options{}, "stage \"output.pre\" does not exist")
 	refused(t, mk(`{"id":"R 1","stage":"input.pre",`+op+`}`), Options{}, "not usable")
 	refused(t, mk(`{"id":"r","stage":"input.pre","on_error":"retry",`+op+`}`), Options{}, "on_error")
 	refused(t, mk(`{"id":"r","stage":"input.pre","when":{},`+op+`}`), Options{}, "would match every line")

@@ -184,6 +184,26 @@ func TestLoopARunningShellIsNamedAboveTheBar(t *testing.T) {
 // model turn produces, each after a pause so what an event runs has time to land.
 func loopWithTurns(t *testing.T, files map[string]string, id string, turns [][]fold.Event) string {
 	t.Helper()
+	out, _ := loopFeeding(t, files, id, []scheduledEvent{
+		{time.Duration(300+len(turns)*250) * time.Millisecond, ctrlCharEvent('c')},
+		{50 * time.Millisecond, ctrlCharEvent('c')},
+	}, func(send func(fold.Event)) {
+		time.Sleep(150 * time.Millisecond)
+		for _, turn := range turns {
+			for _, e := range turn {
+				send(e)
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+	})
+	return out
+}
+
+// loopFeeding runs the real loop with one package installed and approved, the terminal
+// playing script, and feed (on its own goroutine) handing in the events the core would
+// send. It returns what was drawn and the config folder, where the saved conversation is.
+func loopFeeding(t *testing.T, files map[string]string, id string, script []scheduledEvent, feed func(send func(fold.Event))) (string, string) {
+	t.Helper()
 	cfg := t.TempDir()
 	t.Setenv(configDirEnv, cfg)
 	t.Setenv(historyEnv, t.TempDir())
@@ -207,26 +227,15 @@ func loopWithTurns(t *testing.T, files map[string]string, id string, turns [][]f
 	if err != nil {
 		t.Fatal(err)
 	}
-	tty := newFakeTTY(100, 30, []scheduledEvent{
-		{time.Duration(300+len(turns)*250) * time.Millisecond, ctrlCharEvent('c')},
-		{50 * time.Millisecond, ctrlCharEvent('c')},
-	})
+	tty := newFakeTTY(100, 30, script)
 	drv := &testDriver{evCh: make(chan fold.Event, 64), seq: 1000}
-	go func() {
-		time.Sleep(150 * time.Millisecond)
-		for _, turn := range turns {
-			for _, e := range turn {
-				drv.evCh <- e
-			}
-			time.Sleep(250 * time.Millisecond)
-		}
-	}()
+	go feed(func(e fold.Event) { drv.evCh <- e })
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
 		t.Fatalf("loop: %v", err)
 	}
-	return tty.output()
+	return tty.output(), cfg
 }
 
 func answer(seq int64, text string) fold.Event {

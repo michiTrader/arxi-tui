@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Limits of one pass of input.pre over one line.
@@ -174,4 +175,123 @@ func (r *Runner) safeRule(ctx context.Context, p *Package, rule Rule, line strin
 		}
 	}()
 	return r.RunRule(ctx, p, rule, line)
+}
+
+// MaxPostRunes is the longest answer an output.post rule is given. A rule hands its whole
+// result back as the text to show, so cutting what it reads would make it throw the rest of
+// the answer away; an answer longer than this is shown as the model said it, with a note.
+const MaxPostRunes = 4000
+
+// PostResult is what is shown of one answer of the model.
+type PostResult struct {
+	// Text is what the user is shown. It is the model's own text unless a rule reworded it.
+	Text string
+	// Say is local text from the rules that ran, shown as notes.
+	Say []string
+	// Notes are failures and refusals; a rule that fails leaves the text as it was.
+	Notes []Note
+	// Ran lists the rules that took part, "package/rule", in order.
+	Ran []string
+}
+
+// RunOutputPost runs every output.post rule of the given packages over one answer of the
+// model, and returns what is to be SHOWN of it.
+//
+// It is the mirror of RunInputPre with one more restriction: it changes a picture, never a
+// fact. The model's answer is what the model said; the host keeps that for the model's own
+// memory, the saved session and the events, and a rule only chooses the words the user
+// reads. For that reason a rule here can reword the text or add a note, and nothing else:
+// it cannot hold the answer back or consume it (the answer has already been given and
+// paid for), and a rule that fails leaves the text as it was.
+//
+// Rules run in the same fixed order (package id, then rule id), each seeing the text the
+// previous one produced, under the same budget. Unlike an input line, an answer that
+// starts with "/" is ordinary text. An empty answer is left alone.
+func (r *Runner) RunOutputPost(ctx context.Context, pkgs []*Package, text string) PostResult {
+	res := PostResult{Text: text}
+	if strings.TrimSpace(text) == "" {
+		return res
+	}
+	note := func(p *Package, rule Rule, msg string) {
+		res.Notes = append(res.Notes, Note{Package: p.ID, Rule: rule.ID, Message: msg})
+	}
+	var ordered []*Package
+	for _, p := range pkgs {
+		if p != nil && !p.Disabled {
+			ordered = append(ordered, p)
+		}
+	}
+	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
+
+	ctx, cancel := context.WithTimeout(ctx, PipelineBudget)
+	defer cancel()
+
+	tooLong := utf8.RuneCountInString(text) > MaxPostRunes
+	ran, reportedLong := 0, false
+	for _, p := range ordered {
+		rules := append([]Rule(nil), p.Rules...)
+		sort.SliceStable(rules, func(i, j int) bool { return rules[i].ID < rules[j].ID })
+		for _, rule := range rules {
+			if rule.Disabled || rule.Stage != StageOutputPost || !rule.When.Match(res.Text) {
+				continue
+			}
+			who := p.ID + "/" + rule.ID
+			switch {
+			case tooLong:
+				if !reportedLong {
+					reportedLong = true
+					note(p, rule, fmt.Sprintf("skipped: the answer is longer than %d characters, more than a rule can read whole, so it is shown as the model said it", MaxPostRunes))
+				}
+				continue
+			case ran >= MaxRulesPerLine:
+				note(p, rule, fmt.Sprintf("skipped: only %d rules run per answer", MaxRulesPerLine))
+				continue
+			case ctx.Err() != nil:
+				note(p, rule, "skipped: the time for rules on one answer ran out")
+				continue
+			}
+			ran++
+			res.Ran = append(res.Ran, who)
+			out, err := r.safeRule(ctx, p, rule, res.Text)
+			if err != nil {
+				note(p, rule, err.Error())
+				continue
+			}
+			if out.Send != "" {
+				note(p, rule, "a rule cannot send text of its own; use \"text\" to reword the answer")
+				continue
+			}
+			switch out.Verdict {
+			case "", VerdictContinue:
+			case VerdictTransform:
+				if out.Text == "" {
+					note(p, rule, "the rule reworded the answer to nothing, so it was kept as the model said it")
+					continue
+				}
+				res.Text = keepEdges(res.Text, out.Text)
+			case VerdictHandled, VerdictBlock:
+				note(p, rule, fmt.Sprintf("verdict %q holds an answer back, and an answer has already come, so the rule can only reword it (\"transform\"); it was kept as it was", out.Verdict))
+				continue
+			default:
+				note(p, rule, fmt.Sprintf("verdict %q is not understood", out.Verdict))
+				continue
+			}
+			if out.Say != "" {
+				res.Say = append(res.Say, out.Say)
+			}
+		}
+	}
+	return res
+}
+
+// keepEdges gives reworded text the white space the original had at its two ends. An
+// operation's output is trimmed, but a streamed answer reaches the screen in pieces that
+// join where they touch: a piece that starts with a space is the space between two words,
+// and losing it would glue them together.
+func keepEdges(original, reworded string) string {
+	body := strings.TrimLeft(original, " \t\r\n")
+	lead := original[:len(original)-len(body)]
+	trimmed := strings.TrimRight(body, " \t\r\n")
+	tail := body[len(trimmed):]
+	return lead + reworded + tail
 }

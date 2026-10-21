@@ -496,3 +496,5 @@ Abierto, menor:
    se lee bien (la redacción nueva es de #272).
 4. Confirmar en una máquina Windows real (o dejar que CI lo haga) que los dos tests de core ya
    no fallan de forma intermitente.
+
+**B3, part 3 (`output.post`):** rules that reword what is shown of the model's answer, never what the model, the saved session or `${text}` events see. Done; Phase B is complete. Next: Phase C (keymap with contexts as data, tier-1 evaluator, tier-2 interpreter, queue, steering).

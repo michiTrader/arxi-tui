@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	extv2 "github.com/michiTrader/arxi_tui/internal/ext/v2"
 )
 
 // /package is how the user sees the packages the host found and decides which of them
@@ -156,7 +158,11 @@ func packageShowText(p installedPackage, grants map[string]string, cwd string) s
 		b.WriteString(line + " (the model may call it by itself)")
 	}
 	for _, r := range p.Rules {
-		b.WriteString("\nRule " + cleanWarnText(r.ID) + " on " + cleanWarnText(r.Stage))
+		line := "\nRule " + cleanWarnText(r.ID) + " on " + cleanWarnText(r.Stage)
+		if r.Stage == extv2.StageOutputPost {
+			line += " (rewords what you see of each answer; the model keeps its own words)"
+		}
+		b.WriteString(line)
 	}
 	for _, e := range p.Events {
 		line := "\nEvent " + cleanWarnText(e.ID) + " on " + cleanWarnText(e.On)

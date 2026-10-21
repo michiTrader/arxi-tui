@@ -82,6 +82,14 @@ Rules run in a fixed order (package id, then rule id), each seeing the text the
 previous one left. `handled` and `block` end the pipeline. At most 8 rules and
 2 s of total budget per line.
 
+### `output.post`
+
+Runs on each answer of the model and changes only what the user is shown; the model, the
+saved session and `${text}` events keep its own words. Same order and budget as `input.pre`.
+It can reword (`transform`) or `say`; it cannot hold back, consume or send, and
+`on_error: "block"` is refused. A failure shows the answer unchanged. An answer is ordinary
+text here (a `/` prefix is allowed in `when`). See DESIGN-OPEN-TUI.md, B3 part 3.
+
 ### The permission-narrowing rule
 
 **A rule, hook or package can only narrow what the user's own action would have
