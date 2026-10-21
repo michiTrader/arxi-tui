@@ -1336,6 +1336,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		hook bool
 	}
 	var actionQ []queuedAction
+	scripts := newScriptHost()
 	enqueue := func(list actionList, hook bool) {
 		for _, a := range list {
 			if len(actionQ) >= 64 {
@@ -1699,6 +1700,20 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				// button, a key, a command or a hook, never typed (see queuedVerbEnv).
 				env := queuedVerbEnv(drv, cwd)
 				env.ui = uiVerb
+				env.script = func(name, text string) string {
+					facts := map[string]any{
+						"effort":  effort,
+						"mode":    mode,
+						"style":   promptStyle,
+						"working": fold.Fold(collected).AgentWorking,
+					}
+					res, err := scripts.call(effBeh(), name, text, facts, q.hook)
+					if err != nil {
+						return err.Error()
+					}
+					enqueue(res.actions, q.hook)
+					return res.note
+				}
 				if note := runVerbLine(act.Arg, env); note != "" {
 					collected = appendLocalNote(collected, note)
 				}

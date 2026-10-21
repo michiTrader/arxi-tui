@@ -1,3 +1,11 @@
+## Done since: C6, user scripts through `do:script.run` (branch feat/script-verb)
+
+`behaviour.json` takes `scripts` (name -> source). A key, command or hook calls one with `do:script.run <name> [text]`;
+`run(text, facts)` returns a note, a list of actions (checked like a shortcut's, a hook's as a hook's) or null. State
+lasts between calls, a bad script is refused when saved, the guide teaches it with a tested example. Binary +262,144 B
+(10,223,969 B, limit 11,000,000). Open: facts are only effort/mode/style/working (no input, chat or shells yet), no
+disk state, no timers; the refusal words and the facts mode/style/working are not mutation-checked.
+
 ## Done since: C5, tier 2 interpreter `internal/script` (branch feat/script-tier2)
 
 A small strict JS-subset interpreter with no dependency: only the host's globals are visible, state lasts between

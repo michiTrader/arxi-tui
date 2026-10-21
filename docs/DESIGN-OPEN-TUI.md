@@ -486,3 +486,39 @@ it to a script-backed verb or keymap action is the next PR, and the size is meas
   per-call fresh counters (my mutant for that did not compile, and a second attempt was not run).
 - **Not done:** `switch`, `try`/`catch`, regular expressions, `Date`, getters, classes (refused on
   purpose, each with its remedy); timing of a script (steps count work, not milliseconds).
+
+### Built (C6): tier 2 reaches the interface, `do:script.run`
+
+The interpreter of C5 is now used. A user script is a text in `behaviour.json` (`scripts`, name ->
+source), and a key, a command or a hook calls it with `do:script.run <name> [text]`.
+
+- **One door out.** The script declares `function run(text, facts)`. `facts` is `{effort, mode,
+  style, working}`. What `run` returns is all it does: a text is a note, a list of texts is a list of
+  actions, `null` is nothing. Nothing else leaves the script (no file, network, model, clock).
+- **Checked like a shortcut.** The returned list goes through `validateActions` (a hook's call is
+  checked as a hook's: no `ext:`, no `open:`), so a script cannot start a typed verb, answer for the
+  user or reach a plugin without a keypress. A script cannot start a script, so no definition loops.
+  What a hook's script sets never fires another hook, as for any hook.
+- **State.** Top-level `let`s last while the program runs and start over when the script's text
+  changes (the source hash). They are not written to disk. A failed call keeps its partial change and
+  the key works on the next press; the error is a note with the script name, line and remedy.
+- **Saved only if it works.** `behaviour.validate` loads every script (parse, names, top level, has
+  `run`), so a script that cannot run is refused when the agent saves it, not when a key is pressed.
+  At most 16 scripts of 16 KiB. A patch adds, replaces or removes (`null`) a script, and is always
+  put to the user (`touchesWhatRuns`). A trusted project layer ships scripts too (by name, the
+  project wins).
+- **The model is taught.** The guide that `ui_guide` returns has a `scripts` entry with the contract,
+  the language and an example; a test runs that example, so the guide cannot teach a broken one.
+- **Size.** android/arm64 went from 9,961,825 B to 10,223,969 B (+262,144 B) with the interpreter
+  imported; 776,031 B remain under the 11,000,000 B limit.
+- **Mutation checks** (committed tree, one at a time). 14 mutation sites. The first form of 3 of
+  them did not compile; each was rewritten and then caught. 13 of the 14 were caught by the intended
+  test (10 at the first try, 3 after that rewrite: the saved-script check, the count limit, the source hash, the refusal of a script starting a
+  script, the hook/key check of the returned list, patch add/remove, the project-layer merge, the
+  clone of the layer, the effort fact). 1 survived at first: passing `false` instead of `q.hook` to
+  the script call, so a hook's script was checked as a key's. A loop test was added and that mutant is
+  now caught. **Not checked:** the exact words of the refusals, and the facts `mode`, `style` and
+  `working` (only `effort` was mutated).
+- **Not done:** a script cannot read the input line, the conversation or the shells (only the four
+  facts), cannot draw, and has no timers. Those arrive with the data store of phase D/E, as more
+  `facts` and more verbs, not as new doors in the interpreter.

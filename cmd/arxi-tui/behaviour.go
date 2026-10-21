@@ -97,11 +97,14 @@ type behaviour struct {
 	// "queue" (the factory behaviour, kept as "" so a document that never touched it
 	// stays empty) or "steer".
 	EnterWhileBusy string `json:"enter_while_busy,omitempty"`
+	// Scripts are programs of the strict JavaScript subset (internal/script), called with
+	// do:script.run <name>. See scripts.go for what they may do.
+	Scripts map[string]string `json:"scripts,omitempty"`
 }
 
 func (b behaviour) empty() bool {
 	return len(b.Animations) == 0 && len(b.MenuKeys) == 0 && len(b.Commands) == 0 &&
-		len(b.Keys) == 0 && len(b.Hooks) == 0 && b.EnterWhileBusy == ""
+		len(b.Keys) == 0 && len(b.Hooks) == 0 && b.EnterWhileBusy == "" && len(b.Scripts) == 0
 }
 
 // clone copies every part, so an edit never reaches the layer it was drafted from.
@@ -127,6 +130,12 @@ func (b behaviour) clone() behaviour {
 	}
 	out.Commands = append([]userCommand(nil), b.Commands...)
 	out.Hooks = append([]userHook(nil), b.Hooks...)
+	if len(b.Scripts) > 0 {
+		out.Scripts = make(map[string]string, len(b.Scripts))
+		for k, v := range b.Scripts {
+			out.Scripts[k] = v
+		}
+	}
 	return out
 }
 
@@ -199,6 +208,14 @@ func (b behaviour) validate() error {
 	}
 	if err := b.validateMenuKeys(); err != nil {
 		return err
+	}
+	if len(b.Scripts) > maxUserScripts {
+		return fmt.Errorf("scripts: %d defined, the most is %d; remove some (a script set to null is removed)", len(b.Scripts), maxUserScripts)
+	}
+	for _, name := range sortedKeys(b.Scripts) {
+		if err := checkScript(name, b.Scripts[name]); err != nil {
+			return fmt.Errorf("scripts: %w", err)
+		}
 	}
 	if b.EnterWhileBusy != "" && b.EnterWhileBusy != busySteer {
 		return fmt.Errorf("enter_while_busy: %q is not a way to treat a line sent while the agent works; use \"queue\" (it waits for the answer, the factory way) or \"steer\" (it interrupts the turn and goes at once)", b.EnterWhileBusy)
@@ -462,6 +479,8 @@ type behaviourPatch struct {
 	Hooks      *[]userHook                `json:"hooks"`
 	// EnterWhileBusy is "queue" or "steer"; left out it is untouched.
 	EnterWhileBusy *string `json:"enter_while_busy"`
+	// Scripts adds or replaces a script by name; null removes it.
+	Scripts map[string]*string `json:"scripts"`
 }
 
 func parseBehaviourPatch(raw json.RawMessage) (behaviourPatch, error) {
@@ -518,6 +537,16 @@ func applyBehaviourPatch(base behaviour, p behaviourPatch) (behaviour, error) {
 	if p.Hooks != nil {
 		out.Hooks = append([]userHook(nil), (*p.Hooks)...)
 	}
+	for k, v := range p.Scripts {
+		if v == nil {
+			delete(out.Scripts, k)
+			continue
+		}
+		if out.Scripts == nil {
+			out.Scripts = map[string]string{}
+		}
+		out.Scripts[k] = *v
+	}
 	if p.EnterWhileBusy != nil {
 		// "queue" is the factory way and is kept as nothing, so the file stays canonical.
 		if v := strings.TrimSpace(*p.EnterWhileBusy); v == busyQueue {
@@ -561,7 +590,7 @@ func (b behaviour) normalised() behaviour {
 func (p behaviourPatch) touchesWhatRuns() bool {
 	// enter_while_busy is here too: "steer" makes Enter stop the model's work in flight,
 	// which is the user's decision about their own keyboard and not the agent's.
-	return len(p.Keys) > 0 || p.Commands != nil || p.Hooks != nil || p.EnterWhileBusy != nil
+	return len(p.Keys) > 0 || p.Commands != nil || p.Hooks != nil || p.EnterWhileBusy != nil || len(p.Scripts) > 0
 }
 
 func sameBehaviour(a, b behaviour) bool {
@@ -814,6 +843,8 @@ func behaviourGuide(b behaviour) string {
   A key, a command or a hook can be removed with null (keys) or by sending the list without it. Changes to keys, commands and hooks are always put to the user, even in full access, because they decide what their own keyboard does later.
   enter_while_busy  "queue" | "steer"
       What Enter does with a line sent while the agent is working. queue (the factory way): the line waits, shown dimmed under the conversation, and is sent when the answer ends. steer: the work in flight is interrupted (what it already did is kept in the conversation) and the line is sent at once. Alt+Enter does the other one for a single line. Always put to the user.
+  scripts     {"counter": "let n = 0\nfunction run(text, facts) {\n  n = n + 1\n  return 'pressed ' + String(n) + ' times, effort ' + facts.effort\n}"}
+      A script is a small program for logic a shortcut cannot hold: a counter, a state machine, a choice that depends on the effort or mode. It is a JavaScript subset, written as a text. Call it from a key, a command or a hook with do:script.run <name> [text]. It must declare function run(text, facts): text is what came after the name, facts is {effort, mode, style, working} (working is true while the agent answers). Variables declared at the top level (let) keep their value between calls until the script's text changes. What run returns is the ONLY thing the script does: a text is shown as a note, a list of actions (the same kinds as above, for example ['set:effort=high','say:done']) is run as if a shortcut had them, null does nothing. A script cannot touch files, the network, the model, the clock, or another script, and cannot start a typed verb or answer for the user. Language: let/const, functions, arrows, if/for/while/for-of, objects, lists, template texts written with a dollar sign and braces around the value, ?. and ??, Math, JSON, Number, String and the usual list and text methods. Strict on purpose: conditions must be true/false (write n !== 0, not n), === only (no ==), + joins text only with text (use String(n) or a template), no NaN or Infinity, no class/new/this/try/var/switch/async/regex/Date. An error names the script, the line and what to write instead. A script runs for at most 200000 steps and 4 MiB per call. Send {"scripts":{"name":null}} to remove one. Always put to the user: it decides what their keyboard does.
   The user types the common ones themselves: /ui busy <queue|steer>, /ui animate <name> <colour,colour,...> [fps=N] [spread=N] [diagonal|radial|...] [bold] | off, /ui key <key> <action...> | off, /ui menukeys <action> <key...> | off.
 
 `)

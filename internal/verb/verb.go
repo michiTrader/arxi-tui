@@ -118,6 +118,12 @@ var catalogue = []Verb{
 		Example: "queue.push",
 	},
 	{
+		Name: "script.run", Protection: Free,
+		Doc:     "run the function `run(text, facts)` of one of the user's scripts (behaviour.json, scripts); what it returns is shown as a note",
+		Params:  []Param{{Name: "script", Kind: Text, Required: true, Doc: "the name of the script, then optionally one line of text the script receives"}},
+		Example: "script.run counter add 3",
+	},
+	{
 		Name: "queue.steer", Protection: Free,
 		Doc:     "stop the answer being written and send the line being typed at once (what the answer did stays in the conversation)",
 		Example: "queue.steer",

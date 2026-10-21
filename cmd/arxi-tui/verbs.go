@@ -17,6 +17,9 @@ type verbEnv struct {
 	// ui carries out the verbs that change the loop's own view (the expanded tools, the find
 	// bar). Only the loop has that state, so it hands this in; nil means there is no screen.
 	ui func(verb string) string
+	// script runs a user script (scripts.go) and returns the note to show. Only the loop
+	// has the behaviour layer, the facts and the action queue it needs; nil means no screen.
+	script func(name, text string) string
 }
 
 // verbImpl is what each verb of internal/verb does. A test holds the two lists together:
@@ -29,6 +32,16 @@ var verbImpl = map[string]func(args []string, env verbEnv) string{
 	"find.toggle": func(_ []string, env verbEnv) string { return verbUI("find.toggle", env) },
 	"queue.push":  func(_ []string, env verbEnv) string { return verbUI("queue.push", env) },
 	"queue.steer": func(_ []string, env verbEnv) string { return verbUI("queue.steer", env) },
+	"script.run":  verbScriptRun,
+}
+
+// verbScriptRun splits "<name> [text]" and hands it to the loop.
+func verbScriptRun(args []string, env verbEnv) string {
+	if env.script == nil {
+		return "script.run: this session has no screen to run a script on; nothing was done"
+	}
+	name, text, _ := strings.Cut(strings.TrimSpace(args[0]), " ")
+	return env.script(name, strings.TrimSpace(text))
 }
 
 // queuedVerbEnv is the environment of a verb that came out of the loop's action queue. What

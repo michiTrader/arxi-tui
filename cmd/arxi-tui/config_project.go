@@ -336,6 +336,12 @@ func mergeBehaviour(user, proj behaviour) behaviour {
 		}
 	}
 	out.Hooks = append(out.Hooks, proj.Hooks...)
+	for k, v := range proj.Scripts {
+		if out.Scripts == nil {
+			out.Scripts = map[string]string{}
+		}
+		out.Scripts[k] = v
+	}
 	if proj.EnterWhileBusy != "" {
 		out.EnterWhileBusy = proj.EnterWhileBusy
 	}
