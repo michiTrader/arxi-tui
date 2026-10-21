@@ -1,10 +1,18 @@
+## Done since: C5, tier 2 interpreter `internal/script` (branch feat/script-tier2)
+
+A small strict JS-subset interpreter with no dependency: only the host's globals are visible, state lasts between
+calls, limits (steps, alloc, depth, live state, text size) are owned here, and every refusal says what to use
+instead. Not wired into the binary yet (no size change: 9,961,825 B). Open: wire it to a script-backed verb or
+keymap action (next PR, re-measure size); mutation checks not done for the refusal lists and the library
+functions; the `drainQueue` retry now has its tests (#325).
+
 ## Done since: C4, steer + enter_while_busy + queued lines on screen (branch feat/steer-busy-setting)
 
 `alt+enter` and a second `enter` row make steer (stop the answer, send at once) and queue each other's other way,
 chosen by the setting `enter_while_busy` (`/ui busy queue|steer`, always put to the user). The waiting lines are
 drawn dim under the chat as `(queued)`. Ported by hand from the unmerged 063e98e (#246); its tool-call memory was
 not ported (master has its own). A stopped turn no longer posts anything after it was stopped. Open: the core cannot
-take a message mid-turn; Windows Terminal never sends alt+enter; the `drainQueue` retry still has no test.
+take a message mid-turn; Windows Terminal never sends alt+enter; the `drainQueue` retry is tested since #325.
 
 ## Done since: C3, Enter while the agent works queues the line (branch feat/keymap-enter-queue)
 
