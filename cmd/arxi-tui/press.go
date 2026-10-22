@@ -116,9 +116,14 @@ type pluginActionRouter interface {
 // host's own lists, the ones the repaint adds (host.shell.rows). A press that read only the
 // fold would see no rows for them: the list is drawn, Tab never reaches a row and Enter on
 // it does nothing, with no message anywhere.
-func pressState(collected []fold.Event, drv any) fold.State {
+//
+// It carries ui.max too: a node gated on ui.max.is.<pane> (a window) is drawn only while the
+// cursor names it, so a press state without the cursor would hide the window from the focus
+// ring while the frame shows it, and Tab would reach nothing in it.
+func pressState(collected []fold.Event, drv any, uiMax string) fold.State {
 	st := fold.Fold(collected)
 	st.HostShellRows = runningShellRows(drv)
+	st.UIMax = uiMax
 	return st
 }
 

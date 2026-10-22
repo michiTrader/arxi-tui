@@ -504,6 +504,23 @@ Core half: ADR-0055 (core #328). TUI half (branch `feat/tui-steer`):
 - Size: android/arm64 10,289,505 B (limit 11,000,000).
 - Not done: Esc as a way back from the chip (Tab and `up` do it), a window listing the shells (phase D).
 
+### Built (D1): a window is a scene
+
+First step of phase D. Acceptance scenario 3, a window listing the shells, now needs no Go.
+- A window is a full `overlay` gated on `ui.max.is.<pane>` and opened with `/max <pane>` (or a button `cmd:/max <pane>`);
+  `/max` closes it. The test scene (`cmd/arxi-tui/shells_window_test.go`) lists `host.shell.rows`, one pressable row per
+  shell (`cmd:/shell show {row.id}`) and a `[close]` button.
+- Two bugs found by building it: (1) a full overlay shorter than the screen was dropped without a word, it only
+  replaced the screen when it was at least as tall; it now pads to the frame height and hides the caret under it
+  (`internal/engine/render.go`); (2) the focus ring was built from a state without `ui.max`, so Tab found nothing in a
+  window while the frame showed it (`pressState` now takes the cursor).
+- Tests: engine (window absent closed, present open, input covered, frame height, caret hidden) and the real loop
+  (open, Tab to the second row, Enter, the output of that shell and not the other, close with its own button).
+  Mutants on a committed tree: no padding, old "only when taller" rule, caret shown, press state without `ui.max`;
+  each caught by the test that names it. The caret mutant survived the first test and a caret check was added.
+- Not done yet in D: the Go-drawn screens (hub, settings, keys, automations, team, flow, installer) are still Go; docked
+  panels, tabs, popups and the mouse; the test that searches for Go files drawing a particular screen.
+
 ### Built (C5): tier 2, `internal/script`
 
 An interpreter for a small, strict subset of JavaScript, written in this repo with no dependency

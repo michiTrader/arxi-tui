@@ -23,6 +23,13 @@ answer. See DESIGN-OPEN-TUI, Built C7. Open: the write lock around a steer is ca
 and CI does not run `-race`; no run against the real core end to end; a line with pictures still stops the
 turn.
 
+## Done since: D1, a window is a scene (branch feat/components-d1)
+
+A full `overlay` gated on `ui.max.is.<pane>` is a window: `/max <pane>` opens it, a button `cmd:/max` closes it. The
+shells window of scenario 3 is a scene with no Go (tested through the real loop). Fixed: a full overlay shorter than
+the screen was ignored; the focus ring did not see `ui.max`, so Tab reached nothing in a window. Open: the Go-drawn
+screens, panels, tabs, popups and the mouse (rest of phase D); the window is a test scene, not in the default scene.
+
 ## Done since: C8, `down` reaches the shells chip (branch feat/shells-chip-down)
 
 With a background shell running and the caret at the end of the line, `down` focuses the chip under the input (Enter

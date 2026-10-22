@@ -729,9 +729,16 @@ func (r *Renderer) renderStack(n *scene.Node, state fold.State, budget int) ui.F
 		anchor := ov.node.Anchor
 		switch anchor {
 		case "full":
-			if len(lines) >= len(live) {
-				live = lines
+			// A full overlay replaces the screen, whatever its own height: a window of
+			// three rows pads with blank rows to the height of what it covers. Before
+			// this it replaced the screen only when it was at least as tall, so the
+			// shorter, usual window was dropped without a word.
+			full := append([]ui.Line{}, lines...)
+			for len(full) < len(live) {
+				full = append(full, ui.Line{})
 			}
+			live = full
+			caret.Hidden = true // the input is under the window; no caret on a covered row
 		case "top-right", "top-left", "top":
 			// Composite at the top, merging columns at the overlay's x offset.
 			n := len(lines)
