@@ -102,14 +102,21 @@ func TestLoadScreenIgnoresTheFolderWhenNotAllowed(t *testing.T) {
 // drawn (or 30 s), and returns what was drawn.
 func screenLoop(t *testing.T, doc *scene.Document, line, want string) string {
 	t.Helper()
-	t.Setenv(historyEnv, t.TempDir())
 	core := &modelCore{def: "openai/gpt-4o", models: sampleModels().models}
 	drv := &hubTestDriver{testDriver: testDriver{evCh: make(chan fold.Event, 64), seq: 1000}, hub: core}
+	return screenLoopWith(t, doc, drv, drv.evCh, line, want)
+}
+
+// screenLoopWith is screenLoop for any driver: it types line, waits for want to be
+// drawn and returns the screen text.
+func screenLoopWith(t *testing.T, doc *scene.Document, drv Driver, evCh <-chan fold.Event, line, want string) string {
+	t.Helper()
+	t.Setenv(historyEnv, t.TempDir())
 	tty := newOpenFakeTTY(100, 24, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { done <- loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, "") }()
+	go func() { done <- loop(ctx, tty, doc, theme.SOBRIA(), evCh, drv, "") }()
 	for _, ev := range append(typed(line), at(20, enterEvent())) {
 		time.Sleep(ev.delay)
 		tty.events <- ev.event
