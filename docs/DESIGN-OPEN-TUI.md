@@ -600,7 +600,7 @@ Only the everyday interface reads the folder (`persistsScene`), so `-raw` and `-
 - Follow-up: `/flow`, `/team` and `/auto` now have a real-loop test each (`screen_override_screens_test.go`).
 - NOT done, said plainly: `/settings`, `/keys` and the model-style menus are Go-built overlays with no override, and the
   installer comes from `ext.LiveInstallerScene`; a replacement is only as useful as the binds it names (`hub.rows`,
-  `hub.title`, ...), which are not yet documented as a contract for authors; a replacement is not re-read while the
+  `hub.title`, ...), a replacement is not re-read while the
   app runs (restart to see a change); there is no `/ui` verb to write one, so today it is a file edit. The sandbox
   was reset once while this was being written and the first attempt was lost before it was pushed; this is the redo.
 
