@@ -52,19 +52,33 @@ func barsAfterResume(t *testing.T, saved []fold.Event, want string) []string {
 		}
 		return out
 	}
-	script := []scheduledEvent{{120 * time.Millisecond, keyEvent(' ')}, {10 * time.Millisecond, term.Event{Kind: term.EventKey, Key: term.Key{Type: term.KeyBackspace}}}}
+	script := []scheduledEvent{{10 * time.Millisecond, keyEvent(' ')}, {10 * time.Millisecond, term.Event{Kind: term.EventKey, Key: term.Key{Type: term.KeyBackspace}}}}
 	script = append(script, keys("/clear")...)
 	script = append(script, scheduledEvent{40 * time.Millisecond, enterEvent()})
 	script = append(script, keys("/resume ")...)
 	script = append(script, scheduledEvent{80 * time.Millisecond, enterEvent()})
-	// The script stays open: the test quits when the resumed bar is on screen, not after a
-	// guessed delay. A fixed 200 ms before quitting was overrun on a loaded Windows runner,
-	// the loop quit before /resume had answered and the test saw no bar at all.
-	tty := newOpenFakeTTY(130, 30, script)
+	// The terminal stays open and the keys wait for the saved conversation to be taken in.
+	// The loop reads the driver's events and the keyboard from two channels; a key sent
+	// while the conversation is still queued can be handled first, so /clear ran before
+	// anything was saved and /resume had nothing to resume (seen on a slow Windows runner).
+	// The loop handles one thing at a time, so an empty queue means every saved event has
+	// been folded and written before the next key is read.
+	tty := newOpenFakeTTY(130, 30, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, "") }()
+	queueDeadline := time.Now().Add(30 * time.Second)
+	for len(drv.evCh) > 0 && time.Now().Before(queueDeadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond) // the last event taken may still be being handled
+	go func() {
+		for _, ev := range script {
+			time.Sleep(ev.delay)
+			tty.events <- ev.event
+		}
+	}()
 	// Wait for the bar the test expects; if it never comes the caller's assertion reports
 	// what was drawn instead.
 	deadline := time.Now().Add(30 * time.Second)
@@ -89,19 +103,24 @@ func barsAfterResume(t *testing.T, saved []fold.Event, want string) []string {
 	return resumedBars(tty.output())
 }
 
-// resumedBars is the usage segment of every frame drawn after /clear, skipping the frames
-// where the /resume menu hides the bar.
+// resumedBars is the usage segment of every frame drawn after the /resume menu was shown,
+// skipping the frames where the menu hides the bar. Before that point the bar still shows the
+// figures of the events the test injected, which is not what /resume restored; counting them
+// made the wait end early and the exit keys land in the middle of the command.
 func resumedBars(output string) []string {
 	frames := strings.Split(output, "\x1b[?2026h")
 	re := regexp.MustCompile(`ctx [^·]*·`)
-	var bars []string
-	cleared := -1
+	menu := -1
 	for i, f := range frames {
-		if strings.Contains(stripANSI(f), "/clear") {
-			cleared = i
+		if strings.Contains(stripANSI(f), "/resume ") {
+			menu = i
 		}
 	}
-	for _, f := range frames[cleared+1:] {
+	if menu < 0 {
+		return nil
+	}
+	var bars []string
+	for _, f := range frames[menu+1:] {
 		f = stripANSI(f)
 		if strings.Contains(f, "/resume ") {
 			continue // the menu hides the bar
