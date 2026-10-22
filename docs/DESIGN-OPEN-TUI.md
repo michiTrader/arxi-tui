@@ -584,6 +584,21 @@ dead to it, so every window needed the keyboard.
 - Not done: hover, drag, right/middle button, a click that moves the caret in the input, mouse on Termux (the mouse is
   left to the terminal there on purpose, see `wantMouse`).
 
+### Built (D4): a side panel is a scene, no engine change
+
+Acceptance scenario 13 (a side panel) needed nothing new: a `row` already splits its width by `weight` and joins its
+children side by side. D4 only proves it and pins it (`cmd/arxi-tui/side_panel_test.go`).
+- A row of a `list` (weight 1) and a main area (weight 3) puts the main area at column 20 of 80, and a shell and the main
+  area share a screen row.
+- A click on a row of the side panel presses it (`/shell show {row.id}`) and shows the right shell, so `Hit` survives the
+  side-by-side join.
+- Mutants on a committed tree: weights ignored (caught by the width test; the first try did not compile, an unused
+  variable, and was redone), `Hit` dropped in the join (caught by the click test).
+- NOT done, said plainly: a panel the user can resize, hide with a key, or dock to the other side is not tested; the
+  chat pane (`markdown`) inside a weighted row was not tested because the test driver does not echo a sent message, so
+  a panel beside a chat with history is checked only with a fixed main area. Splits are the same `row` (or a `stack`),
+  so they are covered by the same mechanism, but not by a test of their own. Tabs and popups are still to do.
+
 ### Built (D2): a test that no Go file draws a screen
 
 The exit test of phase D, first half. `TestNoGoFileDrawsAScreen` (`cmd/arxi-tui/no_go_screens_test.go`) parses every
