@@ -597,8 +597,7 @@ Only the everyday interface reads the folder (`persistsScene`), so `-raw` and `-
 - Mutants on a committed tree, each caught by the test that names it: loop never allows the profile, loop always
   allows the folder, a broken file used anyway, no notice on a broken file, validation skipped (caught for "unknown
   bind" only). The two loop mutants were caught by the 30 s wait timing out, not by an immediate assertion.
-- Only `/provider` was exercised through the real loop; `team`, `flow` and `auto` use the same `screenFor` call but
-  have no loop test of their own.
+- Follow-up: `/flow`, `/team` and `/auto` now have a real-loop test each (`screen_override_screens_test.go`).
 - NOT done, said plainly: `/settings`, `/keys` and the model-style menus are Go-built overlays with no override, and the
   installer comes from `ext.LiveInstallerScene`; a replacement is only as useful as the binds it names (`hub.rows`,
   `hub.title`, ...), which are not yet documented as a contract for authors; a replacement is not re-read while the
