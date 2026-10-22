@@ -584,6 +584,21 @@ dead to it, so every window needed the keyboard.
 - Not done: hover, drag, right/middle button, a click that moves the caret in the input, mouse on Termux (the mouse is
   left to the terminal there on purpose, see `wantMouse`).
 
+### Built (D5): tabs and a popup are a scene, no engine change
+
+Tabs and popups needed no new node type. `ui.max` is a free name the host stores (`cmd:/max <name>` writes it, `/max`
+clears it) and `ui.max.is.<name>` / `ui.max.none` gate any node on it, so a tab strip is buttons that write the name and
+each pane is gated on its own, and a popup is an `overlay` gated the same way, closed by `cmd:/max`
+(`cmd/arxi-tui/tabs_popup_test.go`).
+- Tests: a click on one tab shows its body and a click on another swaps it with no two bodies at once; a popup opens from
+  a button and a click on its own `[close]` brings the scene back; nothing reaches the model.
+- Mutants on a committed tree, each caught: clicks never press (both tests), `/max <name>` ignores the name (both
+  tests), the `top` overlay composites no rows (the popup test only, which is the right one).
+- NOT done, said plainly: one cursor serves one selector, so two independent tab sets (or a tab set plus a maximized
+  pane) on one screen collide on `ui.max`; a scene-owned value of its own is the fix and is not built. Keyboard
+  navigation between tabs (arrows) is not tested, only Tab/click. A popup does not trap focus: Tab may still reach
+  nodes behind it. Hover and drag are still to do.
+
 ### Built (D4): a side panel is a scene, no engine change
 
 Acceptance scenario 13 (a side panel) needed nothing new: a `row` already splits its width by `weight` and joins its
