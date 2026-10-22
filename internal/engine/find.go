@@ -167,7 +167,7 @@ func washRow(l ui.Line, q []rune, token string) ui.Line {
 			if len(run) == 0 {
 				return
 			}
-			sp := ui.Span{Text: string(run), Style: s.Style, Fill: s.Fill}
+			sp := ui.Span{Text: string(run), Style: s.Style, Fill: s.Fill, Hit: s.Hit}
 			if runHit {
 				sp.Fill = token
 			}

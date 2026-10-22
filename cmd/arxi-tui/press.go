@@ -146,42 +146,7 @@ func focusKey(k term.Key, input, uiFocus string, doc **scene.Document, state fol
 		forward := k.Mod&term.ModShift == 0
 		return true, input, advanceFocus(ids, uiFocus, forward)
 	case k.Type == term.KeyEnter && uiFocus != "":
-		// The cursor may name a plain node (a raw id) or one pressable node of one
-		// instantiated template row (a rowFocusKey). parseRowFocusKey is the
-		// discriminator: a key carrying the NUL marker is a row target resolved
-		// through the row-press enumeration, everything else a plain node resolved
-		// through findPressable. The two shapes share the dispatcher below; only
-		// how the on_press is recovered differs.
-		if nodeID, rowIndex, ok := parseRowFocusKey(uiFocus); ok {
-			onPress, found, err := rowPressOnPress(*doc, state, nodeID, rowIndex)
-			if err != nil {
-				*notice = err.Error()
-				return true, input, uiFocus
-			}
-			if !found {
-				// Focus names a row that is no longer instantiated — the array the
-				// template binds shrank under the cursor. Report and swallow rather
-				// than submit the buffer as a prompt: the user pressed Enter on a
-				// focused row, not on the input.
-				*notice = fmt.Sprintf("focus names row %d of %q, which is not in the current scene", rowIndex, nodeID)
-				return true, input, uiFocus
-			}
-			// onPress already has its {row.<field>} braces resolved (RowPresses'
-			// contract), so it dispatches exactly like a static node's action and
-			// the interpolation is never re-run.
-			newFocus := dispatchPress(onPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, enqueue, ctx, drv)
-			return true, "", newFocus
-		}
-		node := findPressable(*doc, uiFocus)
-		if node == nil || node.OnPress == "" {
-			// Focus points at a node that is not pressable (a focus: target that
-			// is not a button, say). Enter is not ours; let it submit as usual.
-			return false, input, uiFocus
-		}
-		newFocus := dispatchPress(node.OnPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, enqueue, ctx, drv)
-		// Clear the input the way the command paths do: a press is a submitted
-		// action, not text left in the buffer.
-		return true, "", newFocus
+		return pressFocused(uiFocus, input, doc, state, notice, hidden, uiMax, fetch, applyTokens, actions, enqueue, ctx, drv)
 	}
 	return false, input, uiFocus
 }
@@ -371,4 +336,65 @@ func findNodeByID(doc *scene.Document, id string) *scene.Node {
 	}
 	walk(doc.Root)
 	return found
+}
+
+// pressFocused presses the node (or the row of a template) that focus names: it recovers
+// the node's on_press and dispatches it. It is the one door both the Enter key and a click
+// of the pointer go through, so the two cannot differ on what a press does. handled is false
+// when focus names something that is not pressable, and the caller keeps the key or click.
+func pressFocused(uiFocus, input string, doc **scene.Document, state fold.State, notice *string, hidden map[string]bool, uiMax *string, fetch patch.Fetcher, applyTokens func(*patch.PluginTokens), actions pluginActionRouter, enqueue func(line string), ctx context.Context, drv Driver) (bool, string, string) {
+	// The cursor may name a plain node (a raw id) or one pressable node of one
+	// instantiated template row (a rowFocusKey). parseRowFocusKey is the
+	// discriminator: a key carrying the NUL marker is a row target resolved
+	// through the row-press enumeration, everything else a plain node resolved
+	// through findPressable. The two shapes share the dispatcher below; only
+	// how the on_press is recovered differs.
+	if nodeID, rowIndex, ok := parseRowFocusKey(uiFocus); ok {
+		onPress, found, err := rowPressOnPress(*doc, state, nodeID, rowIndex)
+		if err != nil {
+			*notice = err.Error()
+			return true, input, uiFocus
+		}
+		if !found {
+			// Focus names a row that is no longer instantiated — the array the
+			// template binds shrank under the cursor. Report and swallow rather
+			// than submit the buffer as a prompt: the user pressed Enter on a
+			// focused row, not on the input.
+			*notice = fmt.Sprintf("focus names row %d of %q, which is not in the current scene", rowIndex, nodeID)
+			return true, input, uiFocus
+		}
+		// onPress already has its {row.<field>} braces resolved (RowPresses'
+		// contract), so it dispatches exactly like a static node's action and
+		// the interpolation is never re-run.
+		newFocus := dispatchPress(onPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, enqueue, ctx, drv)
+		return true, "", newFocus
+	}
+	node := findPressable(*doc, uiFocus)
+	if node == nil || node.OnPress == "" {
+		// Focus points at a node that is not pressable (a focus: target that
+		// is not a button, say). Enter is not ours; let it submit as usual.
+		return false, input, uiFocus
+	}
+	newFocus := dispatchPress(node.OnPress, uiFocus, input, state, doc, notice, hidden, uiMax, fetch, applyTokens, actions, enqueue, ctx, drv)
+	// Clear the input the way the command paths do: a press is a submitted
+	// action, not text left in the buffer.
+	return true, "", newFocus
+}
+
+// clickTarget is the focus key of the pressable node under a click, or "" when the click is
+// on nothing that presses or no frame has been painted yet. hitAt is the last painted frame's
+// answer for a zero-based cell.
+func clickTarget(hitAt func(col, row int) string, col, row int) string {
+	if hitAt == nil {
+		return ""
+	}
+	return hitAt(col, row)
+}
+
+// clickMayPress says whether a click on a node with focus key hit presses it. A screen that
+// replaces the scene (hub, team, flow, automations, installer) or a consent modal owns the
+// pointer as it owns the keyboard: a node of the scene behind it may be in the frame the user
+// last saw, and a click must not reach through to it.
+func clickMayPress(hit string, screenOpen, modalUp bool) bool {
+	return hit != "" && !screenOpen && !modalUp
 }

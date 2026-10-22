@@ -414,3 +414,28 @@ func TestDispatchExtWithNoRouterReports(t *testing.T) {
 		t.Errorf("an ext: press with no router left notice %q, want it to name the action rather than drop silently or panic", notice)
 	}
 }
+
+// A click presses only on the plain scene: not under a screen that replaced it, not under a
+// consent prompt, and not on a span with no target.
+// Consequence: a click on the consent screen reaches a button of the scene behind it and
+// approves, runs or sends something the user never saw offered.
+// Remedy: clickMayPress refuses while a screen or a modal is up.
+func TestClickMayPressOnlyOnThePlainScene(t *testing.T) {
+	for _, c := range []struct {
+		name               string
+		hit                string
+		screenOpen, modalU bool
+		want               bool
+	}{
+		{"a target on the plain scene", "btn", false, false, true},
+		{"a row target", "pick\x00row\x001", false, false, true},
+		{"no target", "", false, false, false},
+		{"a screen is up", "btn", true, false, false},
+		{"a consent modal is up", "btn", false, true, false},
+		{"both", "btn", true, true, false},
+	} {
+		if got := clickMayPress(c.hit, c.screenOpen, c.modalU); got != c.want {
+			t.Errorf("%s: clickMayPress = %v, want %v. Consequence: a click reaches through a screen it should not. Remedy: see clickMayPress.", c.name, got, c.want)
+		}
+	}
+}

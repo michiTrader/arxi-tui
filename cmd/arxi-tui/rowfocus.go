@@ -3,6 +3,8 @@ package main
 import (
 	"strconv"
 	"strings"
+
+	"github.com/michiTrader/arxi_tui/internal/engine"
 )
 
 // This file is the pure keystone the deferred row-click focus wiring rides on:
@@ -35,7 +37,7 @@ import (
 // parseRowFocusKey's marker test is also the discriminator the dispatcher needs:
 // a key with no marker is an ordinary node id (resolve via findPressable), a key
 // with one is a template-row target (look the (row, node) up in RowPresses).
-const rowFocusMarker = "\x00row\x00"
+const rowFocusMarker = engine.HitMarker
 
 // rowFocusKey encodes the focus target "node nodeID of instantiated row
 // rowIndex" into the single string ui.focus holds. It is the inverse of

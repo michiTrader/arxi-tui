@@ -562,6 +562,28 @@ it to a script-backed verb or keymap action is the next PR, and the size is meas
 - **Not done:** `switch`, `try`/`catch`, regular expressions, `Date`, getters, classes (refused on
   purpose, each with its remedy); timing of a script (steps count work, not milliseconds).
 
+### Built (D3): a click presses
+
+Second step of phase D, the mouse. Until now the pointer only dragged the chat scrollbar; a button or a list row was
+dead to it, so every window needed the keyboard.
+- Every `ui.Span` carries `Hit`: the focus key of the pressable node that drew it (its id, or id and row for a node
+  in a `row_template`, the same `\x00row\x00` key Tab uses; `engine.HitKey`). The innermost pressable node wins; a
+  node with no id has no target, as in the ring. Emit ignores `Hit`, so no golden moves. It survives wrapping,
+  cutting, overlay compositing, the find highlight and gradient cells.
+- A left press on a span with a `Hit` runs `pressFocused`, the function Enter on a focused node now calls too, so a
+  click and Enter cannot differ on what a press does. The draft being typed stays. A click is ignored while a screen
+  (hub, team, flow, automations, installer) or a consent modal is up (`clickMayPress`).
+- Tests: engine (stamp, innermost, row key, wrapped, composited overlay, idless row, find), ui (wrap), theme (cycle,
+  gradient cells), loop (click a row, click `[close]`, click on text, draft kept).
+- Mutants on a committed tree, each caught by the test that names it: outer node overwrites inner, rows keyed by id,
+  idless nodes stamped, `HitAt` by byte, wrap drops `Hit`, cut drops `Hit`, cycle (both branches) drops `Hit`, find
+  drops `Hit`, a click clears the draft. First runs of the wrap, cycle and find mutants SURVIVED; tests were added.
+- NOT covered, said plainly: the call to `clickMayPress` inside the loop. Its table test passes, but removing the call
+  in `main.go` survived: no loop test reached a state where a screen is up with a pressable node under the
+  pointer (no Go-drawn screen has `on_press`). A consent modal is likewise untested for clicks.
+- Not done: hover, drag, right/middle button, a click that moves the caret in the input, mouse on Termux (the mouse is
+  left to the terminal there on purpose, see `wantMouse`).
+
 ### Built (D2): a test that no Go file draws a screen
 
 The exit test of phase D, first half. `TestNoGoFileDrawsAScreen` (`cmd/arxi-tui/no_go_screens_test.go`) parses every

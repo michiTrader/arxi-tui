@@ -13,6 +13,7 @@ import (
 type token struct {
 	text  string
 	style string
+	hit   string // the press target of the span it came from (Span.Hit)
 	space bool
 	brk   bool // a newline in the text: end the line here, whatever the width says
 }
@@ -31,7 +32,7 @@ func tokenize(spans []Span) []token {
 				out = append(out, token{brk: true})
 			}
 			for _, chunk := range splitKeepSpaces(stripControls(seg)) {
-				out = append(out, token{text: chunk, style: sp.Style, space: chunk[0] == ' '})
+				out = append(out, token{text: chunk, style: sp.Style, hit: sp.Hit, space: chunk[0] == ' '})
 			}
 		}
 	}
@@ -172,13 +173,13 @@ func WrapSpans(spans []Span, width int, cont Line) []Line {
 			if !ink && curW+pendW+w >= width {
 				continue
 			}
-			pend = append(pend, Span{Text: tk.text, Style: tk.style})
+			pend = append(pend, Span{Text: tk.text, Style: tk.style, Hit: tk.hit})
 			pendW += w
 			continue
 		}
 		for w > 0 {
 			if curW+pendW+w <= width {
-				commit(Span{Text: tk.text, Style: tk.style}, w)
+				commit(Span{Text: tk.text, Style: tk.style, Hit: tk.hit}, w)
 				break
 			}
 			if curW > contW || (len(lines) == 0 && curW > 0) {
@@ -190,7 +191,7 @@ func WrapSpans(spans []Span, width int, cont Line) []Line {
 			if head == "" {
 				break // nothing fits at all; give up rather than loop forever
 			}
-			commit(Span{Text: head, Style: tk.style}, ansi.StringWidth(head))
+			commit(Span{Text: head, Style: tk.style, Hit: tk.hit}, ansi.StringWidth(head))
 			tk.text = tk.text[len(head):]
 			w = ansi.StringWidth(tk.text)
 			flush()
@@ -268,7 +269,7 @@ func HardWrapSpans(spans []Span, width int) []Line {
 				flush()
 				continue
 			}
-			cur = append(cur, Span{Text: head, Style: sp.Style, Fill: sp.Fill})
+			cur = append(cur, Span{Text: head, Style: sp.Style, Fill: sp.Fill, Hit: sp.Hit})
 			curW += ansi.StringWidth(head)
 			text = text[len(head):]
 		}

@@ -151,3 +151,19 @@ func TestDerivedNamesOnlyResolveForRealCycles(t *testing.T) {
 		t.Error("steps wrap around the palette")
 	}
 }
+
+// A span that cycles colour is still the same press target.
+// Consequence: an animated button cannot be clicked while its colour moves.
+// Remedy: copy Hit where Cycled rebuilds a span.
+func TestCycledSpansKeepTheirHit(t *testing.T) {
+	th := loadRainbow(t)
+	for _, text := range []string{"max", "m"} {
+		f := ui.Frame{Live: []ui.Line{{{Text: text, Style: "rainbow", Hit: "k"}}}}
+		out, _ := th.Cycled(f, time.Unix(100, 0))
+		for _, s := range out.Live[0] {
+			if s.Hit != "k" {
+				t.Errorf("span %q of %q lost its hit (%q)", s.Text, text, s.Hit)
+			}
+		}
+	}
+}
