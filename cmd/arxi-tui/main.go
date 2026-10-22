@@ -1047,7 +1047,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	}
 	browseDoneCh := make(chan browseOutcome, 1)
 	registryFetchClient := newRegistryFetchClient()
-	liveInstaller, liveInstallerErr := ext.LiveInstallerScene()
+	liveInstaller, liveInstallerErr := screenFor("installer", ext.LiveInstallerScene)
 	// Every spawned plugin process is stopped when the loop ends, so a normal quit
 	// does not leak a subprocess. Close is idempotent and the pump's DrainInto
 	// already exits on process death, so closing one already reaped is harmless.

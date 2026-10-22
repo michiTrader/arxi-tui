@@ -34,7 +34,7 @@ type browseOutcome struct {
 // server, and a hostile one that never finishes is cut off rather than pinning a
 // worker goroutine for the session. Built once by the loop so a change to the
 // bound is one edit a reviewer sees, like the other fetchers' constructors.
-func newRegistryFetchClient() *http.Client {
+var newRegistryFetchClient = func() *http.Client {
 	return &http.Client{Timeout: 15 * time.Second}
 }
 

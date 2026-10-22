@@ -226,14 +226,15 @@ sequences, control and bidi characters removed) and cut to 4000 characters and
 | `hub.hint` | text | the key legend of the current hub level (e.g. `"type to filter · ↑↓ move · enter select · esc back"`) | on every level change | empty string — no legend |
 | `hub.detail` | text (markdown) | the explanation shown where the chat sits while the hub is open: what the current level does, the selected provider's URL and key state, or what a form field expects | on every key the hub handles and on every core answer | empty string — nothing to explain |
 
-**Replacing a hub-style screen (D6).** `/provider`, `/team`, `/flow` and `/auto` are drawn from one view state, the four
+**Replacing a screen (D6).** `/provider`, `/team`, `/flow` and `/auto` are drawn from one view state, the four
 `hub.*` binds above (`hub.title`, `hub.rows`, `hub.hint`, `hub.detail`; `row.line` and `row.status` inside `hub.rows`).
-A profile replaces one by putting a scene document at `<settings>/screens/{hub,team,flow,auto}.json` (`hub` is
-`/provider`). The file may use any bind of this inventory, and is validated on load like any scene; a file that does
+A profile replaces one by putting a scene document at `<settings>/screens/{hub,team,flow,auto,installer}.json` (`hub` is
+`/provider`; `installer` is the community installer opened by `/ui plugin browse`, which uses the `community.*` binds). The file may use any bind of this inventory, and is validated on load like any scene; a file that does
 not parse or names an unknown bind is ignored and the built-in screen is drawn, with a notice naming the file. Keys are
 not bound by the file: the host keeps handling them (arrows, Enter, Esc, the letters each screen documents in its
 `hub.hint`), so a replacement redraws the screen but does not change what its keys do. Only the everyday interface
-reads the folder; `-raw` and `-scene` do not. A replacement is read at start, not while running.
+reads the folder; `-raw` and `-scene` do not. A replacement is read at start, not while running. The `/settings`, `/keys`, `/model` and slash menus are not separate
+screens: they are overlays of the main scene, so they are reshaped by replacing the main scene document itself.
 
 **The `community.*` installer view state (signed 2026-09-28, J3 follow-up; argued in `docs/DESIGN-BLOCK-J.md` J3).** These three rows are the live half of the community installer (Scene 7): `Registry.InstallerScene` (J3, PR #103) currently bakes the entries as static cards because the live `list`/search-input pair needs exactly this signed vocabulary. They are host view state in the `slash.*` mould — a `query`, its filtered `matches`, and a `selected` cursor — written by the installer's own keystroke loop, never by an arxi-core event, so a stranger's registry can never author them. `community.matches` is the previewed plugin's own entries; it is not the `<plugin-id>.*` preview namespace (J1, §4.4), which carries a *previewed manifest's* mocked binds, not the browse list. The empty-state of each is a no-op — an empty query lists everything, an empty match array draws no cards, a zero cursor highlights the first — so signing these rows moves no golden until the installer loop populates them (the deferred live half, §4.6).
 

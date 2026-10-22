@@ -598,9 +598,12 @@ Only the everyday interface reads the folder (`persistsScene`), so `-raw` and `-
   allows the folder, a broken file used anyway, no notice on a broken file, validation skipped (caught for "unknown
   bind" only). The two loop mutants were caught by the 30 s wait timing out, not by an immediate assertion.
 - Follow-up: `/flow`, `/team` and `/auto` now have a real-loop test each (`screen_override_screens_test.go`).
-- NOT done, said plainly: `/settings`, `/keys` and the model-style menus are Go-built overlays with no override, and the
-  installer comes from `ext.LiveInstallerScene`; a replacement is only as useful as the binds it names (`hub.rows`,
-  `hub.title`, ...), a replacement is not re-read while the
+- Installer (follow-up): `installer.json` replaces the community installer, proven through the real loop against a local
+  TLS registry (`newRegistryFetchClient` became a variable so a test can inject the client); mutant (direct
+  `ext.LiveInstallerScene()`) caught by the 30 s wait timing out. `/settings`, `/keys`, `/model` and the slash menu are
+  not separate screens: `/settings` and `/keys` borrow the `model.active` overlay of the main scene, so they are reshaped
+  by replacing the main scene, which already works; no test replaces just that overlay.
+- NOT done, said plainly: a replacement is not re-read while the
   app runs (restart to see a change); there is no `/ui` verb to write one, so today it is a file edit. The sandbox
   was reset once while this was being written and the first attempt was lost before it was pushed; this is the redo.
 
