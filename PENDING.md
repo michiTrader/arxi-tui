@@ -37,6 +37,11 @@ opens `/shell`) and `up` gives the input back; every other `down` is the history
 no longer stops on nodes whose `when` is false. The factory scene hash moved on purpose (see GUARDRAILS section 4);
 unfocused it draws the same bytes. Open: Esc does not leave the chip; no window of shells yet (phase D).
 
+## Done since: D4, a side panel needs no Go (branch feat/side-panel-d4)
+
+A `row` of a weighted list and a main area is already a docked panel; tests pin the width and the click. Open: resize,
+hide and dock-to-the-other-side of a panel; a panel beside a real chat history; tabs and popups; hover and drag.
+
 ## Done since: D3, a click presses (branch feat/mouse-press-d3)
 
 A left click on a pressable node or row runs its `on_press`, through the same function as Enter on the focused node.

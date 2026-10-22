@@ -34,9 +34,15 @@ func windowLoop(t *testing.T, script []scheduledEvent) (string, []string) {
 // windowLoopRaw is windowLoop with the bytes as written, so a test can cut them into frames.
 func windowLoopRaw(t *testing.T, script []scheduledEvent) (string, []string) {
 	t.Helper()
+	return sceneLoopRaw(t, shellsWindowScene, script)
+}
+
+// sceneLoopRaw runs the real loop on the given scene document with two simulated shells.
+func sceneLoopRaw(t *testing.T, document string, script []scheduledEvent) (string, []string) {
+	t.Helper()
 	t.Setenv(configDirEnv, t.TempDir())
 	t.Setenv(historyEnv, t.TempDir())
-	doc, err := scene.ParseDocument([]byte(shellsWindowScene))
+	doc, err := scene.ParseDocument([]byte(document))
 	if err != nil {
 		t.Fatal(err)
 	}
