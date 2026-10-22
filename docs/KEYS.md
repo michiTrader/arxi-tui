@@ -23,7 +23,7 @@ escape hatch (invariant 6) and cannot be moved or taken by any setting, scene or
 | `ctrl+c` | stop the answer being written; when idle it clears the line, and twice in a row leaves the program |
 | `esc` | stop the answer being written, or close the menu that is open |
 | `enter` | send the message (or run the command on the line); while an answer is being written the message waits and is sent when it ends |
-| `alt+enter` | while an answer is being written, the other way from `enter`: it stops the answer and sends the line at once (steer), or waits if you chose steer for `enter`; with nothing running it is a plain `enter` |
+| `alt+enter` | while an answer is being written, the other way from `enter`: it sends the line to the answer in flight, which reads it at its next step (steer; with a core that cannot take it, it stops the answer and sends the line at once), or waits if you chose steer for `enter`; with nothing running it is a plain `enter` |
 | `shift+enter`, `ctrl+enter`, `ctrl+j` | a new line in the message, without sending it |
 | `up`, `down` | walk the lines you sent before (inside a long message they move between its rows first) |
 | `ctrl+p`, `ctrl+n` | the same as up and down |
@@ -76,9 +76,13 @@ The waiting lines are drawn dim under the conversation, each marked `(queued)`.
 
 What `enter` does with a line sent while the agent works is the setting `enter_while_busy`
 (`/ui busy queue` or `/ui busy steer`; the condition name is `busy.steers`). `alt+enter` is always
-the other way for one line. Steering (`do:queue.steer`) stops the answer in flight without a
-"Cancelled" line, keeps what it did in the history with a note that the user interrupted it, and
-sends the new line at once; the lines already waiting keep waiting. Windows Terminal binds `alt+enter`
+the other way for one line. Steering (`do:queue.steer`) writes the line to the answer in flight when
+the core takes it: the model reads it at its next tool round and keeps everything it had done, and the
+line appears in the conversation where it was read. A line the answer ended before reading is sent
+after it, in order. When the core cannot take a line (an older core, a line with a picture, a turn with
+no tools, package input rules), steering stops the answer in flight without a "Cancelled" line, keeps
+what it did in the history with a note that the user interrupted it, and sends the new line at once;
+the lines already waiting keep waiting. Windows Terminal binds `alt+enter`
 to full screen and never delivers it; there, `/ui busy steer` makes plain `enter` steer.
 
 ## 3. Where it was checked

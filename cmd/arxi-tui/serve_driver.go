@@ -508,3 +508,14 @@ var (
 	_ turnCanceller  = (*serveDriver)(nil)
 	_ inboxDecider   = (*serveDriver)(nil)
 )
+
+// CanSteer reports whether the turn in flight takes a line while it runs.
+func (d *serveDriver) CanSteer() bool { return d.chat != nil && d.chat.canSteer() }
+
+// Steer writes a line to the turn in flight (see chatSession.steer).
+func (d *serveDriver) Steer(text string) error {
+	if d.chat == nil {
+		return errNotSteerable
+	}
+	return d.chat.steer(text)
+}

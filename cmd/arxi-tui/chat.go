@@ -120,8 +120,14 @@ type chatSession struct {
 
 	// turnText and turnTools describe the turn in flight, so that a turn that ends
 	// without an answer (cancelled, failed) can still be put in the history.
-	turnText  string
-	turnTools []string
+	turnText string
+	// steerFn writes a steering text to the turn in flight (nil unless the core said the
+	// turn takes steering). steerOwed are the texts written that the core has not yet
+	// said it took; turnSteers are the ones it took, which are part of the request now.
+	steerFn    func(string) error
+	steerOwed  []string
+	turnSteers []string
+	turnTools  []string
 	// pendingImages are the pictures that go with the next send, set by the loop just
 	// before Enter and taken (and cleared) by send.
 	pendingImages []driver.ChatImage
@@ -583,6 +589,7 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 		hist, withUI = nil, false
 	}
 	c.turnText, c.turnTools, c.turnEchoes = text, nil, nil
+	c.steerFn, c.steerOwed, c.turnSteers = nil, nil, nil
 	c.turn++
 	turn := c.turn
 	turnCtx, cancel := context.WithCancel(ctx)
@@ -648,12 +655,15 @@ func (c *chatSession) cancelTurn() bool {
 	c.cancel = nil
 	c.busy = false
 	if !c.compacting {
-		c.history = append(c.history, unansweredTurn(c.turnText, whyCancelled, c.turnEchoes))
+		c.history = append(c.history, unansweredTurn(c.turnText+steersNote(c.turnSteers), whyCancelled, c.turnEchoes))
 		c.memory = invalidate(c.memory, c.turnEchoes)
 	}
 	c.compacting = false
+	owed := c.takeOwedLocked()
 	c.mu.Unlock()
 	cancel()
+	// Before the cancelled line, so the loop gives them back with the rest of the queue.
+	c.giveBackSteers(gen, owed)
 	c.post(context.Background(), gen, "chat.cancelled", nil)
 	return true
 }
@@ -673,9 +683,14 @@ func (c *chatSession) stopForSteer() bool {
 	cancel := c.cancel
 	c.cancel = nil
 	c.busy = false
-	c.history = append(c.history, unansweredTurn(c.turnText, whyInterrupted, c.turnEchoes))
+	// What was written to the turn and not yet read goes into the note with the rest: the
+	// new line replaces the turn, and sending the old one after it would be answering
+	// something the user has just overtaken.
+	owed := c.takeOwedLocked()
+	c.history = append(c.history, unansweredTurn(c.turnText+steersNote(append(append([]string(nil), c.turnSteers...), owed...)), whyInterrupted, c.turnEchoes))
 	c.memory = invalidate(c.memory, c.turnEchoes)
 	c.turnText, c.turnTools, c.turnEchoes = "", nil, nil
+	c.turnSteers = nil
 	c.mu.Unlock()
 	cancel()
 	return true
@@ -879,6 +894,10 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 				c.post(ctx, gen, "chat.usage", map[string]any{"context_tokens": float64(n)})
 			}
 		},
+		// A core that takes steering says so once per turn; what the user says to a
+		// running turn then goes to it instead of stopping the turn (steer.go).
+		OnSteerable: func(f func(string) error) { c.steerable(gen, turn, f) },
+		OnSteered:   func(text string) { c.steered(ctx, gen, turn, text) },
 		// What it looks at while answering is shown as it happens.
 		Workdir: workdir, Edits: edits, Runs: runs, Web: web, Outside: outside, Folders: folders,
 		OnApproval: func(ctx context.Context, a driver.Approval) bool { return c.askUser(ctx, gen, a) },
@@ -1031,17 +1050,22 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		params.System = strings.TrimSuffix(strings.TrimSuffix(strings.TrimSuffix(params.System, shellSystem), pkgSystem), uiSystem)
 		res, err = core.SubmitChatSend(ctx, params)
 	}
+	// Whatever the user said to the turn that the core never took goes back to the
+	// loop, before the turn's own last event, so it is sent after the turn or given
+	// back with the queue when the turn failed.
+	owed := c.endSteering(gen, turn)
 	if ctx.Err() != nil {
 		// Cancelled (cancelTurn already told the conversation) or the program is
 		// closing: whatever came back is not wanted.
 		return
 	}
+	c.giveBackSteers(gen, owed)
 	if err != nil {
 		// The request stays in the history, marked unanswered: the user's next words
 		// ("reintenta") mean it, whichever model reads them.
 		c.mu.Lock()
 		if c.gen == gen && c.turn == turn {
-			c.history = append(c.history, unansweredTurn(text, whyFailed, c.turnEchoes))
+			c.history = append(c.history, unansweredTurn(text+steersNote(c.turnSteers), whyFailed, c.turnEchoes))
 			c.memory = invalidate(c.memory, c.turnEchoes)
 		}
 		c.mu.Unlock()
@@ -1056,7 +1080,7 @@ func (c *chatSession) run(ctx context.Context, text, command string, withUI bool
 		c.mu.Unlock()
 		return
 	}
-	c.history = append(c.history, driver.ChatTurn{Role: "user", Text: text}, driver.ChatTurn{Role: "assistant", Text: res.Text})
+	c.history = append(c.history, driver.ChatTurn{Role: "user", Text: text + steersNote(c.turnSteers)}, driver.ChatTurn{Role: "assistant", Text: res.Text})
 	c.memory = remember(c.memory, c.turnEchoes)
 	if rec, ok := newToolRecord(text, c.turnTools); ok {
 		c.toolLog = append(c.toolLog, rec)

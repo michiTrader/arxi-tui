@@ -699,6 +699,7 @@ var handled = map[string]bool{
 	"chat.approval":   true,
 	"chat.decided":    true,
 	"chat.cancelled":  true,
+	"chat.steered":    true,
 	"chat.queued":     true,
 	"chat.unqueued":   true,
 	"run.started":     true,
@@ -995,6 +996,15 @@ func (s *State) apply(e Event) {
 		// of the last turn that happened to finish.
 		if c, ok := e.Payload["context_tokens"].(float64); ok && c > 0 {
 			s.LastContext = uint64(c)
+		}
+
+	case "chat.steered":
+		// A line the user wrote while the answer ran, which the core has put into the
+		// turn: it is a line of the conversation under the user's own role, where it
+		// happened, so the answer that follows reads as the reply to it.
+		s.ThinkingText = ""
+		if text, _ := e.Payload["text"].(string); text != "" {
+			s.History = append(s.History, ChatLine{Role: "user", Text: text})
 		}
 
 	case "chat.queued":

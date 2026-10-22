@@ -447,6 +447,14 @@ type turnSteerer interface {
 	StopForSteer() bool
 }
 
+// liveSteerer is the optional capability a Driver has when the turn in flight can take a
+// line while it runs (serveDriver, with a core that says so). Steer returns an error, and
+// has sent nothing, when it cannot: the caller then stops the turn and sends a new one.
+type liveSteerer interface {
+	CanSteer() bool
+	Steer(text string) error
+}
+
 // cancelRunningTurn stops the turn in flight, if the driver has one. The conversation
 // gets its "Cancelled" line from the driver's own event, not from here.
 func cancelRunningTurn(drv Driver) bool {
@@ -1633,6 +1641,22 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				sceneNotice = "this session cannot be steered; the line is kept, send it when the answer ends"
 			case pkgs.hasRules() && pipeBusy:
 				sceneNotice = "the rules are still checking the previous line; nothing was stopped, try again in a moment"
+			case func() bool {
+				// A core that takes a line while the turn runs: the model reads it at its
+				// next step and keeps everything it had done. A line with pictures cannot
+				// (the core takes text only), and neither can a turn the core did not offer
+				// steering for; those stop the turn, below.
+				ls, ok := drv.(liveSteerer)
+				// Input rules are the packages' to apply to a line before it is sent, and a line
+				// written straight to the turn would skip them.
+				return ok && !pkgs.hasRules() && ls.CanSteer() && len(images.used(input)) == 0 && ls.Steer(text) == nil
+			}():
+				hist.Add(text)
+				chatScroll = 0
+				input, caret, draft, draftCaret = "", 0, "", 0
+				pastes.reset()
+				images.reset()
+				sceneNotice = "sent to the answer in flight; it reads it at its next step"
 			default:
 				// The answer in flight is stopped where it is (what it did stays in the
 				// history, see chatSession.stopForSteer) and the line goes at once. The
@@ -2182,6 +2206,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 				case queueCh <- 0:
 				default:
 				}
+			}
+		case "chat.steer_unsent":
+			// A line written to the answer that ended before it could read it: it waits
+			// with the others and goes next, in the order it was written.
+			if t, _ := e.Payload["text"].(string); t != "" {
+				msgQ = append(msgQ, t)
+				queuedMark(t)
 			}
 		case "chat.cancelled":
 			giveBackQueue("you stopped the answer")

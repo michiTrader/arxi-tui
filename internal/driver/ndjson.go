@@ -34,6 +34,9 @@ type NDJSONDriver struct {
 	scanner *bufio.Scanner
 	enc     *json.Encoder
 	mu      sync.Mutex
+	// wmu guards the encoder while a call is being watched: lines are then written both
+	// by the loop that reads the core and by a caller steering from its own goroutine.
+	wmu sync.Mutex
 	// hello is what the core announced, kept because `implemented` is the
 	// only place a client can learn that a declared verb has no executor.
 	hello *Hello

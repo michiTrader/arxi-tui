@@ -14,6 +14,15 @@ instead. Not wired into the binary yet (no size change: 9,961,825 B). Open: wire
 keymap action (next PR, re-measure size); mutation checks not done for the refusal lists and the library
 functions; the `drainQueue` retry now has its tests (#325).
 
+## Done since: C7, a line written to an answer in flight (branch feat/tui-steer)
+
+TUI half of mid-turn steering (core half: ADR-0055, #328). `queue.steer` writes the line to a running turn when
+the core says `chat.steerable`; the model reads it at its next tool round and keeps what it had done. Otherwise
+the C4 stop-and-resend. What the core never read comes back as `chat.steer_unsent` and goes out after the
+answer. See DESIGN-OPEN-TUI, Built C7. Open: the write lock around a steer is caught only under `go test -race`
+and CI does not run `-race`; no run against the real core end to end; a line with pictures still stops the
+turn; the `down` row needs the phase-D shells chip.
+
 ## Done since: C4, steer + enter_while_busy + queued lines on screen (branch feat/steer-busy-setting)
 
 `alt+enter` and a second `enter` row make steer (stop the answer, send at once) and queue each other's other way,
