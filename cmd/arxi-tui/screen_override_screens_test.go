@@ -23,14 +23,20 @@ func TestLoopShowsTheProfilesFlowScreen(t *testing.T) {
 	}
 }
 
-func TestLoopShowsTheProfilesTeamScreen(t *testing.T) {
-	t.Setenv(configDirEnv, t.TempDir())
-	writeScreen(t, "team", strings.Replace(replacementScreen, "PROFILE HUB", "PROFILE TEAM", 1))
+// teamDriver is a driver whose core describes one team, in a fresh working folder.
+func teamDriver(t *testing.T) *teamTestDriver {
+	t.Helper()
 	root := t.TempDir()
 	writeAgents(t, root, "feature-team.yaml")
 	t.Chdir(root)
 	core := teamHubCore{fakeTeamCore: &fakeTeamCore{infos: map[string]*driver.BlueprintInfo{"feature-team.yaml": featureTeamInfo()}}}
-	drv := &teamTestDriver{testDriver: testDriver{evCh: make(chan fold.Event, 64)}, core: core}
+	return &teamTestDriver{testDriver: testDriver{evCh: make(chan fold.Event, 64)}, core: core}
+}
+
+func TestLoopShowsTheProfilesTeamScreen(t *testing.T) {
+	t.Setenv(configDirEnv, t.TempDir())
+	writeScreen(t, "team", strings.Replace(replacementScreen, "PROFILE HUB", "PROFILE TEAM", 1))
+	drv := teamDriver(t)
 	out := screenLoopWith(t, builtinDoc(t), drv, drv.evCh, "/team", "PROFILE TEAM")
 	if !strings.Contains(out, "PROFILE TEAM") {
 		t.Errorf("/team did not show the profile's screen:\n%s", out)

@@ -16,6 +16,12 @@ const installerRegistry = `{"version":"reg/v1","entries":[{"id":"tick","name":"T
 // the screen drew once want appeared.
 func installerLoop(t *testing.T, want string) string {
 	t.Helper()
+	return installerLoopEdit(t, want, nil)
+}
+
+// installerLoopEdit is installerLoop with a change to the profile made once the loop runs.
+func installerLoopEdit(t *testing.T, want string, edit func()) string {
+	t.Helper()
 	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(installerRegistry))
 	}))
@@ -24,7 +30,7 @@ func installerLoop(t *testing.T, want string) string {
 	newRegistryFetchClient = func() *http.Client { return ts.Client() }
 	defer func() { newRegistryFetchClient = old }()
 	drv := &testDriver{evCh: make(chan fold.Event, 64)}
-	return screenLoopWith(t, builtinDoc(t), drv, drv.evCh, "/ui plugin browse "+ts.URL, want)
+	return screenLoopEdit(t, builtinDoc(t), drv, drv.evCh, "/ui plugin browse "+ts.URL, want, edit)
 }
 
 // The installer is drawn from the profile's installer.json when there is one.

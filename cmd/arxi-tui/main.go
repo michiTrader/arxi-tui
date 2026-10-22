@@ -894,6 +894,12 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		}
 		return d, err
 	}
+	// reread loads a screen again each time it opens, so an edit to its file shows at once
+	// without a restart. why is the notice for a file that could not be used; the caller sets
+	// it after the screen's own notice, which would otherwise wipe it.
+	reread := func(name string, builtin func() (*scene.Document, error)) (*scene.Document, string, error) {
+		return loadScreen(name, builtin, persistsScene(doc))
+	}
 	flowDoc, flowDocErr := screenFor("flow", loadFlowScene)
 	// team is the open /team screen: the architecture of ./agents/*.yaml, read
 	// from the core on a worker (teamCh carries the answer back).
@@ -1016,6 +1022,13 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// user who asked to see the providers must see a screen, not a vanished word.
 	openHub := func(open hubOpen) {
 		hubWant = open
+		var why string
+		hubDoc, why, hubDocErr = reread("hub", loadHubScene)
+		defer func() {
+			if why != "" {
+				sceneNotice = why
+			}
+		}()
 		if hubDocErr != nil {
 			sceneNotice = "/provider: " + hubDocErr.Error()
 			return
@@ -3072,6 +3085,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if hc, _ := drv.(interface{ Hub() hubCore }); hc != nil && hc.Hub() != nil {
 								tc, _ = hc.Hub().(teamCore)
 							}
+							var why string
+							teamDoc, why, teamDocErr = reread("team", loadTeamScene)
 							switch {
 							case teamDocErr != nil:
 								sceneNotice = "/team: " + teamDocErr.Error()
@@ -3081,6 +3096,9 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 								team = newTeamScreen(tc.Hello())
 								sceneNotice = ""
 								startTeamRead(ctx, tc, cwd, teamCh)
+							}
+							if why != "" {
+								sceneNotice = why
 							}
 							input = ""
 							caret = 0
@@ -3092,6 +3110,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if hc, _ := drv.(interface{ Hub() hubCore }); hc != nil && hc.Hub() != nil {
 								ac, _ = hc.Hub().(autoCore)
 							}
+							var why string
+							autoDoc, why, autoDocErr = reread("auto", loadAutoScene)
 							switch {
 							case autoDocErr != nil:
 								sceneNotice = "/auto: " + autoDocErr.Error()
@@ -3108,18 +3128,26 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 									_ = as.EnsureScheduler(ctx)
 								}
 							}
+							if why != "" {
+								sceneNotice = why
+							}
 							input = ""
 							caret = 0
 							slashSel = 0
 						} else if ev.Key.Type == term.KeyEnter && flowCommand(input, slashSel, slashCat) {
 							// `/flow` opens the team screen. With a broken embedded
 							// document it says why instead of vanishing.
+							var why string
+							flowDoc, why, flowDocErr = reread("flow", loadFlowScene)
 							if flowDocErr != nil {
 								sceneNotice = "/flow: " + flowDocErr.Error()
 							} else {
 								flow = &flowScreen{}
 								sceneNotice = ""
 								startFlowPlan(ctx, planReader(drv), cwd, planTeam(drv), flowCh)
+							}
+							if why != "" {
+								sceneNotice = why
 							}
 							input = ""
 							caret = 0
@@ -3982,8 +4010,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			if out.err != nil {
 				sceneNotice = "/ui plugin browse: " + out.err.Error()
 			} else {
+				var why string
+				liveInstaller, why, liveInstallerErr = reread("installer", ext.LiveInstallerScene)
 				browse = newInstallerBrowse(out.reg)
-				sceneNotice = ""
+				sceneNotice = why
 			}
 			repaint()
 		}

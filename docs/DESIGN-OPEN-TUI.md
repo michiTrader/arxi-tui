@@ -603,8 +603,12 @@ Only the everyday interface reads the folder (`persistsScene`), so `-raw` and `-
   `ext.LiveInstallerScene()`) caught by the 30 s wait timing out. `/settings`, `/keys`, `/model` and the slash menu are
   not separate screens: `/settings` and `/keys` borrow the `model.active` overlay of the main scene, so they are reshaped
   by replacing the main scene, which already works; no test replaces just that overlay.
-- NOT done, said plainly: a replacement is not re-read while the
-  app runs (restart to see a change); there is no `/ui` verb to write one, so today it is a file edit. The sandbox
+- Live reload (follow-up): every screen's file is read again each time the screen opens (`reread` in `main.go`), through
+  the real loop for all five screens plus a file broken while running (notice shown, built-in screen drawn). The flow
+  screen had no node for `host.scene.error`, so a refusal there was invisible; it has one now. Five mutants (no reread
+  per screen), each caught by the 30 s wait timing out. An already-open screen is not swapped under the user; the edit
+  shows on the next open.
+- NOT done, said plainly: there is no `/ui` verb to write one, so today it is a file edit. The sandbox
   was reset once while this was being written and the first attempt was lost before it was pushed; this is the redo.
 
 ### Built (D5): tabs and a popup are a scene, no engine change
