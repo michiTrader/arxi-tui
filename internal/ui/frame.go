@@ -24,10 +24,41 @@ import (
 // green belongs to the token. Emit merges them — Style over Fill — so the token
 // keeps its colour without punching a hole in the band. Text and Width ignore it,
 // which is why a wash can never move a golden file.
+//
+// Hit names what a press on this span presses: the id of a pressable node, or the id and
+// the row of one inside a row_template (engine.HitKey). It is empty for everything that is
+// only drawn. Emit ignores it, like Fill, so it can never move a golden; it rides along
+// wherever a span is cut, wrapped or restyled so the frame on screen can answer "what is
+// under the pointer" without the host recomputing the layout.
 type Span struct {
 	Text  string
 	Style string
 	Fill  string
+	Hit   string
+}
+
+// HitAt is the Hit under the pointer at zero-based cell (col, row) of the rows on screen, or "" when
+// the pointer is outside them or on a span with none. The host keeps this method of the last
+// frame it painted, not the rows, so it never builds or holds screen content itself.
+func (f Frame) HitAt(col, row int) string {
+	if row < 0 || row >= len(f.Live) || col < 0 {
+		return ""
+	}
+	return f.Live[row].HitAt(col)
+}
+
+// HitAt is the Hit of the span that covers display column col of the line, or "" when the
+// column is past the end or under a span with none.
+func (l Line) HitAt(col int) string {
+	at := 0
+	for _, s := range l {
+		w := ansi.StringWidth(s.Text)
+		if col >= at && col < at+w {
+			return s.Hit
+		}
+		at += w
+	}
+	return ""
 }
 
 // Line is one terminal row. It must never be wider than the frame that holds it.

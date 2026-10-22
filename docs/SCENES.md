@@ -27,6 +27,9 @@ filterable list is a primitive.
 
 ## Primitive vocabulary (v0, settled)
 
+Any node with an `id` and an `on_press` is pressed by Tab+Enter and by a left click on the cells it draws (the innermost
+node wins; a row of a `row_template` is pressed per row).
+
 Containers: `stack`, `row`, `box` (optional border), `overlay` (anchored,
 floats above everything; `anchor:"full"` legal and, gated on `ui.max.is.<pane>`, a window: it replaces the
 screen whatever its height, hides the caret, and its pressable nodes enter the Tab ring while it is open).

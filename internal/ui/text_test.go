@@ -164,3 +164,31 @@ func TestWrappingLosesNoWord(t *testing.T) {
 		}
 	}
 }
+
+// Wrapping splits a span across rows; the pieces must still press what the whole pressed.
+// Consequence: a pressable child that a row wraps can be clicked on its first piece only.
+// Remedy: copy Hit when WrapSpans cuts a span.
+func TestWrapSpansKeepsTheHitOfASplitSpan(t *testing.T) {
+	lines := WrapSpans([]Span{{Text: "alpha beta gamma delta", Hit: "k"}}, 8, nil)
+	if len(lines) < 2 {
+		t.Fatalf("premise: the span must split, got %d rows", len(lines))
+	}
+	for _, l := range lines {
+		if got := l.HitAt(0); got != "k" {
+			t.Errorf("row %q carries hit %q, want %q", l.Text(), got, "k")
+		}
+	}
+}
+
+// Frame.HitAt is the pointer's door into a frame: outside the rows it answers nothing.
+func TestFrameHitAtIsBoundedByTheRows(t *testing.T) {
+	f := Frame{Live: []Line{{{Text: "ab", Hit: "k"}}, {{Text: "cd"}}}}
+	for _, c := range []struct {
+		col, row int
+		want     string
+	}{{0, 0, "k"}, {1, 0, "k"}, {2, 0, ""}, {0, 1, ""}, {0, 2, ""}, {0, -1, ""}, {-1, 0, ""}} {
+		if got := f.HitAt(c.col, c.row); got != c.want {
+			t.Errorf("HitAt(%d,%d) = %q, want %q. Consequence: a click outside the screen, or on a row below it, presses something. Remedy: bound both axes.", c.col, c.row, got, c.want)
+		}
+	}
+}

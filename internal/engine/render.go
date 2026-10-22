@@ -44,6 +44,7 @@ func cutLine(l ui.Line, left, right int) ui.Line {
 				Text:  ansi.Cut(s.Text, start, end),
 				Style: s.Style,
 				Fill:  s.Fill,
+				Hit:   s.Hit,
 			})
 		}
 		col = next
@@ -426,10 +427,51 @@ func (r *Renderer) renderNode(n *scene.Node, state fold.State, budget int) ui.Fr
 	// row_template) into the frame, row:false dims the whole rendered subtree as
 	// one unit. Both need the node's ordinary rendering first, so enter delegates
 	// to renderByType and post-processes the frame.
+	var f ui.Frame
 	if n.Enter != nil {
-		return r.renderEnter(n, state, budget)
+		f = r.renderEnter(n, state, budget)
+	} else {
+		f = r.renderByType(n, state, budget)
 	}
-	return r.renderByType(n, state, budget)
+	if n.OnPress != "" && n.ID != "" {
+		key := n.ID
+		if r.curRow != nil {
+			key = HitKey(n.ID, r.curRowIndex)
+		}
+		f = stampHit(f, key)
+	}
+	return f
+}
+
+// HitMarker joins a node id and a row index in the key of a pressable node inside a
+// row_template. It is a NUL, which no author-written id contains, so a row key cannot equal a
+// plain id. The host's focus cursor uses the same key (rowFocusKey), so a press with the pointer
+// and a press with Tab and Enter name the same target by construction.
+const HitMarker = "\x00row\x00"
+
+// HitKey is the key of node id in instantiated row index.
+func HitKey(id string, index int) string { return id + HitMarker + strconv.Itoa(index) }
+
+// stampHit marks every span of f that no inner pressable node has already claimed as pressing
+// key, so the innermost pressable node under the pointer wins. It copies the lines it changes:
+// a frame may share rows with a cache.
+func stampHit(f ui.Frame, key string) ui.Frame {
+	if len(f.Live) == 0 {
+		return f
+	}
+	live := make([]ui.Line, len(f.Live))
+	for i, l := range f.Live {
+		nl := make(ui.Line, len(l))
+		for j, s := range l {
+			if s.Hit == "" {
+				s.Hit = key
+			}
+			nl[j] = s
+		}
+		live[i] = nl
+	}
+	f.Live = live
+	return f
 }
 
 // withRowText substitutes the {row.<field>} references in a node's drawn text, title and

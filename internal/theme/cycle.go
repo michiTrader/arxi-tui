@@ -559,7 +559,7 @@ func (t *Theme) cycleLine(l ui.Line, row int, now time.Time, fps *int, geo map[s
 			for _, r := range s.Text {
 				cell := string(r)
 				space := int(math.Round(fl.pos(*b, at, row) / ext * window))
-				out = append(out, ui.Span{Text: cell, Style: s.Style + cycleSep + strconv.Itoa(((tick-space)%total+total)%total), Fill: s.Fill})
+				out = append(out, ui.Span{Text: cell, Style: s.Style + cycleSep + strconv.Itoa(((tick-space)%total+total)%total), Fill: s.Fill, Hit: s.Hit})
 				at += ansi.StringWidth(cell)
 			}
 			col += width
@@ -584,6 +584,7 @@ func (t *Theme) cycleLine(l ui.Line, row int, now time.Time, fps *int, geo map[s
 				Text:  string(r),
 				Style: s.Style + cycleSep + strconv.Itoa((step+j*c.Spread)%len(c.Colors)),
 				Fill:  s.Fill,
+				Hit:   s.Hit,
 			})
 		}
 	}

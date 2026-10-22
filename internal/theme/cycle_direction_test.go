@@ -298,3 +298,21 @@ func TestAngleAndFlagsSurviveTheJSONRoundTrip(t *testing.T) {
 		t.Errorf("Def() = %+v", d)
 	}
 }
+
+// A gradient that paints one shade per cell splits a span into cells; each cell is still the
+// press target of the span it came from.
+// Consequence: a button with a gradient border or label can be clicked only on cells nobody split.
+// Remedy: copy Hit where the positional branch of Cycled makes a cell.
+func TestAPositionalGradientKeepsTheHitOfEveryCell(t *testing.T) {
+	h := loadDir(t, "horizontal", "")
+	f := ui.Frame{Live: []ui.Line{{{Text: "abcdef", Style: "g", Hit: "k"}}}}
+	out, _ := h.Cycled(f, time.UnixMilli(0))
+	if len(out.Live[0]) < 2 {
+		t.Fatalf("premise: the gradient must split the span into cells, got %d spans", len(out.Live[0]))
+	}
+	for _, s := range out.Live[0] {
+		if s.Hit != "k" {
+			t.Errorf("cell %q lost its hit (%q)", s.Text, s.Hit)
+		}
+	}
+}

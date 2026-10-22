@@ -961,6 +961,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// chatBar is where the last frame drew the chat's scrollbar and barDrag whether its thumb is
 	// held: a press on the bar starts it, motion with the button down moves the chat, release ends.
 	var chatBar engine.ChatBar
+	// hitAt answers, for the frame last painted, which pressable node is under a cell: a click
+	// asks it what is under the pointer, so it never recomputes a layout the screen may
+	// no longer have.
+	var hitAt func(col, row int) string
 	chatCache := &engine.ChatRowCache{} // rows of the chat already laid out, kept between frames
 	var sentPastes sentPaste            // the line just sent, as the bar showed it, for the chat to draw
 	var pastes pasteStore               // big pastes kept aside while the input shows [Pasted text #N +L lines]
@@ -2170,6 +2174,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// screen. Only style changes -- never text or width -- so layout and
 		// goldens (which see the resting colour) are untouched.
 		frame, cycleRate := theme.Cycled(frame, cycleNow())
+		hitAt = frame.HitAt
 		armCycle(cycleRate)
 		emitFrame(tty, frame, theme, h, caretState, caretLit(time.Now(), lastKey))
 		armTicker()
@@ -3542,6 +3547,22 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 						if g, ok := barGrab(chatBar, m.Col, m.Row); ok {
 							barDrag, barGrabAt = true, g
 							chatScroll = barScroll(chatBar, m.Row, g)
+						} else if hit := clickTarget(hitAt, m.Col, m.Row); clickMayPress(hit, keymapFacts(term.Key{}).screenOpen, modal.capturing() || bundleMod.capturing()) {
+							// A press with the pointer is the press Enter would make on the
+							// same node: same door (pressFocused), same on_press. The draft
+							// stays: a click is not a submitted line. The focus cursor stays
+							// where it was, unless the press itself moved it (focus:).
+							st := pressState(collected, drv, uiMax)
+							_, _, next := pressFocused(hit, input, &doc, st, &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) {
+								if raw, isRaw := strings.CutPrefix(line, rawActionMark); isRaw {
+									enqueue(actionList{raw}, false)
+									return
+								}
+								enqueue(actionList{"cmd:" + line}, false)
+							}, ctx, drv)
+							if next != hit {
+								uiFocus = next
+							}
 						}
 					case term.MouseDrag:
 						if barDrag {

@@ -37,6 +37,12 @@ opens `/shell`) and `up` gives the input back; every other `down` is the history
 no longer stops on nodes whose `when` is false. The factory scene hash moved on purpose (see GUARDRAILS section 4);
 unfocused it draws the same bytes. Open: Esc does not leave the chip; no window of shells yet (phase D).
 
+## Done since: D3, a click presses (branch feat/mouse-press-d3)
+
+A left click on a pressable node or row runs its `on_press`, through the same function as Enter on the focused node.
+Spans carry `Hit` (engine.HitKey). Open: no test for the `clickMayPress` call in the loop (a mutant removing it
+survived); hover, drag, other buttons; no click moves the input caret; Termux leaves the mouse to the terminal.
+
 ## Done since: D2, a test that no Go file draws a screen (branch feat/components-d2)
 
 `TestNoGoFileDrawsAScreen` fails if a host file other than `emitFrame` builds `ui.Line`, `ui.Span`, `ui.Frame` or
