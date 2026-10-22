@@ -40,8 +40,9 @@ to move the line, not to add more exceptions.
 
 Two limits outside this repository matter for the plan:
 
-- The core declares `--on-busy steer` but honours only `queue`; steering does not interrupt a turn
-  (`core/cmd/arxi/inject.go`, `steer.go`) **(verified)**. Real mid-turn steering is core work.
+- The core declared `--on-busy steer` but honoured only `queue`; steering did not reach a turn
+  (`core/cmd/arxi/inject.go`, `steer.go`) **(verified)**. This was core work and is done: ADR-0055
+  (core #328) and the "Built (C7)" section below.
 - The core is a separate Go module with no third-party dependencies **(verified)** and stays so.
 
 ## 3. Constraints (the guardrails)
@@ -392,9 +393,8 @@ A condition that cannot be decided shows a notice and does not take the key.
   per finished answer (through the `input.pre` rules like a typed line), put back on the input when
   the answer is stopped or fails, forgotten by `/clear` and `/resume`. The line goes into the history.
   A line with a picture is refused with a notice, because the marker would outlive its picture.
-- Real mid-turn steering is still core work and is not done; the queue is the honest version.
-  (C4 below adds the TUI side of steering: stop the turn and send at once. The core still cannot
-  take a message into a turn in flight.)
+- Real mid-turn steering was still core work at this point (done later: C7 below). C4 below adds the
+  stop-and-send form of steering.
 - Size: the android/arm64 binary (`CGO_ENABLED=0`, `-s -w`, `-trimpath`) is 9,896,289 B against
   9,830,753 B on master, +65,536 B. The limit is 11,000,000 B.
 - Checked by breaking it on purpose (30 mutants in two rounds, run on a committed tree). The first
@@ -445,6 +445,46 @@ already has its own (`chat_history.go`, `chat_memory.go`), and the two do the sa
   wait-and-retry of `drainQueue` (still no test of its own), and the removal of `queuedMark(text)`,
   which I could not write as a mutant that compiles.
 
+
+### Built (C7): a line written to an answer in flight
+
+Core half: ADR-0055 (core #328). TUI half (branch `feat/tui-steer`):
+
+- When a `chat.send` with tools runs, the core writes `chat.steerable`. From then on the driver can
+  write `{"type":"chat.steer","text":...}` on the turn's own connection (`ChatSendParams.OnSteerable`,
+  serialised with the reader's other writes by `NDJSONDriver.wmu`, `ErrTurnOver` after the call ends).
+  The core reads it between a tool round and the next ask, appends it as a user message, and answers
+  `chat.steered` with the text it took (several texts since the last ask are joined by a blank line).
+- `queue.steer` first tries that (`liveSteerer`: `CanSteer`, `Steer`). The model keeps everything it had
+  read and done. It falls back to the C4 stop-and-resend when there is no live steer: an older core,
+  a line with pictures, package input rules (a line written straight to the turn would skip them), a
+  turn with no tools, a write that failed.
+- A text written stays *owed* (`chatSession.steerOwed`) until `chat.steered` says the core took it.
+  What the core never read (the turn ended first) comes back as `chat.steer_unsent`, which the loop puts
+  on the queue; cancelling gives it back too; `stopForSteer` folds it into the history note instead,
+  because the replacement line overtakes it.
+- What the core took shows as a user line in place (`chat.steered` in `internal/fold`), is recorded in
+  the saved session, and enters the history as an "App note" appended to the request
+  (`steersNote`), live and when resumed alike, so "retry" after a stopped turn means the request as it
+  had become.
+- Wire only, no new surface capability: an older core never says `chat.steerable`, and the TUI never
+  writes `chat.steer` to it (it would answer it as a response, which the turn's reader would take as the
+  turn's own result).
+- Size: android/arm64 10,223,969 B, the same as master (the binaries differ; the size is aligned).
+  The limit is 11,000,000 B.
+- Tests: driver (4, with `-race`), chatSession (10), fold (2), history live-vs-resumed (2), and the
+  loop with the real key (4). Mutation checks (committed tree, one mutant at a time, 17 first-round
+  mutants plus 4 reformulated): 13 caught by the intended test at once, 2 survived at first
+  (`steered`/`steerable` ignoring which turn they belong to; the old-turn test had no running next
+  turn, so `canSteer` hid it), and 2 did not compile (a `gen+1000` variant of the give-back and a
+  note without `owed`). After rewriting the old-turn test and the two mutants, all four are caught by the
+  right test. Driver half, 6 mutants on `callWatching`: 4 caught by the intended test, 1 did not
+  compile (rewritten, then caught), and **1 survives without `-race`**: removing the write lock around
+  a steer is caught only by `TestSteeringWhileDecisionsAreWrittenKeepsEveryLineWhole` under `-race`,
+  and CI does not run `-race`. So that lock is not protected by CI today; run
+  `go test -race ./internal/driver` when touching it. **Not checked:** the real core against the real
+  TUI end to end (each half is tested against a fake of the other).
+- Not done: the `down` row (needs the phase-D shells chip), a line with pictures cannot steer live.
 
 ### Built (C5): tier 2, `internal/script`
 

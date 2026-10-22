@@ -287,7 +287,22 @@ type ChatSendParams struct {
 	// long tool loop runs and after a call that fails; a core that does not report it
 	// never calls it.
 	OnUsage func(contextTokens int)
+	// OnSteerable, when set, is called once if the core says this turn takes steering
+	// (chat.steerable), with the function that sends a steering text to it. The text
+	// joins the turn's conversation before the model's next ask, and OnSteered says
+	// when it has. The function is safe to call from another goroutine while the call
+	// runs, and returns an error once the turn is over or the line cannot be written;
+	// then nothing was sent. A core that never says chat.steerable never calls it, and
+	// the caller falls back to stopping the turn and sending a new one.
+	OnSteerable func(steer func(text string) error)
+	// OnSteered is told which text the core took into the turn: the texts sent since the
+	// last ask, joined by a blank line, oldest first. A text that is never reported was
+	// not taken (the turn ended first) and is the caller's to send again.
+	OnSteered func(text string)
 }
+
+// ErrTurnOver is what a steer returns when the call it was meant for has ended.
+var ErrTurnOver = errors.New("the turn is over, so the text was not sent")
 
 // Retry is one automatic retry the core announced: the next try of a chat call, after
 // the provider answered "not now".
@@ -453,7 +468,8 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 	if p.OnThinking != nil || p.OnRetry != nil || p.OnUsage != nil {
 		params["stream_thinking"] = true
 	}
-	err := d.callWatching(ctx, "chat-send", "chat.send", params, &r, p.OnThinking, p.OnTool, p.OnApproval, p.OnClientTool, p.OnRetry, p.OnUsage)
+	hooks := steerHooks{p.OnSteerable, p.OnSteered}
+	err := d.callWatching(ctx, "chat-send", "chat.send", params, &r, p.OnThinking, p.OnTool, p.OnApproval, p.OnClientTool, p.OnRetry, p.OnUsage, hooks)
 	var ref *Refusal
 	if errors.As(err, &ref) && ref.Code == "bad_params" {
 		// Only the part that names what was refused: the rest of the message lists
@@ -482,7 +498,7 @@ func (d *NDJSONDriver) SubmitChatSend(ctx context.Context, p ChatSendParams) (*C
 			// would have streamed is simply asked again the plain way.
 			delete(params, "stream_thinking")
 			if p.Workdir != "" {
-				err = d.callWatching(ctx, "chat-send", "chat.send", params, &r, nil, p.OnTool, p.OnApproval, p.OnClientTool, p.OnRetry, p.OnUsage)
+				err = d.callWatching(ctx, "chat-send", "chat.send", params, &r, nil, p.OnTool, p.OnApproval, p.OnClientTool, p.OnRetry, p.OnUsage, hooks)
 			} else {
 				err = d.call(ctx, "chat-send", "chat.send", params, &r)
 			}
@@ -513,6 +529,12 @@ func refusedPart(msg string) string {
 	return msg
 }
 
+// steerHooks are the two callbacks of mid-turn steering (see ChatSendParams.OnSteerable).
+type steerHooks struct {
+	onSteerable func(steer func(text string) error)
+	onSteered   func(text string)
+}
+
 // callWatching is call for a request the core answers with notifications first.
 // A line with a type and no id is a notification: chat.thinking goes to
 // onThinking, chat.tool to onTool, chat.approval to onApproval (whose answer goes
@@ -523,13 +545,31 @@ func refusedPart(msg string) string {
 // chat.retry goes to onRetry. chat.client_tool goes to onClient, and its answer goes back as a
 // chat.client_result line the same way; with no onClient the call fails, so the
 // turn goes on and the model is told.
-func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params map[string]any, out any, onThinking func(string), onTool func(ToolCall), onApproval func(context.Context, Approval) bool, onClient func(context.Context, ClientToolCall) ClientToolResult, onRetry func(Retry), onUsage func(int)) error {
+func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params map[string]any, out any, onThinking func(string), onTool func(ToolCall), onApproval func(context.Context, Approval) bool, onClient func(context.Context, ClientToolCall) ClientToolResult, onRetry func(Retry), onUsage func(int), steer steerHooks) error {
 	req := protoRequest{ID: id, Type: verb, Params: params}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 
-	if err := d.enc.Encode(req); err != nil {
+	// ended is set when this call returns, under the write lock, so a steer written from
+	// another goroutine can never land on the connection after the call is over: the
+	// next request would be reading that line's company.
+	var ended bool
+	defer func() {
+		d.wmu.Lock()
+		ended = true
+		d.wmu.Unlock()
+	}()
+	// write is the one way a line leaves while the call runs. The reading loop writes
+	// decisions and client results, and a steer is written from the caller's goroutine,
+	// so the encoder is not theirs to share without a lock.
+	write := func(v any) error {
+		d.wmu.Lock()
+		defer d.wmu.Unlock()
+		return d.enc.Encode(v)
+	}
+
+	if err := write(req); err != nil {
 		return fmt.Errorf("ndjson: send %s: %w", verb, err)
 	}
 	for {
@@ -577,15 +617,26 @@ func (d *NDJSONDriver) callWatching(ctx context.Context, id, verb string, params
 				onTool(ToolCall{ID: head.CallID, Name: head.Name, Arg: head.Arg, OK: head.OK, Summary: head.Summary, Output: head.Output, Diff: head.Diff})
 			case head.Type == "chat.approval":
 				allow := onApproval != nil && onApproval(ctx, Approval{CallID: head.CallID, Name: head.Name, Arg: head.Arg, Summary: head.Summary, Diff: head.Diff})
-				if err := d.enc.Encode(map[string]any{"type": "chat.decision", "call_id": head.CallID, "allow": allow}); err != nil {
+				if err := write(map[string]any{"type": "chat.decision", "call_id": head.CallID, "allow": allow}); err != nil {
 					return fmt.Errorf("ndjson: answer %s: %w", head.CallID, err)
 				}
+			case head.Type == "chat.steerable" && steer.onSteerable != nil:
+				steer.onSteerable(func(text string) error {
+					d.wmu.Lock()
+					defer d.wmu.Unlock()
+					if ended {
+						return ErrTurnOver
+					}
+					return d.enc.Encode(map[string]any{"type": "chat.steer", "text": text})
+				})
+			case head.Type == "chat.steered" && steer.onSteered != nil:
+				steer.onSteered(head.Text)
 			case head.Type == "chat.client_tool":
 				res := ClientToolResult{Text: head.Name + " is not available in this client"}
 				if onClient != nil {
 					res = onClient(ctx, ClientToolCall{CallID: head.CallID, Name: head.Name, Arguments: head.Arguments})
 				}
-				if err := d.enc.Encode(map[string]any{"type": "chat.client_result", "call_id": head.CallID,
+				if err := write(map[string]any{"type": "chat.client_result", "call_id": head.CallID,
 					"ok": res.OK, "text": res.Text, "arg": res.Arg, "summary": res.Summary, "diff": res.Diff}); err != nil {
 					return fmt.Errorf("ndjson: answer %s: %w", head.CallID, err)
 				}

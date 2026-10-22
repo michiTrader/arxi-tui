@@ -52,7 +52,7 @@ var sessionIDRe = regexp.MustCompile(`^[0-9]{8}-[0-9]{6}-[0-9a-f]{4}$`)
 // context was: an answer carries its own size, but a turn that ended in an error (a timeout
 // is the common one) has no answer, and without these the resumed bar had nothing to show.
 var sessionKinds = map[string]bool{
-	"run.prompt": true, "llm.response": true, "chat.tool": true,
+	"run.prompt": true, "llm.response": true, "chat.tool": true, "chat.steered": true,
 	"chat.error": true, "chat.warn": true, "chat.cancelled": true,
 	"chat.usage": true, "chat.compacted": true,
 }
@@ -417,6 +417,11 @@ func historyFromEvents(evs []fold.Event) []driver.ChatTurn {
 			t.Output, _ = e.Payload["output"].(string)
 			if d := toolDigestEntry(t); d != "" {
 				echoes = append(echoes, toolEcho{entry: d, output: t.Output})
+			}
+		case "chat.steered":
+			// Added to the question while it ran: the model read it as part of the request.
+			if have {
+				pending += steersNote([]string{text})
 			}
 		case "run.prompt":
 			if have {
