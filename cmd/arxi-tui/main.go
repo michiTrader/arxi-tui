@@ -3397,7 +3397,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if picked != "" {
 								enqueue(actionList{"cmd:" + picked}, false)
 							}
-						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, pressState(collected, drv), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) {
+						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, pressState(collected, drv, uiMax), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) {
 							if raw, isRaw := strings.CutPrefix(line, rawActionMark); isRaw {
 								enqueue(actionList{raw}, false)
 								return

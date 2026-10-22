@@ -28,7 +28,8 @@ filterable list is a primitive.
 ## Primitive vocabulary (v0, settled)
 
 Containers: `stack`, `row`, `box` (optional border), `overlay` (anchored,
-floats above everything; `anchor:"full"` legal).
+floats above everything; `anchor:"full"` legal and, gated on `ui.max.is.<pane>`, a window: it replaces the
+screen whatever its height, hides the caret, and its pressable nodes enter the Tab ring while it is open).
 Content: `text`, `markdown`, `input`, `spinner`, `marquee`, `list`
 (filterable, categories, count, `row_template` with relative binds),
 `button`, `switch`/`slider`, `sparkline`, `rule`.
