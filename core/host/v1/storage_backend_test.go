@@ -49,22 +49,33 @@ func TestStoragePortDrivesFullLifecycle(t *testing.T) {
 
 func TestWaitAndInspectObserveDurableTerminalAfterWorkerRemoval(t *testing.T) {
 	storage := newMemoryStorage()
-	h := New(Options{Storage: storage, Provider: textProviderStub{}})
+	// The provider holds the worker inside its external call, so the test
+	// observes the resident worker before it can possibly finish. A simulated
+	// run may complete and remove its worker before the test looks for it,
+	// which made this regression depend on scheduler timing.
+	provider := &blockingTextProvider{started: make(chan struct{}), release: make(chan struct{})}
+	h := New(Options{Storage: storage, Provider: provider})
 	defer h.Close()
 	result, err := h.Submit(context.Background(), SubmitRequest{
-		Blueprint: testBlueprint, Prompt: "work", BudgetUSD: 1, Simulated: true,
+		Blueprint: testBlueprint, Prompt: "work", BudgetUSD: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	select {
+	case <-provider.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("provider did not start: the worker never reached its external call")
+	}
 	backend := h.backend.(*storageBackend)
 	worker := backend.worker(result.JobID)
 	if worker == nil {
-		t.Fatal("submitted job has no resident worker: the regression cannot force the completion/removal boundary")
+		t.Fatal("submitted job has no resident worker while its provider call is held: the regression cannot force the completion/removal boundary")
 	}
+	close(provider.release)
 	select {
 	case <-worker.done:
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("worker did not complete before Wait: the regression must observe durable truth after residency disappears")
 	}
 	if resident := backend.worker(result.JobID); resident != nil {
