@@ -24,6 +24,9 @@ const factoryFlow = `{ "root": { "type": "stack", "children": [
   { "type": "text", "style": {"style": "header"},
     "text": "Δr×i v0.1.0 · flow" },
 
+  { "id": "notice", "type": "text", "bind": "host.scene.error",
+    "when": "host.scene.error", "style": {"style": "banner"} },
+
   { "id": "title", "type": "text", "bind": "hub.title" },
 
   { "id": "detail", "type": "markdown", "bind": "hub.detail", "grow": 1 },

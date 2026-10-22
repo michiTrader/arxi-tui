@@ -111,12 +111,27 @@ func screenLoop(t *testing.T, doc *scene.Document, line, want string) string {
 // drawn and returns the screen text.
 func screenLoopWith(t *testing.T, doc *scene.Document, drv Driver, evCh <-chan fold.Event, line, want string) string {
 	t.Helper()
+	return screenLoopEdit(t, doc, drv, evCh, line, want, nil)
+}
+
+// screenLoopEdit is screenLoopWith with an edit made while the loop is already running:
+// edit runs after the first frame is drawn and before line is typed, which is how a user
+// changes a screen's file without restarting.
+func screenLoopEdit(t *testing.T, doc *scene.Document, drv Driver, evCh <-chan fold.Event, line, want string, edit func()) string {
+	t.Helper()
 	t.Setenv(historyEnv, t.TempDir())
 	tty := newOpenFakeTTY(100, 24, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
 	go func() { done <- loop(ctx, tty, doc, theme.SOBRIA(), evCh, drv, "") }()
+	if edit != nil {
+		deadline := time.Now().Add(30 * time.Second)
+		for tty.output() == "" && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		edit()
+	}
 	for _, ev := range append(typed(line), at(20, enterEvent())) {
 		time.Sleep(ev.delay)
 		tty.events <- ev.event
