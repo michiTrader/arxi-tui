@@ -425,31 +425,58 @@ func TestLoopSlashMenuEscapeCloses(t *testing.T) {
 		t.Fatalf("ParseDocument: %v", err)
 	}
 
-	script := []scheduledEvent{
-		{0, keyEvent('/')},
-		{10 * time.Millisecond, keyEvent('h')},
-		{30 * time.Millisecond, arrowEvent(term.KeyEscape)},
-		{30 * time.Millisecond, keyEvent('x')},
-		{100 * time.Millisecond, ctrlCharEvent('c')},
-		{50 * time.Millisecond, ctrlCharEvent('c')},
-	}
-
-	tty := newFakeTTY(80, 24, script)
+	// The terminal stays open and each step waits for the frame it depends on. Fixed delays
+	// between "/h" and Escape let a loaded runner (Windows CI) read both before drawing
+	// anything, so the filtered menu was never painted and the test failed on timing alone.
+	tty := newOpenFakeTTY(80, 24, nil)
 	drv := &testDriver{evCh: make(chan fold.Event, 64)}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
-		t.Fatalf("loop returned error: %v", err)
+	done := make(chan error, 1)
+	go func() { done <- loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, "") }()
+	waitOut := func(what string, ok func(out string) bool) {
+		deadline := time.Now().Add(30 * time.Second)
+		for !ok(tty.output()) {
+			if time.Now().After(deadline) {
+				t.Fatalf("never saw %s:\n%s", what, stripANSI(tty.output()))
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	want := fmt.Sprintf("Commands %d", len(fold.FilterSlashMatches("h")))
+	wantRe := regexp.MustCompile(regexp.QuoteMeta(want) + `\b`)
+	tty.events <- keyEvent('/')
+	tty.events <- keyEvent('h')
+	waitOut("the filtered menu", func(out string) bool { return wantRe.MatchString(ansi.Strip(out)) })
+	tty.events <- arrowEvent(term.KeyEscape)
+	waitOut("the cleared line", func(out string) bool {
+		fs := strings.Split(out, frameBegin)
+		return frameHasTranscriptLine(fs[len(fs)-1], "┃ ") && !strings.Contains(fs[len(fs)-1], "Commands")
+	})
+	tty.events <- keyEvent('x')
+	waitOut("typing after escape", func(out string) bool {
+		fs := strings.Split(out, frameBegin)
+		return strings.Contains(stripANSI(fs[len(fs)-1]), "┃ x")
+	})
+	tty.events <- ctrlCharEvent('c')
+	time.Sleep(50 * time.Millisecond)
+	tty.events <- ctrlCharEvent('c')
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("loop returned error: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the loop did not quit")
 	}
 
 	out := tty.output()
 	// The count is read from the registry and matched whole: the literal "Commands 1" this
 	// replaces was also a prefix of "Commands 19", the unfiltered menu, so it passed
 	// whether or not the filter ever drew.
-	want := fmt.Sprintf("Commands %d", len(fold.FilterSlashMatches("h")))
-	if !regexp.MustCompile(regexp.QuoteMeta(want) + `\b`).MatchString(ansi.Strip(out)) {
+	if !wantRe.MatchString(ansi.Strip(out)) {
 		t.Errorf("filtered menu (\"/h\" → %q) never rendered; output:\n%s", want, out)
 	}
 
