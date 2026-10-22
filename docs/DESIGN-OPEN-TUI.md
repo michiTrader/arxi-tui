@@ -545,6 +545,18 @@ it to a script-backed verb or keymap action is the next PR, and the size is meas
 - **Not done:** `switch`, `try`/`catch`, regular expressions, `Date`, getters, classes (refused on
   purpose, each with its remedy); timing of a script (steps count work, not milliseconds).
 
+### Built (D2): a test that no Go file draws a screen
+
+The exit test of phase D, first half. `TestNoGoFileDrawsAScreen` (`cmd/arxi-tui/no_go_screens_test.go`) parses every
+non-test Go file of the host and fails if any function other than `emitFrame` names `ui.Line`, `ui.Span`, `ui.Frame` or
+`ui.Cursor`. It passes today: the hub, flow, automations, team and installer screens and every menu already reach the
+terminal through a scene document (or the default scene) and binds; Go supplies data, the engine draws.
+- Mutant: a new file with a function that returns a `ui.Line` fails the test and names the file and line.
+- Limits, said plainly: it sees only those four selectors. A file that imports `ui` under another name, or that writes
+  ANSI text straight to the terminal, would not be seen. It proves where lines are built, not that every screen has
+  a scene a user can edit: that is the rest of D (menus and `/provider` as scene windows the profile can replace,
+  panels, tabs, popups, mouse).
+
 ### Built (C6): tier 2 reaches the interface, `do:script.run`
 
 The interpreter of C5 is now used. A user script is a text in `behaviour.json` (`scripts`, name ->
