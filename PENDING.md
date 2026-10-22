@@ -37,6 +37,12 @@ opens `/shell`) and `up` gives the input back; every other `down` is the history
 no longer stops on nodes whose `when` is false. The factory scene hash moved on purpose (see GUARDRAILS section 4);
 unfocused it draws the same bytes. Open: Esc does not leave the chip; no window of shells yet (phase D).
 
+## Done since: D6, a profile may replace a screen (branch feat/screen-override-d6)
+
+`<settings>/screens/{hub,team,flow,auto}.json` replaces /provider, /team, /flow, /auto; broken files fall back with a
+notice. Open: menus (/settings, /keys, model-style) and the installer have no override; the binds a screen may use are
+not documented as a contract; no live reload; no `/ui` verb writes a screen; team/flow/auto have no loop test.
+
 ## Done since: D5, tabs and a popup need no Go (branch feat/tabs-popup-d5)
 
 `ui.max` as a free selector plus `ui.max.is.<name>` gives tabs and popups; tests pin switching and open/close by click.

@@ -584,6 +584,27 @@ dead to it, so every window needed the keyboard.
 - Not done: hover, drag, right/middle button, a click that moves the caret in the input, mouse on Termux (the mouse is
   left to the terminal there on purpose, see `wantMouse`).
 
+### Built (D6): a profile may replace a screen
+
+`/provider`, `/team`, `/flow` and `/auto` were already scene documents, but embedded: no profile could change them.
+`loadScreen` (`cmd/arxi-tui/screen_override.go`) reads `<settings>/screens/{hub,team,flow,auto}.json` first and falls
+back to the embedded document. The replacement is parsed and validated; a broken one is refused with a notice that
+names the file, and the built-in screen is shown, so a typo can never remove `/provider` (where credentials are set).
+Only the everyday interface reads the folder (`persistsScene`), so `-raw` and `-scene` stay what they were asked for.
+- Tests: no file, valid file, three kinds of broken file (not JSON, unknown bind, empty), the folder ignored when not
+  allowed, and through the real loop: `/provider` shows the profile's screen, shows the built-in one without a profile,
+  and an explicit scene ignores the folder.
+- Mutants on a committed tree, each caught by the test that names it: loop never allows the profile, loop always
+  allows the folder, a broken file used anyway, no notice on a broken file, validation skipped (caught for "unknown
+  bind" only). The two loop mutants were caught by the 30 s wait timing out, not by an immediate assertion.
+- Only `/provider` was exercised through the real loop; `team`, `flow` and `auto` use the same `screenFor` call but
+  have no loop test of their own.
+- NOT done, said plainly: `/settings`, `/keys` and the model-style menus are Go-built overlays with no override, and the
+  installer comes from `ext.LiveInstallerScene`; a replacement is only as useful as the binds it names (`hub.rows`,
+  `hub.title`, ...), which are not yet documented as a contract for authors; a replacement is not re-read while the
+  app runs (restart to see a change); there is no `/ui` verb to write one, so today it is a file edit. The sandbox
+  was reset once while this was being written and the first attempt was lost before it was pushed; this is the redo.
+
 ### Built (D5): tabs and a popup are a scene, no engine change
 
 Tabs and popups needed no new node type. `ui.max` is a free name the host stores (`cmd:/max <name>` writes it, `/max`

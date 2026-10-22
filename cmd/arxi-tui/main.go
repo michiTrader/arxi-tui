@@ -885,16 +885,25 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// flow is the open /flow screen, non-nil exactly while it is showing. It owns
 	// the keyboard like hub does, but reads everything from the folded log.
 	var flow *flowScreen
-	flowDoc, flowDocErr := loadFlowScene()
+	// A profile may replace a screen (screen_override.go). Only the everyday interface reads
+	// the folder, as with the user's colours and keys: -raw and -scene boot what was asked for.
+	screenFor := func(name string, builtin func() (*scene.Document, error)) (*scene.Document, error) {
+		d, why, err := loadScreen(name, builtin, persistsScene(doc))
+		if why != "" {
+			sceneNotice = why
+		}
+		return d, err
+	}
+	flowDoc, flowDocErr := screenFor("flow", loadFlowScene)
 	// team is the open /team screen: the architecture of ./agents/*.yaml, read
 	// from the core on a worker (teamCh carries the answer back).
 	var team *teamScreen
-	teamDoc, teamDocErr := loadTeamScene()
+	teamDoc, teamDocErr := screenFor("team", loadTeamScene)
 	teamCh := make(chan teamOutcome, 1)
 	// auto is the open /auto screen: the automations in ./triggers, read from the
 	// core on a worker (autoCh carries the answer back).
 	var auto *autoScreen
-	autoDoc, autoDocErr := loadAutoScene()
+	autoDoc, autoDocErr := screenFor("auto", loadAutoScene)
 	autoCh := make(chan autoOutcome, 1)
 	// flowCh carries the result of an approval or rejection given from /flow; it
 	// holds two because an answer reports twice (saved, then the run's end).
@@ -1000,7 +1009,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	promptStyle := loadPromptStyle(stylePath())
 	sessLog := newSessionLog(sessionsDir())
 	sessLog.cwd = cwd
-	hubDoc, hubDocErr := loadHubScene()
+	hubDoc, hubDocErr := screenFor("hub", loadHubScene)
 	// openHub is the one door a typed command and a slash-menu pick both take. It
 	// reads the core's state on a worker first so a hung core never freezes the loop.
 	// With no live core the hub still opens, empty, with the reason in the banner: a
