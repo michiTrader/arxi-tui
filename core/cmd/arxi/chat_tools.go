@@ -73,6 +73,11 @@ type chatToolbox struct {
 	// folders: deny (refused, the default), ask (the user is asked to open the
 	// folder it belongs to) or allow (opened without asking). See folders.go.
 	outside string
+	// steer returns the texts the user sent while the turn was running (see
+	// steering.go); nil when the connection cannot be read mid-turn.
+	steer func() []string
+	// steered reports to the client that those texts joined the conversation.
+	steered func(text string)
 }
 
 // maxClientTools bounds how many tools a client may lend one turn. Every definition
@@ -459,6 +464,7 @@ func runToolLoop(ctx context.Context, tb *chatToolbox, req *turn.Request,
 			results = append(results, turn.ContentBlock{Type: turn.BlockToolResult, ToolResult: res})
 		}
 		req.Messages = append(req.Messages, turn.Message{Role: turn.RoleTool, Content: results})
+		req.Messages = appendSteers(req.Messages, tb)
 	}
 }
 

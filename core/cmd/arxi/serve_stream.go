@@ -179,11 +179,23 @@ func (c *connStreams) closeAll() {
 
 // lineSource is the connection's reader: the loop takes its requests from it, and a
 // turn waiting for the user's decision takes the decision from it. Both run on the
-// loop's own goroutine, one at a time, so it needs no lock.
+// loop's own goroutine, one at a time, so the plain reads need no lock.
+//
+// A turn that accepts steering (ADR-0055) starts a pump: from then on a goroutine
+// does the blocking reads and everything arrives through feed, so the turn can look
+// at the connection between two tool rounds without waiting for a line that may never
+// come. The pump is never stopped before the connection ends, because a read that is
+// blocked cannot be taken back; it only hands lines on, so the loop still sees every
+// request, in order.
 type lineSource struct {
 	sc       *bufio.Scanner
 	deferred []sourceLine // requests that arrived while a decision was awaited
+	steers   []sourceLine // steering lines read while waiting for something else
 	cur      sourceLine
+
+	feed    chan sourceLine // nil until startPump; closed when the connection ends
+	quit    chan struct{}   // closed by stop so a pump blocked on feed can leave
+	pumpErr error           // why the pump ended; read only after feed is closed
 }
 
 // sourceLine is one line read, and how long the reader saw it to be (the loop
@@ -195,18 +207,119 @@ type sourceLine struct {
 
 func newLineSource(sc *bufio.Scanner) *lineSource { return &lineSource{sc: sc} }
 
-// scan advances to the next request: first any that arrived while a decision was
-// awaited, in the order they came, then whatever the connection sends.
-func (s *lineSource) scan() bool {
-	if len(s.deferred) > 0 {
-		s.cur, s.deferred = s.deferred[0], s.deferred[1:]
-		return true
+// pumpBuffer is how many lines the pump may read ahead of the loop. It is a bound
+// on memory, not on the client: past it the pump waits and the client's writes wait
+// in the operating system's pipe, which is where they waited before the pump existed.
+const pumpBuffer = 16
+
+// startPump moves the blocking reads onto their own goroutine. Calling it again
+// does nothing.
+func (s *lineSource) startPump() {
+	if s.feed != nil {
+		return
+	}
+	s.feed = make(chan sourceLine, pumpBuffer)
+	s.quit = make(chan struct{})
+	go func(feed chan<- sourceLine, quit <-chan struct{}) {
+		defer close(feed)
+		for s.sc.Scan() {
+			l := sourceLine{text: s.sc.Text(), size: len(s.sc.Bytes())}
+			select {
+			case feed <- l:
+			case <-quit:
+				return
+			}
+		}
+		s.pumpErr = s.sc.Err()
+	}(s.feed, s.quit)
+}
+
+// stop lets a pump that is waiting to hand a line over leave. It is called when the
+// connection's loop ends; without it a connection that failed mid-turn would leave
+// the pump blocked for the life of the process.
+func (s *lineSource) stop() {
+	if s.quit != nil {
+		select {
+		case <-s.quit:
+		default:
+			close(s.quit)
+		}
+	}
+}
+
+// read takes the next line from the connection, from the pump when there is one.
+func (s *lineSource) read() (sourceLine, bool) {
+	if s.feed != nil {
+		l, ok := <-s.feed
+		return l, ok
 	}
 	if !s.sc.Scan() {
-		return false
+		return sourceLine{}, false
 	}
-	s.cur = sourceLine{text: s.sc.Text(), size: len(s.sc.Bytes())}
-	return true
+	return sourceLine{text: s.sc.Text(), size: len(s.sc.Bytes())}, true
+}
+
+// err is why read stopped giving lines: nil for a connection that simply ended.
+func (s *lineSource) err() error {
+	if s.feed != nil {
+		return s.pumpErr
+	}
+	return s.sc.Err()
+}
+
+// isSteer reports whether a line is a steering line.
+func isSteer(text string) bool {
+	var d struct {
+		Type string `json:"type"`
+	}
+	return json.Unmarshal([]byte(text), &d) == nil && d.Type == "chat.steer"
+}
+
+// scan advances to the next request: first any that arrived while a decision was
+// awaited, in the order they came, then whatever the connection sends. A steering
+// line here is one for a turn that is already over (it was written after the
+// client's last chance to be taken), so it is dropped: the client was never told it
+// was taken, and sends it again as a message.
+func (s *lineSource) scan() bool {
+	for {
+		if len(s.deferred) > 0 {
+			s.cur, s.deferred = s.deferred[0], s.deferred[1:]
+			return true
+		}
+		l, ok := s.read()
+		if !ok {
+			return false
+		}
+		if isSteer(l.text) {
+			continue
+		}
+		s.cur = l
+		return true
+	}
+}
+
+// takeSteers returns the steering lines that have arrived, without waiting for any
+// that have not. Requests read on the way are kept for the loop, in order.
+func (s *lineSource) takeSteers() []sourceLine {
+	for s.feed != nil {
+		select {
+		case l, ok := <-s.feed:
+			if !ok {
+				goto done
+			}
+			if isSteer(l.text) {
+				s.steers = append(s.steers, l)
+			} else if l.text != "" {
+				s.deferred = append(s.deferred, l)
+			}
+		default:
+			goto done
+		}
+	}
+done:
+	out := s.steers
+	s.steers = nil
+	return out
 }
 
 // chatApprovalNotification asks the client whether the model may make a change. It
@@ -260,8 +373,11 @@ func (c *connStreams) ask(n chatApprovalNotification) (bool, error) {
 // is stale and dropped. The error is the connection ending first.
 func (c *connStreams) await(kind, callID string) ([]byte, error) {
 	src := c.src
-	for src.sc.Scan() {
-		line := sourceLine{text: src.sc.Text(), size: len(src.sc.Bytes())}
+	for {
+		line, ok := src.read()
+		if !ok {
+			break
+		}
 		var d struct {
 			Type   string `json:"type"`
 			CallID string `json:"call_id"`
@@ -272,11 +388,17 @@ func (c *connStreams) await(kind, callID string) ([]byte, error) {
 			}
 			return []byte(line.text), nil
 		}
+		if d.Type == "chat.steer" {
+			// For the turn that is waiting, not for the loop: kept for the next
+			// boundary, where it is taken (takeSteers).
+			src.steers = append(src.steers, line)
+			continue
+		}
 		if line.text != "" {
 			src.deferred = append(src.deferred, line)
 		}
 	}
-	err := src.sc.Err()
+	err := src.err()
 	if err == nil {
 		err = io.EOF
 	}

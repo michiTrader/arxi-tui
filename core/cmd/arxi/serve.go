@@ -451,6 +451,9 @@ func serveConnSessionContext(ctx context.Context, r io.Reader, w io.Writer, sess
 	sc.Buffer(make([]byte, 0, 64*1024), maxLineBytes+2)
 	src := newLineSource(sc)
 	streams.src = src
+	// A pump may have been started by a turn that takes steering; this lets it go
+	// when the connection's loop ends for any reason.
+	defer src.stop()
 
 	for src.scan() {
 		if src.cur.size > maxLineBytes {
@@ -474,7 +477,7 @@ func serveConnSessionContext(ctx context.Context, r io.Reader, w io.Writer, sess
 		streams.releasePending()
 	}
 
-	if err := sc.Err(); err != nil {
+	if err := src.err(); err != nil {
 		if errors.Is(err, bufio.ErrTooLong) {
 			// The line is reported and then the connection ENDS, because after a
 			// truncated line the stream position is unknown: the tail of the

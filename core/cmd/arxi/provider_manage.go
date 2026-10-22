@@ -906,6 +906,8 @@ func handleChatSendThinking(streams *connStreams, params map[string]any) (any, e
 	}
 	ctx := withRetryNotice(base, func(n chatRetryNotification) { _ = w.write(n) })
 	ctx = withUsageNotice(ctx, func(n chatUsageNotification) { _ = w.write(n) })
+	// What was said to a turn that is over is not for the next one (steering.go).
+	defer streams.endSteering()
 	if boolParam(params, "stream_thinking") {
 		ctx = provider.WithThinking(ctx, func(fragment string) {
 			_ = w.write(thinkingNotification{Type: "chat.thinking", Text: fragment})
@@ -936,6 +938,7 @@ func handleChatSendThinking(streams *connStreams, params map[string]any) (any, e
 		if ctx, err = withClientTools(ctx, stringParam(params, "client_tools"), streams.callClient); err != nil {
 			return nil, err
 		}
+		ctx = withSteering(ctx, streams)
 	} else if stringParam(params, "client_tools") != "" {
 		return nil, badInvocation{errors.New("client_tools needs a workdir: they travel with the tools")}
 	}
