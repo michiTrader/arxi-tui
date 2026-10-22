@@ -131,7 +131,8 @@ const factorySobria = `{ "root": { "type": "stack", "children": [
       { "id": "models", "type": "list", "bind": "model.matches" } ] },
 
   { "id": "shells", "type": "row", "when": "host.shell.list", "children": [
-    { "type": "text", "bind": "host.shell.list", "style": {"style": "dim"} } ] },
+    { "id": "shells_chip", "type": "text", "bind": "host.shell.list", "style": {"style": "dim"},
+      "on_press": "cmd:/shell", "focus_glow": {"style": "header"} } ] },
 
   { "id": "status", "type": "row", "children": [
     { "type": "text", "bind": "slash.hint", "style": {"style": "menu.hint"},
@@ -1495,6 +1496,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			findOpen:        find.open,
 			uiFocused:       uiFocus != "",
 			busySteers:      effBeh().EnterWhileBusy == busySteer,
+			inputAtEnd:      caret >= len([]rune(input)),
+			historyBrowsing: hist.Browsing(),
+			arrowsScroll:    scrollArrows,
+			shellsCount:     runningShells(drv),
 		}
 		// The conversation is folded only for a key the keymap names: typing must not
 		// fold the whole log once per letter.
@@ -1610,6 +1615,8 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		switch name {
 		case "view.expand":
 			expandTools = !expandTools
+		case "focus.input":
+			uiFocus = ""
 		case "queue.push":
 			text := strings.TrimSpace(input)
 			switch {

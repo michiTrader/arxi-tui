@@ -60,8 +60,8 @@ two-file change in review instead of a quiet diff.
 <!-- guard-pins:begin -->
 | File | sha256 |
 |---|---|
-| `internal/defaultscene/SOBRIA.json` | `ef5acf9ba77909a7e715ca71f56460043d557eb6578b9fe84d986df41860d437` |
-| `testdata/SOBRIA.json` | `ef5acf9ba77909a7e715ca71f56460043d557eb6578b9fe84d986df41860d437` |
+| `internal/defaultscene/SOBRIA.json` | `252abddca057216c325af8e148849305f0a1bc5e0233891b5dec032375fe58bc` |
+| `testdata/SOBRIA.json` | `252abddca057216c325af8e148849305f0a1bc5e0233891b5dec032375fe58bc` |
 | `testdata/SOBRIA.frame` | `4acc3b94b4a015f94e812b1f6744d02bfad8b8f6e531169b97b478610ad64a64` |
 | `testdata/SOBRIA.styled` | `45f79a04346baf49aaea9b6a6b5945aaa9d2748e0b258189ac560451094eb102` |
 | `testdata/RAW.frame` | `4b4115dcd78f23b2d1fe49d90f6609fec3cfee965c3218d9a112a3a62078777a` |

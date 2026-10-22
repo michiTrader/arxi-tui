@@ -205,6 +205,10 @@ func TestTheFactoryKeymapParsesAgainstItsOwnNames(t *testing.T) {
 	for _, n := range []string{"menu.open", "key.user_bound", "screen.open", "approval.pending", "find.open", "agent.working", "ui.focused", "busy.steers"} {
 		sch[n] = expr.Bool
 	}
+	for _, n := range []string{"input.at_end", "history.browsing", "arrows.scroll"} {
+		sch[n] = expr.Bool
+	}
+	sch["shells.count"] = expr.Int
 	m, err := Parse(FactoryJSON, sch, nil)
 	if err != nil {
 		t.Fatal(err)

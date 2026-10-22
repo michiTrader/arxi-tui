@@ -32,6 +32,10 @@ var keymapSchema = expr.Schema{
 	"agent.working":    expr.Bool, // an answer is being written (or a compaction runs)
 	"ui.focused":       expr.Bool, // a node of the scene holds the focus, so Enter presses it
 	"busy.steers":      expr.Bool, // the user's enter_while_busy setting is "steer"
+	"input.at_end":     expr.Bool, // the caret is at the end of the line being typed
+	"history.browsing": expr.Bool, // the line on the input was recalled from the sent lines
+	"arrows.scroll":    expr.Bool, // plain up/down scroll the chat (the phone arrangement)
+	"shells.count":     expr.Int,  // how many background shells run
 }
 
 // keymapState is what the loop knows when a key is pressed. The loop fills one in per key.
@@ -44,6 +48,10 @@ type keymapState struct {
 	agentWorking    bool
 	uiFocused       bool
 	busySteers      bool
+	inputAtEnd      bool
+	historyBrowsing bool
+	arrowsScroll    bool
+	shellsCount     int
 }
 
 // lookup answers the questions a condition asks, from one snapshot. Every name of
@@ -66,6 +74,14 @@ func (s keymapState) lookup(name string) (expr.Value, bool) {
 		return expr.B(s.uiFocused), true
 	case "busy.steers":
 		return expr.B(s.busySteers), true
+	case "input.at_end":
+		return expr.B(s.inputAtEnd), true
+	case "history.browsing":
+		return expr.B(s.historyBrowsing), true
+	case "arrows.scroll":
+		return expr.B(s.arrowsScroll), true
+	case "shells.count":
+		return expr.N(int64(s.shellsCount)), true
 	}
 	return expr.Value{}, false
 }

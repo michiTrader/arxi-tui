@@ -31,6 +31,7 @@ var verbImpl = map[string]func(args []string, env verbEnv) string{
 	"view.expand": func(_ []string, env verbEnv) string { return verbUI("view.expand", env) },
 	"find.toggle": func(_ []string, env verbEnv) string { return verbUI("find.toggle", env) },
 	"queue.push":  func(_ []string, env verbEnv) string { return verbUI("queue.push", env) },
+	"focus.input": func(_ []string, env verbEnv) string { return verbUI("focus.input", env) },
 	"queue.steer": func(_ []string, env verbEnv) string { return verbUI("queue.steer", env) },
 	"script.run":  verbScriptRun,
 }

@@ -124,6 +124,11 @@ var catalogue = []Verb{
 		Example: "script.run counter add 3",
 	},
 	{
+		Name: "focus.input", Protection: Free,
+		Doc:     "give the focus back to the input line, from whatever node of the scene holds it",
+		Example: "focus.input",
+	},
+	{
 		Name: "queue.steer", Protection: Free,
 		Doc:     "stop the answer being written and send the line being typed at once (what the answer did stays in the conversation)",
 		Example: "queue.steer",

@@ -47,6 +47,10 @@ func TestEachFlagOfTheStateReachesItsOwnName(t *testing.T) {
 		"agent.working":    {agentWorking: true},
 		"ui.focused":       {uiFocused: true},
 		"busy.steers":      {busySteers: true},
+		"input.at_end":     {inputAtEnd: true},
+		"history.browsing": {historyBrowsing: true},
+		"arrows.scroll":    {arrowsScroll: true},
+		"shells.count":     {shellsCount: 3},
 	}
 	if len(cases) != len(keymapSchema) {
 		t.Fatalf("the schema has %d names and this test %d; add the new name here", len(keymapSchema), len(cases))
@@ -55,6 +59,13 @@ func TestEachFlagOfTheStateReachesItsOwnName(t *testing.T) {
 		for other := range keymapSchema {
 			v, _ := st.lookup(other)
 			want := other == name
+			if v.K == expr.Int {
+				// A number is set when the flag is, and zero otherwise.
+				if (v.I != 0) != want {
+					t.Errorf("with only %s set, %s answers %d. Remedy: wire each field to its own name in keymapState.lookup.", name, other, v.I)
+				}
+				continue
+			}
 			if v.B != want {
 				t.Errorf("with only %s set, %s answers %v. Remedy: wire each flag to its own name in keymapState.lookup.", name, other, v.B)
 			}
@@ -415,5 +426,51 @@ func TestLoopCtrlFDoesNotOpenTheBarBehindAScreen(t *testing.T) {
 	}
 	if !sawScreen {
 		t.Fatal("premise: the automations screen never showed")
+	}
+}
+
+// ---- down and up: the shells chip -------------------------------------------------------
+
+// Down reaches the shells chip only where nothing else wants it: the history walk, the menu
+// and the caret keep the key whenever the chip cannot be what the user means.
+func TestDownReachesTheShellsChipOnlyWhereNothingElseWantsTheKey(t *testing.T) {
+	m, err := factoryKeymap()
+	if err != nil {
+		t.Fatal(err)
+	}
+	down := term.Key{Type: term.KeyDown}
+	idle := keymapState{shellsCount: 1, inputAtEnd: true}
+	rows := []struct {
+		name string
+		st   keymapState
+		want bool
+	}{
+		{"a shell runs and the caret is at the end", idle, true},
+		{"no shell runs", keymapState{inputAtEnd: true}, false},
+		{"the caret is not at the end: down moves it", keymapState{shellsCount: 1}, false},
+		{"a recalled line is on the input: down walks on", keymapState{shellsCount: 1, inputAtEnd: true, historyBrowsing: true}, false},
+		{"the arrows scroll the chat (phone)", keymapState{shellsCount: 1, inputAtEnd: true, arrowsScroll: true}, false},
+		{"a menu is open: down moves its highlight", keymapState{shellsCount: 1, inputAtEnd: true, menuOpen: true}, false},
+		{"a node already holds the focus", keymapState{shellsCount: 1, inputAtEnd: true, uiFocused: true}, false},
+		{"the user bound down", keymapState{shellsCount: 1, inputAtEnd: true, userBound: true}, false},
+		{"a screen is up", keymapState{shellsCount: 1, inputAtEnd: true, screenOpen: true}, false},
+		{"a question waits for y/n", keymapState{shellsCount: 1, inputAtEnd: true, approvalPending: true}, false},
+		{"the find bar is open", keymapState{shellsCount: 1, inputAtEnd: true, findOpen: true}, false},
+	}
+	for _, r := range rows {
+		do, ok, why := resolveKey(m, down, r.st)
+		if why != "" {
+			t.Errorf("%s: %s", r.name, why)
+		}
+		if ok != r.want || (ok && do != "focus:shells_chip") {
+			t.Errorf("%s: down taken=%v do=%q, want taken=%v. Consequence: down walks the history where the chip was meant, or jumps to the chip where the user was editing. Remedy: fix the `when` of the down binding in internal/keymap/factory.json.", r.name, ok, do, r.want)
+		}
+	}
+	up := term.Key{Type: term.KeyUp}
+	if do, ok, _ := resolveKey(m, up, keymapState{uiFocused: true}); !ok || do != "do:focus.input" {
+		t.Errorf("up with a node focused: taken=%v do=%q. Consequence: the chip holds the focus and the arrows cannot give the input back. Remedy: keep the up binding in factory.json.", ok, do)
+	}
+	if _, ok, _ := resolveKey(m, up, keymapState{}); ok {
+		t.Error("up with the input focused was taken by the keymap. Consequence: up no longer walks the history. Remedy: the up binding must need ui.focused.")
 	}
 }
