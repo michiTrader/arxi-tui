@@ -44,7 +44,8 @@
       { "id": "models", "type": "list", "bind": "model.matches" } ] },
 
   { "id": "shells", "type": "row", "when": "host.shell.list", "children": [
-    { "type": "text", "bind": "host.shell.list", "style": {"style": "dim"} } ] },
+    { "id": "shells_chip", "type": "text", "bind": "host.shell.list", "style": {"style": "dim"},
+      "on_press": "cmd:/shell", "focus_glow": {"style": "header"} } ] },
 
   { "id": "status", "type": "row", "children": [
     { "type": "text", "bind": "slash.hint", "style": {"style": "menu.hint"},

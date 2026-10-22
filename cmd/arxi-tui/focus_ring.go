@@ -56,6 +56,13 @@ func focusRing(doc *scene.Document, state fold.State, hidden map[string]bool) ([
 		if n.ID != "" && hidden[n.ID] {
 			return // the node and its subtree are hidden; skip both (D3)
 		}
+		// A node whose `when` is false is not drawn, so Tab must not stop on it: the
+		// cursor would sit on nothing and Enter would press a button nobody can see.
+		// The same predicate the renderer asks (engine.NodeHidden), so the ring and
+		// the frame cannot disagree about what is there.
+		if engine.NodeHidden(n, state) {
+			return
+		}
 		// The node's own raw id is an ordinary target only outside a template: a
 		// row_template container is a static node that may itself carry an
 		// on_press, distinct from the per-row targets its template instantiates.

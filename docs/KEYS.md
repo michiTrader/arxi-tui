@@ -25,7 +25,7 @@ escape hatch (invariant 6) and cannot be moved or taken by any setting, scene or
 | `enter` | send the message (or run the command on the line); while an answer is being written the message waits and is sent when it ends |
 | `alt+enter` | while an answer is being written, the other way from `enter`: it sends the line to the answer in flight, which reads it at its next step (steer; with a core that cannot take it, it stops the answer and sends the line at once), or waits if you chose steer for `enter`; with nothing running it is a plain `enter` |
 | `shift+enter`, `ctrl+enter`, `ctrl+j` | a new line in the message, without sending it |
-| `up`, `down` | walk the lines you sent before (inside a long message they move between its rows first) |
+| `up`, `down` | walk the lines you sent before (inside a long message they move between its rows first); with a background shell running and the caret at the end of the line, `down` moves the focus to the shells chip (Enter opens `/shell`) and `up` gives it back to the input |
 | `ctrl+p`, `ctrl+n` | the same as up and down |
 | `left`, `right`, `home`, `end` | move the caret in the message |
 | `ctrl+left`, `alt+left`, `ctrl+right`, `alt+right`, `alt+b`, `alt+f` | move the caret a word at a time |
@@ -61,11 +61,11 @@ else: the old key becomes inert in a menu rather than quietly doing what another
 ### Where a row is decided
 
 Most rows are still decided in Go (`cmd/arxi-tui/main.go`). The rows for `ctrl+o`, `ctrl+f`,
-`enter` and `alt+enter` (only the part while an answer is being written) are decided by data: `internal/keymap/factory.json`, a list of `{key, when, do}` bindings
+`enter`, `alt+enter` (only the part while an answer is being written), and `down`/`up` (only the shells chip) are decided by data: `internal/keymap/factory.json`, a list of `{key, when, do}` bindings
 (`docs/DESIGN-OPEN-TUI.md` section 5.3). `when` is a tier-1 condition over the names in
 `keymapSchema`; the first binding of a key whose `when` holds wins. A key in that file must have
 a row above (`TestEveryKeyOfTheFactoryKeymapHasARowInDocsKeys`), so the file cannot take a key
-the contract does not list. The next row to move is `down`.
+the contract does not list. `down` and `up` are data too, only for the shells chip (`focus:shells_chip` and `do:focus.input`); walking the history stays in Go.
 
 `enter` while the agent works is `do:queue.push`: the line waits (up to 8) and one goes out each time
 an answer ends. It is off when a menu is open (Enter picks a command), a screen is up, a question

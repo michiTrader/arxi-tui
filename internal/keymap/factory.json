@@ -7,6 +7,8 @@
     { "key": "enter", "when": "agent.working && !menu.open && !screen.open && !approval.pending && !find.open && !ui.focused && !key.user_bound && !busy.steers", "do": "do:queue.push" },
     { "key": "enter", "when": "agent.working && !menu.open && !screen.open && !approval.pending && !find.open && !ui.focused && !key.user_bound && busy.steers", "do": "do:queue.steer" },
     { "key": "alt+enter", "when": "agent.working && !menu.open && !screen.open && !approval.pending && !find.open && !ui.focused && !key.user_bound && !busy.steers", "do": "do:queue.steer" },
-    { "key": "alt+enter", "when": "agent.working && !menu.open && !screen.open && !approval.pending && !find.open && !ui.focused && !key.user_bound && busy.steers", "do": "do:queue.push" }
+    { "key": "alt+enter", "when": "agent.working && !menu.open && !screen.open && !approval.pending && !find.open && !ui.focused && !key.user_bound && busy.steers", "do": "do:queue.push" },
+    { "key": "down", "when": "!menu.open && !screen.open && !approval.pending && !find.open && !key.user_bound && !ui.focused && !arrows.scroll && !history.browsing && input.at_end && shells.count > 0", "do": "focus:shells_chip" },
+    { "key": "up", "when": "!menu.open && !screen.open && !approval.pending && !find.open && !key.user_bound && ui.focused", "do": "do:focus.input" }
   ]
 }

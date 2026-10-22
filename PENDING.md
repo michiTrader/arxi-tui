@@ -21,7 +21,14 @@ the core says `chat.steerable`; the model reads it at its next tool round and ke
 the C4 stop-and-resend. What the core never read comes back as `chat.steer_unsent` and goes out after the
 answer. See DESIGN-OPEN-TUI, Built C7. Open: the write lock around a steer is caught only under `go test -race`
 and CI does not run `-race`; no run against the real core end to end; a line with pictures still stops the
-turn; the `down` row needs the phase-D shells chip.
+turn.
+
+## Done since: C8, `down` reaches the shells chip (branch feat/shells-chip-down)
+
+With a background shell running and the caret at the end of the line, `down` focuses the chip under the input (Enter
+opens `/shell`) and `up` gives the input back; every other `down` is the history or the caret as before. The focus ring
+no longer stops on nodes whose `when` is false. The factory scene hash moved on purpose (see GUARDRAILS section 4);
+unfocused it draws the same bytes. Open: Esc does not leave the chip; no window of shells yet (phase D).
 
 ## Done since: C4, steer + enter_while_busy + queued lines on screen (branch feat/steer-busy-setting)
 

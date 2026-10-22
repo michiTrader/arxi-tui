@@ -486,6 +486,24 @@ Core half: ADR-0055 (core #328). TUI half (branch `feat/tui-steer`):
   TUI end to end (each half is tested against a fake of the other).
 - Not done: the `down` row (needs the phase-D shells chip), a line with pictures cannot steer live.
 
+**Built (C8): `down` reaches the shells chip.** The last row of the C keymap, now that there is something to reach.
+- The shells row of the default scene is pressable: its text node has the id `shells_chip`, `on_press: cmd:/shell`
+  and `focus_glow` (`header`). Unfocused it draws the same bytes as before; only the scene hash in
+  `docs/GUARDRAILS.md` moved, because the JSON gained three fields.
+- Two factory bindings, in `internal/keymap/factory.json`: `down` -> `focus:shells_chip` and `up` -> `do:focus.input`
+  (new Free verb). `down` is taken only when nothing else wants it: no menu, screen, question or find bar, no node
+  focused, the user did not bind the key, the arrows do not scroll the chat (phone), the line is not a recalled one,
+  the caret is at the end and a shell runs. Every other case keeps the old Go path (history walk, caret move).
+- New names for conditions: `input.at_end`, `history.browsing`, `arrows.scroll` (yes/no) and `shells.count`
+  (number, the first number name in the schema).
+- Fix found on the way: `focusRing` ignored a node's `when`, so Tab stopped on nodes that are not drawn (a chip with
+  no shell). It now asks `engine.NodeHidden`, the predicate the renderer asks.
+- Tests: ring (1), the `down` table, 11 situations (1), real loop (6: press, return, no shells, caret inside, recalled
+  line, phone). Mutants: 10 on the keymap/facts/verb plus 1 on the ring, each caught by the test that names it.
+  Not run: a mutant of the `focus_glow` look (no test reads the glow colour here).
+- Size: android/arm64 10,289,505 B (limit 11,000,000).
+- Not done: Esc as a way back from the chip (Tab and `up` do it), a window listing the shells (phase D).
+
 ### Built (C5): tier 2, `internal/script`
 
 An interpreter for a small, strict subset of JavaScript, written in this repo with no dependency
