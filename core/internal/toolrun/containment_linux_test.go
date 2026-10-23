@@ -36,9 +36,18 @@ func TestProcessGroupProfileDoesNotClaimSetsidContainment(t *testing.T) {
 	if err != nil || !res.TimedOut {
 		t.Fatalf("setsid probe = %#v / %v: the operator process-group profile must still enforce its own deadline", res, err)
 	}
-	time.Sleep(700 * time.Millisecond)
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("setsid child did not demonstrate the documented escape: %v; never relabel process-group termination as whole-tree containment", err)
+	// The escaped child writes after 0.4s of its own. A fixed wait of 0.7s after the call
+	// returned was enough on an idle machine and not on a loaded CI runner (the file was
+	// missing when looked for, with the behaviour unchanged), so look for it until it
+	// shows or a generous limit passes. Only a child that was really killed never writes.
+	var statErr error
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(25 * time.Millisecond) {
+		if _, statErr = os.Stat(marker); statErr == nil {
+			break
+		}
+	}
+	if statErr != nil {
+		t.Fatalf("setsid child did not demonstrate the documented escape within 10s: %v; never relabel process-group termination as whole-tree containment", statErr)
 	}
 }
 
