@@ -119,22 +119,42 @@ func TestLoopTheEndOfATurnRefreshesAPanelAndFailureFiresAnEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	script := []scheduledEvent{
-		{600 * time.Millisecond, ctrlCharEvent('c')},
-		{50 * time.Millisecond, ctrlCharEvent('c')},
-	}
-	tty := newFakeTTY(100, 30, script)
+	// The panel runs a script, so how long a refresh takes depends on the machine. Fixed
+	// delays (200ms before the turn's end, 600ms before quitting) overran on a loaded CI
+	// runner and the second run was never drawn. Each step waits for the frame the
+	// previous one must produce instead.
+	tty := newOpenFakeTTY(100, 30, nil)
 	drv := &testDriver{evCh: make(chan fold.Event, 64), seq: 1000}
-	go func() {
-		time.Sleep(200 * time.Millisecond) // after the first run at load
-		drv.evCh <- fold.Event{Type: "agent.turn_done", Seq: 5000}
-		time.Sleep(100 * time.Millisecond)
-		drv.evCh <- fold.Event{Type: "agent.failed", Seq: 6000, Payload: map[string]any{"error": "boom"}}
-	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, ""); err != nil {
-		t.Fatalf("loop: %v", err)
+	done := make(chan error, 1)
+	go func() { done <- loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, "") }()
+	waitFrame := func(want string) {
+		t.Helper()
+		deadline := time.Now().Add(30 * time.Second)
+		for !strings.Contains(stripANSI(tty.output()), want) && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		if !strings.Contains(stripANSI(tty.output()), want) {
+			t.Fatalf("never saw %q; last frame:\n%s", want, lastFrame(tty.output()))
+		}
+	}
+	waitFrame("Clock: run 1") // the first run, at load
+	drv.evCh <- fold.Event{Type: "agent.turn_done", Seq: 5000}
+	waitFrame("Clock: run 2")
+	drv.evCh <- fold.Event{Type: "agent.failed", Seq: 6000, Payload: map[string]any{"error": "boom"}}
+	waitFrame("the turn failed note")
+	for _, ev := range exitKeys() {
+		time.Sleep(ev.delay)
+		tty.events <- ev.event
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("loop: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the loop did not quit")
 	}
 	s := screen(tty.output())
 	if !strings.Contains(s, "Clock: run 2") {
