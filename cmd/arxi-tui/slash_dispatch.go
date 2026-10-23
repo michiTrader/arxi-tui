@@ -42,10 +42,13 @@ var plannedCommands = map[string]bool{
 }
 
 // commandAliases are spellings the host accepts that the menu does not list
-// under their own row (hubCommand routes them to the provider hub).
+// under their own row (hubCommand routes them to the provider hub). /pick is here too: it is
+// the write half of the ui.pick.* binds, a command for scene authors and buttons more than
+// for the menu, and a row in the registry would grow every menu test sized to it.
 var commandAliases = map[string]bool{
 	"providers": true,
 	"login":     true,
+	"pick":      true,
 }
 
 // classifySlash decides what a submitted line is. It is pure: it reads the

@@ -640,9 +640,16 @@ each pane is gated on its own, and a popup is an `overlay` gated the same way, c
   a button and a click on its own `[close]` brings the scene back; nothing reaches the model.
 - Mutants on a committed tree, each caught: clicks never press (both tests), `/max <name>` ignores the name (both
   tests), the `top` overlay composites no rows (the popup test only, which is the right one).
-- NOT done, said plainly: one cursor serves one selector, so two independent tab sets (or a tab set plus a maximized
-  pane) on one screen collide on `ui.max`; a scene-owned value of its own is the fix and is not built. Keyboard
-  navigation between tabs (arrows) is not tested, only Tab/click. A popup does not trap focus: Tab may still reach
+- Follow-up (own selector): `/pick <group> <name>` (typed, or `cmd:/pick ...` on a button) writes a choice per group, and
+  `/pick <group>` clears it; scenes gate on `ui.pick.is.<group>.<name>` and `ui.pick.none.<group>` (signed in BINDS.md,
+  shape checked by the validator). Two tab sets on one screen no longer collide on `ui.max`
+  (`TestLoopTwoTabSetsKeepTheirOwnChoice`). `/pick` is accepted without a row in the slash menu (`commandAliases`), on
+  purpose: a registry row grows every menu test sized to it. Mutants on the committed tree, each caught: pick.is reads the
+  wrong group, pick.none always true, clear does nothing, every group writes one slot, validator accepts any shape (first
+  try did not compile, redone), a press does not write directly (this one first SURVIVED the loop test because the loop's
+  queue also handles `/pick`; `TestPressCmdPickWritesTheGroupWithoutTheQueue` was added and catches it). NOT done: the
+  choice is not saved between runs; `/pick` is not in the model's `ui_guide` yet.
+- NOT done, said plainly: keyboard navigation between tabs (arrows) is not tested, only Tab/click. A popup does not trap focus: Tab may still reach
   nodes behind it. Hover and drag are still to do.
 
 ### Built (D4): a side panel is a scene, no engine change
