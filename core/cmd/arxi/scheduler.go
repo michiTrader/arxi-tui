@@ -135,7 +135,18 @@ func appendExternalDecision(dir string, event kernel.Event, exact bool) (int64, 
 	}
 	defer os.Remove(requestPath)
 	defer os.Remove(resultPath)
-	deadline := time.Now().Add(externalDecisionTimeout)
+	return awaitExternalDecisionResult(resultPath, externalDecisionTimeout)
+}
+
+// awaitExternalDecisionResult polls for the resident's result file. A read that
+// fails for any reason other than "not there yet" is retried until the deadline:
+// on Windows the file can be briefly locked by the OS right after the importer
+// renames it into place, and failing the whole decision on that blip reports a
+// healthy answer as an error. A failure that persists is returned with the
+// timeout so the cause is not lost.
+func awaitExternalDecisionResult(resultPath string, timeout time.Duration) (int64, error) {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
 	for {
 		body, err := os.ReadFile(resultPath)
 		if err == nil {
@@ -149,10 +160,13 @@ func appendExternalDecision(dir string, event kernel.Event, exact bool) (int64, 
 			return result.Sequence, nil
 		}
 		if !os.IsNotExist(err) {
-			return 0, err
+			lastErr = err
 		}
 		if time.Now().After(deadline) {
-			return 0, fmt.Errorf("resident run did not acknowledge inbox decision within %s", externalDecisionTimeout)
+			if lastErr != nil {
+				return 0, fmt.Errorf("read resident decision result within %s: %w", timeout, lastErr)
+			}
+			return 0, fmt.Errorf("resident run did not acknowledge inbox decision within %s", timeout)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
