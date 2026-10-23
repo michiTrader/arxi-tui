@@ -204,11 +204,16 @@ func TestPacerWaitsOnlyWhileTheWindowIsClosed(t *testing.T) {
 func TestPacingCountsAgainstTheTotalWaitBudget(t *testing.T) {
 	// The window (300ms) fits chatMaxWait but not what is left of the whole call's
 	// waiting budget (100ms): it is not served, the ask goes out at once.
+	//
+	// Not served is shown by the absence of a pacing notice: a wait always announces itself
+	// before it sleeps. An earlier version also required the call to finish in under the
+	// window's 300ms, which a slow Windows runner overran (341ms) with the right answer
+	// (two asks, no notice): wall-clock time says how loaded the machine is, not whether
+	// the pacer waited.
 	fastRetries(t)
 	saved := chatRetryTotal
 	chatRetryTotal = 100 * time.Millisecond
 	t.Cleanup(func() { chatRetryTotal = saved })
-	start := time.Now()
 	f, notes, err := paceRig(t, func(call int) (string, string) {
 		if call == 1 {
 			return "0", "300ms"
@@ -218,7 +223,7 @@ func TestPacingCountsAgainstTheTotalWaitBudget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.calls != 2 || len(notes) != 0 || time.Since(start) >= 300*time.Millisecond {
-		t.Fatalf("asks=%d notices=%+v elapsed=%v", f.calls, notes, time.Since(start))
+	if f.calls != 2 || len(notes) != 0 {
+		t.Fatalf("asks=%d notices=%+v; Consequence: a window longer than the call's remaining wait budget was waited for, so one call can hold a user far past the budget. Remedy: pacing must not serve a wait that exceeds what is left of chatRetryTotal.", f.calls, notes)
 	}
 }
