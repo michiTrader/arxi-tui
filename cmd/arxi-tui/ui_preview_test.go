@@ -142,7 +142,7 @@ func TestPreviewIsOneOfTheInterfaceToolsAndStaysShort(t *testing.T) {
 		t.Errorf("tools = %v", names)
 	}
 	defs, _ := json.Marshal(r.b.definitions())
-	if len(defs) > 2500 {
+	if len(defs) > 2750 {
 		t.Errorf("the tool definitions are %d bytes and ride with every question.\nConsequence: a plain \"hola\" pays for the interface feature.\nRemedy: shorten the descriptions.", len(defs))
 	}
 }

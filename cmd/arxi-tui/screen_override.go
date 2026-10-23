@@ -5,8 +5,41 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/michiTrader/arxi_tui/internal/ext"
 	"github.com/michiTrader/arxi_tui/internal/scene"
 )
+
+// screenBuiltins is every screen a profile may replace, by the name of its file. The
+// loader, the model's ui_edit and the guide all read this one list.
+var screenBuiltins = map[string]func() (*scene.Document, error){
+	"hub":       loadHubScene,
+	"team":      loadTeamScene,
+	"flow":      loadFlowScene,
+	"auto":      loadAutoScene,
+	"installer": ext.LiveInstallerScene,
+}
+
+// parseScreen is the one rule for "this file is a usable screen": it parses, has a root,
+// validates, and carries no warning. A warning is what the engine says when it will draw a
+// placeholder or ignore a key (an unknown node type, a misspelled property): for the main
+// scene that is tolerated, but a screen a profile wrote must draw what it says, so a screen
+// with one is refused and the built-in one is shown with the reason.
+func parseScreen(data []byte) (*scene.Document, error) {
+	d, err := scene.ParseDocument(data)
+	if err != nil {
+		return nil, err
+	}
+	if err := d.RefuseEmpty(); err != nil {
+		return nil, err
+	}
+	if err := d.Validate(); err != nil {
+		return nil, err
+	}
+	if w := d.Warnings(); len(w) > 0 {
+		return nil, fmt.Errorf("%s (the engine would ignore it)", w[0].String())
+	}
+	return d, nil
+}
 
 // A screen is a scene document that replaces the scene on display while it is open: the
 // providers hub, /team, /flow, /auto. They ship inside the binary, and a profile may replace
@@ -42,10 +75,7 @@ func loadScreen(name string, builtin func() (*scene.Document, error), allow bool
 		if dir := screensDir(); dir != "" {
 			path := filepath.Join(dir, name+".json")
 			if data, readErr := os.ReadFile(path); readErr == nil {
-				d, parseErr := scene.ParseDocument(data)
-				if parseErr == nil {
-					parseErr = d.Validate()
-				}
+				d, parseErr := parseScreen(data)
 				if parseErr == nil {
 					return d, "", nil
 				}
