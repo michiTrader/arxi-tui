@@ -116,8 +116,10 @@ type uiApply struct {
 	beh, baseBeh behaviour
 	behChanged   bool
 	// pkg is the change to packages, nil when it touches none (package_edit.go).
-	pkg  *packageEdit
-	done chan error
+	pkg *packageEdit
+	// screens is the change to the screen files, nil when it touches none (screen_edit.go).
+	screens *screenEdit
+	done    chan error
 }
 
 func newUIBridge() *uiBridge {
@@ -169,8 +171,8 @@ func (b *uiBridge) setMode(name string) {
 func (b *uiBridge) definitions() []driver.ClientToolDef {
 	return []driver.ClientToolDef{
 		{Name: uiToolGuide,
-			Description: "Read how YOUR OWN interface is built: the terminal app you are running in and the user is looking at (banner, chat, input bar, status bar, and the colours of everything you write). It is NOT in the project folder; never search files for it. Call this first whenever the user asks to change anything about how you or this screen look: layout, spacing, colours, styles.",
-			Schema:      json.RawMessage(`{"type":"object","properties":{}}`)},
+			Description: "Read how YOUR OWN interface is built: the terminal app you are running in and the user is looking at (banner, chat, input bar, status bar, and the colours of everything you write). It is NOT in the project folder; never search files for it. Call this first whenever the user asks to change anything about how you or this screen look: layout, spacing, colours, styles. screen: read another screen's scene.",
+			Schema:      json.RawMessage(`{"type":"object","properties":{"screen":{"type":"string"}}}`)},
 		{Name: uiToolEdit,
 			Description: "Change your own interface (call ui_guide first). The user sees the diff and approves it; it is kept across sessions. colors recolours; texts rewords menus and screens; commands (/ui lines) or scene change the layout; behaviour changes what it DOES: animated colours, menu keys, shortcuts, own / commands, reactions to settings.",
 			Schema: json.RawMessage(`{"type":"object","properties":{` +
@@ -178,6 +180,7 @@ func (b *uiBridge) definitions() []driver.ClientToolDef {
 				`"texts":{"type":"object","additionalProperties":{"type":"string"},"description":"key -> sentence, e.g. {\"team.title\":\"Crews\"}; empty restores the factory one"},` +
 				`"commands":{"type":"array","items":{"type":"string"},"description":"/ui add|move|remove|set|style lines"},` +
 				`"scene":{"type":"string","description":"the whole new scene, as JSON"},` +
+				`"screens":{"type":"object","additionalProperties":{"type":"string"},"description":"other screens, name -> scene JSON; empty restores (SCREENS in ui_guide)"},` +
 				`"behaviour":{"type":"object","description":"animations, menu_keys, keys, commands, hooks; format in ui_guide"},` +
 				`"packages":{"type":"array","items":{"type":"object"},"description":"[{put:<package>}|{remove:id}|{disable:id}|{enable:id}]; the user approves a package before it runs; see ui_guide"},` +
 				`"summary":{"type":"string","description":"one sentence saying what changes, shown to the user"}}}`)},
@@ -196,13 +199,24 @@ func (b *uiBridge) guideText() string {
 		return ""
 	}
 	cwd, _ := os.Getwd()
-	return uiGuide(doc, thm) + "\n" + behaviourGuide(b.behaviourNow()) + "\n" + verbsGuide() + "\n" + packagesGuide(loadAllPackages(cwd, b.behaviourNow())) + "\n" + scenariosGuide() + "\n" + historyGuide()
+	return uiGuide(doc, thm) + "\n" + behaviourGuide(b.behaviourNow()) + "\n" + verbsGuide() + "\n" + packagesGuide(loadAllPackages(cwd, b.behaviourNow())) + "\n" + scenariosGuide() + "\n" + historyGuide() + "\n" + screensGuide()
 }
 
 // call runs one tool call. ask puts a change to the user and blocks until they decide.
 func (b *uiBridge) call(ctx context.Context, c driver.ClientToolCall, ask func(driver.Approval) bool) driver.ClientToolResult {
 	switch c.Name {
 	case uiToolGuide:
+		var ga struct {
+			Screen string `json:"screen"`
+		}
+		_ = json.Unmarshal(c.Arguments, &ga)
+		if ga.Screen != "" {
+			src, err := screenSource(ga.Screen)
+			if err != nil {
+				return driver.ClientToolResult{Text: err.Error(), Summary: "That is not a screen"}
+			}
+			return driver.ClientToolResult{OK: true, Text: "Scene of the " + ga.Screen + " screen as it is drawn now:\n" + src, Arg: ga.Screen, Summary: "Read the " + ga.Screen + " screen"}
+		}
 		text := b.guideText()
 		if text == "" {
 			return driver.ClientToolResult{Text: "the interface is not on screen yet; try again", Summary: "The interface is not ready"}
@@ -266,6 +280,7 @@ func (b *uiBridge) editFlow(ctx context.Context, raw json.RawMessage, ask func(d
 		Texts     map[string]string `json:"texts"`
 		Commands  []string          `json:"commands"`
 		Scene     string            `json:"scene"`
+		Screens   map[string]string `json:"screens"`
 		Behaviour json.RawMessage   `json:"behaviour"`
 		Packages  json.RawMessage   `json:"packages"`
 		Summary   string            `json:"summary"`
@@ -340,6 +355,16 @@ func (b *uiBridge) editFlow(ctx context.Context, raw json.RawMessage, ask func(d
 	if pkgEdit != nil {
 		diff += pkgEdit.diff
 	}
+	var screenChange *screenEdit
+	if len(args.Screens) > 0 {
+		var err error
+		if screenChange, err = draftScreens(args.Screens, nextThm, persistsScene(base)); err != nil {
+			return refuse("The change was refused", err.Error()+"\nNothing was changed. Fix it and call ui_edit again.")
+		}
+		if screenChange != nil {
+			diff += screenChange.diff
+		}
+	}
 	next := base
 	if len(args.Commands) > 0 || strings.TrimSpace(args.Scene) != "" {
 		var err error
@@ -351,8 +376,8 @@ func (b *uiBridge) editFlow(ctx context.Context, raw json.RawMessage, ask func(d
 			return refuse("The change was refused", err.Error())
 		}
 		diff += d
-	} else if len(args.Colors) == 0 && len(args.Texts) == 0 && len(args.Behaviour) == 0 && len(args.Packages) == 0 {
-		return refuse("The change was refused", "ui_edit needs colors, texts, behaviour, packages, commands or scene")
+	} else if len(args.Colors) == 0 && len(args.Texts) == 0 && len(args.Behaviour) == 0 && len(args.Packages) == 0 && len(args.Screens) == 0 {
+		return refuse("The change was refused", "ui_edit needs colors, texts, behaviour, packages, screens, commands or scene")
 	}
 	fill := func() {
 		dry.doc, dry.words = next, len(args.Texts) > 0
@@ -387,7 +412,7 @@ func (b *uiBridge) editFlow(ctx context.Context, raw json.RawMessage, ask func(d
 	done := make(chan error, 1)
 	var err error
 	select {
-	case b.apply <- uiApply{base: base, doc: next, colors: colors, baseColors: user, texts: words, baseTexts: userWords, beh: nextBeh, baseBeh: userBeh, behChanged: behChanged, pkg: pkgEdit, done: done}:
+	case b.apply <- uiApply{base: base, doc: next, colors: colors, baseColors: user, texts: words, baseTexts: userWords, beh: nextBeh, baseBeh: userBeh, behChanged: behChanged, pkg: pkgEdit, screens: screenChange, done: done}:
 	case <-ctx.Done():
 		return refuse("Cancelled", "the turn ended before the change was applied")
 	}
@@ -401,6 +426,9 @@ func (b *uiBridge) editFlow(ctx context.Context, raw json.RawMessage, ask func(d
 	}
 	b.resetRefusals()
 	text := "applied and saved: the interface on screen now shows the change. /ui undo takes it back."
+	if screenChange != nil {
+		text += "\nScreens written: " + strings.Join(sortedKeys(screenChange.write), ", ") + ". Each shows the next time the user opens it; you cannot open it for them, and ui_preview does not draw screens, so say what you changed and do not claim you saw it."
+	}
 	if pkgEdit != nil && len(pkgEdit.put) > 0 {
 		text += "\nPackages written: " + strings.Join(pkgEdit.put, ", ") + ". They do NOTHING yet: the user has to type /package approve <id> themselves, with nothing after the id (the app shows them what it can do and the code to type; never quote a code yourself). You cannot approve them. Tell the user to do that, and do not say they work before."
 	}

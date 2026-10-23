@@ -3899,10 +3899,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 			if req.base != doc || (req.colors != nil && !sameTokens(req.baseColors, userCols)) ||
 				(req.texts != nil && !sameTexts(req.baseTexts, userWords)) ||
 				(req.behChanged && !sameBehaviour(req.baseBeh, userBeh)) ||
-				(req.pkg != nil && !req.pkg.fresh()) {
+				(req.pkg != nil && !req.pkg.fresh()) || (req.screens != nil && !req.screens.fresh()) {
 				req.done <- errors.New("the interface changed while the question was open; read it again with ui_guide and redo the change")
 			} else if req.pkg != nil && !persistsScene(doc) {
 				req.done <- errors.New("packages belong to the everyday interface, and this one was started with -scene or -raw; nothing was changed")
+			} else if req.screens != nil && !persistsScene(doc) {
+				req.done <- errors.New("screens belong to the everyday interface, and this one was started with -scene or -raw; nothing was changed")
+			} else if err := applyScreenEdit(req.screens); err != nil {
+				req.done <- err
 			} else if err := applyPackageEdit(req.pkg, cwd); err != nil {
 				req.done <- err
 			} else {

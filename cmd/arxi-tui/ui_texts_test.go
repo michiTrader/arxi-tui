@@ -271,7 +271,7 @@ func TestTheGuideListsEveryTextKeyWithItsCurrentWords(t *testing.T) {
 		t.Error("the guide shows the factory words for a key the user changed; it must show the live ones")
 	}
 	defs, _ := json.Marshal(r.b.definitions())
-	if len(defs) > 2500 {
+	if len(defs) > 2750 {
 		t.Errorf("the tool definitions are %d bytes and ride with every question; keep the detail in ui_guide", len(defs))
 	}
 }

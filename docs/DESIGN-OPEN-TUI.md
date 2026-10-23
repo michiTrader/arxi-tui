@@ -608,7 +608,22 @@ Only the everyday interface reads the folder (`persistsScene`), so `-raw` and `-
   screen had no node for `host.scene.error`, so a refusal there was invisible; it has one now. Five mutants (no reread
   per screen), each caught by the 30 s wait timing out. An already-open screen is not swapped under the user; the edit
   shows on the next open.
-- NOT done, said plainly: there is no `/ui` verb to write one, so today it is a file edit. The sandbox
+- Built (D6 follow-up): the model rebuilds a screen through the same `ui_edit` it uses for everything else:
+  `screens: {"flow": "<scene JSON>"}` writes `screens/flow.json` after the user sees a diff and allows it, and `""`
+  removes the file so the built-in comes back. `ui_guide {"screen": "flow"}` gives the model the scene in use, and the
+  guide has a SCREENS chapter. Refused before the user is asked: unknown screen, a scene that does not parse, has no
+  root, fails validation, or carries a warning (an unknown node type or key, which the engine would otherwise draw as a
+  placeholder or ignore); also refused in plan mode, with -scene/-raw, and when the file moved while the question was
+  open. The loader uses the same `parseScreen`, so what the model may write is what the loader accepts; this made the
+  loader stricter too: a hand-written screen with an unknown node type is now refused with a notice instead of drawn
+  with a placeholder. All five screens in one list (`screenBuiltins`). Through the real loop: the model's change is
+  applied, then `/flow` shows it. Mutants on the committed tree, each caught: loop skips the write (by the 30 s wait
+  timing out), screens not sent to the loop, diff not shown, warnings not refusing, stale check disabled, everyday check
+  removed, unknown screen accepted (that one first survived because the check was written twice; one copy removed, then
+  caught). Not done: `ui_preview` does not draw a screen, so the model cannot look at what it wrote and is told to say
+  so; `/ui undo` does not cover screens (passing `""` does); no typed `/ui screen ...` command for the user, only the
+  model's path.
+- NOT done, said plainly: there is no typed `/ui` verb for a screen, so a user who wants to write one by hand edits the file. The sandbox
   was reset once while this was being written and the first attempt was lost before it was pushed; this is the redo.
 
 ### Built (D5): tabs and a popup are a scene, no engine change

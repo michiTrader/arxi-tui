@@ -51,7 +51,8 @@ func (r *bridgeRig) edit(t *testing.T, args string, allow bool) driver.ClientToo
 		select {
 		case req := <-r.b.apply:
 			r.doc = req.doc
-			req.done <- nil
+			// The loop writes the screens before it answers; the rig plays that half too.
+			req.done <- applyScreenEdit(req.screens)
 		case <-ctx.Done():
 		}
 	}()
@@ -71,11 +72,12 @@ func TestTheGuideCarriesTheLiveDocumentAndEveryVocabulary(t *testing.T) {
 		}
 	}
 	// The guide is paid for only on the turn that reads it; what rides with every
-	// question is the three definitions. Measured at about 2.4k bytes with the
-	// packages argument and ui_preview; the ceiling leaves room to improve the wording
+	// question is the three definitions. Measured at about 2.5k bytes with the
+	// packages argument and ui_preview, and 2.7k once ui_edit takes screens and ui_guide reads one
+	// (raised from 2500 on purpose: about 60 tokens, on a /ui turn only); the ceiling leaves room to improve the wording
 	// without letting it grow into a prompt. They ride only on a /ui turn.
 	defs, _ := json.Marshal(r.b.definitions())
-	if len(defs) > 2500 {
+	if len(defs) > 2750 {
 		t.Errorf("the tool definitions are %d bytes and are sent with every question.\nConsequence: a plain \"hola\" pays for the interface feature.\nRemedy: keep the definitions short; put the detail in ui_guide.", len(defs))
 	}
 }
