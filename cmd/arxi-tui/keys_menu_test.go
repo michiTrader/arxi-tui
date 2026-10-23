@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/michiTrader/arxi_tui/internal/defaultscene"
+	"github.com/michiTrader/arxi_tui/internal/fold"
+	"github.com/michiTrader/arxi_tui/internal/scene"
 	"github.com/michiTrader/arxi_tui/internal/term"
+	"github.com/michiTrader/arxi_tui/internal/theme"
 )
 
 // withBehaviour makes b the behaviour in force for one test and puts the factory one
@@ -384,18 +389,61 @@ func TestLoopAMovedMenuKeyReallySteersAnotherMenu(t *testing.T) {
 	t.Setenv(configDirEnv, cfg)
 	t.Setenv(historyEnv, t.TempDir())
 	t.Cleanup(func() { setActiveBehaviour(behaviour{}) })
-	altN := scheduledEvent{40 * time.Millisecond, term.Event{Kind: term.EventKey,
+	altN := scheduledEvent{0, term.Event{Kind: term.EventKey,
 		Key: term.Key{Type: term.KeyRunes, Runes: []rune{'n'}, Mod: term.ModAlt}}}
-	script := enterLine("/keys next alt+n")
-	script = append(script, enterLine("/keys next down")...)
-	script = append(script, typed("/mode ")...)
-	script = append(script, altN, scheduledEvent{40 * time.Millisecond, enterEvent()})
-	script = append(script, exitKeys()...)
-	out, _ := runLoopDefault(t, 110, 40, script)
-	if b := readBehaviourFile(t, cfg); !strings.Contains(b, "alt+n") || strings.Contains(b, `"down"`) {
-		t.Fatalf("setup failed, behaviour.json is %q\n%s", b, lastFrame(out))
+	// Fixed delays between the keys overran on a loaded Windows runner: alt+n arrived
+	// before the menu was open and moved nothing. Each step waits for what the one before
+	// it must produce.
+	doc, err := scene.ParseNamed(defaultscene.Name, defaultscene.JSON)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if f := lastFrame(out); !strings.Contains(f, "auto") || strings.Contains(f, "ask ·") {
+	tty := newOpenFakeTTY(110, 40, nil)
+	drv := &testDriver{evCh: make(chan fold.Event, 64), seq: 1000}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, "") }()
+	send := func(evs ...scheduledEvent) {
+		for _, ev := range evs {
+			time.Sleep(ev.delay)
+			tty.events <- ev.event
+		}
+	}
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(30 * time.Second)
+		for !ok() && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		if !ok() {
+			t.Fatalf("never saw %s; last frame:\n%s", what, lastFrame(tty.output()))
+		}
+	}
+	waitFor("the first frame", func() bool { return tty.output() != "" })
+	send(enterLine("/keys next alt+n")...)
+	waitFor("next moved to alt+n", func() bool { return strings.Contains(readBehaviourFile(t, cfg), "alt+n") })
+	send(enterLine("/keys next down")...)
+	send(typed("/mode ")...)
+	// The menu is drawn only after the line above was handled (the loop reads events in order).
+	waitFor("the /mode menu", func() bool { return strings.Contains(lastFrame(tty.output()), "auto") })
+	send(altN, scheduledEvent{20 * time.Millisecond, enterEvent()})
+	// Events are handled in order, so the quit keys land after alt+n and Enter; the final
+	// frame is read once the loop has quit.
+	send(exitKeys()...)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("loop: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the loop did not quit")
+	}
+	f := lastFrame(tty.output())
+	if b := readBehaviourFile(t, cfg); !strings.Contains(b, "alt+n") || strings.Contains(b, `"down"`) {
+		t.Fatalf("setup failed, behaviour.json is %q\n%s", b, f)
+	}
+	if !strings.Contains(f, "auto") || strings.Contains(f, "ask ·") {
 		t.Errorf("alt+n did not move the /mode highlight, so Enter did not pick auto:\n%s", f)
 	}
 }
