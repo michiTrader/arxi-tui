@@ -647,8 +647,10 @@ each pane is gated on its own, and a popup is an `overlay` gated the same way, c
   purpose: a registry row grows every menu test sized to it. Mutants on the committed tree, each caught: pick.is reads the
   wrong group, pick.none always true, clear does nothing, every group writes one slot, validator accepts any shape (first
   try did not compile, redone), a press does not write directly (this one first SURVIVED the loop test because the loop's
-  queue also handles `/pick`; `TestPressCmdPickWritesTheGroupWithoutTheQueue` was added and catches it). NOT done: the
-  choice is not saved between runs; `/pick` is not in the model's `ui_guide` yet.
+  queue also handles `/pick`; `TestPressCmdPickWritesTheGroupWithoutTheQueue` was added and catches it). `ui_guide` now teaches `/max`,
+  `/pick` and both bind families (`TestUIGuideTeachesTheOwnViewStateBinds`; its tab example is validated by
+  `TestUIGuideTabExampleIsAValidScene`: a first version that only parsed let a malformed `when` survive, the mutant
+  is now caught). NOT done: the choice is not saved between runs.
 - NOT done, said plainly: keyboard navigation between tabs (arrows) is not tested, only Tab/click. A popup does not trap focus: Tab may still reach
   nodes behind it. Hover and drag are still to do.
 
