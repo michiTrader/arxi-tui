@@ -578,9 +578,13 @@ dead to it, so every window needed the keyboard.
 - Mutants on a committed tree, each caught by the test that names it: outer node overwrites inner, rows keyed by id,
   idless nodes stamped, `HitAt` by byte, wrap drops `Hit`, cut drops `Hit`, cycle (both branches) drops `Hit`, find
   drops `Hit`, a click clears the draft. First runs of the wrap, cycle and find mutants SURVIVED; tests were added.
-- NOT covered, said plainly: the call to `clickMayPress` inside the loop. Its table test passes, but removing the call
-  in `main.go` survived: no loop test reached a state where a screen is up with a pressable node under the
-  pointer (no Go-drawn screen has `on_press`). A consent modal is likewise untested for clicks.
+- Follow-up: the screen half of `clickMayPress` is now proven through the real loop
+  (`TestLoopAClickOnAScreenDoesNotPressTheSceneBehindIt`): a profile screen and the main scene both have a button with
+  the id `go`, a click on the screen's button must not press the main one, and after the screen closes the same click
+  must. The mutant that replaces the guard in `main.go` with `hit != ""` is caught immediately (the main scene's
+  `MAIN PRESSED` appears while the screen is open). Still NOT covered, said plainly: the consent-modal half of the guard
+  (`modal.capturing() || bundleMod.capturing()`): no loop test clicks while a consent modal is up, so removing only that
+  term would survive.
 - Not done: hover, drag, right/middle button, a click that moves the caret in the input, mouse on Termux (the mouse is
   left to the terminal there on purpose, see `wantMouse`).
 
