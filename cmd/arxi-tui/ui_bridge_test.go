@@ -337,3 +337,31 @@ func TestColorCommandReadsTokenAndStyle(t *testing.T) {
 		t.Error("/ui colorful is not a colour command")
 	}
 }
+
+func TestUIGuideTeachesTheOwnViewStateBinds(t *testing.T) {
+	g := uiGuide(builtinDoc(t), theme.SOBRIA())
+	for _, want := range []string{"cmd:/pick <group> <name>", "ui.pick.is.<group>.<name>", "ui.pick.none.<group>", "cmd:/max <pane id>", "ui.max.is.<pane id>"} {
+		if !strings.Contains(g, want) {
+			t.Errorf("the guide does not mention %q.\nConsequence: the model cannot build tabs or a maximize button from a request, so every such idea needs a Go change again.\nRemedy: keep the VIEW STATE paragraph in uiGuide in step with BINDS.md.", want)
+		}
+	}
+}
+
+// The tab example printed in the guide is copied by the model, so it must load: a scene
+// document is built around it and parsed with the real validator.
+func TestUIGuideTabExampleIsAValidScene(t *testing.T) {
+	g := uiGuide(builtinDoc(t), theme.SOBRIA())
+	i := strings.Index(g, "Example, two tabs:\n  ")
+	if i < 0 {
+		t.Fatal("the guide has no tab example")
+	}
+	line := strings.SplitN(g[i+len("Example, two tabs:\n  "):], "\n", 2)[0]
+	doc := `{"root":{"type":"stack","children":[` + line + `,{"id":"prompt","type":"input","bind":"user.input"}]}}`
+	parsed, err := scene.ParseNamed("guide-example", []byte(doc))
+	if err == nil {
+		err = parsed.Validate()
+	}
+	if err != nil {
+		t.Fatalf("the guide's tab example does not load: %v.\nConsequence: the model copies it and every attempt is refused.\nRemedy: keep the example in uiGuide valid; the validator names what is wrong.", err)
+	}
+}
