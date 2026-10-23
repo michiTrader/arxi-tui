@@ -3,6 +3,9 @@ package main
 import (
 	"fmt"
 	"strings"
+
+	"github.com/michiTrader/arxi_tui/internal/scene"
+	"github.com/michiTrader/arxi_tui/internal/term"
 )
 
 // This file is the host-level grammar for `/max [pane]`, the command that writes
@@ -53,4 +56,50 @@ func parseMax(line string) (pane string, matched bool, err error) {
 	default:
 		return "", true, fmt.Errorf("/max takes at most one pane id: /max <pane> to maximize, or /max alone to restore")
 	}
+}
+
+// pickUsage is what /pick says when it is misused.
+const pickUsage = "/pick <group> <name> chooses a tab or option; /pick <group> clears the group's choice"
+
+// applyPick runs `/pick <group> <name>` (or the bare `pick ...` an on_press yields) on the
+// choices the host holds. matched reports whether the line IS a /pick; notice is the refusal
+// to show, or "". It is the one door for a typed line and a pressed button, as parseMax is for
+// /max, so the two cannot differ.
+//
+// Each group has a selector of its own (ui.pick.is.<group>.<name>), which is what lets two
+// tab sets live on one screen: /max has a single slot, so a second tab set (or a maximized
+// pane beside a tab set) would overwrite the first's choice.
+func applyPick(picks map[string]string, line string) (matched bool, notice string) {
+	rest, ok := stripLeadingVerb(line, "pick")
+	if !ok {
+		return false, ""
+	}
+	if picks == nil {
+		return true, "/pick: this surface holds no choices to write"
+	}
+	fields := strings.Fields(rest)
+	if len(fields) == 0 || len(fields) > 2 {
+		return true, pickUsage
+	}
+	if !scene.ValidPickWord(fields[0]) {
+		return true, fmt.Sprintf("/pick: %q is not a group name (use a-z, 0-9, '_' and '-'). %s", fields[0], pickUsage)
+	}
+	if len(fields) == 1 {
+		delete(picks, fields[0])
+		return true, ""
+	}
+	if !scene.ValidPickWord(fields[1]) {
+		return true, fmt.Sprintf("/pick: %q is not a choice name (use a-z, 0-9, '_' and '-'). %s", fields[1], pickUsage)
+	}
+	picks[fields[0]] = fields[1]
+	return true, ""
+}
+
+// applyPickOnEnter is applyPick for the typed path: it acts only on Enter, so a line still
+// being typed is left alone.
+func applyPickOnEnter(k term.Key, picks map[string]string, input string) (bool, string) {
+	if k.Type != term.KeyEnter {
+		return false, ""
+	}
+	return applyPick(picks, input)
 }

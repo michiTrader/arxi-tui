@@ -792,6 +792,10 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 	// state.UIMax (and derives ui.max.none / ui.max.is.<id> from it), so writing
 	// the cursor here is all the loop adds for click-to-maximize.
 	uiMax := ""
+	// uiPick holds the choice of each `/pick <group> <name>` group: the selector of its own
+	// that lets two tab sets share a screen, where ui.max has a single slot. Re-attached to
+	// the state each frame like uiMax (Fold leaves it empty).
+	uiPick := map[string]string{}
 
 	// pluginFetch is the network side of `/ui plugin add <url>` (H6). It is the
 	// only real HTTP client the loop holds, injected into the /ui dispatch so the
@@ -1836,6 +1840,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 		// if the loop did not re-apply its cursor here. The engine derives
 		// ui.max.none and the ui.max.is.<id> family from it, so the layout follows.
 		state.UIMax = uiMax
+		state.UIPick = uiPick
 		// Invariant 3's other half: the fallback scene is on screen, and this
 		// is the notice that says why. It is re-applied on every repaint
 		// because Fold rebuilds State from the event list each frame
@@ -3400,6 +3405,14 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 									collected = appendLocalWarning(collected, w)
 								}
 							}
+						} else if pickMatched, pickWhy := applyPickOnEnter(ev.Key, uiPick, input); pickMatched {
+							// `/pick <group> <name>`: the group's own choice, typed. The
+							// same applyPick backs a pressed cmd:/pick button.
+							if pickWhy != "" {
+								sceneNotice = pickWhy
+							}
+							input = ""
+							caret = 0
 						} else if pane, matched, perr := parseMax(input); ev.Key.Type == term.KeyEnter && matched {
 							// `/max <pane>` writes the host ui.max cursor, Scene 10's
 							// write half, intercepted here before the slash menu for the
@@ -3439,7 +3452,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							if picked != "" {
 								enqueue(actionList{"cmd:" + picked}, false)
 							}
-						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, pressState(collected, drv, uiMax), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) {
+						} else if handled, nextInput, nextFocus := focusKey(ev.Key, input, uiFocus, &doc, pressState(collected, drv, uiMax, uiPick), &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) {
 							if raw, isRaw := strings.CutPrefix(line, rawActionMark); isRaw {
 								enqueue(actionList{raw}, false)
 								return
@@ -3589,7 +3602,7 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 							// same node: same door (pressFocused), same on_press. The draft
 							// stays: a click is not a submitted line. The focus cursor stays
 							// where it was, unless the press itself moved it (focus:).
-							st := pressState(collected, drv, uiMax)
+							st := pressState(collected, drv, uiMax, uiPick)
 							_, _, next := pressFocused(hit, input, &doc, st, &sceneNotice, uiHidden, &uiMax, pluginFetch, applyPluginTokens, pluginActions, func(line string) {
 								if raw, isRaw := strings.CutPrefix(line, rawActionMark); isRaw {
 									enqueue(actionList{raw}, false)

@@ -120,10 +120,11 @@ type pluginActionRouter interface {
 // It carries ui.max too: a node gated on ui.max.is.<pane> (a window) is drawn only while the
 // cursor names it, so a press state without the cursor would hide the window from the focus
 // ring while the frame shows it, and Tab would reach nothing in it.
-func pressState(collected []fold.Event, drv any, uiMax string) fold.State {
+func pressState(collected []fold.Event, drv any, uiMax string, uiPick map[string]string) fold.State {
 	st := fold.Fold(collected)
 	st.HostShellRows = runningShellRows(drv)
 	st.UIMax = uiMax
+	st.UIPick = uiPick
 	return st
 }
 
@@ -208,6 +209,15 @@ func dispatchPress(onPress, currentFocus, answerText string, state fold.State, d
 		// above rather than submitted. uiMax may be nil in a context that holds no
 		// such cursor (a press test that does not exercise maximize); a nil guard
 		// keeps the dispatcher usable there without inventing a cursor to write.
+		// `/pick <group> <name>` writes the group's own choice. The map lives in the loop and
+		// travels in state (a map is shared, not copied), so a press changes what the loop
+		// holds without one more parameter on every press function.
+		if matched, why := applyPick(state.UIPick, action.Arg); matched {
+			if why != "" {
+				*notice = why
+			}
+			return currentFocus
+		}
 		if pane, matched, perr := parseMax(action.Arg); matched {
 			switch {
 			case perr != nil:

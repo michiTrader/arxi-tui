@@ -302,6 +302,10 @@ type State struct {
 	UIFocus   string `json:"ui.focus"`
 	UIMax     string `json:"ui.max"`
 	UISurface string `json:"ui.surface"`
+	// UIPick is the choice of each pick group (`/pick <group> <name>`), host-owned view
+	// state like UIMax. It has no bind of its own: scenes read it through the families
+	// ui.pick.is.<group>.<name> and ui.pick.none.<group>, so it carries no json tag.
+	UIPick map[string]string `json:"-"`
 	// UIHidden is the set of node ids the user has hidden through `/ui hide <id>`
 	// (BINDS.md §4.3, signed as D3). It is a set and not a scalar for the reason
 	// the design pinned: every other `ui.*` row is a single id, so a scalar

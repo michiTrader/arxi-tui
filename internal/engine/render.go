@@ -3438,6 +3438,22 @@ func resolveBind(bind string, state fold.State) string {
 		}
 		return "false"
 	}
+	// The ui.pick families (BINDS.md §4.3): one selector per group, so two tab sets do not
+	// share ui.max. Concrete "true"/"false" for the reason the ui.max family gives.
+	if rest, ok := strings.CutPrefix(bind, scene.PickIsBindPrefix); ok {
+		if group, name, found := strings.Cut(rest, "."); found && group != "" && name != "" {
+			if state.UIPick[group] == name {
+				return "true"
+			}
+			return "false"
+		}
+	}
+	if group, ok := strings.CutPrefix(bind, scene.PickNoneBindPrefix); ok && group != "" {
+		if state.UIPick[group] == "" {
+			return "true"
+		}
+		return "false"
+	}
 	switch bind {
 	case "chat.history":
 		return state.ChatHistoryMarkdown()

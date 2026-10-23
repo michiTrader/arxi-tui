@@ -146,6 +146,30 @@ func bindKindNodeTypeList(kind string) string {
 // provider verbs name their strings once.
 const MaxIsBindPrefix = "ui.max.is."
 
+// PickIsBindPrefix and PickNoneBindPrefix are the signed prefixes of the ui.pick families
+// (BINDS.md §4.3): a selector of its own per group, so two tab sets on one screen do not
+// share the single ui.max slot. ui.pick.is.<group>.<name> is true when the group's choice
+// is that name; ui.pick.none.<group> is true while the group has no choice. Named once here
+// for the validator and the engine, like MaxIsBindPrefix.
+const (
+	PickIsBindPrefix   = "ui.pick.is."
+	PickNoneBindPrefix = "ui.pick.none."
+)
+
+// ValidPickWord reports whether s may name a group or a choice: lower-case letters, digits,
+// '_' and '-', so that "group.name" splits at one dot with no doubt.
+func ValidPickWord(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 var signedBinds = map[string]bool{
 	// §4.1 run state
 	"chat.history":            true,
@@ -595,6 +619,28 @@ func (d *Document) validateOneBind(bind, where string, n *Node, path string, sco
 			return &Error{
 				Loc: d.locOf(path),
 				Msg: fmt.Sprintf("bind %q in %s of node type %q names no pane id after %q; the ui.max.is.<id> family (BINDS.md §4.3) gates on which pane is maximized, so it needs the pane id — use ui.max.none to gate on nothing being maximized", bind, where, n.Type, MaxIsBindPrefix),
+			}
+		}
+		return nil
+	}
+	// The ui.pick families (BINDS.md §4.3): a selector per group. A malformed address is
+	// refused here, with the shape, so the scene does not quietly gate on a name no
+	// /pick command can ever write.
+	if rest, ok := strings.CutPrefix(bind, PickIsBindPrefix); ok {
+		group, name, found := strings.Cut(rest, ".")
+		if !found || !ValidPickWord(group) || !ValidPickWord(name) {
+			return &Error{
+				Loc: d.locOf(path),
+				Msg: fmt.Sprintf("bind %q in %s of node type %q is not of the form ui.pick.is.<group>.<name> (BINDS.md §4.3); group and name use a-z, 0-9, '_' and '-'", bind, where, n.Type),
+			}
+		}
+		return nil
+	}
+	if group, ok := strings.CutPrefix(bind, PickNoneBindPrefix); ok {
+		if !ValidPickWord(group) {
+			return &Error{
+				Loc: d.locOf(path),
+				Msg: fmt.Sprintf("bind %q in %s of node type %q is not of the form ui.pick.none.<group> (BINDS.md §4.3); the group uses a-z, 0-9, '_' and '-'", bind, where, n.Type),
 			}
 		}
 		return nil
