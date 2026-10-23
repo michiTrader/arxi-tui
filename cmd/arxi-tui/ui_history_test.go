@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/michiTrader/arxi_tui/internal/defaultscene"
+	"github.com/michiTrader/arxi_tui/internal/fold"
+	"github.com/michiTrader/arxi_tui/internal/scene"
+	"github.com/michiTrader/arxi_tui/internal/theme"
 	"github.com/michiTrader/arxi_tui/internal/ui"
 )
 
@@ -286,13 +291,57 @@ func TestHistoryIsATypedCommandAndNeverARequestToTheModel(t *testing.T) {
 
 func TestTypingUIHistoryThroughTheLoopListsAndNeverReachesTheModel(t *testing.T) {
 	histRig(t)
-	script := append(enterLine("/ui color markdown.code fg=magenta"), enterLine("/ui history")...)
-	out, sent := runLoopDefault(t, 100, 30, append(script, exitKeys()...))
-	if len(sent) != 0 {
-		t.Errorf("/ui history reached the model: %q", sent)
+	// Fixed delays between the two lines overran on a loaded Windows runner: the second
+	// line was typed before the first had been handled and the list never appeared. Each
+	// step waits for what the previous one must produce.
+	doc, err := scene.ParseNamed(defaultscene.Name, defaultscene.JSON)
+	if err != nil {
+		t.Fatal(err)
 	}
-	plain := lastFrame(out)
-	if !strings.Contains(plain, "/ui history (newest first") || !strings.Contains(plain, "#1") {
+	tty := newOpenFakeTTY(100, 30, nil)
+	drv := &testDriver{evCh: make(chan fold.Event, 64), seq: 1000}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, "") }()
+	send := func(evs []scheduledEvent) {
+		for _, ev := range evs {
+			time.Sleep(ev.delay)
+			tty.events <- ev.event
+		}
+	}
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(30 * time.Second)
+		for !ok() && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		if !ok() {
+			t.Fatalf("never saw %s; last frame:\n%s", what, lastFrame(tty.output()))
+		}
+	}
+	waitFor("the first frame", func() bool { return tty.output() != "" })
+	send(enterLine("/ui color markdown.code fg=magenta"))
+	waitFor("the colour recorded as a version", func() bool {
+		h, _ := loadUIHistory()
+		return len(h.Versions) > 0
+	})
+	send(enterLine("/ui history"))
+	waitFor("the list", func() bool { return strings.Contains(lastFrame(tty.output()), "/ui history (newest first") })
+	plain := lastFrame(tty.output())
+	send(exitKeys())
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("loop: %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the loop did not quit")
+	}
+	if len(drv.submitted) != 0 {
+		t.Errorf("/ui history reached the model: %q", drv.submitted)
+	}
+	if !strings.Contains(plain, "#1") {
 		t.Errorf("the list is not on screen:\n%s\nConsequence: the history exists in files nobody can see.\nRemedy: show the list as a note in the conversation.", plain)
 	}
 }
