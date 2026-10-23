@@ -785,3 +785,32 @@ func TestRunOnceOnAnEmptyDirectorySucceeds(t *testing.T) {
 		t.Errorf("no triggers is not a failure: exit %d\n%s", r.code, r.out)
 	}
 }
+
+func TestAwaitExternalDecisionResultRetriesATransientReadFailure(t *testing.T) {
+	result := filepath.Join(t.TempDir(), "x.result")
+	// A directory at the path makes ReadFile fail with an error that is not
+	// "not exist", the same class as a Windows sharing violation.
+	if err := os.Mkdir(result, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_ = os.Remove(result)
+		_ = os.WriteFile(result, []byte(`{"sequence":7}`+"\n"), 0o600)
+	}()
+	seq, err := awaitExternalDecisionResult(result, 10*time.Second)
+	if err != nil || seq != 7 {
+		t.Fatalf("sequence, err = %d, %v; want 7, nil. Consequence: a momentary read failure on the result file reports an answered decision as an error, so the user retries a reply that already landed. Remedy: keep polling until the deadline on a read error that is not \"not exist\".", seq, err)
+	}
+}
+
+func TestAwaitExternalDecisionResultKeepsAPersistentFailureCause(t *testing.T) {
+	result := filepath.Join(t.TempDir(), "x.result")
+	if err := os.Mkdir(result, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, err := awaitExternalDecisionResult(result, 100*time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "read resident decision result") {
+		t.Fatalf("err = %v; want it to name the read failure. Consequence: a permanent read problem is reported as a missing acknowledgement and the real cause is lost. Remedy: return the last read error at the deadline.", err)
+	}
+}
