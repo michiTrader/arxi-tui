@@ -526,11 +526,7 @@ func TestBehaviourAnimationReachesTheEmittedFrames(t *testing.T) {
 	drv := &effortDriver{testDriver: testDriver{evCh: make(chan fold.Event, 64)}}
 	// Put the effort word in the status bar under the animation by style_by, via the real
 	// patch surface, then pick a level and let the animation tick.
-	line := `/ui set status_effort style_by {"high":"rainbow"}`
-	script := append(typeBeh(line), scheduledEvent{20 * time.Millisecond, enterEvent()})
-	script = append(script, typeBeh("/effort ")...)
-	script = append(script, fkey(term.KeyDown), fkey(term.KeyDown), scheduledEvent{20 * time.Millisecond, enterEvent()})
-	tty := newOpenFakeTTY(110, 30, script)
+	tty := newOpenFakeTTY(110, 30, nil)
 
 	doc := builtinDoc(t) // here, not in the goroutine: t.Fatal must run on the test's own
 	done := make(chan error, 1)
@@ -539,6 +535,7 @@ func TestBehaviourAnimationReachesTheEmittedFrames(t *testing.T) {
 		defer cancel()
 		done <- loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, "")
 	}()
+	driveEffortHigh(t, tty, drv)
 
 	colours := func(out string) (map[string]bool, map[string]int) {
 		seen, counts := map[string]bool{}, map[string]int{}
@@ -580,6 +577,42 @@ func TestBehaviourAnimationReachesTheEmittedFrames(t *testing.T) {
 	}
 }
 
+// driveEffortHigh does what a user does to put the effort word under an animation: style it
+// with /ui set, open /effort, move down twice and pick. Each step waits for what the one
+// before it must produce, because keys sent on fixed timers reached the loop before the
+// /effort menu had its rows on a loaded Windows runner and nothing was picked (the effort
+// levels set were []). It returns once the driver was told the level.
+func driveEffortHigh(t *testing.T, tty *fakeTTY, drv *effortDriver) {
+	t.Helper()
+	send := func(evs ...scheduledEvent) {
+		for _, ev := range evs {
+			time.Sleep(ev.delay)
+			tty.events <- ev.event
+		}
+	}
+	waitFor := func(what string, ok func() bool) {
+		t.Helper()
+		deadline := time.Now().Add(60 * time.Second)
+		for !ok() && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		if !ok() {
+			t.Fatalf("never saw %s; last frame:\n%s", what, lastFrame(tty.output()))
+		}
+	}
+	waitFor("the first frame", func() bool { return tty.output() != "" })
+	send(typeBeh(`/ui set status_effort style_by {"high":"rainbow"}`)...)
+	send(scheduledEvent{20 * time.Millisecond, enterEvent()})
+	send(typeBeh("/effort ")...)
+	waitFor("the /effort menu with its rows", func() bool { return strings.Contains(lastFrame(tty.output()), "high") })
+	send(fkey(term.KeyDown), fkey(term.KeyDown), scheduledEvent{20 * time.Millisecond, enterEvent()})
+	waitFor("the effort level reaching the driver", func() bool {
+		drv.mu.Lock()
+		defer drv.mu.Unlock()
+		return len(drv.levels) > 0
+	})
+}
+
 // The colour of the effort word changes when the clock moves one step, and comes back when it
 // has moved a whole turn of the palette. The test owns the time the loop hands the animated
 // palettes (cycleNow), so it needs no real waiting and cannot be fooled by a slow machine: the
@@ -593,11 +626,7 @@ func TestBehaviourAnimationMovesWithTheClock(t *testing.T) {
 	t.Cleanup(func() { cycleNow = saved })
 
 	drv := &effortDriver{testDriver: testDriver{evCh: make(chan fold.Event, 64)}}
-	line := `/ui set status_effort style_by {"high":"rainbow"}`
-	script := append(typeBeh(line), scheduledEvent{20 * time.Millisecond, enterEvent()})
-	script = append(script, typeBeh("/effort ")...)
-	script = append(script, fkey(term.KeyDown), fkey(term.KeyDown), scheduledEvent{20 * time.Millisecond, enterEvent()})
-	tty := newOpenFakeTTY(110, 30, script)
+	tty := newOpenFakeTTY(110, 30, nil)
 	doc := builtinDoc(t)
 	done := make(chan error, 1)
 	go func() {
@@ -605,6 +634,7 @@ func TestBehaviourAnimationMovesWithTheClock(t *testing.T) {
 		defer cancel()
 		done <- loop(ctx, tty, doc, theme.SOBRIA(), drv.evCh, drv, "")
 	}()
+	driveEffortHigh(t, tty, drv)
 
 	letters := regexp.MustCompile("\x1b\\[(3[0-7])m(\\pL)")
 	// paint sets the clock and returns the colours of the word as drawn by the next frames: the
