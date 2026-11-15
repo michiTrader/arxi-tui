@@ -398,3 +398,75 @@ func TestACommandThatCannotStartIsAnErrorNotAShell(t *testing.T) {
 		t.Error("a command that never started must not be listed")
 	}
 }
+
+// Consequence if this fails: a model that polls a running build reads it 23 times in 35
+// seconds, and every read is a full paid request. Remedy: each empty read waits longer.
+func TestRepeatedEmptyReadsOfARunningShellWaitLongerEachTime(t *testing.T) {
+	old := shellBackoffStep
+	shellBackoffStep = 300 * time.Millisecond
+	t.Cleanup(func() { shellBackoffStep = old })
+	r := newTestShells(t)
+	ctx, dir := context.Background(), t.TempDir()
+	if res := r.call(ctx, shellCall(toolShellStart, map[string]any{"command": "sleep 30"}), dir, policyAllow, nil); !res.OK {
+		t.Fatal(res)
+	}
+	var took [4]time.Duration
+	for i := range took {
+		t0 := time.Now()
+		res := r.call(ctx, shellCall(toolShellRead, map[string]any{"id": 1}), dir, policyAllow, nil)
+		took[i] = time.Since(t0)
+		if !strings.Contains(res.Text, "nothing new") || !strings.Contains(res.Text, "still running") {
+			t.Errorf("read %d: %q", i, res.Text)
+		}
+	}
+	if took[0] > 150*time.Millisecond || took[1] > 150*time.Millisecond {
+		t.Errorf("the first empty reads must answer at once, took %v", took[:2])
+	}
+	if took[2] < 250*time.Millisecond || took[3] < 550*time.Millisecond {
+		t.Errorf("later reads must wait longer each time, took %v", took)
+	}
+}
+
+func TestOutputEndsTheBackoffAtOnceAndResetsIt(t *testing.T) {
+	old := shellBackoffStep
+	shellBackoffStep = 2 * time.Second
+	t.Cleanup(func() { shellBackoffStep = old })
+	r := newTestShells(t)
+	ctx, dir := context.Background(), t.TempDir()
+	if res := r.call(ctx, shellCall(toolShellStart, map[string]any{"command": "sleep 1; echo hello; sleep 30"}), dir, policyAllow, nil); !res.OK {
+		t.Fatal(res)
+	}
+	s, _ := r.find(1)
+	for i := 0; i < 3; i++ {
+		s.noteRead(true)
+	}
+	t0 := time.Now()
+	res := r.call(ctx, shellCall(toolShellRead, map[string]any{"id": 1}), dir, policyAllow, nil)
+	if d := time.Since(t0); !strings.Contains(res.Text, "hello") || d > 3500*time.Millisecond {
+		t.Errorf("output must end the wait: took %v, text %q", d, res.Text)
+	}
+	if s.emptyStreak() != 0 {
+		t.Errorf("a read with output must reset the streak, got %d", s.emptyStreak())
+	}
+}
+
+func TestReadWaitNeverExceedsTheCapAndAllIsNeverDelayed(t *testing.T) {
+	if got := readWait(0, 1); got != 0 {
+		t.Errorf("readWait(0,1) = %v", got)
+	}
+	if got := readWait(0, 100); got != maxShellWait*time.Second {
+		t.Errorf("readWait(0,100) = %v, want the cap", got)
+	}
+	r := newTestShells(t)
+	ctx, dir := context.Background(), t.TempDir()
+	r.call(ctx, shellCall(toolShellStart, map[string]any{"command": "sleep 30"}), dir, policyAllow, nil)
+	s, _ := r.find(1)
+	for i := 0; i < 50; i++ {
+		s.noteRead(true)
+	}
+	t0 := time.Now()
+	r.call(ctx, shellCall(toolShellRead, map[string]any{"id": 1, "all": true}), dir, policyAllow, nil)
+	if d := time.Since(t0); d > time.Second {
+		t.Errorf("all=true was delayed %v", d)
+	}
+}

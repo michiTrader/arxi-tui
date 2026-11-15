@@ -44,7 +44,29 @@ const (
 	maxShellRead = 16 << 10
 	// maxShellWait is the longest shell_read waits for new output.
 	maxShellWait = 20
+	// shellFreeEmptyReads is how many empty reads in a row answer at once. Every read is
+	// a full model round trip, and a model left to itself polled a build 23 times in 35
+	// seconds; after this many empty answers the tool itself starts to wait.
+	shellFreeEmptyReads = 1
 )
+
+// shellBackoffStep is how much longer each further empty read of a running shell waits.
+// A variable so tests do not wait whole seconds.
+var shellBackoffStep = 5 * time.Second
+
+// readWait is how long a shell_read waits for output: what the model asked for, plus a
+// step for every empty read beyond the free ones, never more than maxShellWait. Output
+// arriving ends the wait at once, so a program that prints is never delayed.
+func readWait(asked time.Duration, emptyReads int) time.Duration {
+	w := asked
+	if extra := emptyReads - shellFreeEmptyReads; extra > 0 {
+		w += time.Duration(extra) * shellBackoffStep
+	}
+	if max := time.Duration(maxShellWait) * time.Second; w > max {
+		w = max
+	}
+	return w
+}
 
 type shellState int
 
@@ -73,8 +95,10 @@ type shell struct {
 	buf     []byte // the last maxShellKeep bytes written
 	written int64  // every byte written, so a reader knows what it has not seen
 	readPos int64  // how much shell_read already handed to the model
-	killing bool
-	done    chan struct{}
+	// emptyReads counts the reads in a row that found nothing new; any output resets it.
+	emptyReads int
+	killing    bool
+	done       chan struct{}
 }
 
 // Write keeps the tail of what the command prints.
@@ -612,7 +636,7 @@ func shellDefinitions() []driver.ClientToolDef {
 			Description: "Start a command in the background in the project folder; returns its id at once. For servers, watchers and long jobs. The user approves it like run.",
 			Schema:      json.RawMessage(`{"type":"object","properties":{"command":{"type":"string"}},"required":["command"]}`)},
 		{Name: toolShellRead,
-			Description: "What a background shell printed since you last read it, and whether it still runs. Without id, lists the shells. wait_seconds waits for new output (max 20).",
+			Description: "What a background shell printed since you last read it, and whether it still runs. Without id, lists the shells. wait_seconds waits for new output (max 20). Do not poll: when nothing is new, pass wait_seconds 20 instead of reading again at once.",
 			Schema:      json.RawMessage(`{"type":"object","properties":{"id":{"type":"integer"},"wait_seconds":{"type":"integer"},"all":{"type":"boolean","description":"the tail, not only what is new"}}}`)},
 		{Name: toolShellStop,
 			Description: "End a background shell and everything it started.",
@@ -686,17 +710,23 @@ func (r *shellRegistry) call(ctx context.Context, c driver.ClientToolCall, dir, 
 		if !ok {
 			return refuse("No such shell", fmt.Sprintf("there is no shell %d; shell_read without id lists them", *args.ID))
 		}
-		wait := args.Wait
-		if wait > maxShellWait {
-			wait = maxShellWait
+		asked := time.Duration(args.Wait) * time.Second
+		if asked > maxShellWait*time.Second {
+			asked = maxShellWait * time.Second
+		}
+		// The back-off applies only to a read that would find nothing and has no reason
+		// to be quick: all=true is a request for the tail, never delayed.
+		wait := asked
+		if !args.All && !s.hasNew() && s.state() == shellRunning {
+			wait = readWait(asked, s.emptyStreak())
 		}
 		if wait > 0 {
-			deadline := time.Now().Add(time.Duration(wait) * time.Second)
+			deadline := time.Now().Add(wait)
 			for !s.hasNew() && s.state() == shellRunning && time.Now().Before(deadline) {
 				select {
 				case <-ctx.Done():
 					deadline = time.Now()
-				case <-time.After(100 * time.Millisecond):
+				case <-time.After(20 * time.Millisecond):
 				}
 			}
 		}
@@ -707,8 +737,20 @@ func (r *shellRegistry) call(ctx context.Context, c driver.ClientToolCall, dir, 
 		if dropped > 0 {
 			fmt.Fprintf(&b, "[%d earlier bytes left out]\n", dropped)
 		}
-		if strings.TrimSpace(text) == "" {
+		empty := strings.TrimSpace(text) == ""
+		streak := 0
+		if !args.All {
+			streak = s.noteRead(empty)
+		}
+		if empty {
 			b.WriteString("(nothing new)")
+			if info.State == shellRunning {
+				b.WriteString("\nThe program is still running. Do not read it again at once: every read costs a full request. " +
+					"Do something else, or read with wait_seconds 20 so the wait happens here.")
+				if streak > 1 {
+					fmt.Fprintf(&b, " (%d empty reads in a row; each now waits longer.)", streak)
+				}
+			}
 		} else {
 			b.WriteString(text)
 		}
@@ -723,6 +765,25 @@ func (r *shellRegistry) call(ctx context.Context, c driver.ClientToolCall, dir, 
 		return driver.ClientToolResult{OK: true, Arg: fmt.Sprint(*args.ID), Summary: fmt.Sprintf("Stopped shell %d", *args.ID), Text: fmt.Sprintf("Stopped shell %d.", *args.ID)}
 	}
 	return refuse("Unknown tool", c.Name+" is not a shell tool")
+}
+
+// emptyStreak is how many reads in a row found nothing new.
+func (s *shell) emptyStreak() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.emptyReads
+}
+
+// noteRead records the outcome of a read and returns the streak of empty ones.
+func (s *shell) noteRead(empty bool) int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if empty {
+		s.emptyReads++
+	} else {
+		s.emptyReads = 0
+	}
+	return s.emptyReads
 }
 
 // hasNew reports whether the shell printed something shell_read has not handed out.

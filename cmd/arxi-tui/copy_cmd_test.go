@@ -218,3 +218,51 @@ func TestCopyIgnoresNotes(t *testing.T) {
 		t.Errorf("answers = %q, want only the assistant's", got)
 	}
 }
+
+// Consequence if this fails: a long command copied from the screen arrives cut by line
+// breaks in the middle (the screen wraps it to the terminal's width) and fails when
+// pasted into a shell. Remedy: /copy code takes the block from the answer's own text.
+func TestCopyCodeTakesTheBlockUnwrapped(t *testing.T) {
+	long := "go test ./cmd/arxi-tui/ -run 'Shell|Read|Backoff|Repeated|Output' -count=1 -v -timeout 300s -race"
+	h := []fold.ChatLine{
+		{Role: "user", Text: "how?"},
+		{Role: "assistant", Text: "Run:\n```bash\n" + long + "\n```\nthen:\n```\nmake\n```\nDone."},
+	}
+	got, what, err := copyText(h, "code")
+	if err != nil || got != "make" || what != "the last code block" {
+		t.Fatalf("got %q %q %v; the NEWEST block alone, without fences", got, what, err)
+	}
+	// An older block is reachable too, as a row of its own answer: the long line is whole.
+	if bs := codeBlocks(h[1].Text); len(bs) != 2 || bs[0] != long {
+		t.Errorf("blocks = %q", bs)
+	}
+	// The row exists only when there is a block to copy.
+	refs := func(h []fold.ChatLine) string {
+		var r []string
+		for _, m := range copyMenuData(h) {
+			r = append(r, m.Ref)
+		}
+		return strings.Join(r, ",")
+	}
+	if got := refs(h); got != "last,all,code" {
+		t.Errorf("rows with a block = %s", got)
+	}
+	if got := refs(convo()); strings.Contains(got, "code") {
+		t.Errorf("rows without a block = %s", got)
+	}
+	if _, _, err := copyText(convo(), "code"); err == nil || !strings.Contains(err.Error(), "no answer has a code block") {
+		t.Errorf("err = %v; the refusal must say why", err)
+	}
+}
+
+func TestCodeBlocksHandlesTildesCRLFAndAnUnclosedFence(t *testing.T) {
+	if bs := codeBlocks("a\r\n~~~\r\none\r\n~~~\r\n"); len(bs) != 1 || bs[0] != "one" {
+		t.Errorf("tilde/CRLF = %q", bs)
+	}
+	if bs := codeBlocks("```\ncut short\nline two"); len(bs) != 1 || bs[0] != "cut short\nline two" {
+		t.Errorf("unclosed = %q", bs)
+	}
+	if bs := codeBlocks("no fences here"); len(bs) != 0 {
+		t.Errorf("none = %q", bs)
+	}
+}

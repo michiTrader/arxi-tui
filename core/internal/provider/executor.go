@@ -323,7 +323,7 @@ func (x *Executor) PrepareTurnContext(ctx context.Context, e kernel.SpawnTurn, m
 	if err != nil {
 		return turn.Request{}, exec.NotDispatched(fmt.Errorf("prepare turn for %s: %w", e.Agent, err))
 	}
-	if res.Protocol != "" && res.Protocol != model.ProtocolOpenAIChatCompletions && res.Protocol != model.ProtocolAnthropicMessages {
+	if res.Protocol != "" && !model.KnownWire(res.Protocol) {
 		return turn.Request{}, exec.NotDispatched(fmt.Errorf("prepare turn for %s: provider %s uses unsupported protocol %s",
 			e.Agent, res.Provider, res.Protocol))
 	}
@@ -491,6 +491,26 @@ func (x *Executor) completeTurnOn(ctx context.Context, req turn.Request) (turn.R
 			return out, nil
 		}
 		return canonicalOpenAIResponse(resp)
+	case model.ProtocolOpenAIResponses:
+		wire, err := responsesTurnRequest(req)
+		if err != nil {
+			return turn.Response{}, exec.NotDispatched(err)
+		}
+		resp, callErr := x.newClient(res).CompleteResponses(ctx, wire)
+		var apiErr *APIError
+		if callErr != nil && !asAPIError(callErr, &apiErr) {
+			return turn.Response{}, callErr
+		}
+		if apiErr != nil {
+			out := turn.Response{Schema: turn.Schema, Model: req.Model, FinishReason: turn.FinishRefusal,
+				Refusal: &turn.Refusal{Code: fmt.Sprintf("http_%d", apiErr.Status), Message: apiErr.Message, Retryable: apiErr.Retryable(), Web: apiErr.Web, RetryAfterMs: apiErr.After().Milliseconds()}}
+			if resp != nil {
+				out.ID = resp.ID
+				out.Usage = turn.Usage{InputTokens: resp.Usage.InputTokens, OutputTokens: resp.Usage.OutputTokens}
+			}
+			return out, nil
+		}
+		return canonicalResponsesResponse(resp)
 	default:
 		return turn.Response{}, exec.NotDispatched(fmt.Errorf("provider %s uses unsupported protocol %s", res.Provider, res.Protocol))
 	}

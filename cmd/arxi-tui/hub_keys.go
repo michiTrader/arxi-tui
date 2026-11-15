@@ -218,7 +218,7 @@ func (h *providerHub) enter() hubKeyResult {
 			h.setLevel(lvModels)
 		case "edit":
 			r, _ := d.provider(h.prov)
-			h.openForm(newEditForm(h.prov, r.BaseURL, r.APIKeyEnv))
+			h.openForm(newEditForm(h.prov, r.BaseURL, r.APIKeyEnv, wireWord(r.Protocol)))
 		case "remove":
 			h.setLevel(lvConfirm)
 			h.sel = 1 // the safe answer is under the highlight

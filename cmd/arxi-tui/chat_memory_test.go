@@ -97,7 +97,8 @@ func TestWhatACallCouldHaveChangedIsForgotten(t *testing.T) {
 	}{
 		{"edit of a.go", driver.ToolCall{Name: "edit", Arg: "a.go", OK: true}, false, true, false},
 		{"write of a.go", driver.ToolCall{Name: "write", Arg: "a.go", OK: true}, false, true, false},
-		{"a command", driver.ToolCall{Name: "run", Arg: "make", OK: true, Output: "ok"}, false, false, false},
+		// A command names no file, so nothing is dropped: it is flagged (see the test below).
+		{"a command", driver.ToolCall{Name: "run", Arg: "make", OK: true, Output: "ok"}, true, true, true},
 		{"a failed edit still may have", driver.ToolCall{Name: "edit", Arg: "a.go", OK: false}, false, true, false},
 	}
 	for _, tc := range cases {
@@ -244,9 +245,9 @@ func TestAResumedConversationRemembersWhatItRead(t *testing.T) {
 	for _, m := range mem {
 		got = append(got, m.entry)
 	}
-	// a.go was edited; the failed turn ran a command, which empties everything before it;
-	// only the last answered turn's read is left.
-	if strings.Join(got, "|") != "read(d.go)" {
+	// a.go was edited (dropped); the failed turn ran a command, which flags what was
+	// remembered but keeps it; d.go was read after, so it is the fresh one.
+	if strings.Join(got, "|") != "read(b.go)|read(d.go)" {
 		t.Errorf("memory = %v", got)
 	}
 	evs2 := []fold.Event{ev("run.prompt", "uno"), tool("read", "a.go", true, "BODY-A"), ev("llm.response", "ok"),
@@ -392,5 +393,29 @@ func TestAClippedResultIsNeverRemembered(t *testing.T) {
 	}
 	if cutOutput("a file that ends with an ellipsis…") {
 		t.Error("a short result ending in … is not a cut one")
+	}
+}
+
+// Consequence if this fails: every `go test` or `git status` makes the model forget the
+// files it read and read them all again, paid for in each following ask. Remedy: a command
+// keeps the memory but says it may be out of date.
+func TestACommandFlagsWhatWasReadInsteadOfForgettingIt(t *testing.T) {
+	core := &scriptChat{turns: [][]driver.ToolCall{
+		{readOf("a.go", "BODY-A")},
+		{{Name: "run", Arg: "go test", OK: true, Output: "ok"}},
+	}}
+	c, out := chatOn(core)
+	sendAndWait(t, c, out, "uno", "agent.turn_done")
+	sendAndWait(t, c, out, "dos", "agent.turn_done")
+	sendAndWait(t, c, out, "tres", "agent.turn_done")
+	sys := core.system(2)
+	if !strings.Contains(sys, "BODY-A") || !strings.Contains(sys, "a command ran after this") {
+		t.Errorf("the read must stay, flagged as possibly stale:\n%s", sys)
+	}
+	// An edit of that very file still drops it.
+	mem := foldCalls(remember(nil, []toolEcho{{entry: "read(a.go)", name: "read", arg: "a.go", ok: true, output: "BODY-A"}}),
+		[]toolEcho{{name: "edit", arg: "a.go"}}, true)
+	if len(mem) != 0 {
+		t.Errorf("an edit of the file must drop its reading: %v", mem)
 	}
 }

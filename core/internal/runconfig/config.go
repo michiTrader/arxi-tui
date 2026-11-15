@@ -320,7 +320,7 @@ func Validate(a Artifact) error {
 			return fmt.Errorf("route ref %q is empty or duplicated", r.Ref)
 		}
 		seen[r.Ref] = true
-		if r.Protocol != model.ProtocolOpenAIChatCompletions && r.Protocol != model.ProtocolAnthropicMessages {
+		if !model.KnownWire(r.Protocol) {
 			return fmt.Errorf("route %q uses unsupported protocol %q", r.Ref, r.Protocol)
 		}
 		u, err := url.Parse(r.BaseURL)

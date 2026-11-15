@@ -37,10 +37,13 @@ type hubWork struct {
 	Name    string // provider
 	BaseURL string
 	EnvName string
-	Key     string
-	Ref     string   // model ref ("provider/id")
-	Models  []string // model ids to add by hand
-	In, Out *float64 // prices for the models above
+	// Protocol is the provider's API format as the core spells it (openai, responses,
+	// anthropic, or auto on an update); empty leaves it to detection / keeps it.
+	Protocol string
+	Key      string
+	Ref      string   // model ref ("provider/id")
+	Models   []string // model ids to add by hand
+	In, Out  *float64 // prices for the models above
 	// CacheRead and CacheWrite price the cached tokens (they need In and Out); Window
 	// is the context window in tokens, 0 to leave it to what the service reports.
 	CacheRead, CacheWrite *float64
@@ -192,7 +195,7 @@ func runHubWork(ctx context.Context, core hubCore, w hubWork) hubOutcome {
 
 	case opAdd:
 		res, err := core.SubmitProviderAdd(ctx, driver.ProviderAddParams{
-			Name: w.Name, BaseURL: w.BaseURL, APIKeyEnv: w.EnvName, APIKey: w.Key,
+			Name: w.Name, BaseURL: w.BaseURL, APIKeyEnv: w.EnvName, APIKey: w.Key, Protocol: w.Protocol,
 		})
 		if err != nil {
 			return fail(err)
@@ -224,7 +227,7 @@ func runHubWork(ctx context.Context, core hubCore, w hubWork) hubOutcome {
 
 	case opUpdate:
 		if _, err := core.SubmitProviderUpdate(ctx, driver.ProviderUpdateParams{
-			Name: w.Name, BaseURL: w.BaseURL, APIKeyEnv: w.EnvName, APIKey: w.Key,
+			Name: w.Name, BaseURL: w.BaseURL, APIKeyEnv: w.EnvName, APIKey: w.Key, Protocol: w.Protocol,
 		}); err != nil {
 			return fail(err)
 		}

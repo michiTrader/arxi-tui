@@ -25,7 +25,7 @@ const detectTimeout = 8 * time.Second
 // to every custom URL, did not. A page where an API answer should be means "this route
 // is not reachable for us"; any other answer means it is.
 //
-// The OpenAI wire wins when both are reachable (it is what almost every custom
+// The OpenAI chat wire wins when several are reachable (it is what almost every custom
 // endpoint speaks). The result is "" when neither route is reachable or the network
 // failed: the caller then keeps its default and says nothing it cannot know.
 func DetectProtocol(ctx context.Context, baseURL, key string, hc *http.Client) string {
@@ -39,6 +39,11 @@ func DetectProtocol(ctx context.Context, baseURL, key string, hc *http.Client) s
 	case reachable:
 		return model.ProtocolOpenAIChatCompletions
 	case unreachable:
+		// A gateway that serves a model only on /responses answers /chat/completions with
+		// an empty body (probe counts that as unreachable), so /responses is asked next.
+		if probe(ctx, hc, base+"/responses", key, false) == reachable {
+			return model.ProtocolOpenAIResponses
+		}
 		if probe(ctx, hc, base+"/messages", key, true) == reachable {
 			return model.ProtocolAnthropicMessages
 		}
@@ -103,6 +108,11 @@ func probe(ctx context.Context, hc *http.Client, url, key string, anthropic bool
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if looksLikeWebPage(raw) || resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusMethodNotAllowed {
+		return unreachable
+	}
+	// A host that is up answers an empty request with a JSON complaint. An empty body
+	// (outside an auth refusal, which proves the route exists) means nothing serves it.
+	if len(bytes.TrimSpace(raw)) == 0 && resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden {
 		return unreachable
 	}
 	return reachable

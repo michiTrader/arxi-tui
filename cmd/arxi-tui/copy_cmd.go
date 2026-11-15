@@ -21,7 +21,8 @@ import (
 // selecting it with the mouse (a drag-select also takes the frame's border).
 //
 // The menu `/copy ` lists, from the top: `last` (the newest answer), `all` (the whole
-// conversation, each message labelled) and then the earlier answers numbered 2, 3, ...
+// conversation, each message labelled), `code` (the newest code block alone, as written,
+// when there is one) and then the earlier answers numbered 2, 3, ...
 // counting back from the newest, so the number is the same in the menu and in
 // `/copy 3`. Enter copies the highlighted row; Tab marks several rows (a ✓ shows) and
 // Enter then copies all the marked ones, oldest first.
@@ -77,7 +78,46 @@ func preview(s string) string {
 	return s
 }
 
-// copyMenuData builds the rows for a conversation: last, all, then 2..n.
+// codeBlocks returns the fenced code blocks of a markdown text, in order, each without
+// its fence lines. An unclosed fence (an answer cut short) still yields what it holds.
+func codeBlocks(md string) []string {
+	var out []string
+	var cur []string
+	in := false
+	for _, line := range strings.Split(strings.ReplaceAll(md, "\r\n", "\n"), "\n") {
+		if t := strings.TrimSpace(line); strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+			if in {
+				out = append(out, strings.Join(cur, "\n"))
+				cur = nil
+			}
+			in = !in
+			continue
+		}
+		if in {
+			cur = append(cur, line)
+		}
+	}
+	if in && len(cur) > 0 {
+		out = append(out, strings.Join(cur, "\n"))
+	}
+	return out
+}
+
+// lastCode is the newest code block of the newest answer that has one, "" when none.
+// Why a row of its own: what a mouse selection copies is the screen's rows, already cut
+// to the terminal's width, so a long command arrives with line breaks in the middle of
+// it. The block is taken from the answer's own text, where it was never cut.
+func lastCode(as []string) string {
+	for i := len(as) - 1; i >= 0; i-- {
+		if bs := codeBlocks(as[i]); len(bs) > 0 {
+			return bs[len(bs)-1]
+		}
+	}
+	return ""
+}
+
+// copyMenuData builds the rows for a conversation: last, all, code (when an answer has
+// a code block), then 2..n.
 func copyMenuData(h []fold.ChatLine) []fold.ModelMatch {
 	as := answers(h)
 	if len(as) == 0 {
@@ -86,6 +126,9 @@ func copyMenuData(h []fold.ChatLine) []fold.ModelMatch {
 	rows := []fold.ModelMatch{
 		{Ref: "last", Name: "last", Provider: preview(as[len(as)-1])},
 		{Ref: "all", Name: "all", Provider: "the whole conversation, " + plural(len(h), "message", "messages")},
+	}
+	if code := lastCode(as); code != "" {
+		rows = append(rows, fold.ModelMatch{Ref: "code", Name: "code", Provider: "last code block, unwrapped: " + preview(code)})
 	}
 	for n := 2; n <= len(as); n++ {
 		rows = append(rows, fold.ModelMatch{Ref: strconv.Itoa(n), Name: strconv.Itoa(n), Provider: preview(as[len(as)-n])})
@@ -173,8 +216,13 @@ func copyText(h []fold.ChatLine, pick string) (text, what string, err error) {
 	}
 	// Numbers, oldest first so the pasted text reads in the order it was said.
 	var nums []int
+	wantCode := false
 	for _, p := range strings.Split(pick, ",") {
 		p = strings.TrimSpace(p)
+		if p == "code" {
+			wantCode = true
+			continue
+		}
 		if p == "last" {
 			p = "1"
 		}
@@ -198,6 +246,16 @@ func copyText(h []fold.ChatLine, pick string) (text, what string, err error) {
 			seen[n] = true
 			parts = append(parts, as[len(as)-n])
 		}
+	}
+	if wantCode {
+		code := lastCode(as)
+		if code == "" {
+			return "", "", errors.New("/copy code: no answer has a code block")
+		}
+		if len(parts) == 0 {
+			return code, "the last code block", nil
+		}
+		parts = append(parts, code)
 	}
 	if len(parts) == 1 {
 		return parts[0], "1 answer", nil
