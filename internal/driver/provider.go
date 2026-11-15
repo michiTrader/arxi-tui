@@ -44,7 +44,7 @@ type ProviderAddParams struct {
 	Name      string
 	BaseURL   string
 	APIKeyEnv string
-	// Protocol is "openai", "anthropic" or "" (the core detects which one the endpoint
+	// Protocol is "openai", "responses", "anthropic" or "" (the core detects which one the endpoint
 	// answers; some hosts leave only one open).
 	Protocol string
 	// APIKey is the key itself, typed into the /login form. It is the one field
@@ -297,6 +297,9 @@ type ProviderRow struct {
 	APIKeyEnv string `json:"api_key_env"`
 	Key       string `json:"key"`
 	Models    int    `json:"models"`
+	// Protocol is the wire the provider is called on (openai-chat-completions/v1,
+	// openai-responses/v1 or anthropic-messages/v1).
+	Protocol string `json:"protocol"`
 }
 
 // ProviderListResult wraps provider.list. Empty is a valid answer.

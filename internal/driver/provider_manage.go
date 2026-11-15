@@ -49,7 +49,7 @@ type ProviderUpdateParams struct {
 	BaseURL   string
 	APIKeyEnv string
 	APIKey    string
-	// Protocol is "openai", "anthropic", "auto" or "" (keep). With a new BaseURL and
+	// Protocol is "openai", "responses", "anthropic", "auto" or "" (keep). With a new BaseURL and
 	// nothing here, the core detects which wire the endpoint answers.
 	Protocol string
 }

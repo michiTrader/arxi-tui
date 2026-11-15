@@ -120,13 +120,23 @@ func (s *imageStore) attach(input, path string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("cannot read %s: %v", filepath.Base(path), unwrapPathErr(err))
 	}
+	return s.attachBytes(input, filepath.Base(path), raw)
+}
+
+// attachBytes is attach for a picture already in memory (the clipboard's): the same
+// count, format and weight limits, the same marker.
+func (s *imageStore) attachBytes(input, name string, raw []byte) (string, error) {
+	have := s.used(input)
+	if len(have) >= imageMaxCount {
+		return "", fmt.Errorf("a message takes at most %d pictures; nothing was attached", imageMaxCount)
+	}
 	mt := http.DetectContentType(raw)
 	okType := false
 	for _, t := range []string{"image/png", "image/jpeg", "image/gif", "image/webp"} {
 		okType = okType || mt == t
 	}
 	if !okType {
-		return "", fmt.Errorf("%s is not a png, jpeg, gif or webp picture; nothing was attached", filepath.Base(path))
+		return "", fmt.Errorf("%s is not a png, jpeg, gif or webp picture; nothing was attached", name)
 	}
 	enc := base64.StdEncoding.EncodeToString(raw)
 	total := len(enc)
@@ -143,9 +153,9 @@ func (s *imageStore) attach(input, path string) (string, error) {
 	if s.next < 1 {
 		s.next = 1
 	}
-	mark := fmt.Sprintf("[Image #%d %s]", s.next, safeName(filepath.Base(path)))
+	mark := fmt.Sprintf("[Image #%d %s]", s.next, safeName(name))
 	s.next++
-	s.byMark[mark] = attachedImage{name: filepath.Base(path), img: driver.ChatImage{MediaType: mt, Data: enc}}
+	s.byMark[mark] = attachedImage{name: name, img: driver.ChatImage{MediaType: mt, Data: enc}}
 	s.marks.text[mark] = mark
 	return mark, nil
 }

@@ -109,7 +109,19 @@ const (
 	ProtocolOpenAIChatCompletions = "openai-chat-completions/v1"
 	// ProtocolAnthropicMessages names Anthropic's native Messages API.
 	ProtocolAnthropicMessages = "anthropic-messages/v1"
+	// ProtocolOpenAIResponses names OpenAI's Responses API (POST /responses). Some gateways
+	// serve a model only there and answer /chat/completions with an empty body.
+	ProtocolOpenAIResponses = "openai-responses/v1"
 )
+
+// KnownWire reports whether protocol is one of the wires this build can speak.
+func KnownWire(protocol string) bool {
+	switch protocol {
+	case ProtocolOpenAIChatCompletions, ProtocolAnthropicMessages, ProtocolOpenAIResponses:
+		return true
+	}
+	return false
+}
 
 // known is the table of providers whose endpoint and models ship with the
 // binary.
@@ -152,7 +164,7 @@ func Known(name string) (baseURL string, models []string, ok bool) {
 }
 
 // ParseProtocol turns what a user types for --protocol into a wire name: "openai"
-// or "anthropic" (or the full name). "" and "auto" mean "decide for me" and give
+// "responses" or "anthropic" (or the full name). "" and "auto" mean "decide for me" and give
 // ("", true). Anything else is refused.
 func ParseProtocol(s string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
@@ -162,6 +174,8 @@ func ParseProtocol(s string) (string, bool) {
 		return ProtocolOpenAIChatCompletions, true
 	case "anthropic", ProtocolAnthropicMessages:
 		return ProtocolAnthropicMessages, true
+	case "responses", "openai-responses", ProtocolOpenAIResponses:
+		return ProtocolOpenAIResponses, true
 	}
 	return "", false
 }
@@ -297,7 +311,7 @@ func (p Provider) Validate() error {
 	if err := validateName(p.Name); err != nil {
 		return err
 	}
-	if p.Protocol != "" && p.Protocol != ProtocolOpenAIChatCompletions && p.Protocol != ProtocolAnthropicMessages {
+	if p.Protocol != "" && !KnownWire(p.Protocol) {
 		return fmt.Errorf("provider %q declares unsupported protocol %q", p.Name, p.Protocol)
 	}
 	if err := validateBaseURL(p.Name, p.BaseURL); err != nil {
@@ -323,7 +337,7 @@ func (p Provider) Validate() error {
 				"status would never appear to change", p.Name, m.ID)
 		}
 		seen[m.ID] = true
-		if m.Protocol != "" && m.Protocol != ProtocolOpenAIChatCompletions && m.Protocol != ProtocolAnthropicMessages {
+		if m.Protocol != "" && !KnownWire(m.Protocol) {
 			return fmt.Errorf("provider %q: model %q declares unsupported protocol %q", p.Name, m.ID, m.Protocol)
 		}
 		if err := validatePrice(m.ID, m.Price); err != nil {

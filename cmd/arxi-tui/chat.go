@@ -71,6 +71,9 @@ type chatSession struct {
 
 	mu      sync.Mutex
 	history []driver.ChatTurn
+	// trimNotified is set once the cap has told the user it cut older turns, so the
+	// notice appears once per conversation, not on every question.
+	trimNotified bool
 	// lastAsk is how many tokens the model held at the latest ask it answered, as the
 	// core reported it (0 until one does). It is what the model actually carried,
 	// tool-loop messages included, which the history above does not hold.
@@ -566,7 +569,11 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	if web == policyDeny {
 		web = ""
 	}
-	hist := trimHistory(c.history, chatMaxHistory, chatMaxHistoryBytes)
+	hist, dropped := capHistory(c.history, chatMaxHistory, chatMaxHistoryBytes)
+	warnTrim := dropped > 0 && !c.trimNotified
+	if warnTrim {
+		c.trimNotified = true
+	}
 	// The interface tools and their guide ride only with a question that asks for them.
 	text, command := uiTriggerWord(text)
 	withUI := command != ""
@@ -595,6 +602,9 @@ func (c *chatSession) send(ctx context.Context, text string) error {
 	turnCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 	c.mu.Unlock()
+	if warnTrim {
+		c.post(ctx, gen, "chat.warn", map[string]any{"text": trimNotice(dropped)})
+	}
 	go c.run(turnCtx, text, command, withUI, hist, gen, model, effort, workdir, edits, runs, web, outside, folders, turn, images)
 	return nil
 }
@@ -704,6 +714,7 @@ func (c *chatSession) reset() {
 	c.mu.Lock()
 	c.gen++
 	c.history = nil
+	c.trimNotified = false
 	c.lastAsk = 0
 	c.toolLog = nil
 	c.memory = nil

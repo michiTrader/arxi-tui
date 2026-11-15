@@ -16,7 +16,7 @@ import (
 // toolMemory is what the app keeps instead: what the reading tools (read, list, grep)
 // returned in earlier answered turns, newest first within a byte budget, in the system
 // prompt of the next turns. It is as stale as the files are, so it is dropped as soon as
-// something could have changed them (a write, an edit, a command), it says it may be out
+// a write or an edit changes them, flagged when a command ran after it, it says it may be out
 // of date, and it is emptied by /clear and by a compaction, whose point is a smaller
 // context.
 
@@ -38,10 +38,11 @@ func remembers(name string) bool {
 	return false
 }
 
-// changes says which tools could have changed what the remembered results describe.
+// changesFiles says which tools name a file they changed, so only that file's result is
+// forgotten. A command ("run") names nothing: it flags what is remembered instead.
 func changesFiles(name string) bool {
 	switch name {
-	case "write", "edit", "run":
+	case "write", "edit":
 		return true
 	}
 	return false
@@ -66,7 +67,15 @@ func foldCalls(mem []toolEcho, calls []toolEcho, keep bool) []toolEcho {
 	for _, c := range calls {
 		switch {
 		case c.name == "run":
-			mem = nil
+			// A command names no file, so any remembered result may be out of date. It
+			// used to empty the memory, which made the model re-read every file after
+			// each `go test`; now the results stay, flagged.
+			marked := mem[:0:0]
+			for _, m := range mem {
+				m.stale = true
+				marked = append(marked, m)
+			}
+			mem = marked
 		case changesFiles(c.name):
 			kept := mem[:0:0]
 			for _, m := range mem {
@@ -145,7 +154,11 @@ func toolMemoryText(mem []toolEcho) string {
 		"(not part of your replies; do not copy it into them):")
 	for i, m := range mem {
 		if keep[i] {
-			b.WriteString("\n- " + m.entry + " returned:\n" + m.output)
+			note := " returned:\n"
+			if m.stale {
+				note = " returned (a command ran after this; it may have changed it):\n"
+			}
+			b.WriteString("\n- " + m.entry + note + m.output)
 		}
 	}
 	return b.String()

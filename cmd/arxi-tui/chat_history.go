@@ -126,6 +126,10 @@ type toolEcho struct {
 	// needs them to tell a read from a command and one file from another.
 	name, arg string
 	ok        bool
+	// stale marks a remembered result that a command has run after: most commands
+	// (tests, git status, ls) change nothing, so the result is kept, but it is shown as
+	// possibly out of date instead of being dropped and read all over again.
+	stale bool
 }
 
 const (

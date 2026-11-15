@@ -28,7 +28,47 @@ const (
 	kindPrice            // a price, USD per million tokens
 	kindWindow           // a context window in tokens: 1000000, 1M or 200k
 	kindYesNo            // yes or no (empty is no)
+	kindWire             // a provider's API format: auto, openai, responses or anthropic
 )
+
+// wireFieldLabel names the field that picks the wire a provider is called on. Some
+// gateways serve a model only on one route (River serves DeepSeek only on /responses and
+// answers /chat/completions with an empty body), so the user has to be able to say which.
+const wireFieldLabel = "API format (auto/openai/responses/anthropic)"
+
+// wireHelp is the sentence the forms show about that field.
+const wireHelp = "API format: leave empty (auto) to let arxi probe the service; write responses for a " +
+	"/v1/responses endpoint, anthropic for /v1/messages, openai for /v1/chat/completions."
+
+// parseWire turns what the user typed into the word the core takes for --protocol:
+// "" (auto), openai, responses or anthropic. ok is false for any other word.
+func parseWire(s string) (word string, ok bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "", "auto":
+		return "", true
+	case "openai", "chat", "chat-completions", "openai-chat-completions/v1":
+		return "openai", true
+	case "responses", "response", "openai-responses", "openai-responses/v1":
+		return "responses", true
+	case "anthropic", "messages", "anthropic-messages/v1":
+		return "anthropic", true
+	}
+	return "", false
+}
+
+// wireWord is the short word for a wire name as provider.list reports it, so an edit
+// form opens showing what the provider uses now.
+func wireWord(protocol string) string {
+	switch protocol {
+	case "openai-chat-completions/v1":
+		return "openai"
+	case "openai-responses/v1":
+		return "responses"
+	case "anthropic-messages/v1":
+		return "anthropic"
+	}
+	return ""
+}
 
 // hubField is one input of a form.
 type hubField struct {
@@ -65,6 +105,7 @@ type hubForm struct {
 	focus  int
 
 	origURL, origEnv string // formEdit: what the core holds now
+	origWire         string // formEdit: the wire word the core holds now
 	backend          string // formSearch: brave, exa or searxng
 }
 
@@ -224,31 +265,34 @@ func newOtherForm(name string) *hubForm {
 		title: "Add another service",
 		help: "Any service that speaks the OpenAI chat API. Give its name, its base URL (the part before " +
 			"/chat/completions) and a key. If you know the model ids, list them separated by commas; otherwise " +
-			"they are fetched from the service.",
+			"they are fetched from the service. " + wireHelp,
 		fields: []hubField{
 			{label: "Name", value: name, required: true, kind: kindName},
 			{label: "Base URL", required: true, kind: kindURL},
 			{label: "API key", secret: true, kind: kindKey},
 			{label: "Env var name", envName: true, kind: kindEnv},
+			{label: wireFieldLabel, kind: kindWire},
 			{label: "Model ids", kind: kindModels},
 		},
 	}
 }
 
-func newEditForm(name, baseURL, envName string) *hubForm {
+func newEditForm(name, baseURL, envName, wire string) *hubForm {
 	return &hubForm{
 		kind:  formEdit,
 		title: "Edit " + name,
 		prov:  name,
 		help: "Change the base URL, store a new key, or point to an environment variable. " +
-			"Leave a field as it is to keep it. Clear the variable name to stop using it.",
+			"Leave a field as it is to keep it. Clear the variable name to stop using it. " + wireHelp,
 		fields: []hubField{
 			{label: "Base URL", value: baseURL, kind: kindURL},
 			{label: "API key", secret: true, kind: kindKey, unchanged: "(unchanged)"},
 			{label: "Env var name", value: envName, envName: true, kind: kindEnv},
+			{label: wireFieldLabel, value: wire, kind: kindWire},
 		},
-		origURL: baseURL,
-		origEnv: envName,
+		origURL:  baseURL,
+		origEnv:  envName,
+		origWire: wire,
 	}
 }
 
@@ -346,6 +390,10 @@ func (f *hubForm) submit() (hubWork, string) {
 			if _, err := parseWindow(v); err != nil {
 				return hubWork{}, fl.label + " " + err.Error() + " (write 1000000, 1M or 200k)"
 			}
+		case kindWire:
+			if _, ok := parseWire(v); !ok {
+				return hubWork{}, fl.label + " must be auto, openai, responses or anthropic"
+			}
 		case kindYesNo:
 			if _, err := parseYesNo(v); err != nil {
 				return hubWork{}, fl.label + " " + err.Error()
@@ -370,6 +418,7 @@ func (f *hubForm) submit() (hubWork, string) {
 	case formAddOther:
 		w := hubWork{Op: opAdd, Name: f.get("Name"), BaseURL: f.get("Base URL"),
 			Key: f.get("API key"), EnvName: f.get("Env var name"), Models: parseModelIDs(f.get("Model ids"))}
+		w.Protocol, _ = parseWire(f.get(wireFieldLabel))
 		if w.Key == "" && w.EnvName == "" {
 			return hubWork{}, "give an API key, or the name of the environment variable that holds it"
 		}
@@ -386,7 +435,15 @@ func (f *hubForm) submit() (hubWork, string) {
 				w.EnvName = "none" // the core's spelling of "stop using a variable"
 			}
 		}
-		if w.BaseURL == "" && w.EnvName == "" && w.Key == "" {
+		// Sent only when changed. An emptied field asks the core to detect again ("auto"),
+		// which is how a wrong manual choice is undone.
+		if cur, _ := parseWire(f.get(wireFieldLabel)); cur != f.origWire {
+			w.Protocol = cur
+			if cur == "" {
+				w.Protocol = "auto"
+			}
+		}
+		if w.BaseURL == "" && w.EnvName == "" && w.Key == "" && w.Protocol == "" {
 			return hubWork{}, "nothing changed"
 		}
 		return w, ""

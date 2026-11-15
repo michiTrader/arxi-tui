@@ -3569,7 +3569,30 @@ func loop(ctx context.Context, tty Terminal, doc *scene.Document, theme *theme.T
 					}
 					pasteBefore := inputState{input, caret}
 					pasted := cleanPaste(ev.Text)
-					if path, isPic := imagePathOf(pasted); isPic && !strings.HasPrefix(input, "/") {
+					if strings.TrimSpace(pasted) == "" && !strings.HasPrefix(input, "/") {
+						// A terminal pastes text only: Ctrl+V over a screenshot arrives as an
+						// empty paste. Ask the system clipboard for a picture instead of
+						// dropping the key in silence.
+						mark, note, err := pasteClipboardImage(ctx, &images, input)
+						switch {
+						case err != nil:
+							collected = appendLocalWarning(collected, err.Error())
+						case mark == "":
+							if pasted == "" {
+								collected = appendLocalWarning(collected, noClipboardPicture)
+							} else {
+								input, caret = insertText(input, caret, pasted)
+							}
+						default:
+							input, caret = insertText(input, caret, mark+" ")
+							if note != "" {
+								collected = appendLocalWarning(collected, note)
+							}
+							if w := imageModelWarning(hubDefault, hubDefaultKnown, hubImages); w != "" {
+								collected = appendLocalWarning(collected, w)
+							}
+						}
+					} else if path, isPic := imagePathOf(pasted); isPic && !strings.HasPrefix(input, "/") {
 						// A file dropped on the terminal pastes its path: a picture is attached.
 						if mark, err := images.attach(input, path); err != nil {
 							collected = appendLocalWarning(collected, err.Error())

@@ -211,11 +211,16 @@ func clampPercent(p int) int {
 // three short messages, and compacting that every turn would spend a model call each
 // time to change nothing.
 func shouldAutoCompact(s autoCompactSetting, lastContext uint64, window int, hist []driver.ChatTurn) bool {
-	if !s.On || window <= 0 || lastContext == 0 {
+	if !s.On {
 		return false
 	}
-	if lastContext*100 < uint64(window)*uint64(clampPercent(s.Percent)) {
-		return false
+	// Near the history cap the next question would lose older turns whatever the window
+	// says, so this needs no window figure (many providers never report one).
+	near := historyNearCap(hist)
+	if !near {
+		if window <= 0 || lastContext == 0 || lastContext*100 < uint64(window)*uint64(clampPercent(s.Percent)) {
+			return false
+		}
 	}
 	_, _, worth := splitForCompact(hist)
 	return worth
@@ -336,6 +341,7 @@ func (c *chatSession) runCompact(ctx context.Context, focus string, old, keep []
 		return
 	}
 	c.history = next
+	c.trimNotified = false
 	// The point of a compaction is a smaller context: what was read is let go with the
 	// rest, and read again if it is needed.
 	c.memory = nil

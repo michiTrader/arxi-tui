@@ -69,7 +69,7 @@ var detectEndpoint = func(baseURL, key string) (string, string) {
 
 // errBadProtocol is the refusal for a --protocol word nobody knows.
 func errBadProtocol(s string) error {
-	return badInvocation{fmt.Errorf("protocol %q is not one of: openai, anthropic, auto", s)}
+	return badInvocation{fmt.Errorf("protocol %q is not one of: openai, responses, anthropic, auto", s)}
 }
 
 // registerProviderWire is registerProvider with an optional explicit wire. For an
@@ -159,6 +159,9 @@ type providerRow struct {
 	// key folder could not be read; the remedy differs from "missing").
 	Key    string `json:"key"`
 	Models int    `json:"models"`
+	// Protocol is the wire the provider is called on (openai-chat-completions/v1,
+	// openai-responses/v1, anthropic-messages/v1), so the TUI can show and edit it.
+	Protocol string `json:"protocol"`
 }
 
 // listProviders reports every registered provider and its credential state.
@@ -173,7 +176,7 @@ func listProviders() ([]providerRow, error) {
 	}
 	rows := make([]providerRow, 0, len(ps))
 	for _, p := range ps {
-		row := providerRow{Name: p.Name, BaseURL: p.BaseURL, APIKeyEnv: p.APIKeyEnv, Models: len(p.Models)}
+		row := providerRow{Name: p.Name, BaseURL: p.BaseURL, APIKeyEnv: p.APIKeyEnv, Models: len(p.Models), Protocol: p.EffectiveProtocol()}
 		if p.APIKeyEnv != "" && strings.TrimSpace(os.Getenv(p.APIKeyEnv)) != "" {
 			row.Key = "env"
 		} else {

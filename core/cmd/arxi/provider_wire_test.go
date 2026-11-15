@@ -87,7 +87,7 @@ func TestAnExplicitWireIsNeverOverriddenAndAnUnknownOneNamesTheChoices(t *testin
 		t.Fatalf("protocol = %q; the user chose it", got.Provider.Protocol)
 	}
 	_, err = registerProviderWire("gate2", h.srv.URL+"/v1", "grpc", "", "")
-	if err == nil || !strings.Contains(err.Error(), "openai, anthropic, auto") {
+	if err == nil || !strings.Contains(err.Error(), "openai, responses, anthropic, auto") {
 		t.Fatalf("err = %v; must list the accepted words", err)
 	}
 }
